@@ -1,0 +1,97 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.bazarbozorg'
+version = '1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+application {
+    mainClass = 'com.bazarbozorg.backtest.BacktestApplication'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.ta4j:ta4j-core:0.16'
+    implementation 'com.h2database:h2:2.2.224'
+    implementation 'info.picocli:picocli:4.7.5'
+    implementation 'ch.qos.logback:logback-classic:1.4.14'
+    implementation 'com.opencsv:opencsv:5.9'
+    implementation 'org.apache.commons:commons-math3:3.6.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    annotationProcessor 'info.picocli:picocli-codegen:4.7.5'
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'com.bazarbozorg.backtest.BacktestApplication'
+    }
+}
+
+tasks.register('generateTestData') {
+    description = 'Generates sample AAPL daily OHLCV CSV test data'
+    group = 'data'
+
+    doLast {
+        def outputDir = file("${projectDir}/test-data")
+        outputDir.mkdirs()
+        def outputFile = new File(outputDir, "AAPL_daily.csv")
+        def rng = new Random(42)
+        def prevClose = 75.00d
+
+        outputFile.withPrintWriter { pw ->
+            pw.println("Date,Open,High,Low,Close,Volume")
+
+            def start = java.time.LocalDate.of(2020, 1, 2)
+            def end = java.time.LocalDate.of(2023, 12, 29)
+            def count = 0
+
+            for (def d = start; !d.isAfter(end); d = d.plusDays(1)) {
+                def dow = d.getDayOfWeek()
+                if (dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY) continue
+
+                def openFactor = 1.0 + (rng.nextDouble() * 0.02 - 0.01)
+                def openPrice = prevClose * openFactor
+
+                def closeFactor = 1.0 + (rng.nextDouble() * 0.04 - 0.02)
+                def closePrice = openPrice * closeFactor
+
+                def maxOC = Math.max(openPrice, closePrice)
+                def minOC = Math.min(openPrice, closePrice)
+
+                def highPrice = maxOC * (1.0 + Math.abs(rng.nextDouble() * 0.01))
+                def lowPrice = minOC * (1.0 - Math.abs(rng.nextDouble() * 0.01))
+
+                def volume = 50000000 + rng.nextInt(100000001)
+
+                openPrice = Math.round(openPrice * 100.0) / 100.0
+                highPrice = Math.round(highPrice * 100.0) / 100.0
+                lowPrice = Math.round(lowPrice * 100.0) / 100.0
+                closePrice = Math.round(closePrice * 100.0) / 100.0
+
+                pw.printf("%s,%.2f,%.2f,%.2f,%.2f,%d%n", d, openPrice, highPrice, lowPrice, closePrice, volume)
+
+                prevClose = closePrice
+                count++
+            }
+            println("Generated ${count} trading days of data -> ${outputFile.absolutePath}")
+        }
+    }
+}
