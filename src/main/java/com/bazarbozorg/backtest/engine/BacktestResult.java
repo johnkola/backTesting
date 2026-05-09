@@ -18,6 +18,7 @@ public class BacktestResult {
     private final String strategyName;
     private final String instrumentSymbol;
     private final Timeframe timeframe;
+    private final String dataSource;
     private final ZonedDateTime startDate;
     private final ZonedDateTime endDate;
     private final PerformanceMetrics metrics;
@@ -26,21 +27,8 @@ public class BacktestResult {
     private final double initialCapital;
     private final double finalEquity;
 
-    /**
-     * Creates a new backtest result.
-     *
-     * @param strategyName     the name of the strategy that was tested
-     * @param instrumentSymbol the symbol of the instrument that was tested
-     * @param timeframe        the timeframe of the candle data
-     * @param startDate        the start date of the backtest period
-     * @param endDate          the end date of the backtest period
-     * @param metrics          the calculated performance metrics
-     * @param trades           the list of completed trades
-     * @param equityHistory    the equity curve history
-     * @param initialCapital   the starting capital
-     * @param finalEquity      the ending portfolio equity
-     */
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
+                          String dataSource,
                           ZonedDateTime startDate, ZonedDateTime endDate,
                           PerformanceMetrics metrics, List<Trade> trades,
                           List<EquityPoint> equityHistory,
@@ -48,6 +36,7 @@ public class BacktestResult {
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
+        this.dataSource = dataSource;
         this.startDate = startDate;
         this.endDate = endDate;
         this.metrics = metrics;
@@ -55,6 +44,10 @@ public class BacktestResult {
         this.equityHistory = Collections.unmodifiableList(equityHistory);
         this.initialCapital = initialCapital;
         this.finalEquity = finalEquity;
+    }
+
+    public String getDataSource() {
+        return dataSource;
     }
 
     public String getStrategyName() {

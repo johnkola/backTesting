@@ -1,0 +1,15 @@
+{
+  "name": "backtest-web-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web frontend for the Java backtesting app: serves rendered docs and (later) read-only API endpoints over the Postgres data.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "marked": "^14.1.3",
+    "pg": "^8.20.0"
+  }
+}

@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.config;
 
-import org.h2.jdbcx.JdbcDataSource;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,15 +13,24 @@ public class DatabaseConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(DatabaseConfig.class);
 
-    private final JdbcDataSource dataSource;
+    private final HikariDataSource dataSource;
 
     public DatabaseConfig() {
         AppConfig config = AppConfig.getInstance();
-        this.dataSource = new JdbcDataSource();
-        this.dataSource.setURL(config.getDbUrl());
-        this.dataSource.setUser(config.getDbUser());
-        this.dataSource.setPassword(config.getDbPassword());
-        logger.info("Configured H2 DataSource with URL: {}", config.getDbUrl());
+
+        HikariConfig hikariConfig = new HikariConfig();
+        hikariConfig.setJdbcUrl(config.getDbUrl());
+        hikariConfig.setUsername(config.getDbUser());
+        hikariConfig.setPassword(config.getDbPassword());
+        hikariConfig.setMaximumPoolSize(config.getDbPoolMaxSize());
+        hikariConfig.setMinimumIdle(config.getDbPoolMinIdle());
+        hikariConfig.setConnectionTimeout(config.getDbPoolConnectionTimeoutMs());
+        hikariConfig.setPoolName("backtest-pool");
+        hikariConfig.addDataSourceProperty("reWriteBatchedInserts", "true");
+
+        this.dataSource = new HikariDataSource(hikariConfig);
+        logger.info("Configured HikariCP PostgreSQL DataSource: url={}, maxPoolSize={}",
+                config.getDbUrl(), config.getDbPoolMaxSize());
     }
 
     public Connection getConnection() throws SQLException {
@@ -29,5 +39,12 @@ public class DatabaseConfig {
 
     public DataSource getDataSource() {
         return dataSource;
+    }
+
+    public void close() {
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+            logger.info("HikariCP DataSource closed");
+        }
     }
 }

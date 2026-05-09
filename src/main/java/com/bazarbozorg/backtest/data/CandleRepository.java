@@ -27,9 +27,11 @@ public class CandleRepository {
             return;
         }
 
-        String sql = "MERGE INTO candles (instrument_id, timeframe, timestamp, open, high, low, close, volume) " +
-                "KEY (instrument_id, timeframe, timestamp) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO candles (instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                "ON CONFLICT (instrument_id, timeframe, source_id, timestamp) DO UPDATE SET " +
+                "open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, " +
+                "close = EXCLUDED.close, volume = EXCLUDED.volume";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -38,19 +40,20 @@ public class CandleRepository {
 
             for (Candle candle : candles) {
                 ps.setLong(1, candle.getInstrumentId());
-                ps.setString(2, candle.getTimeframe().name());
-                ps.setObject(3, candle.getTimestamp().toOffsetDateTime());
-                ps.setDouble(4, candle.getOpen());
-                ps.setDouble(5, candle.getHigh());
-                ps.setDouble(6, candle.getLow());
-                ps.setDouble(7, candle.getClose());
-                ps.setDouble(8, candle.getVolume());
+                ps.setLong(2, candle.getSourceId());
+                ps.setString(3, candle.getTimeframe().name());
+                ps.setObject(4, candle.getTimestamp().toOffsetDateTime());
+                ps.setDouble(5, candle.getOpen());
+                ps.setDouble(6, candle.getHigh());
+                ps.setDouble(7, candle.getLow());
+                ps.setDouble(8, candle.getClose());
+                ps.setDouble(9, candle.getVolume());
                 ps.addBatch();
             }
 
             ps.executeBatch();
             conn.commit();
-            logger.debug("Saved {} candle(s) via batch MERGE", candles.size());
+            logger.debug("Saved {} candle(s) via batch upsert", candles.size());
 
         } catch (SQLException e) {
             logger.error("Failed to batch save candles", e);
@@ -58,11 +61,11 @@ public class CandleRepository {
         }
     }
 
-    public List<Candle> findByInstrumentAndTimeframe(long instrumentId, Timeframe timeframe,
+    public List<Candle> findByInstrumentAndTimeframe(long instrumentId, long sourceId, Timeframe timeframe,
                                                      ZonedDateTime from, ZonedDateTime to) {
         StringBuilder sql = new StringBuilder(
-                "SELECT id, instrument_id, timeframe, timestamp, open, high, low, close, volume " +
-                "FROM candles WHERE instrument_id = ? AND timeframe = ?");
+                "SELECT id, instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume " +
+                "FROM candles WHERE instrument_id = ? AND source_id = ? AND timeframe = ?");
 
         if (from != null) {
             sql.append(" AND timestamp >= ?");
@@ -79,6 +82,7 @@ public class CandleRepository {
 
             int paramIndex = 1;
             ps.setLong(paramIndex++, instrumentId);
+            ps.setLong(paramIndex++, sourceId);
             ps.setString(paramIndex++, timeframe.name());
             if (from != null) {
                 ps.setObject(paramIndex++, from.toOffsetDateTime());
@@ -93,25 +97,46 @@ public class CandleRepository {
                 }
             }
 
-            logger.debug("Found {} candle(s) for instrumentId={}, timeframe={}, from={}, to={}",
-                    candles.size(), instrumentId, timeframe, from, to);
+            logger.debug("Found {} candle(s) for instrumentId={}, sourceId={}, timeframe={}, from={}, to={}",
+                    candles.size(), instrumentId, sourceId, timeframe, from, to);
             return candles;
 
         } catch (SQLException e) {
-            logger.error("Failed to find candles for instrumentId={}, timeframe={}",
-                    instrumentId, timeframe, e);
+            logger.error("Failed to find candles for instrumentId={}, sourceId={}, timeframe={}",
+                    instrumentId, sourceId, timeframe, e);
             throw new RuntimeException("Failed to find candles", e);
         }
     }
 
-    public long countByInstrument(long instrumentId, Timeframe timeframe) {
+    public long countByInstrumentAllSources(long instrumentId, Timeframe timeframe) {
         String sql = "SELECT COUNT(*) FROM candles WHERE instrument_id = ? AND timeframe = ?";
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, instrumentId);
+            ps.setString(2, timeframe.name());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+                return 0;
+            }
+        } catch (SQLException e) {
+            logger.error("Failed to count candles for instrumentId={}, timeframe={}",
+                    instrumentId, timeframe, e);
+            throw new RuntimeException("Failed to count candles", e);
+        }
+    }
+
+    public long countByInstrument(long instrumentId, long sourceId, Timeframe timeframe) {
+        String sql = "SELECT COUNT(*) FROM candles WHERE instrument_id = ? AND source_id = ? AND timeframe = ?";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setLong(1, instrumentId);
-            ps.setString(2, timeframe.name());
+            ps.setLong(2, sourceId);
+            ps.setString(3, timeframe.name());
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -121,21 +146,22 @@ public class CandleRepository {
             }
 
         } catch (SQLException e) {
-            logger.error("Failed to count candles for instrumentId={}, timeframe={}",
-                    instrumentId, timeframe, e);
+            logger.error("Failed to count candles for instrumentId={}, sourceId={}, timeframe={}",
+                    instrumentId, sourceId, timeframe, e);
             throw new RuntimeException("Failed to count candles", e);
         }
     }
 
-    public Optional<DateRange> getDateRange(long instrumentId, Timeframe timeframe) {
+    public Optional<DateRange> getDateRange(long instrumentId, long sourceId, Timeframe timeframe) {
         String sql = "SELECT MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts " +
-                "FROM candles WHERE instrument_id = ? AND timeframe = ?";
+                "FROM candles WHERE instrument_id = ? AND source_id = ? AND timeframe = ?";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setLong(1, instrumentId);
-            ps.setString(2, timeframe.name());
+            ps.setLong(2, sourceId);
+            ps.setString(3, timeframe.name());
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -152,8 +178,8 @@ public class CandleRepository {
             }
 
         } catch (SQLException e) {
-            logger.error("Failed to get date range for instrumentId={}, timeframe={}",
-                    instrumentId, timeframe, e);
+            logger.error("Failed to get date range for instrumentId={}, sourceId={}, timeframe={}",
+                    instrumentId, sourceId, timeframe, e);
             throw new RuntimeException("Failed to get date range", e);
         }
     }
@@ -163,6 +189,7 @@ public class CandleRepository {
         return new Candle(
                 rs.getLong("id"),
                 rs.getLong("instrument_id"),
+                rs.getLong("source_id"),
                 Timeframe.valueOf(rs.getString("timeframe")),
                 odt.toZonedDateTime(),
                 rs.getDouble("open"),

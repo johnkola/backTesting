@@ -1,0 +1,42 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: backtest-timescaledb
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: backtest
+      POSTGRES_USER: backtest
+      POSTGRES_PASSWORD: backtest
+      TS_TUNE_MEMORY: 2GB
+      TS_TUNE_NUM_CPUS: 2
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backtest -d backtest"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: backtest-web
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      PGHOST: timescaledb
+      PGPORT: 5432
+      PGDATABASE: backtest
+      PGUSER: backtest
+      PGPASSWORD: backtest
+      PORT: 3000
+
+volumes:
+  timescaledb-data:

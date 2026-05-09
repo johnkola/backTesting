@@ -1,0 +1,11 @@
+.git
+.gradle
+build
+out
+data
+test-data
+**/node_modules
+**/dist
+**/.idea
+**/*.iml
+src/test

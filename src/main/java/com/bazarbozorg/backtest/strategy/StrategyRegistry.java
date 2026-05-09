@@ -5,6 +5,7 @@ import com.bazarbozorg.backtest.strategy.impl.EmaTripleCrossStrategy;
 import com.bazarbozorg.backtest.strategy.impl.MacdStrategy;
 import com.bazarbozorg.backtest.strategy.impl.RsiStrategy;
 import com.bazarbozorg.backtest.strategy.impl.SmaCrossoverStrategy;
+import com.bazarbozorg.backtest.strategy.nn.NeuralNetworkStrategy;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -33,6 +34,7 @@ public final class StrategyRegistry {
         registerStrategy("macd", MacdStrategy::new);
         registerStrategy("bollinger", BollingerBandStrategy::new);
         registerStrategy("ema-triple", EmaTripleCrossStrategy::new);
+        registerStrategy("nn-feedforward", NeuralNetworkStrategy::new);
     }
 
     /**

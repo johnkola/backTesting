@@ -53,8 +53,7 @@ public class DatabaseManager {
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
 
-            String[] statements = schemaSql.split(";");
-            for (String sql : statements) {
+            for (String sql : splitStatements(schemaSql)) {
                 String trimmed = sql.trim();
                 if (!trimmed.isEmpty()) {
                     stmt.execute(trimmed);
@@ -66,6 +65,44 @@ public class DatabaseManager {
             logger.error("Failed to execute schema SQL", e);
             throw new RuntimeException("Failed to initialize database schema", e);
         }
+    }
+
+    // Splits SQL on `;` while respecting PostgreSQL `$tag$ ... $tag$` dollar quotes
+    // (so DO blocks and function bodies survive intact).
+    private static java.util.List<String> splitStatements(String sql) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        String openTag = null;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (openTag == null && c == '$') {
+                int end = sql.indexOf('$', i + 1);
+                if (end > i) {
+                    String tag = sql.substring(i, end + 1);
+                    if (tag.matches("\\$[A-Za-z_]*\\$")) {
+                        openTag = tag;
+                        cur.append(tag);
+                        i = end;
+                        continue;
+                    }
+                }
+            } else if (openTag != null && c == '$' && sql.startsWith(openTag, i)) {
+                cur.append(openTag);
+                i += openTag.length() - 1;
+                openTag = null;
+                continue;
+            }
+            if (openTag == null && c == ';') {
+                out.add(cur.toString());
+                cur.setLength(0);
+            } else {
+                cur.append(c);
+            }
+        }
+        if (cur.length() > 0) {
+            out.add(cur.toString());
+        }
+        return out;
     }
 
     private String loadSchemaFromClasspath() {
@@ -93,7 +130,10 @@ public class DatabaseManager {
     }
 
     public void shutdown() {
-        logger.info("DatabaseManager shutdown complete");
+        if (databaseConfig != null) {
+            databaseConfig.close();
+        }
         databaseConfig = null;
+        logger.info("DatabaseManager shutdown complete");
     }
 }

@@ -2,6 +2,7 @@ package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.data.BarSeriesConverter;
 import com.bazarbozorg.backtest.data.CandleRepository;
+import com.bazarbozorg.backtest.data.DataSourceRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.data.InstrumentRepository;
 import com.bazarbozorg.backtest.model.*;
@@ -83,24 +84,29 @@ public class BacktestEngine {
      */
     public BacktestResult run(String instrumentSymbol, Timeframe timeframe,
                                TradingStrategy strategy, Map<String, String> params,
-                               ZonedDateTime from, ZonedDateTime to) {
-        logger.info("Starting backtest: instrument={}, timeframe={}, strategy={}, from={}, to={}",
-                instrumentSymbol, timeframe, strategy.getName(), from, to);
+                               ZonedDateTime from, ZonedDateTime to, String sourceName) {
+        logger.info("Starting backtest: instrument={}, timeframe={}, strategy={}, source={}, from={}, to={}",
+                instrumentSymbol, timeframe, strategy.getName(), sourceName, from, to);
 
         // Step 1: Load candles from DB
         InstrumentRepository instrumentRepo = new InstrumentRepository(databaseManager);
         CandleRepository candleRepo = new CandleRepository(databaseManager);
+        DataSourceRepository sourceRepo = new DataSourceRepository(databaseManager);
 
         Instrument instrument = instrumentRepo.findBySymbol(instrumentSymbol)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Instrument not found: " + instrumentSymbol));
 
+        DataSource source = sourceRepo.findByName(sourceName)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Data source not found: " + sourceName));
+
         List<Candle> candles = candleRepo.findByInstrumentAndTimeframe(
-                instrument.getId(), timeframe, from, to);
+                instrument.getId(), source.getId(), timeframe, from, to);
 
         if (candles.isEmpty()) {
             throw new IllegalStateException("No candle data found for " + instrumentSymbol
-                    + " (" + timeframe + ") between " + from + " and " + to);
+                    + " (" + timeframe + ", source=" + sourceName + ") between " + from + " and " + to);
         }
 
         logger.info("Loaded {} candles for {}", candles.size(), instrumentSymbol);
@@ -184,6 +190,7 @@ public class BacktestEngine {
                 strategy.getName(),
                 instrumentSymbol,
                 timeframe,
+                sourceName,
                 startDate,
                 endDate,
                 metrics,

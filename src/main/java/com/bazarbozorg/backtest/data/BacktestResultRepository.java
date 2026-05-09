@@ -56,40 +56,42 @@ public class BacktestResultRepository {
      */
     public void save(BacktestResult result) {
         String sql = "INSERT INTO backtest_results " +
-                "(instrument_symbol, strategy_name, timeframe, start_date, end_date, " +
+                "(instrument_symbol, strategy_name, timeframe, data_source, start_date, end_date, " +
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, result_json) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             PerformanceMetrics metrics = result.getMetrics();
+            String dataSource = result.getDataSource() != null ? result.getDataSource() : "default";
 
             ps.setString(1, result.getInstrumentSymbol());
             ps.setString(2, result.getStrategyName());
             ps.setString(3, result.getTimeframe().name());
+            ps.setString(4, dataSource);
 
             if (result.getStartDate() != null) {
-                ps.setObject(4, result.getStartDate().toOffsetDateTime());
-            } else {
-                ps.setNull(4, Types.TIMESTAMP_WITH_TIMEZONE);
-            }
-
-            if (result.getEndDate() != null) {
-                ps.setObject(5, result.getEndDate().toOffsetDateTime());
+                ps.setObject(5, result.getStartDate().toOffsetDateTime());
             } else {
                 ps.setNull(5, Types.TIMESTAMP_WITH_TIMEZONE);
             }
 
-            ps.setDouble(6, result.getInitialCapital());
-            ps.setDouble(7, result.getFinalEquity());
-            ps.setDouble(8, metrics.getTotalReturnPct());
-            ps.setDouble(9, metrics.getSharpeRatio());
-            ps.setDouble(10, metrics.getMaxDrawdownPct());
-            ps.setInt(11, metrics.getTotalTrades());
-            ps.setDouble(12, metrics.getWinRate());
-            ps.setString(13, gson.toJson(result));
+            if (result.getEndDate() != null) {
+                ps.setObject(6, result.getEndDate().toOffsetDateTime());
+            } else {
+                ps.setNull(6, Types.TIMESTAMP_WITH_TIMEZONE);
+            }
+
+            ps.setDouble(7, result.getInitialCapital());
+            ps.setDouble(8, result.getFinalEquity());
+            ps.setDouble(9, metrics.getTotalReturnPct());
+            ps.setDouble(10, metrics.getSharpeRatio());
+            ps.setDouble(11, metrics.getMaxDrawdownPct());
+            ps.setInt(12, metrics.getTotalTrades());
+            ps.setDouble(13, metrics.getWinRate());
+            ps.setString(14, gson.toJson(result));
 
             ps.executeUpdate();
             logger.info("Saved backtest result: {} on {} ({})",

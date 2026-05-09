@@ -17,6 +17,9 @@ public class AppConfig {
     private final String dbUrl;
     private final String dbUser;
     private final String dbPassword;
+    private final int dbPoolMaxSize;
+    private final int dbPoolMinIdle;
+    private final long dbPoolConnectionTimeoutMs;
     private final double defaultInitialCapital;
     private final String defaultCommissionType;
     private final double defaultCommissionValue;
@@ -36,9 +39,13 @@ public class AppConfig {
             logger.error("Error loading configuration file {}, using defaults", CONFIG_FILE, e);
         }
 
-        this.dbUrl = props.getProperty("db.url", "jdbc:h2:./data/backtest;AUTO_SERVER=TRUE");
-        this.dbUser = props.getProperty("db.user", "sa");
-        this.dbPassword = props.getProperty("db.password", "");
+        this.dbUrl = props.getProperty("db.url", "jdbc:postgresql://localhost:5432/backtest");
+        this.dbUser = props.getProperty("db.user", "backtest");
+        this.dbPassword = props.getProperty("db.password", "backtest");
+        this.dbPoolMaxSize = Integer.parseInt(props.getProperty("db.pool.maxSize", "10"));
+        this.dbPoolMinIdle = Integer.parseInt(props.getProperty("db.pool.minIdle", "2"));
+        this.dbPoolConnectionTimeoutMs = Long.parseLong(
+                props.getProperty("db.pool.connectionTimeoutMs", "10000"));
         this.defaultInitialCapital = Double.parseDouble(
                 props.getProperty("default.initial.capital", "10000.0"));
         this.defaultCommissionType = props.getProperty("default.commission.type", "percentage");
@@ -70,6 +77,18 @@ public class AppConfig {
 
     public String getDbPassword() {
         return dbPassword;
+    }
+
+    public int getDbPoolMaxSize() {
+        return dbPoolMaxSize;
+    }
+
+    public int getDbPoolMinIdle() {
+        return dbPoolMinIdle;
+    }
+
+    public long getDbPoolConnectionTimeoutMs() {
+        return dbPoolConnectionTimeoutMs;
     }
 
     public double getDefaultInitialCapital() {

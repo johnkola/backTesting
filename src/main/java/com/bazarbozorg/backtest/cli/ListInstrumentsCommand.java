@@ -40,7 +40,7 @@ public class ListInstrumentsCommand implements Runnable {
             for (Instrument instrument : instruments) {
                 long totalCandles = 0;
                 for (Timeframe tf : Timeframe.values()) {
-                    totalCandles += candleRepo.countByInstrument(instrument.getId(), tf);
+                    totalCandles += candleRepo.countByInstrumentAllSources(instrument.getId(), tf);
                 }
 
                 List<String> row = new ArrayList<>();

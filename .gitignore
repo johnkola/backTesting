@@ -41,3 +41,8 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### Node / web layer ###
+node_modules/
+web/client/dist/
+*.log

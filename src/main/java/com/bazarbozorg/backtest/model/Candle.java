@@ -6,6 +6,7 @@ public class Candle {
 
     private final long id;
     private final long instrumentId;
+    private final long sourceId;
     private final Timeframe timeframe;
     private final ZonedDateTime timestamp;
     private final double open;
@@ -14,10 +15,11 @@ public class Candle {
     private final double close;
     private final double volume;
 
-    public Candle(long id, long instrumentId, Timeframe timeframe, ZonedDateTime timestamp,
+    public Candle(long id, long instrumentId, long sourceId, Timeframe timeframe, ZonedDateTime timestamp,
                   double open, double high, double low, double close, double volume) {
         this.id = id;
         this.instrumentId = instrumentId;
+        this.sourceId = sourceId;
         this.timeframe = timeframe;
         this.timestamp = timestamp;
         this.open = open;
@@ -33,6 +35,10 @@ public class Candle {
 
     public long getInstrumentId() {
         return instrumentId;
+    }
+
+    public long getSourceId() {
+        return sourceId;
     }
 
     public Timeframe getTimeframe() {
@@ -68,6 +74,7 @@ public class Candle {
         return "Candle{" +
                 "id=" + id +
                 ", instrumentId=" + instrumentId +
+                ", sourceId=" + sourceId +
                 ", timeframe=" + timeframe +
                 ", timestamp=" + timestamp +
                 ", open=" + open +

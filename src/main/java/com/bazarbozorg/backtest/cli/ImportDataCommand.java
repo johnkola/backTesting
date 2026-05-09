@@ -22,6 +22,10 @@ public class ImportDataCommand implements Runnable {
     @Option(names = {"--timeframe"}, defaultValue = "D1", description = "Candle timeframe: ${COMPLETION-CANDIDATES} (default: ${DEFAULT-VALUE})")
     private Timeframe timeframe;
 
+    @Option(names = {"--source"}, defaultValue = "default",
+            description = "Data source name (e.g. yahoo, alpha-vantage). Default: ${DEFAULT-VALUE}")
+    private String source;
+
     @Override
     public void run() {
         System.out.println("=== Backtest Data Import ===");
@@ -29,6 +33,7 @@ public class ImportDataCommand implements Runnable {
         System.out.printf("Instrument: %s%n", instrumentSymbol);
         System.out.printf("Type:       %s%n", instrumentType);
         System.out.printf("Timeframe:  %s%n", timeframe);
+        System.out.printf("Source:     %s%n", source);
         System.out.println();
 
         DatabaseManager dbManager = DatabaseManager.getInstance();
@@ -36,7 +41,7 @@ public class ImportDataCommand implements Runnable {
             dbManager.initialize();
 
             CsvDataImporter importer = new CsvDataImporter(dbManager);
-            int count = importer.importData(filePath, instrumentSymbol, instrumentType, timeframe);
+            int count = importer.importData(filePath, instrumentSymbol, instrumentType, timeframe, source);
 
             System.out.println();
             System.out.println("=== Import Summary ===");

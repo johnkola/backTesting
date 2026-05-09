@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.data;
 
 import com.bazarbozorg.backtest.model.Candle;
+import com.bazarbozorg.backtest.model.DataSource;
 import com.bazarbozorg.backtest.model.Instrument;
 import com.bazarbozorg.backtest.model.InstrumentType;
 import com.bazarbozorg.backtest.model.Timeframe;
@@ -12,6 +13,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Paths;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,16 +40,22 @@ public class CsvDataImporter {
      * @param instrumentSymbol the symbol of the instrument (e.g. "AAPL", "EURUSD")
      * @param type             the instrument type
      * @param timeframe        the timeframe of the candle data
+     * @param sourceName       the data source name (e.g. "yahoo", "alpha-vantage", "default")
      * @return the number of candles successfully imported
      */
-    public int importData(String filePath, String instrumentSymbol, InstrumentType type, Timeframe timeframe) {
+    public int importData(String filePath, String instrumentSymbol, InstrumentType type,
+                          Timeframe timeframe, String sourceName) {
         logger.info("Starting CSV import from: {}", filePath);
-        logger.info("Instrument: {} ({}), Timeframe: {}", instrumentSymbol, type, timeframe);
+        logger.info("Instrument: {} ({}), Timeframe: {}, Source: {}",
+                instrumentSymbol, type, timeframe, sourceName);
 
         InstrumentRepository instrumentRepo = new InstrumentRepository(databaseManager);
         CandleRepository candleRepo = new CandleRepository(databaseManager);
+        DataSourceRepository sourceRepo = new DataSourceRepository(databaseManager);
+        DataImportRepository importRepo = new DataImportRepository(databaseManager);
 
-        // Find or create the instrument
+        DataSource source = sourceRepo.getOrCreate(sourceName);
+
         Instrument instrument = instrumentRepo.findBySymbol(instrumentSymbol)
                 .orElseGet(() -> {
                     Instrument newInstrument = new Instrument(0, instrumentSymbol, instrumentSymbol, type);
@@ -61,7 +69,6 @@ public class CsvDataImporter {
         int skippedRows = 0;
 
         try (CSVReader reader = new CSVReader(new FileReader(filePath))) {
-            // Skip header row
             String[] header = reader.readNext();
             if (header == null) {
                 logger.warn("CSV file is empty: {}", filePath);
@@ -97,6 +104,7 @@ public class CsvDataImporter {
                     Candle candle = new Candle(
                             0,
                             instrument.getId(),
+                            source.getId(),
                             timeframe,
                             timestamp,
                             open, high, low, close, volume
@@ -125,10 +133,14 @@ public class CsvDataImporter {
             return 0;
         }
 
-        // Save all parsed candles to the database
         if (!candles.isEmpty()) {
             candleRepo.saveAll(candles);
             logger.info("Successfully saved {} candles to the database", candles.size());
+
+            String absolutePath = Paths.get(filePath).toAbsolutePath().toString();
+            String fileName = Paths.get(filePath).getFileName().toString();
+            importRepo.recordImport(source.getId(), instrument.getId(), timeframe,
+                    absolutePath, fileName, candles.size());
         }
 
         logger.info("Import complete. Total rows: {}, Imported: {}, Skipped: {}",

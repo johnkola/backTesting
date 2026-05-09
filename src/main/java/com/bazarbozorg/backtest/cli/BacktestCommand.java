@@ -59,6 +59,10 @@ public class BacktestCommand implements Runnable {
             description = "Strategy parameters (e.g. -p shortPeriod=20 -p longPeriod=100)")
     private Map<String, String> params;
 
+    @Option(names = {"--source"}, defaultValue = "default",
+            description = "Data source name to backtest against (default: ${DEFAULT-VALUE})")
+    private String source;
+
     @Override
     public void run() {
         DatabaseManager dbManager = DatabaseManager.getInstance();
@@ -98,6 +102,7 @@ public class BacktestCommand implements Runnable {
             System.out.printf("Strategy:    %s%n", strategyName);
             System.out.printf("Instrument:  %s%n", instrumentSymbol);
             System.out.printf("Timeframe:   %s%n", timeframe);
+            System.out.printf("Source:      %s%n", source);
             System.out.printf("Capital:     $%,.2f%n", initialCapital);
             if (!strategyParams.isEmpty()) {
                 System.out.printf("Parameters:  %s%n", strategyParams);
@@ -109,7 +114,7 @@ public class BacktestCommand implements Runnable {
                     dbManager, commissionModel, slippageModel, initialCapital);
 
             BacktestResult result = engine.run(
-                    instrumentSymbol, timeframe, strategy, strategyParams, from, to);
+                    instrumentSymbol, timeframe, strategy, strategyParams, from, to, source);
 
             if (result == null) {
                 System.err.println("Backtest returned no results.");
