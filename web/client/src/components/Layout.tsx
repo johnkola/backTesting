@@ -27,7 +27,7 @@ export default function Layout() {
               </li>
             ))}
             <li>
-              <a href="/readme" target="_blank" rel="noreferrer">Docs</a>
+              <a href="/readme" target="_blank" rel="noopener noreferrer">Docs</a>
             </li>
           </ul>
         </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type ImportRecord, type Paginated } from '../lib/api'
+import { api, isAbortError, type ImportRecord, type Paginated } from '../lib/api'
 import Pagination from '../components/Pagination'
 
 const LIMIT = 25
@@ -13,9 +13,11 @@ export default function ImportsPage() {
 
   useEffect(() => {
     setError(null)
-    api.imports({ limit: LIMIT, offset, source, instrument })
+    const ctrl = new AbortController()
+    api.imports({ limit: LIMIT, offset, source, instrument }, ctrl.signal)
       .then(setData)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
+    return () => ctrl.abort()
   }, [offset, source, instrument])
 
   function applyFilters(s: string, i: string) {

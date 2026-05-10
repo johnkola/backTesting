@@ -70,8 +70,10 @@ export type Trade = {
   exitTime?: string
   entryPrice?: number
   exitPrice?: number
+  quantity?: number
   side?: string
   pnl?: number
+  commission?: number
   returnPct?: number
   [k: string]: unknown
 }
@@ -113,8 +115,8 @@ export type ResultDetail = ResultSummary & {
   } | null
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal })
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`
     try {
@@ -126,15 +128,28 @@ async function getJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** True when an error came from an aborted fetch (caller should silently bail). */
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError'
+}
+
 export const api = {
-  health: () => getJson<{ status: string; db: boolean }>('/api/health'),
-  sources: () => getJson<{ items: Source[] }>('/api/sources'),
-  instruments: () => getJson<{ items: Instrument[] }>('/api/instruments'),
-  imports: (params: { limit?: number; offset?: number; source?: string; instrument?: string } = {}) =>
-    getJson<Paginated<ImportRecord>>(`/api/imports?${qs(params)}`),
-  results: (params: { limit?: number; offset?: number; strategy?: string; instrument?: string; source?: string } = {}) =>
-    getJson<Paginated<ResultSummary>>(`/api/results?${qs(params)}`),
-  result: (id: string) => getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`),
+  health: (signal?: AbortSignal) =>
+    getJson<{ status: string; db: boolean }>('/api/health', signal),
+  sources: (signal?: AbortSignal) =>
+    getJson<{ items: Source[] }>('/api/sources', signal),
+  instruments: (signal?: AbortSignal) =>
+    getJson<{ items: Instrument[] }>('/api/instruments', signal),
+  imports: (
+    params: { limit?: number; offset?: number; source?: string; instrument?: string } = {},
+    signal?: AbortSignal,
+  ) => getJson<Paginated<ImportRecord>>(`/api/imports?${qs(params)}`, signal),
+  results: (
+    params: { limit?: number; offset?: number; strategy?: string; instrument?: string; source?: string } = {},
+    signal?: AbortSignal,
+  ) => getJson<Paginated<ResultSummary>>(`/api/results?${qs(params)}`, signal),
+  result: (id: string, signal?: AbortSignal) =>
+    getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
 }
 
 function qs(params: Record<string, unknown>): string {

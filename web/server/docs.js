@@ -38,27 +38,32 @@ function assertKnownDoc(name) {
 
 // Insert a new revision only if the latest one for this doc has a different
 // content hash. Returns { id, captured_at, isNew }.
+//
+// Race-safe: a single INSERT … ON CONFLICT DO NOTHING RETURNING handles
+// concurrent first-time loads of the same content. If the conflict path
+// fires, RETURNING is empty and we re-SELECT the row that won the race.
 async function captureIfChanged(name, content) {
   assertKnownDoc(name);
   const hash = hashContent(content);
 
-  const existing = await pool.query(
-    `SELECT id, captured_at FROM doc_revisions
-      WHERE doc_name = $1 AND content_hash = $2
-      ORDER BY captured_at DESC LIMIT 1`,
-    [name, hash]
-  );
-  if (existing.rows.length > 0) {
-    return { id: existing.rows[0].id, captured_at: existing.rows[0].captured_at, isNew: false };
-  }
-
   const inserted = await pool.query(
     `INSERT INTO doc_revisions (doc_name, content, content_hash)
      VALUES ($1, $2, $3)
+     ON CONFLICT (doc_name, content_hash) DO NOTHING
      RETURNING id, captured_at`,
     [name, content, hash]
   );
-  return { id: inserted.rows[0].id, captured_at: inserted.rows[0].captured_at, isNew: true };
+  if (inserted.rows.length > 0) {
+    return { id: inserted.rows[0].id, captured_at: inserted.rows[0].captured_at, isNew: true };
+  }
+
+  const existing = await pool.query(
+    `SELECT id, captured_at FROM doc_revisions
+      WHERE doc_name = $1 AND content_hash = $2
+      LIMIT 1`,
+    [name, hash]
+  );
+  return { id: existing.rows[0].id, captured_at: existing.rows[0].captured_at, isNew: false };
 }
 
 async function getRevision(name, id) {

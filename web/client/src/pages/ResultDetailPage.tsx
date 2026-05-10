@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api, type ResultDetail } from '../lib/api'
+import { api, isAbortError, type ResultDetail } from '../lib/api'
 import {
   CartesianGrid,
   Line,
@@ -35,7 +35,11 @@ export default function ResultDetailPage() {
     if (!id) return
     setDetail(null)
     setError(null)
-    api.result(id).then(setDetail).catch((e: Error) => setError(e.message))
+    const ctrl = new AbortController()
+    api.result(id, ctrl.signal)
+      .then(setDetail)
+      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
+    return () => ctrl.abort()
   }, [id])
 
   if (error) return <div className="alert alert-error">{error}</div>
@@ -125,9 +129,11 @@ export default function ResultDetailPage() {
                 <th>Entry</th>
                 <th>Exit</th>
                 <th>Side</th>
+                <th className="text-right">Qty</th>
                 <th className="text-right">Entry px</th>
                 <th className="text-right">Exit px</th>
                 <th className="text-right">P&amp;L</th>
+                <th className="text-right">Comm.</th>
                 <th className="text-right">Return</th>
               </tr>
             </thead>
@@ -141,15 +147,17 @@ export default function ResultDetailPage() {
                     <td className="whitespace-nowrap">{t.entryTime ? new Date(t.entryTime).toLocaleDateString() : '—'}</td>
                     <td className="whitespace-nowrap">{t.exitTime ? new Date(t.exitTime).toLocaleDateString() : '—'}</td>
                     <td className="font-mono">{t.side ?? '—'}</td>
+                    <td className="text-right tabular-nums">{num(t.quantity ?? null, 4)}</td>
                     <td className="text-right tabular-nums">{num(t.entryPrice ?? null)}</td>
                     <td className="text-right tabular-nums">{num(t.exitPrice ?? null)}</td>
                     <td className={`text-right tabular-nums ${pnlClass}`}>{money(pnl)}</td>
+                    <td className="text-right tabular-nums text-base-content/70">{money(t.commission ?? null)}</td>
                     <td className={`text-right tabular-nums ${pnlClass}`}>{pct(ret)}</td>
                   </tr>
                 )
               })}
               {(r?.trades?.length ?? 0) === 0 && (
-                <tr><td colSpan={7} className="text-center text-base-content/60 p-4">No trades.</td></tr>
+                <tr><td colSpan={9} className="text-center text-base-content/60 p-4">No trades.</td></tr>
               )}
             </tbody>
           </table>

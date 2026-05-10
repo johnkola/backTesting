@@ -179,11 +179,15 @@ async function serveDocHistory(name, req, res) {
 }
 
 function renderHome() {
+  // Dev-only fallback: rendered when the React client hasn't been built yet
+  // (no web/server/public/ directory). In production (Dockerfile copies the
+  // built client over) this is unreachable — express.static serves index.html
+  // for `/` instead.
   const content = `<div class="hero bg-base-200 rounded-box mb-8">
   <div class="hero-content text-center py-12">
     <div class="max-w-md">
       <h1 class="text-4xl font-bold">backtest</h1>
-      <p class="py-4">Java backtesting CLI on PostgreSQL + TimescaleDB. Browse the docs below; the read-only data API and React UI are coming next.</p>
+      <p class="py-4">Java backtesting CLI on PostgreSQL + TimescaleDB. The React UI isn't built — run <code>npm run build</code> in <code>web/client/</code>, or use the Vite dev server on :5173 — but the docs and read-only API are live.</p>
     </div>
   </div>
 </div>
@@ -191,7 +195,7 @@ function renderHome() {
   <a href="/readme" class="card bg-base-200 hover:bg-base-300 transition">
     <div class="card-body">
       <h2 class="card-title">README</h2>
-      <p>Quick start, CLI reference, configuration, and the project roadmap (current phase: web frontend).</p>
+      <p>Quick start, CLI reference, configuration, and the project roadmap.</p>
     </div>
   </a>
   <a href="/architecture" class="card bg-base-200 hover:bg-base-300 transition">

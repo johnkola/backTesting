@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
-import { api, type Instrument } from '../lib/api'
+import { api, isAbortError, type Instrument } from '../lib/api'
 
 export default function InstrumentsPage() {
   const [instruments, setInstruments] = useState<Instrument[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.instruments()
+    const ctrl = new AbortController()
+    api.instruments(ctrl.signal)
       .then((r) => setInstruments(r.items))
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
+    return () => ctrl.abort()
   }, [])
 
   return (

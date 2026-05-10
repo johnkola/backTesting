@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type ResultSummary, type Paginated } from '../lib/api'
+import { api, isAbortError, type ResultSummary, type Paginated } from '../lib/api'
 import Pagination from '../components/Pagination'
 
 const LIMIT = 25
@@ -20,9 +20,11 @@ export default function ResultsPage() {
 
   useEffect(() => {
     setError(null)
-    api.results({ limit: LIMIT, offset, strategy, instrument, source })
+    const ctrl = new AbortController()
+    api.results({ limit: LIMIT, offset, strategy, instrument, source }, ctrl.signal)
       .then(setData)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
+    return () => ctrl.abort()
   }, [offset, strategy, instrument, source])
 
   function update<T extends string>(setter: (v: T) => void) {
