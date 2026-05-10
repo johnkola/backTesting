@@ -1,7 +1,7 @@
 package com.bazarbozorg.backtest.strategy;
 
 import com.bazarbozorg.backtest.model.StrategyContext;
-import com.bazarbozorg.backtest.model.StrategySignal;
+import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import org.ta4j.core.BarSeries;
 
 import java.util.Map;

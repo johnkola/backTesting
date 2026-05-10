@@ -1,5 +1,7 @@
 package com.bazarbozorg.backtest.data;
 
+import com.bazarbozorg.backtest.data.entity.BacktestResultRow;
+import com.bazarbozorg.backtest.data.entity.BacktestResultSummaryRow;
 import com.bazarbozorg.backtest.engine.BacktestResult;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 import com.google.gson.*;
@@ -16,9 +18,21 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Repository for persisting and retrieving backtest results from the database.
- * Stores both summary columns for efficient querying and the full result
- * serialized as JSON for complete reconstruction.
+ * Repository for persisting and retrieving backtest results.
+ *
+ * <p>Backtest output crosses two layers:
+ * <ul>
+ *   <li><b>Domain</b> ({@link BacktestResult}) — what the engine produces and
+ *       the CLI / web layer consumes. Includes nested trade list, equity
+ *       history, and performance metrics.</li>
+ *   <li><b>DB row</b> ({@link BacktestResultRow}) — direct mirror of the
+ *       {@code backtest_results} table: indexed summary columns plus the raw
+ *       {@code result_json} text. Built via builder, knows nothing about Gson.</li>
+ * </ul>
+ * The repository serializes the full {@code BacktestResult} into
+ * {@code resultJson} on save, and deserializes it back on
+ * {@link #findLatest()}. Listing flows ({@link #findAll()}) skip the JSON
+ * entirely and return lightweight {@link BacktestResultSummaryRow}s.</p>
  */
 public class BacktestResultRepository {
 
@@ -48,13 +62,9 @@ public class BacktestResultRepository {
         }
     }
 
-    /**
-     * Saves a backtest result to the database. Inserts summary columns for
-     * efficient listing and the full result serialized as JSON for later retrieval.
-     *
-     * @param result the backtest result to save
-     */
     public void save(BacktestResult result) {
+        BacktestResultRow row = toRow(result);
+
         String sql = "INSERT INTO backtest_results " +
                 "(instrument_symbol, strategy_name, timeframe, data_source, start_date, end_date, " +
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
@@ -64,38 +74,35 @@ public class BacktestResultRepository {
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            PerformanceMetrics metrics = result.getMetrics();
-            String dataSource = result.getDataSource() != null ? result.getDataSource() : "default";
+            ps.setString(1, row.instrumentSymbol());
+            ps.setString(2, row.strategyName());
+            ps.setString(3, row.timeframe());
+            ps.setString(4, row.dataSource());
 
-            ps.setString(1, result.getInstrumentSymbol());
-            ps.setString(2, result.getStrategyName());
-            ps.setString(3, result.getTimeframe().name());
-            ps.setString(4, dataSource);
-
-            if (result.getStartDate() != null) {
-                ps.setObject(5, result.getStartDate().toOffsetDateTime());
+            if (row.startDate() != null) {
+                ps.setObject(5, row.startDate().toOffsetDateTime());
             } else {
                 ps.setNull(5, Types.TIMESTAMP_WITH_TIMEZONE);
             }
 
-            if (result.getEndDate() != null) {
-                ps.setObject(6, result.getEndDate().toOffsetDateTime());
+            if (row.endDate() != null) {
+                ps.setObject(6, row.endDate().toOffsetDateTime());
             } else {
                 ps.setNull(6, Types.TIMESTAMP_WITH_TIMEZONE);
             }
 
-            ps.setDouble(7, result.getInitialCapital());
-            ps.setDouble(8, result.getFinalEquity());
-            ps.setDouble(9, metrics.getTotalReturnPct());
-            ps.setDouble(10, metrics.getSharpeRatio());
-            ps.setDouble(11, metrics.getMaxDrawdownPct());
-            ps.setInt(12, metrics.getTotalTrades());
-            ps.setDouble(13, metrics.getWinRate());
-            ps.setString(14, gson.toJson(result));
+            ps.setDouble(7, row.initialCapital());
+            ps.setDouble(8, row.finalEquity());
+            ps.setDouble(9, row.totalReturnPct());
+            ps.setDouble(10, row.sharpeRatio());
+            ps.setDouble(11, row.maxDrawdownPct());
+            ps.setInt(12, row.totalTrades());
+            ps.setDouble(13, row.winRate());
+            ps.setString(14, row.resultJson());
 
             ps.executeUpdate();
             logger.info("Saved backtest result: {} on {} ({})",
-                    result.getStrategyName(), result.getInstrumentSymbol(), result.getTimeframe());
+                    row.strategyName(), row.instrumentSymbol(), row.timeframe());
 
         } catch (SQLException e) {
             logger.error("Failed to save backtest result", e);
@@ -103,19 +110,14 @@ public class BacktestResultRepository {
         }
     }
 
-    /**
-     * Returns a list of all saved backtest result summaries, ordered by creation
-     * date descending (most recent first). Does not deserialize the full JSON.
-     *
-     * @return list of backtest result summaries
-     */
-    public List<BacktestResultSummary> findAll() {
+    /** Returns lightweight summaries (no result_json), ordered most-recent first. */
+    public List<BacktestResultSummaryRow> findAll() {
         String sql = "SELECT id, instrument_symbol, strategy_name, timeframe, " +
                 "start_date, end_date, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, created_at " +
                 "FROM backtest_results ORDER BY created_at DESC";
 
-        List<BacktestResultSummary> summaries = new ArrayList<>();
+        List<BacktestResultSummaryRow> summaries = new ArrayList<>();
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql);
@@ -134,11 +136,7 @@ public class BacktestResultRepository {
         }
     }
 
-    /**
-     * Returns the most recently saved backtest result, fully deserialized from JSON.
-     *
-     * @return an Optional containing the latest BacktestResult, or empty if none exist
-     */
+    /** Most recent backtest, fully reconstructed from {@code result_json}. */
     public Optional<BacktestResult> findLatest() {
         String sql = "SELECT result_json FROM backtest_results ORDER BY created_at DESC LIMIT 1";
 
@@ -162,101 +160,49 @@ public class BacktestResultRepository {
         }
     }
 
-    /**
-     * Maps a ResultSet row to a BacktestResultSummary.
-     */
-    private BacktestResultSummary mapSummaryRow(ResultSet rs) throws SQLException {
-        BacktestResultSummary summary = new BacktestResultSummary();
-        summary.id = rs.getLong("id");
-        summary.instrumentSymbol = rs.getString("instrument_symbol");
-        summary.strategyName = rs.getString("strategy_name");
-        summary.timeframe = rs.getString("timeframe");
+    private BacktestResultRow toRow(BacktestResult result) {
+        PerformanceMetrics metrics = result.getMetrics();
+        String dataSource = result.getDataSource() != null ? result.getDataSource() : "default";
 
+        return BacktestResultRow.builder()
+                .instrumentSymbol(result.getInstrumentSymbol())
+                .strategyName(result.getStrategyName())
+                .timeframe(result.getTimeframe().name())
+                .dataSource(dataSource)
+                .startDate(result.getStartDate())
+                .endDate(result.getEndDate())
+                .initialCapital(result.getInitialCapital())
+                .finalEquity(result.getFinalEquity())
+                .totalReturnPct(metrics.getTotalReturnPct())
+                .sharpeRatio(metrics.getSharpeRatio())
+                .maxDrawdownPct(metrics.getMaxDrawdownPct())
+                .totalTrades(metrics.getTotalTrades())
+                .winRate(metrics.getWinRate())
+                .resultJson(gson.toJson(result))
+                .build();
+    }
+
+    private BacktestResultSummaryRow mapSummaryRow(ResultSet rs) throws SQLException {
         OffsetDateTime startOdt = rs.getObject("start_date", OffsetDateTime.class);
-        summary.startDate = startOdt != null ? startOdt.toZonedDateTime() : null;
-
         OffsetDateTime endOdt = rs.getObject("end_date", OffsetDateTime.class);
-        summary.endDate = endOdt != null ? endOdt.toZonedDateTime() : null;
-
-        summary.totalReturnPct = rs.getDouble("total_return_pct");
-        summary.sharpeRatio = rs.getDouble("sharpe_ratio");
-        summary.maxDrawdownPct = rs.getDouble("max_drawdown_pct");
-        summary.totalTrades = rs.getInt("total_trades");
-        summary.winRate = rs.getDouble("win_rate");
-
         Timestamp createdTs = rs.getTimestamp("created_at");
-        summary.createdAt = createdTs != null
+        ZonedDateTime createdAt = createdTs != null
                 ? createdTs.toInstant().atZone(java.time.ZoneOffset.UTC)
                 : null;
 
-        return summary;
-    }
-
-    /**
-     * Lightweight summary of a saved backtest result, containing only the
-     * indexed/summary columns without the full serialized JSON.
-     */
-    public static class BacktestResultSummary {
-
-        private long id;
-        private String instrumentSymbol;
-        private String strategyName;
-        private String timeframe;
-        private ZonedDateTime startDate;
-        private ZonedDateTime endDate;
-        private double totalReturnPct;
-        private double sharpeRatio;
-        private double maxDrawdownPct;
-        private int totalTrades;
-        private double winRate;
-        private ZonedDateTime createdAt;
-
-        public long getId() {
-            return id;
-        }
-
-        public String getInstrumentSymbol() {
-            return instrumentSymbol;
-        }
-
-        public String getStrategyName() {
-            return strategyName;
-        }
-
-        public String getTimeframe() {
-            return timeframe;
-        }
-
-        public ZonedDateTime getStartDate() {
-            return startDate;
-        }
-
-        public ZonedDateTime getEndDate() {
-            return endDate;
-        }
-
-        public double getTotalReturnPct() {
-            return totalReturnPct;
-        }
-
-        public double getSharpeRatio() {
-            return sharpeRatio;
-        }
-
-        public double getMaxDrawdownPct() {
-            return maxDrawdownPct;
-        }
-
-        public int getTotalTrades() {
-            return totalTrades;
-        }
-
-        public double getWinRate() {
-            return winRate;
-        }
-
-        public ZonedDateTime getCreatedAt() {
-            return createdAt;
-        }
+        return BacktestResultSummaryRow.builder()
+                .id(rs.getLong("id"))
+                .instrumentSymbol(rs.getString("instrument_symbol"))
+                .strategyName(rs.getString("strategy_name"))
+                .timeframe(rs.getString("timeframe"))
+                .startDate(startOdt != null ? startOdt.toZonedDateTime() : null)
+                .endDate(endOdt != null ? endOdt.toZonedDateTime() : null)
+                .totalReturnPct(rs.getDouble("total_return_pct"))
+                .sharpeRatio(rs.getDouble("sharpe_ratio"))
+                .maxDrawdownPct(rs.getDouble("max_drawdown_pct"))
+                .totalTrades(rs.getInt("total_trades"))
+                .winRate(rs.getDouble("win_rate"))
+                .createdAt(createdAt)
+                .build();
     }
 }

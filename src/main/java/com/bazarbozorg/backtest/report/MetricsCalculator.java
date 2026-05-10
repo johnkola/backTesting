@@ -77,13 +77,13 @@ public final class MetricsCalculator {
         double totalCommissions = 0.0;
 
         for (Trade trade : trades) {
-            totalCommissions += trade.getCommission();
+            totalCommissions += trade.commission();
             if (trade.isWin()) {
                 winningTradeCount++;
-                totalWinPnl += trade.getPnl();
+                totalWinPnl += trade.pnl();
             } else {
                 losingTradeCount++;
-                totalLossPnl += trade.getPnl();
+                totalLossPnl += trade.pnl();
             }
         }
 

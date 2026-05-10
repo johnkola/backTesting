@@ -1,7 +1,7 @@
 package com.bazarbozorg.backtest.data;
 
+import com.bazarbozorg.backtest.data.entity.InstrumentRow;
 import com.bazarbozorg.backtest.model.Instrument;
-import com.bazarbozorg.backtest.model.InstrumentType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,19 +21,19 @@ public class InstrumentRepository {
     }
 
     public Instrument save(Instrument instrument) {
-        if (instrument.getId() > 0 && existsById(instrument.getId())) {
+        if (instrument.id() > 0 && existsById(instrument.id())) {
             return update(instrument);
         }
 
-        Optional<Instrument> existing = findBySymbol(instrument.getSymbol());
+        Optional<Instrument> existing = findBySymbol(instrument.symbol());
         if (existing.isPresent()) {
             Instrument withId = new Instrument(
-                    existing.get().getId(),
-                    instrument.getSymbol(),
-                    instrument.getName(),
-                    instrument.getType(),
-                    instrument.getPricePrecision(),
-                    instrument.getPipSize()
+                    existing.get().id(),
+                    instrument.symbol(),
+                    instrument.name(),
+                    instrument.type(),
+                    instrument.pricePrecision(),
+                    instrument.pipSize()
             );
             return update(withId);
         }
@@ -42,31 +42,32 @@ public class InstrumentRepository {
     }
 
     private Instrument insert(Instrument instrument) {
+        InstrumentRow row = InstrumentRow.fromDomain(instrument);
         String sql = "INSERT INTO instruments (symbol, name, type, price_precision, pip_size) " +
                 "VALUES (?, ?, ?, ?, ?)";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
 
-            ps.setString(1, instrument.getSymbol());
-            ps.setString(2, instrument.getName());
-            ps.setString(3, instrument.getType().name());
-            ps.setInt(4, instrument.getPricePrecision());
-            ps.setDouble(5, instrument.getPipSize());
+            ps.setString(1, row.symbol());
+            ps.setString(2, row.name());
+            ps.setString(3, row.type());
+            ps.setInt(4, row.pricePrecision());
+            ps.setDouble(5, row.pipSize());
 
             ps.executeUpdate();
 
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {
                     long generatedId = keys.getLong(1);
-                    logger.debug("Inserted instrument {} with id {}", instrument.getSymbol(), generatedId);
+                    logger.debug("Inserted instrument {} with id {}", row.symbol(), generatedId);
                     return new Instrument(
                             generatedId,
-                            instrument.getSymbol(),
-                            instrument.getName(),
-                            instrument.getType(),
-                            instrument.getPricePrecision(),
-                            instrument.getPipSize()
+                            row.symbol(),
+                            row.name(),
+                            instrument.type(),
+                            row.pricePrecision(),
+                            row.pipSize()
                     );
                 }
             }
@@ -74,31 +75,32 @@ public class InstrumentRepository {
             throw new SQLException("Insert succeeded but no generated key was returned");
 
         } catch (SQLException e) {
-            logger.error("Failed to insert instrument: {}", instrument.getSymbol(), e);
+            logger.error("Failed to insert instrument: {}", instrument.symbol(), e);
             throw new RuntimeException("Failed to insert instrument", e);
         }
     }
 
     private Instrument update(Instrument instrument) {
+        InstrumentRow row = InstrumentRow.fromDomain(instrument);
         String sql = "UPDATE instruments SET symbol = ?, name = ?, type = ?, " +
                 "price_precision = ?, pip_size = ? WHERE id = ?";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            ps.setString(1, instrument.getSymbol());
-            ps.setString(2, instrument.getName());
-            ps.setString(3, instrument.getType().name());
-            ps.setInt(4, instrument.getPricePrecision());
-            ps.setDouble(5, instrument.getPipSize());
-            ps.setLong(6, instrument.getId());
+            ps.setString(1, row.symbol());
+            ps.setString(2, row.name());
+            ps.setString(3, row.type());
+            ps.setInt(4, row.pricePrecision());
+            ps.setDouble(5, row.pipSize());
+            ps.setLong(6, row.id());
 
             ps.executeUpdate();
-            logger.debug("Updated instrument {} (id={})", instrument.getSymbol(), instrument.getId());
+            logger.debug("Updated instrument {} (id={})", instrument.symbol(), instrument.id());
             return instrument;
 
         } catch (SQLException e) {
-            logger.error("Failed to update instrument: {}", instrument.getSymbol(), e);
+            logger.error("Failed to update instrument: {}", instrument.symbol(), e);
             throw new RuntimeException("Failed to update instrument", e);
         }
     }
@@ -128,7 +130,7 @@ public class InstrumentRepository {
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return Optional.of(mapRow(rs));
+                    return Optional.of(mapRow(rs).toDomain());
                 }
             }
             return Optional.empty();
@@ -148,7 +150,7 @@ public class InstrumentRepository {
              ResultSet rs = ps.executeQuery()) {
 
             while (rs.next()) {
-                instruments.add(mapRow(rs));
+                instruments.add(mapRow(rs).toDomain());
             }
             return instruments;
 
@@ -174,14 +176,14 @@ public class InstrumentRepository {
         }
     }
 
-    private Instrument mapRow(ResultSet rs) throws SQLException {
-        return new Instrument(
-                rs.getLong("id"),
-                rs.getString("symbol"),
-                rs.getString("name"),
-                InstrumentType.valueOf(rs.getString("type")),
-                rs.getInt("price_precision"),
-                rs.getDouble("pip_size")
-        );
+    private InstrumentRow mapRow(ResultSet rs) throws SQLException {
+        return InstrumentRow.builder()
+                .id(rs.getLong("id"))
+                .symbol(rs.getString("symbol"))
+                .name(rs.getString("name"))
+                .type(rs.getString("type"))
+                .pricePrecision(rs.getInt("price_precision"))
+                .pipSize(rs.getDouble("pip_size"))
+                .build();
     }
 }

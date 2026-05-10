@@ -2,8 +2,8 @@ package com.bazarbozorg.backtest.cli;
 
 import com.bazarbozorg.backtest.data.CsvDataImporter;
 import com.bazarbozorg.backtest.data.DatabaseManager;
-import com.bazarbozorg.backtest.model.InstrumentType;
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.model.enums.InstrumentType;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 

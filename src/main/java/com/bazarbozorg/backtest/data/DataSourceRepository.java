@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.data;
 
+import com.bazarbozorg.backtest.data.entity.DataSourceRow;
 import com.bazarbozorg.backtest.model.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +28,7 @@ public class DataSourceRepository {
             ps.setString(1, name);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return Optional.of(mapRow(rs));
+                    return Optional.of(mapRow(rs).toDomain());
                 }
                 return Optional.empty();
             }
@@ -55,7 +56,12 @@ public class DataSourceRepository {
             }
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {
-                    return new DataSource(keys.getLong(1), name, description, null);
+                    return DataSourceRow.builder()
+                            .id(keys.getLong(1))
+                            .name(name)
+                            .description(description)
+                            .build()
+                            .toDomain();
                 }
             }
             return findByName(name).orElseThrow(() ->
@@ -73,7 +79,7 @@ public class DataSourceRepository {
              PreparedStatement ps = conn.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                sources.add(mapRow(rs));
+                sources.add(mapRow(rs).toDomain());
             }
             return sources;
         } catch (SQLException e) {
@@ -82,13 +88,13 @@ public class DataSourceRepository {
         }
     }
 
-    private DataSource mapRow(ResultSet rs) throws SQLException {
+    private DataSourceRow mapRow(ResultSet rs) throws SQLException {
         OffsetDateTime created = rs.getObject("created_at", OffsetDateTime.class);
-        return new DataSource(
-                rs.getLong("id"),
-                rs.getString("name"),
-                rs.getString("description"),
-                created != null ? created.toZonedDateTime() : null
-        );
+        return DataSourceRow.builder()
+                .id(rs.getLong("id"))
+                .name(rs.getString("name"))
+                .description(rs.getString("description"))
+                .createdAt(created != null ? created.toZonedDateTime() : null)
+                .build();
     }
 }

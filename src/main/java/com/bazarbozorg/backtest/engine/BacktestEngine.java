@@ -6,16 +6,21 @@ import com.bazarbozorg.backtest.data.DataSourceRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.data.InstrumentRepository;
 import com.bazarbozorg.backtest.model.*;
+import com.bazarbozorg.backtest.model.enums.*;
 import com.bazarbozorg.backtest.model.commission.CommissionModel;
 import com.bazarbozorg.backtest.model.slippage.SlippageModel;
 import com.bazarbozorg.backtest.report.MetricsCalculator;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
+import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
+import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
+import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.ta4j.core.Bar;
 import org.ta4j.core.BarSeries;
 
+import java.nio.file.Path;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,10 +37,14 @@ public class BacktestEngine {
 
     private static final Logger logger = LoggerFactory.getLogger(BacktestEngine.class);
 
+    /** Default location for the trained-model cache (relative to the working dir). */
+    private static final Path DEFAULT_MODEL_STORE_DIR = Path.of("data", "models");
+
     private final DatabaseManager databaseManager;
     private final CommissionModel commissionModel;
     private final SlippageModel slippageModel;
     private final double initialCapital;
+    private final ModelStore modelStore;
 
     /**
      * Creates a new backtest engine.
@@ -47,10 +56,22 @@ public class BacktestEngine {
      */
     public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
                           SlippageModel slippageModel, double initialCapital) {
+        this(databaseManager, commissionModel, slippageModel, initialCapital,
+                new ModelStore(DEFAULT_MODEL_STORE_DIR));
+    }
+
+    /**
+     * Constructor variant that lets callers (typically tests) override the
+     * directory used for the trained-model cache.
+     */
+    public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
+                          SlippageModel slippageModel, double initialCapital,
+                          ModelStore modelStore) {
         this.databaseManager = databaseManager;
         this.commissionModel = commissionModel;
         this.slippageModel = slippageModel;
         this.initialCapital = initialCapital;
+        this.modelStore = modelStore;
     }
 
     /**
@@ -85,6 +106,19 @@ public class BacktestEngine {
     public BacktestResult run(String instrumentSymbol, Timeframe timeframe,
                                TradingStrategy strategy, Map<String, String> params,
                                ZonedDateTime from, ZonedDateTime to, String sourceName) {
+        return run(instrumentSymbol, timeframe, strategy, params, from, to, sourceName, false);
+    }
+
+    /**
+     * Variant of {@link #run(String, Timeframe, TradingStrategy, Map, ZonedDateTime, ZonedDateTime, String)}
+     * with an explicit {@code forceRetrain} flag for strategies that implement
+     * {@link PersistableModelStrategy}. When true, any cached model is ignored
+     * and the strategy must train from scratch.
+     */
+    public BacktestResult run(String instrumentSymbol, Timeframe timeframe,
+                               TradingStrategy strategy, Map<String, String> params,
+                               ZonedDateTime from, ZonedDateTime to, String sourceName,
+                               boolean forceRetrain) {
         logger.info("Starting backtest: instrument={}, timeframe={}, strategy={}, source={}, from={}, to={}",
                 instrumentSymbol, timeframe, strategy.getName(), sourceName, from, to);
 
@@ -102,7 +136,7 @@ public class BacktestEngine {
                         "Data source not found: " + sourceName));
 
         List<Candle> candles = candleRepo.findByInstrumentAndTimeframe(
-                instrument.getId(), source.getId(), timeframe, from, to);
+                instrument.id(), source.id(), timeframe, from, to);
 
         if (candles.isEmpty()) {
             throw new IllegalStateException("No candle data found for " + instrumentSymbol
@@ -115,7 +149,12 @@ public class BacktestEngine {
         BarSeries series = BarSeriesConverter.convert(instrumentSymbol, candles);
         logger.info("Converted to BarSeries with {} bars", series.getBarCount());
 
-        // Step 3: Initialize strategy
+        // Step 3: Initialize strategy (passing a persistence context first if supported)
+        if (strategy instanceof PersistableModelStrategy persistable) {
+            ModelContext ctx = new ModelContext(
+                    instrument.id(), source.id(), timeframe, forceRetrain, modelStore);
+            persistable.setModelContext(ctx);
+        }
         strategy.initialize(series, params);
         int warmupBars = strategy.getWarmupBars();
         logger.info("Strategy '{}' initialized with {} warmup bars", strategy.getName(), warmupBars);
@@ -140,7 +179,7 @@ public class BacktestEngine {
             StrategySignal signal = strategy.evaluate(context);
 
             // Process signal
-            processSignal(signal, instrument.getId(), closePrice, barTime,
+            processSignal(signal, instrument.id(), closePrice, barTime,
                     portfolioManager, executionSimulator);
 
             // Record equity point
@@ -213,19 +252,13 @@ public class BacktestEngine {
                 if (existingLong == null) {
                     double quantity = portfolioManager.calculatePositionSize(closePrice, 1.0);
                     if (quantity > 0) {
-                        Order order = new Order(instrumentId, OrderSide.BUY, quantity, closePrice);
+                        Order order = Order.market(instrumentId, OrderSide.BUY, quantity, closePrice);
                         ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, closePrice);
+                        order = order.filled(barTime, fill.filledPrice(), fill.commission(), fill.slippage());
 
-                        order.setFilledPrice(fill.filledPrice());
-                        order.setCommission(fill.commission());
-                        order.setSlippage(fill.slippage());
-                        order.setStatus(OrderStatus.FILLED);
-                        order.setFilledAt(barTime);
-
-                        Position position = portfolioManager.openPosition(
+                        portfolioManager.openPosition(
                                 instrumentId, OrderSide.BUY, fill.filledPrice(),
-                                quantity, barTime, fill.commission());
-                        position.addOrderId(order.getId());
+                                quantity, barTime, fill.commission(), order.id());
 
                         logger.debug("ENTRY_LONG: {} units @ {} (commission: {})",
                                 quantity, fill.filledPrice(), fill.commission());
@@ -239,19 +272,13 @@ public class BacktestEngine {
                 if (existingShort == null) {
                     double quantity = portfolioManager.calculatePositionSize(closePrice, 1.0);
                     if (quantity > 0) {
-                        Order order = new Order(instrumentId, OrderSide.SELL, quantity, closePrice);
+                        Order order = Order.market(instrumentId, OrderSide.SELL, quantity, closePrice);
                         ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, closePrice);
+                        order = order.filled(barTime, fill.filledPrice(), fill.commission(), fill.slippage());
 
-                        order.setFilledPrice(fill.filledPrice());
-                        order.setCommission(fill.commission());
-                        order.setSlippage(fill.slippage());
-                        order.setStatus(OrderStatus.FILLED);
-                        order.setFilledAt(barTime);
-
-                        Position position = portfolioManager.openPosition(
+                        portfolioManager.openPosition(
                                 instrumentId, OrderSide.SELL, fill.filledPrice(),
-                                quantity, barTime, fill.commission());
-                        position.addOrderId(order.getId());
+                                quantity, barTime, fill.commission(), order.id());
 
                         logger.debug("ENTRY_SHORT: {} units @ {} (commission: {})",
                                 quantity, fill.filledPrice(), fill.commission());
@@ -297,17 +324,10 @@ public class BacktestEngine {
                                          ZonedDateTime barTime, PortfolioManager portfolioManager,
                                          ExecutionSimulator executionSimulator) {
         OrderSide exitSide = position.isLong() ? OrderSide.SELL : OrderSide.BUY;
-        Order exitOrder = new Order(instrumentId, exitSide, position.getQuantity(), closePrice);
-
+        Order exitOrder = Order.market(instrumentId, exitSide, position.quantity(), closePrice);
         ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(exitOrder, closePrice);
+        exitOrder = exitOrder.filled(barTime, fill.filledPrice(), fill.commission(), fill.slippage());
 
-        exitOrder.setFilledPrice(fill.filledPrice());
-        exitOrder.setCommission(fill.commission());
-        exitOrder.setSlippage(fill.slippage());
-        exitOrder.setStatus(OrderStatus.FILLED);
-        exitOrder.setFilledAt(barTime);
-
-        position.addOrderId(exitOrder.getId());
-        portfolioManager.closePosition(position, fill.filledPrice(), barTime, fill.commission());
+        portfolioManager.closePosition(position, fill.filledPrice(), barTime, fill.commission(), exitOrder.id());
     }
 }

@@ -1,6 +1,6 @@
 package com.bazarbozorg.backtest.model.slippage;
 
-import com.bazarbozorg.backtest.model.OrderSide;
+import com.bazarbozorg.backtest.model.enums.OrderSide;
 
 /**
  * Interface for modeling slippage in order execution.

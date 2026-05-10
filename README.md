@@ -45,7 +45,7 @@ Java 17 is required. The Gradle config sets the `--add-opens` JVM flags needed b
 | `import`           | Load OHLCV CSV (`Date,Open,High,Low,Close,Volume`); supports `--source` |
 | `list-instruments` | Show imported instruments                                            |
 | `list-strategies`  | Show registered strategies                                           |
-| `run`              | Execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source]`) |
+| `run`              | Execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source] [--retrain]`) |
 | `report --last`    | Print full report of the most recent backtest                        |
 | `report --list`    | Tabular summary of all saved backtests                               |
 
@@ -103,14 +103,14 @@ Multiple historical-data providers can now coexist for the same `(symbol, timefr
 - [x] `run --source NAME` filters candles by source; `BacktestResult.dataSource` persisted to `backtest_results.data_source`
 - [x] `DatabaseManager.runSchema()` splitter respects `$tag$ ... $tag$` so DO blocks survive intact
 
-### Phase 3 — Make it fast for ML training/testing (NOT STARTED)
+### Phase 3 — Make it fast for ML training/testing (IN PROGRESS)
 
 The DB swap alone doesn't speed up NN training — the strategy still loads candles row-by-row and recomputes features on every run.
 
 - [ ] Add TimescaleDB **compression** policy on older candle chunks
 - [ ] Add **continuous aggregates** for D1 → W1 / M1 rollups
 - [ ] Cache extracted feature matrices to disk (Parquet or ND4J binary), keyed by `(symbol, timeframe, range, lookback)`
-- [ ] Persist trained NN models (don't retrain on every backtest)
+- [x] **3.1** Persist trained NN models (don't retrain on every backtest) — see [Model cache](#model-cache) below
 - [ ] Split `train` and `run` into separate CLI subcommands
 
 ### Phase 4 — Data pipeline polish (LATER)
@@ -153,6 +153,31 @@ Layer a Node + React UI on top of the existing Java CLI. Java keeps owning write
 
 - [x] **5D.1** Add `web` service(s) to `docker-compose.yml` so `docker compose up -d` brings up DB + web
 - [x] **5D.2** Document the `web/` workflow in `ARCHITECTURE.md` and the README quick start
+
+---
+
+## Model cache
+
+Strategies that implement `PersistableModelStrategy` (currently just `nn-feedforward`) cache their trained model on disk so repeated backtests with the same configuration skip the train step. The DL4J network and its fitted feature normalizer are saved under:
+
+```
+data/models/<strategy>/<sha256-cache-key>/
+  model.zip         # serialized MultiLayerNetwork (weights + updater)
+  normalizer.bin    # serialized NormalizerMinMaxScaler
+  metadata.json     # cache key, hyperparams, training fingerprint, validation accuracy, dl4j version
+```
+
+The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last bar epoch + bar count), every hyperparameter, and the DL4J version. Any of those changing produces a new key and forces fresh training.
+
+**Invalidation.** Re-importing candles for the same `(instrument, source, timeframe)` changes the bar count and/or last-bar timestamp, which changes the cache key — so a re-import naturally retrains on the next run. Editing rows directly in the database without re-importing will **not** invalidate the cache; use `--retrain` if you do this.
+
+**Force retrain.** Pass `--retrain` to `run`:
+
+```bash
+./gradlew run --args="run -s nn-feedforward -i AAPL -t D1 --retrain"
+```
+
+**DL4J version pinning.** The runtime DL4J version is recorded in `metadata.json`. If the project bumps DL4J, cached models from the previous version are ignored (logged as `DL4J version mismatch`) and retrained. There is no automatic eviction of orphaned model directories — `rm -rf data/models/` is the manual cleanup.
 
 ---
 

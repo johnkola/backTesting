@@ -43,3 +43,6 @@ bin/
 node_modules/
 web/client/dist/
 *.log
+
+### Trained-model cache (derived from training; can be regenerated) ###
+data/models/

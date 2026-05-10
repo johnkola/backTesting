@@ -3,8 +3,8 @@ package com.bazarbozorg.backtest.data;
 import com.bazarbozorg.backtest.model.Candle;
 import com.bazarbozorg.backtest.model.DataSource;
 import com.bazarbozorg.backtest.model.Instrument;
-import com.bazarbozorg.backtest.model.InstrumentType;
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.model.enums.InstrumentType;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.util.DateTimeUtils;
 import com.opencsv.CSVReader;
 import com.opencsv.exceptions.CsvValidationException;
@@ -60,7 +60,7 @@ public class CsvDataImporter {
                 .orElseGet(() -> {
                     Instrument newInstrument = new Instrument(0, instrumentSymbol, instrumentSymbol, type);
                     Instrument saved = instrumentRepo.save(newInstrument);
-                    logger.info("Created new instrument: {} with id {}", instrumentSymbol, saved.getId());
+                    logger.info("Created new instrument: {} with id {}", instrumentSymbol, saved.id());
                     return saved;
                 });
 
@@ -103,8 +103,8 @@ public class CsvDataImporter {
 
                     Candle candle = new Candle(
                             0,
-                            instrument.getId(),
-                            source.getId(),
+                            instrument.id(),
+                            source.id(),
                             timeframe,
                             timestamp,
                             open, high, low, close, volume
@@ -139,7 +139,7 @@ public class CsvDataImporter {
 
             String absolutePath = Paths.get(filePath).toAbsolutePath().toString();
             String fileName = Paths.get(filePath).getFileName().toString();
-            importRepo.recordImport(source.getId(), instrument.getId(), timeframe,
+            importRepo.recordImport(source.id(), instrument.id(), timeframe,
                     absolutePath, fileName, candles.size());
         }
 

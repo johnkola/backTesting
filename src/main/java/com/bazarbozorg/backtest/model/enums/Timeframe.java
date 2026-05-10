@@ -1,4 +1,4 @@
-package com.bazarbozorg.backtest.model;
+package com.bazarbozorg.backtest.model.enums;
 
 import java.time.Duration;
 import java.util.HashMap;

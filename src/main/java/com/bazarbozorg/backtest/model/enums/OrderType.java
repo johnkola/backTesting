@@ -1,4 +1,4 @@
-package com.bazarbozorg.backtest.model;
+package com.bazarbozorg.backtest.model.enums;
 
 public enum OrderType {
     MARKET,

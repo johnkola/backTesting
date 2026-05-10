@@ -1,12 +1,12 @@
 package com.bazarbozorg.backtest.data;
 
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.data.entity.DataImportRow;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.*;
 import java.time.OffsetDateTime;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -42,42 +42,37 @@ public class DataImportRepository {
         }
     }
 
-    public List<ImportRecord> findBySource(long sourceId) {
+    public List<DataImportRow> findBySource(long sourceId) {
         String sql = "SELECT id, source_id, instrument_id, timeframe, file_path, file_name, " +
                 "row_count, imported_at FROM data_imports WHERE source_id = ? " +
                 "ORDER BY imported_at DESC";
-        List<ImportRecord> records = new ArrayList<>();
+        List<DataImportRow> rows = new ArrayList<>();
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, sourceId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    records.add(mapRow(rs));
+                    rows.add(mapRow(rs));
                 }
             }
-            return records;
+            return rows;
         } catch (SQLException e) {
             logger.error("Failed to list imports for sourceId={}", sourceId, e);
             throw new RuntimeException("Failed to list imports", e);
         }
     }
 
-    private ImportRecord mapRow(ResultSet rs) throws SQLException {
+    private DataImportRow mapRow(ResultSet rs) throws SQLException {
         OffsetDateTime importedAt = rs.getObject("imported_at", OffsetDateTime.class);
-        return new ImportRecord(
-                rs.getLong("id"),
-                rs.getLong("source_id"),
-                rs.getLong("instrument_id"),
-                Timeframe.valueOf(rs.getString("timeframe")),
-                rs.getString("file_path"),
-                rs.getString("file_name"),
-                rs.getInt("row_count"),
-                importedAt != null ? importedAt.toZonedDateTime() : null
-        );
-    }
-
-    public record ImportRecord(long id, long sourceId, long instrumentId, Timeframe timeframe,
-                               String filePath, String fileName, int rowCount,
-                               ZonedDateTime importedAt) {
+        return DataImportRow.builder()
+                .id(rs.getLong("id"))
+                .sourceId(rs.getLong("source_id"))
+                .instrumentId(rs.getLong("instrument_id"))
+                .timeframe(rs.getString("timeframe"))
+                .filePath(rs.getString("file_path"))
+                .fileName(rs.getString("file_name"))
+                .rowCount(rs.getInt("row_count"))
+                .importedAt(importedAt != null ? importedAt.toZonedDateTime() : null)
+                .build();
     }
 }

@@ -2,7 +2,7 @@ package com.bazarbozorg.backtest.strategy;
 
 import com.bazarbozorg.backtest.model.Portfolio;
 import com.bazarbozorg.backtest.model.StrategyContext;
-import com.bazarbozorg.backtest.model.StrategySignal;
+import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.impl.SmaCrossoverStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

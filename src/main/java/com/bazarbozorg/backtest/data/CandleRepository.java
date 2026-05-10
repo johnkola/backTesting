@@ -1,13 +1,14 @@
 package com.bazarbozorg.backtest.data;
 
+import com.bazarbozorg.backtest.data.entity.CandleRow;
 import com.bazarbozorg.backtest.model.Candle;
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.*;
-import java.time.ZonedDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -39,15 +40,16 @@ public class CandleRepository {
             conn.setAutoCommit(false);
 
             for (Candle candle : candles) {
-                ps.setLong(1, candle.getInstrumentId());
-                ps.setLong(2, candle.getSourceId());
-                ps.setString(3, candle.getTimeframe().name());
-                ps.setObject(4, candle.getTimestamp().toOffsetDateTime());
-                ps.setDouble(5, candle.getOpen());
-                ps.setDouble(6, candle.getHigh());
-                ps.setDouble(7, candle.getLow());
-                ps.setDouble(8, candle.getClose());
-                ps.setDouble(9, candle.getVolume());
+                CandleRow row = CandleRow.fromDomain(candle);
+                ps.setLong(1, row.instrumentId());
+                ps.setLong(2, row.sourceId());
+                ps.setString(3, row.timeframe());
+                ps.setObject(4, row.timestamp().toOffsetDateTime());
+                ps.setDouble(5, row.open());
+                ps.setDouble(6, row.high());
+                ps.setDouble(7, row.low());
+                ps.setDouble(8, row.close());
+                ps.setDouble(9, row.volume());
                 ps.addBatch();
             }
 
@@ -93,7 +95,7 @@ public class CandleRepository {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    candles.add(mapRow(rs));
+                    candles.add(mapRow(rs).toDomain());
                 }
             }
 
@@ -184,25 +186,23 @@ public class CandleRepository {
         }
     }
 
-    private Candle mapRow(ResultSet rs) throws SQLException {
+    private CandleRow mapRow(ResultSet rs) throws SQLException {
         OffsetDateTime odt = rs.getObject("timestamp", OffsetDateTime.class);
-        return new Candle(
-                rs.getLong("id"),
-                rs.getLong("instrument_id"),
-                rs.getLong("source_id"),
-                Timeframe.valueOf(rs.getString("timeframe")),
-                odt.toZonedDateTime(),
-                rs.getDouble("open"),
-                rs.getDouble("high"),
-                rs.getDouble("low"),
-                rs.getDouble("close"),
-                rs.getDouble("volume")
-        );
+        return CandleRow.builder()
+                .id(rs.getLong("id"))
+                .instrumentId(rs.getLong("instrument_id"))
+                .sourceId(rs.getLong("source_id"))
+                .timeframe(rs.getString("timeframe"))
+                .timestamp(odt != null ? odt.toZonedDateTime() : null)
+                .open(rs.getDouble("open"))
+                .high(rs.getDouble("high"))
+                .low(rs.getDouble("low"))
+                .close(rs.getDouble("close"))
+                .volume(rs.getDouble("volume"))
+                .build();
     }
 
-    /**
-     * Represents a date range with minimum and maximum timestamps.
-     */
+    /** Min/max timestamp for a (instrument, source, timeframe) slice. */
     public record DateRange(ZonedDateTime from, ZonedDateTime to) {
     }
 }

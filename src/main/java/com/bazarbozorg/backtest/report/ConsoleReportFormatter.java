@@ -229,13 +229,13 @@ public class ConsoleReportFormatter {
         for (int i = start; i < trades.size(); i++) {
             Trade trade = trades.get(i);
             List<String> row = new ArrayList<>();
-            row.add(DateTimeUtils.formatDate(trade.getEntryTime()));
-            row.add(DateTimeUtils.formatDate(trade.getExitTime()));
-            row.add(trade.getSide().name());
-            row.add(String.format("%.2f", trade.getEntryPrice()));
-            row.add(String.format("%.2f", trade.getExitPrice()));
-            row.add(String.format("%+,.2f", trade.getPnl()));
-            row.add(String.format("%+.2f%%", trade.getReturnPct() * 100));
+            row.add(DateTimeUtils.formatDate(trade.entryTime()));
+            row.add(DateTimeUtils.formatDate(trade.exitTime()));
+            row.add(trade.side().name());
+            row.add(String.format("%.2f", trade.entryPrice()));
+            row.add(String.format("%.2f", trade.exitPrice()));
+            row.add(String.format("%+,.2f", trade.pnl()));
+            row.add(String.format("%+.2f%%", trade.returnPct() * 100));
             rows.add(row);
         }
 

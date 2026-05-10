@@ -72,10 +72,16 @@ To register a new strategy: add a `registerStrategy("name", MyStrategy::new)` li
 ### Neural network strategy (`strategy/nn/`)
 
 The DL4J-based `NeuralNetworkStrategy` is structurally different from the indicator strategies:
-- `buildIndicators()` does the **actual training** — it splits the series by `trainSplitRatio` (default 0.8), fits a `NormalizerStandardize` on the train features only, trains the MLP for `numEpochs`, then logs validation accuracy.
+- `buildIndicators()` does the **actual training** — it splits the series by `trainSplitRatio` (default 0.8), fits a `NormalizerMinMaxScaler` on the train features only, trains the MLP for `numEpochs`, then logs validation accuracy.
 - `evaluate()` does inference on a single window per bar.
 - `LabelGenerator` produces 3-class labels (BUY / HOLD / SELL) by looking `forwardBars` ahead and comparing the future return to `buyThreshold` / `sellThreshold`. Because labels need future bars, training stops at `series.getBarCount() - forwardBars - 1`.
 - This means the train-split window peeks at "future" bars relative to early backtest bars — fine for research but not a true walk-forward setup. Don't claim otherwise in user-facing output.
+
+### Model persistence (`strategy/persistence/`)
+
+ML strategies opt in to filesystem caching by implementing `PersistableModelStrategy`. Before calling `strategy.initialize`, `BacktestEngine` checks for that interface and hands the strategy a `ModelContext` carrying `(instrumentId, sourceId, timeframe, forceRetrain, ModelStore)`. The strategy is responsible for computing a deterministic cache key (`ModelStore.computeCacheKey`), trying `store.load(strategyName, key)`, and on miss training + calling `store.save(...)` to write the network, the fitted normalizer, and a JSON metadata sidecar.
+
+`ModelStore` is a thin wrapper around `data/models/<strategy>/<key>/`. There is no DB-backed model registry yet — the cache key is the filename, and `metadata.json` is debug info plus a DL4J version stamp used to reject models trained against a different runtime. The `--retrain` CLI flag flips `forceRetrain` on the context so a manual edit to the candle table (which doesn't change the bar count / last-bar timestamp fingerprint) can still be invalidated. See the README "Model cache" section for the user-facing contract.
 
 ### Web layer (`web/`)
 
@@ -99,6 +105,18 @@ PostgreSQL + TimescaleDB with five tables (see `schema.sql`):
 - `backtest_results` — full `BacktestResult` as JSON in `result_json` plus denormalized summary columns (including `data_source`) for `report --list`.
 
 `DatabaseManager` is a singleton; `initialize()` must be called before `getConnection()`, and `shutdown()` nulls the config. CLI commands are responsible for the init/shutdown pairing (see the `try/finally` blocks in `BacktestCommand`, `ImportDataCommand`, `ReportCommand`).
+
+#### Row entities vs domain records (`data/entity/`)
+
+Repositories don't read directly into domain records. Instead, every table has a corresponding `*Row` record-with-builder under `data/entity/` whose components mirror the SQL columns 1:1 in their raw types (e.g. `timeframe` and `type` are stored as `String`, not the domain enums; `result_json` lives as `String`, no Gson knowledge in the row).
+
+- `mapRow(ResultSet)` returns a `*Row`, constructed via `XxxRow.builder().column(...).build()`.
+- The repository then calls `row.toDomain()` to produce the domain record (`Instrument`, `DataSource`, `Candle`).
+- Writes go the other direction: `XxxRow.fromDomain(domain)` then field-by-field `setX` on the `PreparedStatement`.
+
+Two row types have no domain counterpart and are returned as-is to the caller: `DataImportRow` (the audit log shape *is* the public shape) and `BacktestResultSummaryRow` (the lightweight projection used by `report --list`). The full `BacktestResult` is reconstructed from `BacktestResultRow.resultJson` on `findLatest`.
+
+The split keeps engine/CLI code talking in domain types (records the engine produces and consumes) while DB-side validation and column shape stay isolated in `data/entity/`. When a column type or name changes, only the row record + repository need updating.
 
 CSV import format: `Date,Open,High,Low,Close,Volume` with a header row. `CsvDataImporter` auto-creates the `Instrument` and `DataSource` rows if missing, then records the import event in `data_imports`.
 

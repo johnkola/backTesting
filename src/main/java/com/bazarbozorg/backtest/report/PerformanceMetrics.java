@@ -10,7 +10,7 @@ public class PerformanceMetrics {
     private final double totalReturnPct;
     private final double annualizedReturnPct;
     private final double sharpeRatio;
-    private final double sortinoRatio;
+    private final double sortingRatio;
     private final double calmarRatio;
     private final double maxDrawdownPct;
     private final double maxDrawdownAmount;
@@ -35,7 +35,7 @@ public class PerformanceMetrics {
         this.totalReturnPct = builder.totalReturnPct;
         this.annualizedReturnPct = builder.annualizedReturnPct;
         this.sharpeRatio = builder.sharpeRatio;
-        this.sortinoRatio = builder.sortinoRatio;
+        this.sortingRatio = builder.sortinoRatio;
         this.calmarRatio = builder.calmarRatio;
         this.maxDrawdownPct = builder.maxDrawdownPct;
         this.maxDrawdownAmount = builder.maxDrawdownAmount;
@@ -70,7 +70,7 @@ public class PerformanceMetrics {
     }
 
     public double getSortinoRatio() {
-        return sortinoRatio;
+        return sortingRatio;
     }
 
     public double getCalmarRatio() {

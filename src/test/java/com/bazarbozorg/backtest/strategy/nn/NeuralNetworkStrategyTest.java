@@ -2,7 +2,7 @@ package com.bazarbozorg.backtest.strategy.nn;
 
 import com.bazarbozorg.backtest.model.Portfolio;
 import com.bazarbozorg.backtest.model.StrategyContext;
-import com.bazarbozorg.backtest.model.StrategySignal;
+import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

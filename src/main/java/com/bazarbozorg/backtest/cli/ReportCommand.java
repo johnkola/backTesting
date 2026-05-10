@@ -1,8 +1,8 @@
 package com.bazarbozorg.backtest.cli;
 
 import com.bazarbozorg.backtest.data.BacktestResultRepository;
-import com.bazarbozorg.backtest.data.BacktestResultRepository.BacktestResultSummary;
 import com.bazarbozorg.backtest.data.DatabaseManager;
+import com.bazarbozorg.backtest.data.entity.BacktestResultSummaryRow;
 import com.bazarbozorg.backtest.engine.BacktestResult;
 import com.bazarbozorg.backtest.report.ConsoleReportFormatter;
 import com.bazarbozorg.backtest.util.DateTimeUtils;
@@ -61,7 +61,7 @@ public class ReportCommand implements Runnable {
      * Lists all saved backtest results as a summary table.
      */
     private void listAllResults(BacktestResultRepository resultRepo) {
-        List<BacktestResultSummary> summaries = resultRepo.findAll();
+        List<BacktestResultSummaryRow> summaries = resultRepo.findAll();
 
         if (summaries.isEmpty()) {
             System.out.println("No saved backtest results found.");
@@ -75,20 +75,20 @@ public class ReportCommand implements Runnable {
         );
 
         List<List<String>> rows = new ArrayList<>();
-        for (BacktestResultSummary summary : summaries) {
+        for (BacktestResultSummaryRow summary : summaries) {
             List<String> row = new ArrayList<>();
-            row.add(String.valueOf(summary.getId()));
-            row.add(summary.getStrategyName());
-            row.add(summary.getInstrumentSymbol());
-            row.add(summary.getTimeframe());
-            row.add(DateTimeUtils.formatDate(summary.getStartDate())
-                    + " to " + DateTimeUtils.formatDate(summary.getEndDate()));
-            row.add(String.valueOf(MathUtils.round(summary.getTotalReturnPct(), 2)));
-            row.add(String.valueOf(MathUtils.round(summary.getSharpeRatio(), 2)));
-            row.add(String.valueOf(MathUtils.round(summary.getMaxDrawdownPct(), 2)));
-            row.add(String.valueOf(summary.getTotalTrades()));
-            row.add(String.valueOf(MathUtils.round(summary.getWinRate(), 2)));
-            row.add(DateTimeUtils.format(summary.getCreatedAt()));
+            row.add(String.valueOf(summary.id()));
+            row.add(summary.strategyName());
+            row.add(summary.instrumentSymbol());
+            row.add(summary.timeframe());
+            row.add(DateTimeUtils.formatDate(summary.startDate())
+                    + " to " + DateTimeUtils.formatDate(summary.endDate()));
+            row.add(String.valueOf(MathUtils.round(summary.totalReturnPct(), 2)));
+            row.add(String.valueOf(MathUtils.round(summary.sharpeRatio(), 2)));
+            row.add(String.valueOf(MathUtils.round(summary.maxDrawdownPct(), 2)));
+            row.add(String.valueOf(summary.totalTrades()));
+            row.add(String.valueOf(MathUtils.round(summary.winRate(), 2)));
+            row.add(DateTimeUtils.format(summary.createdAt()));
             rows.add(row);
         }
 

@@ -43,17 +43,17 @@ public final class BarSeriesConverter {
                 .build();
 
         for (Candle candle : candles) {
-            Duration timePeriod = candle.getTimeframe().getDuration();
-            ZonedDateTime endTime = candle.getTimestamp().plus(timePeriod);
+            Duration timePeriod = candle.timeframe().getDuration();
+            ZonedDateTime endTime = candle.timestamp().plus(timePeriod);
 
             BaseBar bar = BaseBar.builder(DecimalNum::valueOf, Number.class)
                     .timePeriod(timePeriod)
                     .endTime(endTime)
-                    .openPrice(candle.getOpen())
-                    .highPrice(candle.getHigh())
-                    .lowPrice(candle.getLow())
-                    .closePrice(candle.getClose())
-                    .volume(candle.getVolume())
+                    .openPrice(candle.open())
+                    .highPrice(candle.high())
+                    .lowPrice(candle.low())
+                    .closePrice(candle.close())
+                    .volume(candle.volume())
                     .build();
 
             barSeries.addBar(bar);

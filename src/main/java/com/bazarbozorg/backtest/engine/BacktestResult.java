@@ -1,7 +1,7 @@
 package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.model.EquityPoint;
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.Trade;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 

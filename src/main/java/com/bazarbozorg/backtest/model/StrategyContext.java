@@ -6,12 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class StrategyContext {
-
-    private final int currentBarIndex;
-    private final BarSeries series;
-    private final Portfolio portfolio;
-    private final List<Order> pendingOrders;
+public record StrategyContext(int currentBarIndex, BarSeries series, Portfolio portfolio, List<Order> pendingOrders) {
 
     public StrategyContext(int currentBarIndex, BarSeries series, Portfolio portfolio,
                            List<Order> pendingOrders) {
@@ -23,19 +18,8 @@ public class StrategyContext {
                 : new ArrayList<>();
     }
 
-    public int getCurrentBarIndex() {
-        return currentBarIndex;
-    }
-
-    public BarSeries getSeries() {
-        return series;
-    }
-
-    public Portfolio getPortfolio() {
-        return portfolio;
-    }
-
-    public List<Order> getPendingOrders() {
+    @Override
+    public List<Order> pendingOrders() {
         return Collections.unmodifiableList(pendingOrders);
     }
 }

@@ -35,9 +35,9 @@ public class ExecutionSimulator {
      * @return a {@link FillResult} with the adjusted price, commission, and slippage amount
      */
     public FillResult fillMarketOrder(Order order, double fillPrice) {
-        double adjustedPrice = slippageModel.calculate(fillPrice, order.getSide());
+        double adjustedPrice = slippageModel.calculate(fillPrice, order.side());
         double slippageAmount = Math.abs(adjustedPrice - fillPrice);
-        double commission = commissionModel.calculate(adjustedPrice, order.getQuantity());
+        double commission = commissionModel.calculate(adjustedPrice, order.quantity());
 
         return new FillResult(adjustedPrice, commission, slippageAmount);
     }

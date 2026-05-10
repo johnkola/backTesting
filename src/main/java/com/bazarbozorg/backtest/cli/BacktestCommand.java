@@ -5,7 +5,7 @@ import com.bazarbozorg.backtest.data.BacktestResultRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.engine.BacktestResult;
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.commission.CommissionModel;
 import com.bazarbozorg.backtest.model.commission.FixedCommission;
 import com.bazarbozorg.backtest.model.commission.PercentageCommission;
@@ -63,6 +63,10 @@ public class BacktestCommand implements Runnable {
             description = "Data source name to backtest against (default: ${DEFAULT-VALUE})")
     private String source;
 
+    @Option(names = {"--retrain"},
+            description = "For ML strategies: ignore any cached model and train from scratch")
+    private boolean retrain;
+
     @Override
     public void run() {
         DatabaseManager dbManager = DatabaseManager.getInstance();
@@ -114,7 +118,7 @@ public class BacktestCommand implements Runnable {
                     dbManager, commissionModel, slippageModel, initialCapital);
 
             BacktestResult result = engine.run(
-                    instrumentSymbol, timeframe, strategy, strategyParams, from, to, source);
+                    instrumentSymbol, timeframe, strategy, strategyParams, from, to, source, retrain);
 
             if (result == null) {
                 System.err.println("Backtest returned no results.");

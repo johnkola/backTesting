@@ -4,7 +4,7 @@ import com.bazarbozorg.backtest.data.CandleRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.data.InstrumentRepository;
 import com.bazarbozorg.backtest.model.Instrument;
-import com.bazarbozorg.backtest.model.Timeframe;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.util.TableFormatter;
 import picocli.CommandLine.Command;
 
@@ -40,15 +40,15 @@ public class ListInstrumentsCommand implements Runnable {
             for (Instrument instrument : instruments) {
                 long totalCandles = 0;
                 for (Timeframe tf : Timeframe.values()) {
-                    totalCandles += candleRepo.countByInstrumentAllSources(instrument.getId(), tf);
+                    totalCandles += candleRepo.countByInstrumentAllSources(instrument.id(), tf);
                 }
 
                 List<String> row = new ArrayList<>();
-                row.add(instrument.getSymbol());
-                row.add(instrument.getName() != null ? instrument.getName() : "");
-                row.add(instrument.getType().name());
-                row.add(String.valueOf(instrument.getPricePrecision()));
-                row.add(String.valueOf(instrument.getPipSize()));
+                row.add(instrument.symbol());
+                row.add(instrument.name() != null ? instrument.name() : "");
+                row.add(instrument.type().name());
+                row.add(String.valueOf(instrument.pricePrecision()));
+                row.add(String.valueOf(instrument.pipSize()));
                 row.add(String.valueOf(totalCandles));
                 rows.add(row);
             }

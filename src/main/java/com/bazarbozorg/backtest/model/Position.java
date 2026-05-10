@@ -1,189 +1,91 @@
 package com.bazarbozorg.backtest.model;
 
+import com.bazarbozorg.backtest.model.enums.OrderSide;
+
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Represents an open or closed trading position.
- * A position is created when an entry order is filled and closed when an exit order is filled.
- * Tracks entry/exit prices, P&L, commissions, and associated order IDs.
+ * An open or closed trading position, immutable. Lifecycle is open
+ * ({@link #open}) → closed ({@link #closed}). The compact constructor copies
+ * {@code orderIds} so callers cannot mutate the record's list.
  */
-public class Position {
+public record Position(String id,
+                       long instrumentId,
+                       OrderSide side,
+                       double entryPrice,
+                       double quantity,
+                       ZonedDateTime entryTime,
+                       ZonedDateTime exitTime,
+                       double exitPrice,
+                       boolean open,
+                       double realizedPnl,
+                       double commission,
+                       List<String> orderIds) {
 
-    private final String id;
-    private final long instrumentId;
-    private final OrderSide side;
-    private final double entryPrice;
-    private final double quantity;
-    private final ZonedDateTime entryTime;
+    public Position {
+        orderIds = List.copyOf(orderIds);
+    }
 
-    private ZonedDateTime exitTime;
-    private double exitPrice;
-    private boolean open;
-    private double realizedPnl;
-    private double commission;
-    private final List<String> orderIds;
-
-    /**
-     * Creates a new open position.
-     *
-     * @param instrumentId the instrument identifier
-     * @param side         the position side (BUY for long, SELL for short)
-     * @param entryPrice   the entry price
-     * @param quantity     the position size
-     * @param entryTime    the time the position was opened
-     */
-    public Position(long instrumentId, OrderSide side, double entryPrice,
-                    double quantity, ZonedDateTime entryTime) {
-        this.id = UUID.randomUUID().toString();
-        this.instrumentId = instrumentId;
-        this.side = side;
-        this.entryPrice = entryPrice;
-        this.quantity = quantity;
-        this.entryTime = entryTime;
-        this.exitTime = null;
-        this.exitPrice = 0.0;
-        this.open = true;
-        this.realizedPnl = 0.0;
-        this.commission = 0.0;
-        this.orderIds = new ArrayList<>();
+    /** Creates a fresh, open position. */
+    public static Position open(long instrumentId, OrderSide side, double entryPrice,
+                                 double quantity, ZonedDateTime entryTime,
+                                 double commission, String entryOrderId) {
+        return new Position(UUID.randomUUID().toString(), instrumentId, side,
+                entryPrice, quantity, entryTime,
+                null, 0.0, true, 0.0, commission,
+                entryOrderId == null ? List.of() : List.of(entryOrderId));
     }
 
     /**
-     * Closes this position at the given exit price and time.
-     * Calculates the realized P&L based on position side:
-     * - LONG (BUY): (exitPrice - entryPrice) * quantity
-     * - SHORT (SELL): (entryPrice - exitPrice) * quantity
-     *
-     * @param exitPrice the exit price
-     * @param exitTime  the time the position was closed
+     * Returns a closed copy of this position. Computes realized P&amp;L from
+     * the entry/exit prices and side.
      */
-    public void close(double exitPrice, ZonedDateTime exitTime) {
-        if (!this.open) {
+    public Position closed(double exitPrice, ZonedDateTime exitTime) {
+        if (!open) {
             throw new IllegalStateException("Position is already closed: " + id);
         }
-        this.exitPrice = exitPrice;
-        this.exitTime = exitTime;
-        this.open = false;
-
-        if (isLong()) {
-            this.realizedPnl = (exitPrice - entryPrice) * quantity;
-        } else {
-            this.realizedPnl = (entryPrice - exitPrice) * quantity;
-        }
+        double pnl = isLong()
+                ? (exitPrice - entryPrice) * quantity
+                : (entryPrice - exitPrice) * quantity;
+        return new Position(id, instrumentId, side, entryPrice, quantity, entryTime,
+                exitTime, exitPrice, false, pnl, commission, orderIds);
     }
 
-    /**
-     * Calculates the unrealized P&L at the given current market price.
-     *
-     * @param currentPrice the current market price
-     * @return the unrealized P&L
-     */
-    public double getUnrealizedPnl(double currentPrice) {
+    /** Returns a copy with the given commission. */
+    public Position withCommission(double commission) {
+        return new Position(id, instrumentId, side, entryPrice, quantity, entryTime,
+                exitTime, exitPrice, open, realizedPnl, commission, orderIds);
+    }
+
+    /** Returns a copy with {@code orderId} appended to the order-id history. */
+    public Position withOrderId(String orderId) {
+        if (orderId == null) {
+            return this;
+        }
+        java.util.List<String> next = new java.util.ArrayList<>(orderIds.size() + 1);
+        next.addAll(orderIds);
+        next.add(orderId);
+        return new Position(id, instrumentId, side, entryPrice, quantity, entryTime,
+                exitTime, exitPrice, open, realizedPnl, commission, next);
+    }
+
+    /** Mark-to-market unrealized P&amp;L at {@code currentPrice}. Zero if closed. */
+    public double unrealizedPnl(double currentPrice) {
         if (!open) {
             return 0.0;
         }
-        if (isLong()) {
-            return (currentPrice - entryPrice) * quantity;
-        } else {
-            return (entryPrice - currentPrice) * quantity;
-        }
+        return isLong()
+                ? (currentPrice - entryPrice) * quantity
+                : (entryPrice - currentPrice) * quantity;
     }
 
-    /**
-     * Returns true if this is a long position (BUY side).
-     */
     public boolean isLong() {
         return side == OrderSide.BUY;
     }
 
-    /**
-     * Returns true if this is a short position (SELL side).
-     */
     public boolean isShort() {
         return side == OrderSide.SELL;
-    }
-
-    /**
-     * Adds an order ID to the list of orders associated with this position.
-     *
-     * @param orderId the order ID to add
-     */
-    public void addOrderId(String orderId) {
-        this.orderIds.add(orderId);
-    }
-
-    // --- Getters ---
-
-    public String getId() {
-        return id;
-    }
-
-    public long getInstrumentId() {
-        return instrumentId;
-    }
-
-    public OrderSide getSide() {
-        return side;
-    }
-
-    public double getEntryPrice() {
-        return entryPrice;
-    }
-
-    public double getQuantity() {
-        return quantity;
-    }
-
-    public ZonedDateTime getEntryTime() {
-        return entryTime;
-    }
-
-    public ZonedDateTime getExitTime() {
-        return exitTime;
-    }
-
-    public double getExitPrice() {
-        return exitPrice;
-    }
-
-    public boolean isOpen() {
-        return open;
-    }
-
-    public double getRealizedPnl() {
-        return realizedPnl;
-    }
-
-    public double getCommission() {
-        return commission;
-    }
-
-    public void setCommission(double commission) {
-        this.commission = commission;
-    }
-
-    public List<String> getOrderIds() {
-        return Collections.unmodifiableList(orderIds);
-    }
-
-    @Override
-    public String toString() {
-        return "Position{" +
-                "id='" + id + '\'' +
-                ", instrumentId=" + instrumentId +
-                ", side=" + side +
-                ", entryPrice=" + entryPrice +
-                ", quantity=" + quantity +
-                ", entryTime=" + entryTime +
-                ", exitTime=" + exitTime +
-                ", exitPrice=" + exitPrice +
-                ", open=" + open +
-                ", realizedPnl=" + realizedPnl +
-                ", commission=" + commission +
-                '}';
     }
 }

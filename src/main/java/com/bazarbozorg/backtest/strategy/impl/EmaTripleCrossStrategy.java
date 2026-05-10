@@ -1,7 +1,7 @@
 package com.bazarbozorg.backtest.strategy.impl;
 
 import com.bazarbozorg.backtest.model.StrategyContext;
-import com.bazarbozorg.backtest.model.StrategySignal;
+import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
 import org.ta4j.core.indicators.EMAIndicator;
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
@@ -71,7 +71,7 @@ public class EmaTripleCrossStrategy extends AbstractTa4jStrategy {
 
     @Override
     public StrategySignal evaluate(StrategyContext context) {
-        int currentIndex = context.getCurrentBarIndex();
+        int currentIndex = context.currentBarIndex();
 
         if (currentIndex < getWarmupBars()) {
             return StrategySignal.HOLD;

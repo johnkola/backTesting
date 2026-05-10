@@ -195,6 +195,15 @@ public class FeatureExtractor {
         return normalizer;
     }
 
+    /**
+     * Installs a previously-fitted normalizer (e.g. one loaded from a saved
+     * model) so that {@link #normalize(INDArray)} can be called without first
+     * calling {@link #fitNormalizer(INDArray)} on training data.
+     */
+    public void setNormalizer(NormalizerMinMaxScaler normalizer) {
+        this.normalizer = normalizer;
+    }
+
     public int getLookbackWindow() {
         return lookbackWindow;
     }

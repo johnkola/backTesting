@@ -1,7 +1,7 @@
 package com.bazarbozorg.backtest.report;
 
 import com.bazarbozorg.backtest.model.EquityPoint;
-import com.bazarbozorg.backtest.model.OrderSide;
+import com.bazarbozorg.backtest.model.enums.OrderSide;
 import com.bazarbozorg.backtest.model.Position;
 import com.bazarbozorg.backtest.model.Trade;
 import org.junit.jupiter.api.DisplayName;
@@ -29,11 +29,10 @@ class MetricsCalculatorTest {
      */
     private Trade createTrade(double entryPrice, double exitPrice, double quantity,
                                double commission, int dayOffset) {
-        Position pos = new Position(1L, OrderSide.BUY, entryPrice, quantity,
-                BASE_TIME.plusDays(dayOffset));
-        pos.setCommission(commission);
-        pos.close(exitPrice, BASE_TIME.plusDays(dayOffset + 5));
-        return new Trade(pos, 5);
+        Position pos = Position.open(1L, OrderSide.BUY, entryPrice, quantity,
+                        BASE_TIME.plusDays(dayOffset), commission, null)
+                .closed(exitPrice, BASE_TIME.plusDays(dayOffset + 5));
+        return Trade.from(pos, 5);
     }
 
     /**
