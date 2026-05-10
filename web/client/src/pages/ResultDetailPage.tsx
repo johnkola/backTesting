@@ -73,6 +73,27 @@ export default function ResultDetailPage() {
         </h1>
         <span className="badge">{detail.timeframe}</span>
         <span className="badge badge-outline font-mono">{detail.dataSource}</span>
+        {detail.modelCacheHit === true && (
+          <span
+            className="badge badge-success"
+            title={`cache hit · key ${detail.modelCacheKey ?? ''}`}
+          >
+            cached model
+          </span>
+        )}
+        {detail.modelCacheHit === false && (
+          <span
+            className="badge badge-warning"
+            title={`trained fresh · key ${detail.modelCacheKey ?? ''}`}
+          >
+            trained fresh
+          </span>
+        )}
+        {detail.modelCacheKey && (
+          <span className="text-xs font-mono text-base-content/50" title={detail.modelCacheKey}>
+            {detail.modelCacheKey.slice(0, 12)}…
+          </span>
+        )}
         <span className="ml-auto text-sm text-base-content/60">
           run {new Date(detail.createdAt).toLocaleString()}
         </span>

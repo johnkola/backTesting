@@ -95,3 +95,9 @@ CREATE TABLE IF NOT EXISTS backtest_results (
 );
 
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS data_source VARCHAR(50) NOT NULL DEFAULT 'default';
+
+-- Phase 3.1 visibility: which model cache key produced this run, and whether
+-- the model was loaded from cache (true) or trained fresh (false). Both are
+-- NULL for non-ML strategies and for runs that pre-date these columns.
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_cache_key VARCHAR(64);
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_cache_hit BOOLEAN;

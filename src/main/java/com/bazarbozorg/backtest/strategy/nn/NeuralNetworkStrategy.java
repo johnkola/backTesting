@@ -4,6 +4,7 @@ import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
 import com.bazarbozorg.backtest.strategy.persistence.LoadedModel;
+import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelMetadata;
 import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
@@ -49,6 +50,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
     private MultiLayerNetwork model;
     private int warmupBars;
     private ModelContext modelContext;
+    private ModelCacheOutcome cacheOutcome;
 
     @Override
     public String getName() {
@@ -84,6 +86,11 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
     }
 
     @Override
+    public Optional<ModelCacheOutcome> getCacheOutcome() {
+        return Optional.ofNullable(cacheOutcome);
+    }
+
+    @Override
     protected void buildIndicators() {
         config = NeuralNetworkConfig.fromParameters(parameters);
         featureExtractor = new FeatureExtractor(series, config.getLookbackWindow());
@@ -111,6 +118,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
                 LoadedModel loaded = hit.get();
                 model = loaded.network();
                 featureExtractor.setNormalizer(loaded.normalizer());
+                cacheOutcome = new ModelCacheOutcome(loaded.metadata().cacheKey(), true);
                 logger.info("Loaded cached NN model (key={}, validation accuracy={}%)",
                         shortKey(loaded.metadata().cacheKey()),
                         loaded.metadata().validationAccuracyPct());
@@ -127,6 +135,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
 
         if (modelContext != null) {
             saveCached(validationAccuracyPct, trainDuration);
+            cacheOutcome = new ModelCacheOutcome(computeCacheKey(), false);
         }
     }
 

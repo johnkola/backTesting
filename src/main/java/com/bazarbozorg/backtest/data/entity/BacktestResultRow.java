@@ -23,6 +23,8 @@ public record BacktestResultRow(long id,
                                 double maxDrawdownPct,
                                 int totalTrades,
                                 double winRate,
+                                String modelCacheKey,
+                                Boolean modelCacheHit,
                                 String resultJson,
                                 ZonedDateTime createdAt) {
 
@@ -45,6 +47,8 @@ public record BacktestResultRow(long id,
         private double maxDrawdownPct;
         private int totalTrades;
         private double winRate;
+        private String modelCacheKey;
+        private Boolean modelCacheHit;
         private String resultJson;
         private ZonedDateTime createdAt;
 
@@ -64,6 +68,8 @@ public record BacktestResultRow(long id,
         public Builder maxDrawdownPct(double v) { this.maxDrawdownPct = v; return this; }
         public Builder totalTrades(int v) { this.totalTrades = v; return this; }
         public Builder winRate(double v) { this.winRate = v; return this; }
+        public Builder modelCacheKey(String s) { this.modelCacheKey = s; return this; }
+        public Builder modelCacheHit(Boolean v) { this.modelCacheHit = v; return this; }
         public Builder resultJson(String s) { this.resultJson = s; return this; }
         public Builder createdAt(ZonedDateTime d) { this.createdAt = d; return this; }
 
@@ -71,7 +77,7 @@ public record BacktestResultRow(long id,
             return new BacktestResultRow(id, instrumentSymbol, strategyName, timeframe,
                     dataSource, startDate, endDate, initialCapital, finalEquity,
                     totalReturnPct, sharpeRatio, maxDrawdownPct, totalTrades, winRate,
-                    resultJson, createdAt);
+                    modelCacheKey, modelCacheHit, resultJson, createdAt);
         }
     }
 }

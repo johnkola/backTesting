@@ -82,6 +82,7 @@ export default function ResultsPage() {
                   <th className="text-right">Max DD</th>
                   <th className="text-right">Trades</th>
                   <th className="text-right">Win</th>
+                  <th>Cache</th>
                   <th></th>
                 </tr>
               </thead>
@@ -102,13 +103,24 @@ export default function ResultsPage() {
                       <td className="text-right tabular-nums">{r.totalTrades}</td>
                       <td className="text-right tabular-nums">{pct(r.winRate)}</td>
                       <td>
+                        {r.modelCacheHit === true && (
+                          <span className="badge badge-sm badge-success" title={r.modelCacheKey ?? ''}>hit</span>
+                        )}
+                        {r.modelCacheHit === false && (
+                          <span className="badge badge-sm badge-warning" title={r.modelCacheKey ?? ''}>fresh</span>
+                        )}
+                        {r.modelCacheHit == null && (
+                          <span className="text-base-content/40">—</span>
+                        )}
+                      </td>
+                      <td>
                         <Link to={`/results/${r.id}`} className="btn btn-xs btn-outline">open</Link>
                       </td>
                     </tr>
                   )
                 })}
                 {data.items.length === 0 && (
-                  <tr><td colSpan={11} className="text-center text-base-content/60">No results match.</td></tr>
+                  <tr><td colSpan={12} className="text-center text-base-content/60">No results match.</td></tr>
                 )}
               </tbody>
             </table>

@@ -68,8 +68,8 @@ public class BacktestResultRepository {
         String sql = "INSERT INTO backtest_results " +
                 "(instrument_symbol, strategy_name, timeframe, data_source, start_date, end_date, " +
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
-                "max_drawdown_pct, total_trades, win_rate, result_json) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, result_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -98,7 +98,19 @@ public class BacktestResultRepository {
             ps.setDouble(11, row.maxDrawdownPct());
             ps.setInt(12, row.totalTrades());
             ps.setDouble(13, row.winRate());
-            ps.setString(14, row.resultJson());
+
+            if (row.modelCacheKey() != null) {
+                ps.setString(14, row.modelCacheKey());
+            } else {
+                ps.setNull(14, Types.VARCHAR);
+            }
+            if (row.modelCacheHit() != null) {
+                ps.setBoolean(15, row.modelCacheHit());
+            } else {
+                ps.setNull(15, Types.BOOLEAN);
+            }
+
+            ps.setString(16, row.resultJson());
 
             ps.executeUpdate();
             logger.info("Saved backtest result: {} on {} ({})",
@@ -114,7 +126,8 @@ public class BacktestResultRepository {
     public List<BacktestResultSummaryRow> findAll() {
         String sql = "SELECT id, instrument_symbol, strategy_name, timeframe, " +
                 "start_date, end_date, total_return_pct, sharpe_ratio, " +
-                "max_drawdown_pct, total_trades, win_rate, created_at " +
+                "max_drawdown_pct, total_trades, win_rate, " +
+                "model_cache_key, model_cache_hit, created_at " +
                 "FROM backtest_results ORDER BY created_at DESC";
 
         List<BacktestResultSummaryRow> summaries = new ArrayList<>();
@@ -178,6 +191,8 @@ public class BacktestResultRepository {
                 .maxDrawdownPct(metrics.getMaxDrawdownPct())
                 .totalTrades(metrics.getTotalTrades())
                 .winRate(metrics.getWinRate())
+                .modelCacheKey(result.getModelCacheKey())
+                .modelCacheHit(result.getModelCacheHit())
                 .resultJson(gson.toJson(result))
                 .build();
     }
@@ -189,6 +204,9 @@ public class BacktestResultRepository {
         ZonedDateTime createdAt = createdTs != null
                 ? createdTs.toInstant().atZone(java.time.ZoneOffset.UTC)
                 : null;
+
+        boolean cacheHitRaw = rs.getBoolean("model_cache_hit");
+        Boolean cacheHit = rs.wasNull() ? null : cacheHitRaw;
 
         return BacktestResultSummaryRow.builder()
                 .id(rs.getLong("id"))
@@ -202,6 +220,8 @@ public class BacktestResultRepository {
                 .maxDrawdownPct(rs.getDouble("max_drawdown_pct"))
                 .totalTrades(rs.getInt("total_trades"))
                 .winRate(rs.getDouble("win_rate"))
+                .modelCacheKey(rs.getString("model_cache_key"))
+                .modelCacheHit(cacheHit)
                 .createdAt(createdAt)
                 .build();
     }

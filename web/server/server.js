@@ -338,7 +338,7 @@ app.get('/api/results', async (req, res) => {
       SELECT id, instrument_symbol, strategy_name, timeframe, data_source,
              start_date, end_date, initial_capital, final_equity,
              total_return_pct, sharpe_ratio, max_drawdown_pct,
-             total_trades, win_rate, created_at
+             total_trades, win_rate, model_cache_key, model_cache_hit, created_at
         FROM backtest_results
         ${whereSql}
         ORDER BY created_at DESC, id DESC
@@ -365,6 +365,8 @@ app.get('/api/results', async (req, res) => {
         maxDrawdownPct: r.max_drawdown_pct == null ? null : Number(r.max_drawdown_pct),
         totalTrades: r.total_trades,
         winRate: r.win_rate == null ? null : Number(r.win_rate),
+        modelCacheKey: r.model_cache_key,
+        modelCacheHit: r.model_cache_hit,
         createdAt: r.created_at,
       })),
       total: Number(countRows[0].total),
@@ -386,7 +388,8 @@ app.get('/api/results/:id', async (req, res) => {
       SELECT id, instrument_symbol, strategy_name, timeframe, data_source,
              start_date, end_date, initial_capital, final_equity,
              total_return_pct, sharpe_ratio, max_drawdown_pct,
-             total_trades, win_rate, result_json, created_at
+             total_trades, win_rate, model_cache_key, model_cache_hit,
+             result_json, created_at
         FROM backtest_results
        WHERE id = $1`;
     const { rows } = await pool.query(sql, [id]);
@@ -422,6 +425,8 @@ app.get('/api/results/:id', async (req, res) => {
       maxDrawdownPct: r.max_drawdown_pct == null ? null : Number(r.max_drawdown_pct),
       totalTrades: r.total_trades,
       winRate: r.win_rate == null ? null : Number(r.win_rate),
+      modelCacheKey: r.model_cache_key,
+      modelCacheHit: r.model_cache_hit,
       createdAt: r.created_at,
       result,
     });

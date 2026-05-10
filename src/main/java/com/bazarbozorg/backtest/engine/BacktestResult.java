@@ -1,8 +1,8 @@
 package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.model.EquityPoint;
-import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.Trade;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 
 import java.time.ZonedDateTime;
@@ -12,6 +12,11 @@ import java.util.List;
 /**
  * Holds the complete results of a backtest run, including performance metrics,
  * trade history, equity curve data, and metadata about the backtest configuration.
+ *
+ * <p>{@code modelCacheKey} and {@code modelCacheHit} are populated only when
+ * the strategy implements {@link com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy}
+ * and produced an outcome. Both are {@code null} for indicator strategies and
+ * for older results deserialized from JSON that pre-date this field.</p>
  */
 public class BacktestResult {
 
@@ -26,13 +31,16 @@ public class BacktestResult {
     private final List<EquityPoint> equityHistory;
     private final double initialCapital;
     private final double finalEquity;
+    private final String modelCacheKey;
+    private final Boolean modelCacheHit;
 
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
                           String dataSource,
                           ZonedDateTime startDate, ZonedDateTime endDate,
                           PerformanceMetrics metrics, List<Trade> trades,
                           List<EquityPoint> equityHistory,
-                          double initialCapital, double finalEquity) {
+                          double initialCapital, double finalEquity,
+                          String modelCacheKey, Boolean modelCacheHit) {
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
@@ -44,6 +52,8 @@ public class BacktestResult {
         this.equityHistory = Collections.unmodifiableList(equityHistory);
         this.initialCapital = initialCapital;
         this.finalEquity = finalEquity;
+        this.modelCacheKey = modelCacheKey;
+        this.modelCacheHit = modelCacheHit;
     }
 
     public String getDataSource() {
@@ -88,5 +98,15 @@ public class BacktestResult {
 
     public double getFinalEquity() {
         return finalEquity;
+    }
+
+    /** Cache key under which the trained model lives, or null for non-ML strategies. */
+    public String getModelCacheKey() {
+        return modelCacheKey;
+    }
+
+    /** True iff the model was loaded from cache; false if trained fresh; null for non-ML strategies. */
+    public Boolean getModelCacheHit() {
+        return modelCacheHit;
     }
 }

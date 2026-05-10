@@ -12,6 +12,7 @@ import com.bazarbozorg.backtest.model.slippage.SlippageModel;
 import com.bazarbozorg.backtest.report.MetricsCalculator;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
+import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
@@ -225,6 +226,16 @@ public class BacktestEngine {
                 buyAndHoldReturnPct,
                 tradingDays);
 
+        String modelCacheKey = null;
+        Boolean modelCacheHit = null;
+        if (strategy instanceof PersistableModelStrategy persistable) {
+            ModelCacheOutcome outcome = persistable.getCacheOutcome().orElse(null);
+            if (outcome != null) {
+                modelCacheKey = outcome.cacheKey();
+                modelCacheHit = outcome.hit();
+            }
+        }
+
         return new BacktestResult(
                 strategy.getName(),
                 instrumentSymbol,
@@ -236,7 +247,9 @@ public class BacktestEngine {
                 portfolioManager.getCompletedTrades(),
                 portfolioManager.getEquityHistory(),
                 initialCapital,
-                finalEquity);
+                finalEquity,
+                modelCacheKey,
+                modelCacheHit);
     }
 
     /**

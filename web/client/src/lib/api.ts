@@ -62,6 +62,8 @@ export type ResultSummary = {
   maxDrawdownPct: number | null
   totalTrades: number
   winRate: number | null
+  modelCacheKey: string | null
+  modelCacheHit: boolean | null
   createdAt: string
 }
 
