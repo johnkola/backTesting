@@ -3,9 +3,13 @@ package com.bazarbozorg.backtest.data;
 import com.bazarbozorg.backtest.data.entity.CandleRow;
 import com.bazarbozorg.backtest.model.Candle;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
+import org.postgresql.PGConnection;
+import org.postgresql.copy.CopyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.StringReader;
 import java.sql.*;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
@@ -23,43 +27,79 @@ public class CandleRepository {
         this.databaseManager = databaseManager;
     }
 
+    private static final String CREATE_STAGING_SQL = """
+            CREATE TEMP TABLE candles_staging (
+                instrument_id BIGINT NOT NULL,
+                source_id     BIGINT NOT NULL,
+                timeframe     VARCHAR(10) NOT NULL,
+                timestamp     TIMESTAMPTZ NOT NULL,
+                open          DOUBLE PRECISION NOT NULL,
+                high          DOUBLE PRECISION NOT NULL,
+                low           DOUBLE PRECISION NOT NULL,
+                close         DOUBLE PRECISION NOT NULL,
+                volume        DOUBLE PRECISION
+            ) ON COMMIT DROP""";
+
+    private static final String COPY_SQL =
+            "COPY candles_staging " +
+            "(instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume) " +
+            "FROM STDIN WITH (FORMAT TEXT)";
+
+    private static final String UPSERT_FROM_STAGING_SQL = """
+            INSERT INTO candles
+                (instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume)
+            SELECT instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume
+              FROM candles_staging
+            ON CONFLICT (instrument_id, timeframe, source_id, timestamp) DO UPDATE SET
+                open   = EXCLUDED.open,
+                high   = EXCLUDED.high,
+                low    = EXCLUDED.low,
+                close  = EXCLUDED.close,
+                volume = EXCLUDED.volume""";
+
     public void saveAll(List<Candle> candles) {
         if (candles == null || candles.isEmpty()) {
             return;
         }
 
-        String sql = "INSERT INTO candles (instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-                "ON CONFLICT (instrument_id, timeframe, source_id, timestamp) DO UPDATE SET " +
-                "open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, " +
-                "close = EXCLUDED.close, volume = EXCLUDED.volume";
-
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
+        try (Connection conn = databaseManager.getConnection()) {
             conn.setAutoCommit(false);
+            try {
+                try (Statement st = conn.createStatement()) {
+                    st.execute(CREATE_STAGING_SQL);
+                }
 
-            for (Candle candle : candles) {
-                CandleRow row = CandleRow.fromDomain(candle);
-                ps.setLong(1, row.instrumentId());
-                ps.setLong(2, row.sourceId());
-                ps.setString(3, row.timeframe());
-                ps.setObject(4, row.timestamp().toOffsetDateTime());
-                ps.setDouble(5, row.open());
-                ps.setDouble(6, row.high());
-                ps.setDouble(7, row.low());
-                ps.setDouble(8, row.close());
-                ps.setDouble(9, row.volume());
-                ps.addBatch();
+                CopyManager copyManager = conn.unwrap(PGConnection.class).getCopyAPI();
+                StringBuilder buf = new StringBuilder(candles.size() * 80);
+                for (Candle candle : candles) {
+                    CandleRow row = CandleRow.fromDomain(candle);
+                    buf.append(row.instrumentId()).append('\t')
+                       .append(row.sourceId()).append('\t')
+                       .append(row.timeframe()).append('\t')
+                       .append(row.timestamp().toOffsetDateTime().toString()).append('\t')
+                       .append(row.open()).append('\t')
+                       .append(row.high()).append('\t')
+                       .append(row.low()).append('\t')
+                       .append(row.close()).append('\t')
+                       .append(row.volume()).append('\n');
+                }
+                long copied = copyManager.copyIn(COPY_SQL, new StringReader(buf.toString()));
+
+                int upserted;
+                try (Statement st = conn.createStatement()) {
+                    upserted = st.executeUpdate(UPSERT_FROM_STAGING_SQL);
+                }
+
+                conn.commit();
+                logger.debug("Bulk-upserted {} candle(s) via COPY → staging → ON CONFLICT (copied={}, upserted={})",
+                        candles.size(), copied, upserted);
+            } catch (SQLException | IOException e) {
+                conn.rollback();
+                throw e;
             }
-
-            ps.executeBatch();
-            conn.commit();
-            logger.debug("Saved {} candle(s) via batch upsert", candles.size());
-
-        } catch (SQLException e) {
-            logger.error("Failed to batch save candles", e);
-            throw new RuntimeException("Failed to batch save candles", e);
+        } catch (SQLException | IOException e) {
+            logger.error("Failed to bulk-upsert candles", e);
+            throw new RuntimeException("Failed to bulk-upsert candles", e);
         }
     }
 

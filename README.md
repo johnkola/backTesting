@@ -12,7 +12,7 @@ docker compose up -d                                                            
 ./gradlew run --args="report --last"
 ```
 
-Then open **http://localhost:3000/** for the React UI (instruments, imports, results with equity curve), or `http://localhost:3000/readme` / `/architecture` for rendered docs.
+Then open **http://localhost:3000/** for the React UI (instruments, imports, results with equity curve, and a Models page that lists every cached NN artifact on disk), or `http://localhost:3000/readme` / `/architecture` for rendered docs.
 
 `--source` is optional and defaults to `default`. The same instrument can hold parallel candle histories from different providers (`yahoo`, `alpha-vantage`, broker exports, etc.) without overwriting.
 
@@ -71,88 +71,41 @@ See `ARCHITECTURE.md` for deeper architecture notes (bar-by-bar loop semantics, 
 
 ## Roadmap & status
 
-### Phase 1 — Database migration (DONE)
+The roadmap is organised as **Done / Now / Next** so the current focus is always the middle section. Old phase numbers (1, 2, 2.5, 3.1, 5A–5D) are kept in parentheses where useful so git history and prior commit messages still line up. Note that phases didn't ship in numeric order — Phase 5 (web) finished before most of Phase 3 (perf).
 
-Move from embedded H2 to PostgreSQL + TimescaleDB so candle data scales and supports time-series queries.
+### Now
 
-- [x] `docker-compose.yml` with TimescaleDB pg16
-- [x] Swap H2 driver → PostgreSQL + HikariCP pool in `build.gradle`
-- [x] PostgreSQL connection URL + pool settings in `application.properties` / `AppConfig`
-- [x] `schema.sql` rewritten: `CREATE EXTENSION timescaledb`, `BIGINT GENERATED ... AS IDENTITY`, `TIMESTAMPTZ`, `DOUBLE PRECISION`, `TEXT`
-- [x] `candles` is a hypertable; PK `(instrument_id, timeframe, timestamp)` includes the partition key
-- [x] `CandleRepository` upsert: H2 `MERGE` → PostgreSQL `INSERT ... ON CONFLICT`
-- [x] `DatabaseConfig` rebuilt as `HikariDataSource` with `reWriteBatchedInserts=true`
-- [x] `DatabaseManager.shutdown()` closes the pool
-- [x] `./gradlew compileJava` passes
+*(nothing in flight — last shipped: COPY-based bulk import. Replace this line when you pick the next thing up.)*
 
-### Phase 2 — Verify the migration (DONE)
+### Next
 
-- [x] `docker compose up -d` and confirm container is healthy
-- [x] Run `./gradlew test` against the live database
-- [x] Smoke test: `import` → `run` → `report --last`
-- [ ] Delete the unused `data/backtest.mv.db` H2 file
+Roughly priority-ordered, but pick whatever's most useful when you sit down.
 
-### Phase 2.5 — Multi-source candle histories (DONE)
-
-Multiple historical-data providers can now coexist for the same `(symbol, timeframe, timestamp)`.
-
-- [x] `data_sources` table + `default` seed; `DataSourceRepository.getOrCreate` for upsert-by-name
-- [x] `candles.source_id` column folded into the primary key — old rows backfilled to `default` via guarded DO block
-- [x] `data_imports` audit table: `(source_id, instrument_id, timeframe, file_path, file_name, row_count, imported_at)`
-- [x] `import --source NAME` (default `default`); each import event recorded with file path + name
-- [x] `run --source NAME` filters candles by source; `BacktestResult.dataSource` persisted to `backtest_results.data_source`
-- [x] `DatabaseManager.runSchema()` splitter respects `$tag$ ... $tag$` so DO blocks survive intact
-
-### Phase 3 — Make it fast for ML training/testing (IN PROGRESS)
-
-The DB swap alone doesn't speed up NN training — the strategy still loads candles row-by-row and recomputes features on every run.
-
-- [ ] Add TimescaleDB **compression** policy on older candle chunks
-- [ ] Add **continuous aggregates** for D1 → W1 / M1 rollups
+**Perf / ML (was Phase 3):**
+- [ ] TimescaleDB **compression** policy on older candle chunks
+- [ ] **Continuous aggregates** for D1 → W1 / M1 rollups
 - [ ] Cache extracted feature matrices to disk (Parquet or ND4J binary), keyed by `(symbol, timeframe, range, lookback)`
-- [x] **3.1** Persist trained NN models (don't retrain on every backtest) — see [Model cache](#model-cache) below
 - [ ] Split `train` and `run` into separate CLI subcommands
 
-### Phase 4 — Data pipeline polish (LATER)
-
-- [ ] Bulk CSV import via PostgreSQL `COPY` (10–50× faster than batched inserts)
+**Data pipeline polish (was Phase 4):**
 - [ ] Index tuning on `backtest_results` for the `report --list` query
-- [ ] Dataset / model versioning (track which candles + feature config produced which model)
+- [ ] Dataset / model versioning — retain prior models per cache key instead of overwriting (the Models page already exposes the training fingerprint, but there's no historical retention)
 
-### Phase 5 — Web frontend (NOT STARTED)
+**Housekeeping:**
+- [ ] Delete the leftover `data/backtest.mv.db` H2 file (still on disk after the Postgres migration)
 
-Layer a Node + React UI on top of the existing Java CLI. Java keeps owning writes (imports, backtests); Node reads Postgres directly. Each step below is small enough to finish independently — pick up wherever the last one left off.
+### Done
 
-#### Phase 5A — Docs server (each step ~5 min, resumable)
+Compressed view — see git log for per-step detail.
 
-- [x] **5A.1** `web/server/` skeleton: `package.json` (express, marked), single `server.js` listening on `:3000`, hello-world route
-- [x] **5A.2** `GET /readme` reads `../../README.md`, renders via `marked`, returns HTML
-- [x] **5A.3** `GET /architecture` same for `ARCHITECTURE.md`
-- [x] **5A.4** `GET /` index page linking to `/readme` and `/architecture`; minimal CSS for readability
-
-#### Phase 5B — Read-only API (each step ~10 min)
-
-- [x] **5B.1** Add `pg` dependency; shared `db.js` Pool wired to `application.properties` values (or env vars)
-- [x] **5B.2** `GET /api/sources` — list `data_sources` rows
-- [x] **5B.3** `GET /api/instruments` — list `instruments` with per-source candle counts
-- [x] **5B.4** `GET /api/imports` — paginated list of `data_imports` joined with source + instrument names; filters: `source`, `instrument`
-- [x] **5B.5** `GET /api/results` — paginated `backtest_results` summary (no `result_json`); filters: `strategy`, `instrument`, `source`
-- [x] **5B.6** `GET /api/results/:id` — full row including parsed `result_json` (trades + equity curve + metrics)
-
-#### Phase 5C — React UI (each step ~10–15 min)
-
-- [x] **5C.1** Scaffold `web/client/` via Vite (React + TypeScript) with `/api` proxy to `:3000`
-- [x] **5C.2** Top-level layout + navigation (Sources / Instruments / Imports / Results) — react-router + daisyUI navbar
-- [x] **5C.3** Sources + Imports tables (audit view: which file came from which provider, when)
-- [x] **5C.4** Instruments view (per-source candle counts + date range)
-- [x] **5C.5** Results list table (filter by strategy / instrument / source)
-- [x] **5C.6** Result detail page: metrics card + trade table
-- [x] **5C.7** Result detail page: equity curve chart (Recharts)
-
-#### Phase 5D — Run alongside the rest (each step ~5 min)
-
-- [x] **5D.1** Add `web` service(s) to `docker-compose.yml` so `docker compose up -d` brings up DB + web
-- [x] **5D.2** Document the `web/` workflow in `ARCHITECTURE.md` and the README quick start
+- **Database on PostgreSQL + TimescaleDB** (Phases 1 & 2): H2 → PG, HikariCP pool with `reWriteBatchedInserts=true`, idempotent `schema.sql` bootstrapped from `DatabaseManager.initialize()`, `candles` as a hypertable with PK `(instrument_id, timeframe, source_id, timestamp)`, smoke-tested end-to-end.
+- **Multi-source candle histories** (Phase 2.5): `data_sources` table, `candles.source_id` folded into PK with guarded backfill DO block, `data_imports` audit log, `--source NAME` on both `import` and `run`, `BacktestResult.dataSource` persisted.
+- **Trained-model cache** (Phase 3.1): `PersistableModelStrategy` interface; `ModelStore` writes `model.zip` + `normalizer.bin` + `metadata.json` under `data/models/<strategy>/<sha256>/`; cache key fingerprints the training data + hyperparams + DL4J version; `--retrain` forces invalidation. See [Model cache](#model-cache).
+- **COPY-based bulk import** (was Phase 4): `CandleRepository.saveAll` now writes via PostgreSQL `COPY` into a temp staging table, then `INSERT ... SELECT ... ON CONFLICT DO UPDATE` from staging into `candles` — preserves the re-import overwrite semantics while skipping per-row JDBC batch round-trips. First DB-touching test (`CandleRepositoryBulkUpsertTest`) checks the upsert path; skips when no DB is reachable.
+- **Web layer end-to-end** (Phases 5A–5D):
+  - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
+  - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
+  - Containerised: multi-stage `web/Dockerfile` bundles client `dist/` into the server image; `docker-compose.yml` brings DB + web up together.
 
 ---
 
