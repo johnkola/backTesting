@@ -5,6 +5,8 @@ import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
+import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
+import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,8 +29,9 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Verifies that {@link NeuralNetworkStrategy} uses the model cache when given
  * a {@link ModelContext}: training writes files to disk, a second strategy
- * with the same context loads the cached model, and {@code forceRetrain}
- * bypasses the cache.
+ * with the same context loads the cached model, {@link ModelLoadPolicy#TRAIN_FRESH}
+ * bypasses the cache, and {@link ModelLoadPolicy#LOAD_ONLY} raises
+ * {@link ModelNotCachedException} on miss.
  */
 class NeuralNetworkStrategyCacheTest {
 
@@ -67,8 +70,8 @@ class NeuralNetworkStrategyCacheTest {
         return p;
     }
 
-    private ModelContext ctx(ModelStore store, boolean forceRetrain) {
-        return new ModelContext(1L, 2L, Timeframe.D1, forceRetrain, store);
+    private ModelContext ctx(ModelStore store, ModelLoadPolicy policy) {
+        return new ModelContext(1L, 2L, Timeframe.D1, policy, store);
     }
 
     private StrategyContext at(int barIndex) {
@@ -81,7 +84,7 @@ class NeuralNetworkStrategyCacheTest {
 
         // First run: cache miss → trains → saves
         NeuralNetworkStrategy first = new NeuralNetworkStrategy();
-        first.setModelContext(ctx(store, false));
+        first.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
         first.initialize(series, params());
 
         // Files should exist somewhere under tmp/nn-feedforward/<key>/
@@ -96,7 +99,7 @@ class NeuralNetworkStrategyCacheTest {
 
         // Second run: cache hit → load
         NeuralNetworkStrategy second = new NeuralNetworkStrategy();
-        second.setModelContext(ctx(store, false));
+        second.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
         second.initialize(series, params());
 
         // Same warmup
@@ -115,20 +118,48 @@ class NeuralNetworkStrategyCacheTest {
     }
 
     @Test
-    void forceRetrainProducesUsableModelEvenWhenCacheExists(@TempDir Path tmp) {
+    void trainFreshPolicyProducesUsableModelEvenWhenCacheExists(@TempDir Path tmp) {
         ModelStore store = new ModelStore(tmp);
 
         NeuralNetworkStrategy first = new NeuralNetworkStrategy();
-        first.setModelContext(ctx(store, false));
+        first.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
         first.initialize(series, params());
 
         NeuralNetworkStrategy retrained = new NeuralNetworkStrategy();
-        retrained.setModelContext(ctx(store, true)); // forceRetrain
+        retrained.setModelContext(ctx(store, ModelLoadPolicy.TRAIN_FRESH));
         retrained.initialize(series, params());
 
         // Should still produce signals, no exceptions
         int warmup = retrained.getWarmupBars();
         StrategySignal signal = retrained.evaluate(at(warmup + 1));
+        assertNotNull(signal);
+    }
+
+    @Test
+    void loadOnlyPolicyThrowsWhenCacheIsEmpty(@TempDir Path tmp) {
+        ModelStore store = new ModelStore(tmp);
+
+        NeuralNetworkStrategy s = new NeuralNetworkStrategy();
+        s.setModelContext(ctx(store, ModelLoadPolicy.LOAD_ONLY));
+
+        assertThrows(ModelNotCachedException.class, () -> s.initialize(series, params()));
+    }
+
+    @Test
+    void loadOnlyPolicyLoadsWhenCacheExists(@TempDir Path tmp) {
+        ModelStore store = new ModelStore(tmp);
+
+        // Seed the cache via a normal LOAD_OR_TRAIN run.
+        NeuralNetworkStrategy seeded = new NeuralNetworkStrategy();
+        seeded.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
+        seeded.initialize(series, params());
+
+        // LOAD_ONLY against the populated cache should succeed and produce signals.
+        NeuralNetworkStrategy reader = new NeuralNetworkStrategy();
+        reader.setModelContext(ctx(store, ModelLoadPolicy.LOAD_ONLY));
+        reader.initialize(series, params());
+
+        StrategySignal signal = reader.evaluate(at(reader.getWarmupBars() + 1));
         assertNotNull(signal);
     }
 

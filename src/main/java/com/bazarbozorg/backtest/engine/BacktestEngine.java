@@ -14,6 +14,7 @@ import com.bazarbozorg.backtest.report.PerformanceMetrics;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
+import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
 import org.slf4j.Logger;
@@ -107,53 +108,34 @@ public class BacktestEngine {
     public BacktestResult run(String instrumentSymbol, Timeframe timeframe,
                                TradingStrategy strategy, Map<String, String> params,
                                ZonedDateTime from, ZonedDateTime to, String sourceName) {
-        return run(instrumentSymbol, timeframe, strategy, params, from, to, sourceName, false);
+        return run(instrumentSymbol, timeframe, strategy, params, from, to, sourceName,
+                ModelLoadPolicy.LOAD_ONLY);
     }
 
     /**
      * Variant of {@link #run(String, Timeframe, TradingStrategy, Map, ZonedDateTime, ZonedDateTime, String)}
-     * with an explicit {@code forceRetrain} flag for strategies that implement
-     * {@link PersistableModelStrategy}. When true, any cached model is ignored
-     * and the strategy must train from scratch.
+     * with an explicit {@link ModelLoadPolicy} for strategies that implement
+     * {@link PersistableModelStrategy}. The {@code run} CLI subcommand passes
+     * {@link ModelLoadPolicy#LOAD_ONLY}, so a cache miss raises
+     * {@link com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException}
+     * instead of silently retraining.
      */
     public BacktestResult run(String instrumentSymbol, Timeframe timeframe,
                                TradingStrategy strategy, Map<String, String> params,
                                ZonedDateTime from, ZonedDateTime to, String sourceName,
-                               boolean forceRetrain) {
+                               ModelLoadPolicy policy) {
         logger.info("Starting backtest: instrument={}, timeframe={}, strategy={}, source={}, from={}, to={}",
                 instrumentSymbol, timeframe, strategy.getName(), sourceName, from, to);
 
-        // Step 1: Load candles from DB
-        InstrumentRepository instrumentRepo = new InstrumentRepository(databaseManager);
-        CandleRepository candleRepo = new CandleRepository(databaseManager);
-        DataSourceRepository sourceRepo = new DataSourceRepository(databaseManager);
-
-        Instrument instrument = instrumentRepo.findBySymbol(instrumentSymbol)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Instrument not found: " + instrumentSymbol));
-
-        DataSource source = sourceRepo.findByName(sourceName)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Data source not found: " + sourceName));
-
-        List<Candle> candles = candleRepo.findByInstrumentAndTimeframe(
-                instrument.id(), source.id(), timeframe, from, to);
-
-        if (candles.isEmpty()) {
-            throw new IllegalStateException("No candle data found for " + instrumentSymbol
-                    + " (" + timeframe + ", source=" + sourceName + ") between " + from + " and " + to);
-        }
-
-        logger.info("Loaded {} candles for {}", candles.size(), instrumentSymbol);
-
-        // Step 2: Convert to BarSeries
-        BarSeries series = BarSeriesConverter.convert(instrumentSymbol, candles);
-        logger.info("Converted to BarSeries with {} bars", series.getBarCount());
+        Prepared prep = prepare(instrumentSymbol, timeframe, from, to, sourceName);
+        Instrument instrument = prep.instrument();
+        DataSource source = prep.source();
+        BarSeries series = prep.series();
 
         // Step 3: Initialize strategy (passing a persistence context first if supported)
         if (strategy instanceof PersistableModelStrategy persistable) {
             ModelContext ctx = new ModelContext(
-                    instrument.id(), source.id(), timeframe, forceRetrain, modelStore);
+                    instrument.id(), source.id(), timeframe, policy, modelStore);
             persistable.setModelContext(ctx);
         }
         strategy.initialize(series, params);
@@ -251,6 +233,94 @@ public class BacktestEngine {
                 modelCacheKey,
                 modelCacheHit);
     }
+
+    /**
+     * Train (or load) a model for a {@link PersistableModelStrategy} without running the
+     * bar-by-bar backtest loop. Shares the load-candles-and-build-series prep with
+     * {@link #run}; the strategy's {@link com.bazarbozorg.backtest.strategy.persistence.ModelContext}
+     * is wired with the supplied {@link ModelLoadPolicy} so callers get exactly the
+     * cache-vs-train behaviour they asked for.
+     *
+     * <p>Throws {@link IllegalArgumentException} if {@code strategy} does not implement
+     * {@link PersistableModelStrategy} (i.e. has nothing to train).
+     */
+    public TrainingSummary train(String instrumentSymbol, Timeframe timeframe,
+                                 TradingStrategy strategy, Map<String, String> params,
+                                 ZonedDateTime from, ZonedDateTime to, String sourceName,
+                                 ModelLoadPolicy policy) {
+        if (!(strategy instanceof PersistableModelStrategy persistable)) {
+            throw new IllegalArgumentException("Strategy '" + strategy.getName()
+                    + "' does not support training (not a PersistableModelStrategy).");
+        }
+
+        logger.info("Starting training: instrument={}, timeframe={}, strategy={}, source={}, policy={}",
+                instrumentSymbol, timeframe, strategy.getName(), sourceName, policy);
+
+        Prepared prep = prepare(instrumentSymbol, timeframe, from, to, sourceName);
+
+        ModelContext ctx = new ModelContext(
+                prep.instrument().id(), prep.source().id(), timeframe, policy, modelStore);
+        persistable.setModelContext(ctx);
+        strategy.initialize(prep.series(), params);
+
+        ModelCacheOutcome outcome = persistable.getCacheOutcome().orElse(null);
+        String cacheKey = outcome != null ? outcome.cacheKey() : null;
+        boolean hit = outcome != null && outcome.hit();
+
+        return new TrainingSummary(
+                strategy.getName(),
+                instrumentSymbol,
+                timeframe,
+                sourceName,
+                prep.series().getBarCount(),
+                cacheKey,
+                hit);
+    }
+
+    private Prepared prepare(String instrumentSymbol, Timeframe timeframe,
+                              ZonedDateTime from, ZonedDateTime to, String sourceName) {
+        InstrumentRepository instrumentRepo = new InstrumentRepository(databaseManager);
+        CandleRepository candleRepo = new CandleRepository(databaseManager);
+        DataSourceRepository sourceRepo = new DataSourceRepository(databaseManager);
+
+        Instrument instrument = instrumentRepo.findBySymbol(instrumentSymbol)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Instrument not found: " + instrumentSymbol));
+
+        DataSource source = sourceRepo.findByName(sourceName)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Data source not found: " + sourceName));
+
+        List<Candle> candles = candleRepo.findByInstrumentAndTimeframe(
+                instrument.id(), source.id(), timeframe, from, to);
+
+        if (candles.isEmpty()) {
+            throw new IllegalStateException("No candle data found for " + instrumentSymbol
+                    + " (" + timeframe + ", source=" + sourceName + ") between " + from + " and " + to);
+        }
+
+        logger.info("Loaded {} candles for {}", candles.size(), instrumentSymbol);
+
+        BarSeries series = BarSeriesConverter.convert(instrumentSymbol, candles);
+        logger.info("Converted to BarSeries with {} bars", series.getBarCount());
+
+        return new Prepared(instrument, source, series);
+    }
+
+    private record Prepared(Instrument instrument, DataSource source, BarSeries series) {}
+
+    /**
+     * Outcome of a {@link #train} call: enough for the CLI to print a one-line status,
+     * with the cache key so the caller can correlate against the Models page or
+     * {@code metadata.json} on disk.
+     */
+    public record TrainingSummary(String strategyName,
+                                   String instrumentSymbol,
+                                   Timeframe timeframe,
+                                   String sourceName,
+                                   int barCount,
+                                   String cacheKey,
+                                   boolean cacheHit) {}
 
     /**
      * Processes a trading signal by creating and filling orders as needed.

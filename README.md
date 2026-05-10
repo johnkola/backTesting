@@ -45,7 +45,8 @@ Java 17 is required. The Gradle config sets the `--add-opens` JVM flags needed b
 | `import`           | Load OHLCV CSV (`Date,Open,High,Low,Close,Volume`); supports `--source` |
 | `list-instruments` | Show imported instruments                                            |
 | `list-strategies`  | Show registered strategies                                           |
-| `run`              | Execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source] [--retrain]`) |
+| `train`            | Train a `PersistableModelStrategy` and cache it on disk (`-s strategy -i SYMBOL -t timeframe [--source] [--force]`) — required before `run` for NN strategies |
+| `run`              | Execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source]`); errors out if a `PersistableModelStrategy` has no cached model |
 | `report --last`    | Print full report of the most recent backtest                        |
 | `report --list`    | Tabular summary of all saved backtests                               |
 
@@ -75,7 +76,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: COPY-based bulk import. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: `train` / `run` CLI split. Replace this line when you pick the next thing up.)*
 
 ### Next
 
@@ -85,7 +86,6 @@ Roughly priority-ordered, but pick whatever's most useful when you sit down.
 - [ ] TimescaleDB **compression** policy on older candle chunks
 - [ ] **Continuous aggregates** for D1 → W1 / M1 rollups
 - [ ] Cache extracted feature matrices to disk (Parquet or ND4J binary), keyed by `(symbol, timeframe, range, lookback)`
-- [ ] Split `train` and `run` into separate CLI subcommands
 
 **Data pipeline polish (was Phase 4):**
 - [ ] Index tuning on `backtest_results` for the `report --list` query
@@ -102,6 +102,7 @@ Compressed view — see git log for per-step detail.
 - **Multi-source candle histories** (Phase 2.5): `data_sources` table, `candles.source_id` folded into PK with guarded backfill DO block, `data_imports` audit log, `--source NAME` on both `import` and `run`, `BacktestResult.dataSource` persisted.
 - **Trained-model cache** (Phase 3.1): `PersistableModelStrategy` interface; `ModelStore` writes `model.zip` + `normalizer.bin` + `metadata.json` under `data/models/<strategy>/<sha256>/`; cache key fingerprints the training data + hyperparams + DL4J version; `--retrain` forces invalidation. See [Model cache](#model-cache).
 - **COPY-based bulk import** (was Phase 4): `CandleRepository.saveAll` now writes via PostgreSQL `COPY` into a temp staging table, then `INSERT ... SELECT ... ON CONFLICT DO UPDATE` from staging into `candles` — preserves the re-import overwrite semantics while skipping per-row JDBC batch round-trips. First DB-touching test (`CandleRepositoryBulkUpsertTest`) checks the upsert path; skips when no DB is reachable.
+- **`train` / `run` CLI split** (was Phase 3): new `train` subcommand trains a `PersistableModelStrategy` and caches the model on disk; `run` is now strict and refuses to backtest without a cached model (prints the exact `train` invocation to fix it). `ModelContext.forceRetrain` retired in favour of a `ModelLoadPolicy` enum (`LOAD_OR_TRAIN` / `TRAIN_FRESH` / `LOAD_ONLY`); `run --retrain` retired in favour of `train --force`. New `ModelNotCachedException` is what `run` catches to print the hint.
 - **Web layer end-to-end** (Phases 5A–5D):
   - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
@@ -122,12 +123,21 @@ data/models/<strategy>/<sha256-cache-key>/
 
 The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last bar epoch + bar count), every hyperparameter, and the DL4J version. Any of those changing produces a new key and forces fresh training.
 
-**Invalidation.** Re-importing candles for the same `(instrument, source, timeframe)` changes the bar count and/or last-bar timestamp, which changes the cache key — so a re-import naturally retrains on the next run. Editing rows directly in the database without re-importing will **not** invalidate the cache; use `--retrain` if you do this.
-
-**Force retrain.** Pass `--retrain` to `run`:
+**Train first, then run.** Since the `train` / `run` split, `run` will refuse to backtest an NN strategy without a cached model. The workflow is:
 
 ```bash
-./gradlew run --args="run -s nn-feedforward -i AAPL -t D1 --retrain"
+./gradlew run --args="train -s nn-feedforward -i AAPL -t D1"
+./gradlew run --args="run   -s nn-feedforward -i AAPL -t D1"
+```
+
+If `run` is invoked without a matching cached model, it prints the exact `train` command to run and exits non-zero.
+
+**Invalidation.** Re-importing candles for the same `(instrument, source, timeframe)` changes the bar count and/or last-bar timestamp, which changes the cache key — so a subsequent `train` produces a fresh model under a new key. Editing rows directly in the database without re-importing will **not** invalidate the cache; use `train --force` if you do this.
+
+**Force retrain.** Pass `--force` to `train` to ignore the cache and train from scratch (then save under the same key):
+
+```bash
+./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --force"
 ```
 
 **DL4J version pinning.** The runtime DL4J version is recorded in `metadata.json`. If the project bumps DL4J, cached models from the previous version are ignored (logged as `DL4J version mismatch`) and retrained. There is no automatic eviction of orphaned model directories — `rm -rf data/models/` is the manual cleanup.

@@ -11,12 +11,12 @@ import com.bazarbozorg.backtest.model.enums.Timeframe;
  * @param instrumentId  database id of the instrument being backtested
  * @param sourceId      database id of the data source
  * @param timeframe     the candle timeframe (e.g. D1, H1)
- * @param forceRetrain  if true, a cache hit must be ignored and the model retrained
+ * @param policy        cache-vs-train decision for this invocation
  * @param modelStore    the filesystem-backed store used to load/save models
  */
 public record ModelContext(long instrumentId,
                            long sourceId,
                            Timeframe timeframe,
-                           boolean forceRetrain,
+                           ModelLoadPolicy policy,
                            ModelStore modelStore) {
 }

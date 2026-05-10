@@ -6,7 +6,9 @@ import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
 import com.bazarbozorg.backtest.strategy.persistence.LoadedModel;
 import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
+import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelMetadata;
+import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
@@ -111,8 +113,8 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
             return;
         }
 
-        // Try cache before training
-        if (modelContext != null && !modelContext.forceRetrain()) {
+        // Cache-vs-train decision driven by ModelContext.policy.
+        if (modelContext != null && modelContext.policy() != ModelLoadPolicy.TRAIN_FRESH) {
             Optional<LoadedModel> hit = tryLoadCached();
             if (hit.isPresent()) {
                 LoadedModel loaded = hit.get();
@@ -124,9 +126,12 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
                         loaded.metadata().validationAccuracyPct());
                 return;
             }
+            if (modelContext.policy() == ModelLoadPolicy.LOAD_ONLY) {
+                throw new ModelNotCachedException(getName(), computeCacheKey());
+            }
             logger.info("No cached NN model found; training fresh.");
         } else if (modelContext != null) {
-            logger.info("--retrain set; ignoring any cached NN model.");
+            logger.info("TRAIN_FRESH policy set; ignoring any cached NN model.");
         }
 
         long trainStart = System.currentTimeMillis();

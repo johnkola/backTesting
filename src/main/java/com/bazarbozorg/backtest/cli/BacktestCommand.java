@@ -15,6 +15,8 @@ import com.bazarbozorg.backtest.model.slippage.SlippageModel;
 import com.bazarbozorg.backtest.report.ConsoleReportFormatter;
 import com.bazarbozorg.backtest.strategy.StrategyRegistry;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
+import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
+import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.util.DateTimeUtils;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -62,10 +64,6 @@ public class BacktestCommand implements Runnable {
     @Option(names = {"--source"}, defaultValue = "default",
             description = "Data source name to backtest against (default: ${DEFAULT-VALUE})")
     private String source;
-
-    @Option(names = {"--retrain"},
-            description = "For ML strategies: ignore any cached model and train from scratch")
-    private boolean retrain;
 
     @Override
     public void run() {
@@ -118,7 +116,8 @@ public class BacktestCommand implements Runnable {
                     dbManager, commissionModel, slippageModel, initialCapital);
 
             BacktestResult result = engine.run(
-                    instrumentSymbol, timeframe, strategy, strategyParams, from, to, source, retrain);
+                    instrumentSymbol, timeframe, strategy, strategyParams, from, to, source,
+                    ModelLoadPolicy.LOAD_ONLY);
 
             if (result == null) {
                 System.err.println("Backtest returned no results.");
@@ -134,6 +133,11 @@ public class BacktestCommand implements Runnable {
             resultRepo.save(result);
             System.out.println("Result saved to database.");
 
+        } catch (ModelNotCachedException e) {
+            System.err.println(e.getMessage());
+            System.err.println("Hint: ./gradlew run --args=\"train -s " + strategyName
+                    + " -i " + instrumentSymbol + " -t " + timeframeCode
+                    + " --source " + source + "\"");
         } catch (Exception e) {
             System.err.println("Backtest failed: " + e.getMessage());
             e.printStackTrace();

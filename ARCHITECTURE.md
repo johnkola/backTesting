@@ -28,7 +28,8 @@ The application entry point is `BacktestApplication` (picocli), which dispatches
 
 - `import` — load CSV OHLCV (`-f file -i SYMBOL -t STOCK|FOREX --timeframe D1 [--source NAME]`)
 - `list-strategies` / `list-instruments`
-- `run` — execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source NAME] --from --to -p key=value`)
+- `train` — train a `PersistableModelStrategy` and write to the on-disk cache (`-s strategy -i SYMBOL -t timeframe [--source NAME] [--from] [--to] [--force]`). Does not run the bar-by-bar loop.
+- `run` — execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source NAME] --from --to -p key=value`). For `PersistableModelStrategy`, requires a cached model — there's no auto-train fallback. Catches `ModelNotCachedException` and prints the exact `train` command to fix the miss.
 - `report --last` / `report --list` — view persisted results
 
 `--source` defaults to `default` on both `import` and `run`. Each `(instrument, timeframe, source, timestamp)` is its own candle row, so the same symbol can hold parallel histories from different providers without overwriting.
@@ -79,9 +80,9 @@ The DL4J-based `NeuralNetworkStrategy` is structurally different from the indica
 
 ### Model persistence (`strategy/persistence/`)
 
-ML strategies opt in to filesystem caching by implementing `PersistableModelStrategy`. Before calling `strategy.initialize`, `BacktestEngine` checks for that interface and hands the strategy a `ModelContext` carrying `(instrumentId, sourceId, timeframe, forceRetrain, ModelStore)`. The strategy is responsible for computing a deterministic cache key (`ModelStore.computeCacheKey`), trying `store.load(strategyName, key)`, and on miss training + calling `store.save(...)` to write the network, the fitted normalizer, and a JSON metadata sidecar.
+ML strategies opt in to filesystem caching by implementing `PersistableModelStrategy`. Before calling `strategy.initialize`, `BacktestEngine` checks for that interface and hands the strategy a `ModelContext` carrying `(instrumentId, sourceId, timeframe, ModelLoadPolicy, ModelStore)`. The strategy is responsible for computing a deterministic cache key (`ModelStore.computeCacheKey`), trying `store.load(strategyName, key)`, and acting on the policy: `LOAD_OR_TRAIN` falls through to a train + `store.save(...)` on miss, `TRAIN_FRESH` skips the lookup entirely, and `LOAD_ONLY` throws `ModelNotCachedException` rather than training. The training step writes the network, the fitted normalizer, and a JSON metadata sidecar in one call.
 
-`ModelStore` is a thin wrapper around `data/models/<strategy>/<key>/`. There is no DB-backed model registry yet — the cache key is the filename, and `metadata.json` is debug info plus a DL4J version stamp used to reject models trained against a different runtime. The `--retrain` CLI flag flips `forceRetrain` on the context so a manual edit to the candle table (which doesn't change the bar count / last-bar timestamp fingerprint) can still be invalidated. See the README "Model cache" section for the user-facing contract.
+`ModelStore` is a thin wrapper around `data/models/<strategy>/<key>/`. There is no DB-backed model registry yet — the cache key is the filename, and `metadata.json` is debug info plus a DL4J version stamp used to reject models trained against a different runtime. The `BacktestEngine.train` entry point shares its candle-load + series-build prep with `run` (see `BacktestEngine.prepare`) so a `train` invocation goes through the same data path as the equivalent `run`; only the post-`initialize` steps differ (`train` returns a `TrainingSummary`, `run` continues into the bar loop). See the README "Model cache" section for the user-facing contract.
 
 After a backtest runs, the engine reads the `(modelCacheKey, modelCacheHit)` pair off the strategy and persists both onto `BacktestResult`; the row is stored in `backtest_results.model_cache_key` and `model_cache_hit`. Both fields are surfaced through `/api/results` and `/api/results/:id` so the React UI can render a `cache hit` / `fresh` badge on each result, and `/api/models` does a `GROUP BY model_cache_key` against the same column to compute the "Used in" count on the Models page.
 

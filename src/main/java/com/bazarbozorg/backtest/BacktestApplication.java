@@ -5,6 +5,7 @@ import com.bazarbozorg.backtest.cli.ImportDataCommand;
 import com.bazarbozorg.backtest.cli.ListInstrumentsCommand;
 import com.bazarbozorg.backtest.cli.ListStrategiesCommand;
 import com.bazarbozorg.backtest.cli.ReportCommand;
+import com.bazarbozorg.backtest.cli.TrainCommand;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
@@ -16,6 +17,7 @@ import picocli.CommandLine.Command;
              ImportDataCommand.class,
              ListStrategiesCommand.class,
              ListInstrumentsCommand.class,
+             TrainCommand.class,
              BacktestCommand.class,
              ReportCommand.class,
          })
