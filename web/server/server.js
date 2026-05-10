@@ -13,6 +13,13 @@ const port = process.env.PORT || 3000;
 // the docs into /app/docs).
 const docsDir = process.env.DOCS_DIR || path.resolve(__dirname, '..', '..');
 
+// Where trained NN models live on disk: <root>/data/models/<strategy>/<sha>/
+// (model.zip + normalizer.bin + metadata.json). The Java app writes these
+// during backtests. In containerised deploys mount the host data/models/
+// volume into the web container and override MODELS_DIR; without that the
+// endpoint returns an empty list.
+const modelsDir = process.env.MODELS_DIR || path.resolve(__dirname, '..', '..', 'data', 'models');
+
 // Built React assets land here when the Dockerfile copies the client `dist/`.
 // In local dev (no `public/`), we fall back to the legacy daisyUI home page.
 const clientDist = path.join(__dirname, 'public');
@@ -430,6 +437,98 @@ app.get('/api/results/:id', async (req, res) => {
       createdAt: r.created_at,
       result,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function readModelsFromDisk() {
+  if (!fs.existsSync(modelsDir)) return [];
+  const out = [];
+  for (const strategyEntry of fs.readdirSync(modelsDir, { withFileTypes: true })) {
+    if (!strategyEntry.isDirectory()) continue;
+    const strategyDir = path.join(modelsDir, strategyEntry.name);
+    for (const cacheEntry of fs.readdirSync(strategyDir, { withFileTypes: true })) {
+      if (!cacheEntry.isDirectory()) continue;
+      const dir = path.join(strategyDir, cacheEntry.name);
+      const metaPath = path.join(dir, 'metadata.json');
+      if (!fs.existsSync(metaPath)) continue;
+      try {
+        const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        // metadata.json mirrors Java's ModelMetadata record (camelCase). Pass
+        // through verbatim; the DB join later adds instrumentSymbol +
+        // sourceName + backtestCount.
+        out.push({ ...raw, diskPath: dir });
+      } catch (err) {
+        console.error(`Failed to parse ${metaPath}:`, err);
+      }
+    }
+  }
+  return out;
+}
+
+app.get('/api/models', async (req, res) => {
+  try {
+    const entries = readModelsFromDisk();
+    if (entries.length === 0) {
+      return res.json({ items: [], modelsDir });
+    }
+
+    const instrumentIds = [...new Set(entries.map((e) => e.instrumentId).filter((v) => v != null))];
+    const sourceIds = [...new Set(entries.map((e) => e.sourceId).filter((v) => v != null))];
+    const cacheKeys = [...new Set(entries.map((e) => e.cacheKey).filter((v) => v != null))];
+
+    const [instrumentsQ, sourcesQ, usageQ] = await Promise.all([
+      instrumentIds.length
+        ? pool.query(
+            'SELECT id, symbol FROM instruments WHERE id = ANY($1::bigint[])',
+            [instrumentIds],
+          )
+        : Promise.resolve({ rows: [] }),
+      sourceIds.length
+        ? pool.query(
+            'SELECT id, name FROM data_sources WHERE id = ANY($1::bigint[])',
+            [sourceIds],
+          )
+        : Promise.resolve({ rows: [] }),
+      cacheKeys.length
+        ? pool.query(
+            `SELECT model_cache_key, COUNT(*)::int AS n
+               FROM backtest_results
+              WHERE model_cache_key = ANY($1::text[])
+              GROUP BY model_cache_key`,
+            [cacheKeys],
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
+
+    const instrumentMap = new Map(instrumentsQ.rows.map((r) => [String(r.id), r.symbol]));
+    const sourceMap = new Map(sourcesQ.rows.map((r) => [String(r.id), r.name]));
+    const usageMap = new Map(usageQ.rows.map((r) => [r.model_cache_key, r.n]));
+
+    const items = entries.map((e) => ({
+      cacheKey: e.cacheKey,
+      strategyName: e.strategyName,
+      instrumentId: e.instrumentId,
+      instrumentSymbol: instrumentMap.get(String(e.instrumentId)) ?? null,
+      sourceId: e.sourceId,
+      sourceName: sourceMap.get(String(e.sourceId)) ?? null,
+      timeframe: e.timeframe,
+      trainingFromEpochSec: e.trainingFromEpochSec,
+      trainingToEpochSec: e.trainingToEpochSec,
+      trainingBarCount: e.trainingBarCount,
+      hyperparams: e.hyperparams ?? {},
+      dl4jVersion: e.dl4jVersion,
+      validationAccuracyPct: e.validationAccuracyPct,
+      trainingDurationMs: e.trainingDurationMs,
+      createdAt: e.createdAt,
+      backtestCount: usageMap.get(e.cacheKey) ?? 0,
+      diskPath: e.diskPath,
+    }));
+
+    items.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+
+    res.json({ items, modelsDir });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

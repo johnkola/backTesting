@@ -6,6 +6,7 @@ import InstrumentsPage from './pages/InstrumentsPage'
 import ImportsPage from './pages/ImportsPage'
 import ResultsPage from './pages/ResultsPage'
 import ResultDetailPage from './pages/ResultDetailPage'
+import ModelsPage from './pages/ModelsPage'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/imports" element={<ImportsPage />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/results/:id" element={<ResultDetailPage />} />
+          <Route path="/models" element={<ModelsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

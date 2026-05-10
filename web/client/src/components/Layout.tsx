@@ -5,6 +5,7 @@ const links = [
   { to: '/instruments', label: 'Instruments' },
   { to: '/imports', label: 'Imports' },
   { to: '/results', label: 'Results' },
+  { to: '/models', label: 'Models' },
 ]
 
 export default function Layout() {

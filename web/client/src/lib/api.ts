@@ -101,6 +101,26 @@ export type PerformanceMetrics = {
   [k: string]: unknown
 }
 
+export type TrainedModel = {
+  cacheKey: string
+  strategyName: string
+  instrumentId: string | number | null
+  instrumentSymbol: string | null
+  sourceId: string | number | null
+  sourceName: string | null
+  timeframe: string
+  trainingFromEpochSec: number | null
+  trainingToEpochSec: number | null
+  trainingBarCount: number | null
+  hyperparams: Record<string, string>
+  dl4jVersion: string | null
+  validationAccuracyPct: number | null
+  trainingDurationMs: number | null
+  createdAt: string | null
+  backtestCount: number
+  diskPath: string
+}
+
 export type ResultDetail = ResultSummary & {
   result: {
     strategyName: string
@@ -152,6 +172,8 @@ export const api = {
   ) => getJson<Paginated<ResultSummary>>(`/api/results?${qs(params)}`, signal),
   result: (id: string, signal?: AbortSignal) =>
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
+  models: (signal?: AbortSignal) =>
+    getJson<{ items: TrainedModel[]; modelsDir: string }>('/api/models', signal),
 }
 
 function qs(params: Record<string, unknown>): string {

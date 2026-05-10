@@ -5,6 +5,7 @@ const cards = [
   { to: '/instruments', title: 'Instruments', desc: 'Symbols loaded into the database with per-source candle counts and date ranges.' },
   { to: '/imports', title: 'Imports', desc: 'Audit log of every CSV import: which file, which source, when, how many rows.' },
   { to: '/results', title: 'Results', desc: 'Saved backtest runs. Open one to see metrics, trades, and the equity curve.' },
+  { to: '/models', title: 'Models', desc: 'Trained NN models on disk: hyperparameters, validation accuracy, and which backtests reused them.' },
 ]
 
 export default function HomePage() {
