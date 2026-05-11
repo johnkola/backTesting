@@ -442,6 +442,23 @@ app.get('/api/results/:id', async (req, res) => {
   }
 });
 
+// Compact-ISO-8601-with-millis-UTC, matches ModelStore.VERSION_FORMAT in Java.
+const VERSION_DIR_RE = /^\d{8}T\d{6}\.\d{3}Z$/;
+
+function pushEntryIfMetadata(out, dir, versionId) {
+  const metaPath = path.join(dir, 'metadata.json');
+  if (!fs.existsSync(metaPath)) return;
+  try {
+    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    // metadata.json mirrors Java's ModelMetadata record (camelCase). Pass
+    // through verbatim; the DB join later adds instrumentSymbol +
+    // sourceName + backtestCount. versionId is null for legacy flat entries.
+    out.push({ ...raw, diskPath: dir, versionId });
+  } catch (err) {
+    console.error(`Failed to parse ${metaPath}:`, err);
+  }
+}
+
 function readModelsFromDisk() {
   if (!fs.existsSync(modelsDir)) return [];
   const out = [];
@@ -450,18 +467,23 @@ function readModelsFromDisk() {
     const strategyDir = path.join(modelsDir, strategyEntry.name);
     for (const cacheEntry of fs.readdirSync(strategyDir, { withFileTypes: true })) {
       if (!cacheEntry.isDirectory()) continue;
-      const dir = path.join(strategyDir, cacheEntry.name);
-      const metaPath = path.join(dir, 'metadata.json');
-      if (!fs.existsSync(metaPath)) continue;
-      try {
-        const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-        // metadata.json mirrors Java's ModelMetadata record (camelCase). Pass
-        // through verbatim; the DB join later adds instrumentSymbol +
-        // sourceName + backtestCount.
-        out.push({ ...raw, diskPath: dir });
-      } catch (err) {
-        console.error(`Failed to parse ${metaPath}:`, err);
+      const keyDir = path.join(strategyDir, cacheEntry.name);
+
+      // Versioned layout: <strategy>/<key>/<versionId>/metadata.json. List
+      // version subdirs and emit one row per version. The Models page then
+      // shows the full history under each cache key.
+      const versionDirs = fs.readdirSync(keyDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && VERSION_DIR_RE.test(e.name));
+      if (versionDirs.length > 0) {
+        for (const v of versionDirs) {
+          pushEntryIfMetadata(out, path.join(keyDir, v.name), v.name);
+        }
+        continue;
       }
+
+      // Legacy flat layout: metadata.json directly under <key>/. Pre-versioning
+      // entries written before model-versioning shipped.
+      pushEntryIfMetadata(out, keyDir, null);
     }
   }
   return out;
@@ -508,6 +530,7 @@ app.get('/api/models', async (req, res) => {
 
     const items = entries.map((e) => ({
       cacheKey: e.cacheKey,
+      versionId: e.versionId,
       strategyName: e.strategyName,
       instrumentId: e.instrumentId,
       instrumentSymbol: instrumentMap.get(String(e.instrumentId)) ?? null,

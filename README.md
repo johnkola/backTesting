@@ -76,7 +76,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: D1 → W1 / M1 continuous aggregates. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: model versioning, minimum cut. Replace this line when you pick the next thing up.)*
 
 ### Next
 
@@ -84,7 +84,8 @@ Roughly priority-ordered, but pick whatever's most useful when you sit down.
 
 
 **Data pipeline polish (was Phase 4):**
-- [ ] Dataset / model versioning — retain prior models per cache key instead of overwriting (the Models page already exposes the training fingerprint, but there's no historical retention)
+- [ ] Version pinning on `run` — let users backtest against a specific historical model version, not just the latest. Builds on the versioning layout that just shipped.
+- [ ] Retention policy for old model versions (keep-last-N, age out, manual mark-and-prune)
 
 
 ### Done
@@ -100,6 +101,7 @@ Compressed view — see git log for per-step detail.
 - **TimescaleDB compression on `candles`** (was Phase 3): native compression enabled on the hypertable with `compress_segmentby='instrument_id, source_id, timeframe'` and `compress_orderby='timestamp DESC'`. Auto-compress policy targets chunks older than 7 days (typical 10–20× storage reduction). Re-imports of compressed chunks require manual `decompress_chunk()` — see Storage compression below. Schema bootstrap stays idempotent via a guard on `timescaledb_information.hypertables.compression_enabled`.
 - **Index tuning on `backtest_results`** (was Phase 4): added `idx_backtest_results_created_at_desc` on `(created_at DESC)` so `report --list`, `report --last`, and `/api/results` can read in already-sorted order; added a partial `idx_backtest_results_model_cache_key` on `(model_cache_key) WHERE model_cache_key IS NOT NULL` for the Models page's `WHERE model_cache_key = ANY(...) GROUP BY` aggregate. Plus an `EXPLAIN`-based test guards against future regressions silently disabling the index.
 - **D1 → W1 / M1 continuous aggregates** (was Phase 3): TimescaleDB materialized views `candles_weekly` and `candles_monthly` computed lazily from `candles WHERE timeframe='D1'` (FIRST/LAST/MAX/MIN/SUM on each `time_bucket`). Refresh policies run hourly (W1, 90-day lookback) and twice-daily (M1, 365-day lookback). Infrastructure only — no engine or web consumer yet; the views sit alongside the hypertable so a future multi-timeframe path can `SELECT … FROM candles_weekly` instead of re-aggregating client-side.
+- **Model versioning, minimum cut** (was Phase 4): `ModelStore.save()` now writes each train output to `data/models/<strategy>/<key>/<versionId>/` (where `versionId` is a compact UTC timestamp like `20260511T134522.123Z`) instead of overwriting the key dir. `load()` returns the lexicographically-latest version; legacy flat-layout entries still load transparently. `/api/models` walks the new layer and emits one row per version, and the Models page gains a Version column. Two ergonomic follow-ups (version pinning on `run`, retention policy) moved to Next.
 - **Web layer end-to-end** (Phases 5A–5D):
   - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
@@ -112,13 +114,17 @@ Compressed view — see git log for per-step detail.
 Strategies that implement `PersistableModelStrategy` (currently just `nn-feedforward`) cache their trained model on disk so repeated backtests with the same configuration skip the train step. The DL4J network and its fitted feature normalizer are saved under:
 
 ```
-data/models/<strategy>/<sha256-cache-key>/
+data/models/<strategy>/<sha256-cache-key>/<versionId>/
   model.zip         # serialized MultiLayerNetwork (weights + updater)
   normalizer.bin    # serialized NormalizerMinMaxScaler
   metadata.json     # cache key, hyperparams, training fingerprint, validation accuracy, dl4j version
 ```
 
-The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last bar epoch + bar count), every hyperparameter, and the DL4J version. Any of those changing produces a new key and forces fresh training.
+`<versionId>` is a compact UTC timestamp like `20260511T134522.123Z`. Each `train` invocation writes a new version subdir rather than overwriting the previous one, so a `train --force` (or any second train at the same cache key) preserves the prior model. `load()` returns the lexicographically-latest version under the key — that's "the current model" for `run` purposes.
+
+Legacy flat-layout entries (files directly under `<sha256-cache-key>/`, written before versioning shipped) still load transparently. No migration needed.
+
+The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last bar epoch + bar count), every hyperparameter, and the DL4J version. Any of those changing produces a new key and forces fresh training (and therefore a new version directory under a new key).
 
 **Train first, then run.** Since the `train` / `run` split, `run` will refuse to backtest an NN strategy without a cached model. The workflow is:
 

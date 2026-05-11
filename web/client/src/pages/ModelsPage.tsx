@@ -20,6 +20,20 @@ function epochRange(from: number | null, to: number | null): string {
   return f === t ? f : `${f} → ${t}`
 }
 
+/** Format the compact version id ("20260511T134522.123Z") as e.g. "05-11 13:45". */
+function formatVersion(v: string | null): string {
+  if (!v) return 'legacy'
+  const m = v.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.\d{3}Z$/)
+  if (!m) return v
+  const [, , mo, d, hh, mm] = m
+  return `${mo}-${d} ${hh}:${mm}`
+}
+
+/** Stable React key per row: a (cacheKey, versionId) pair uniquely identifies a row. */
+function rowKey(m: TrainedModel): string {
+  return `${m.cacheKey}:${m.versionId ?? 'legacy'}`
+}
+
 export default function ModelsPage() {
   const [data, setData] = useState<{ items: TrainedModel[]; modelsDir: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +87,7 @@ export default function ModelsPage() {
                 <th className="text-right">Val. acc.</th>
                 <th className="text-right">Train time</th>
                 <th>Created</th>
+                <th>Version</th>
                 <th className="text-right">Used in</th>
                 <th>Cache key</th>
                 <th></th>
@@ -80,9 +95,10 @@ export default function ModelsPage() {
             </thead>
             <tbody>
               {data.items.map((m) => {
-                const isOpen = expanded === m.cacheKey
+                const key = rowKey(m)
+                const isOpen = expanded === key
                 return (
-                  <Fragment key={m.cacheKey}>
+                  <Fragment key={key}>
                     <tr className="hover:bg-base-300">
                       <td className="font-mono">{m.strategyName}</td>
                       <td className="font-mono">{m.instrumentSymbol ?? `#${m.instrumentId ?? '?'}`}</td>
@@ -98,6 +114,9 @@ export default function ModelsPage() {
                       <td className="text-right tabular-nums">{ms(m.trainingDurationMs)}</td>
                       <td className="whitespace-nowrap">
                         {m.createdAt ? new Date(m.createdAt).toLocaleString() : '—'}
+                      </td>
+                      <td className="whitespace-nowrap font-mono text-xs" title={m.versionId ?? 'pre-versioning entry'}>
+                        {m.versionId ? formatVersion(m.versionId) : <span className="text-base-content/40">legacy</span>}
                       </td>
                       <td className="text-right tabular-nums">
                         {m.backtestCount > 0 ? (
@@ -123,7 +142,7 @@ export default function ModelsPage() {
                       <td>
                         <button
                           className="btn btn-xs btn-ghost"
-                          onClick={() => setExpanded(isOpen ? null : m.cacheKey)}
+                          onClick={() => setExpanded(isOpen ? null : key)}
                         >
                           {isOpen ? 'hide' : 'params'}
                         </button>
@@ -131,7 +150,7 @@ export default function ModelsPage() {
                     </tr>
                     {isOpen && (
                       <tr className="bg-base-300/40">
-                        <td colSpan={12}>
+                        <td colSpan={13}>
                           <div className="p-3 space-y-3">
                             <div className="flex flex-wrap gap-2">
                               <span className="badge badge-outline font-mono">

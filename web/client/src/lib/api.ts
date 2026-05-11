@@ -103,6 +103,9 @@ export type PerformanceMetrics = {
 
 export type TrainedModel = {
   cacheKey: string
+  /** Compact ISO-8601 UTC timestamp (e.g. "20260511T134522.123Z"). Null for
+   *  legacy entries written before model versioning shipped. */
+  versionId: string | null
   strategyName: string
   instrumentId: string | number | null
   instrumentSymbol: string | null
