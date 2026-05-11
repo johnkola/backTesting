@@ -12,6 +12,7 @@ import com.bazarbozorg.backtest.model.slippage.SlippageModel;
 import com.bazarbozorg.backtest.report.MetricsCalculator;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
+import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
 import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
@@ -41,12 +42,15 @@ public class BacktestEngine {
 
     /** Default location for the trained-model cache (relative to the working dir). */
     private static final Path DEFAULT_MODEL_STORE_DIR = Path.of("data", "models");
+    /** Default location for the feature-matrix cache (relative to the working dir). */
+    private static final Path DEFAULT_FEATURE_STORE_DIR = Path.of("data", "features");
 
     private final DatabaseManager databaseManager;
     private final CommissionModel commissionModel;
     private final SlippageModel slippageModel;
     private final double initialCapital;
     private final ModelStore modelStore;
+    private final FeatureStore featureStore;
 
     /**
      * Creates a new backtest engine.
@@ -59,21 +63,23 @@ public class BacktestEngine {
     public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
                           SlippageModel slippageModel, double initialCapital) {
         this(databaseManager, commissionModel, slippageModel, initialCapital,
-                new ModelStore(DEFAULT_MODEL_STORE_DIR));
+                new ModelStore(DEFAULT_MODEL_STORE_DIR),
+                new FeatureStore(DEFAULT_FEATURE_STORE_DIR));
     }
 
     /**
      * Constructor variant that lets callers (typically tests) override the
-     * directory used for the trained-model cache.
+     * directories used for the on-disk caches.
      */
     public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
                           SlippageModel slippageModel, double initialCapital,
-                          ModelStore modelStore) {
+                          ModelStore modelStore, FeatureStore featureStore) {
         this.databaseManager = databaseManager;
         this.commissionModel = commissionModel;
         this.slippageModel = slippageModel;
         this.initialCapital = initialCapital;
         this.modelStore = modelStore;
+        this.featureStore = featureStore;
     }
 
     /**
@@ -135,7 +141,7 @@ public class BacktestEngine {
         // Step 3: Initialize strategy (passing a persistence context first if supported)
         if (strategy instanceof PersistableModelStrategy persistable) {
             ModelContext ctx = new ModelContext(
-                    instrument.id(), source.id(), timeframe, policy, modelStore);
+                    instrument.id(), source.id(), timeframe, policy, modelStore, featureStore);
             persistable.setModelContext(ctx);
         }
         strategy.initialize(series, params);
@@ -259,7 +265,7 @@ public class BacktestEngine {
         Prepared prep = prepare(instrumentSymbol, timeframe, from, to, sourceName);
 
         ModelContext ctx = new ModelContext(
-                prep.instrument().id(), prep.source().id(), timeframe, policy, modelStore);
+                prep.instrument().id(), prep.source().id(), timeframe, policy, modelStore, featureStore);
         persistable.setModelContext(ctx);
         strategy.initialize(prep.series(), params);
 

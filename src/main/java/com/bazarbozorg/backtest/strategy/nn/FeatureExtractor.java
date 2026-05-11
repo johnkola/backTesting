@@ -39,6 +39,11 @@ public class FeatureExtractor {
 
     public static final int FEATURES_PER_BAR = 12;
 
+    // Bump when the feature definition changes (new feature, removed feature,
+    // changed indicator period, changed formula). The on-disk feature cache
+    // includes this in its key, so a bump invalidates every cached matrix.
+    public static final int FEATURE_SCHEMA_VERSION = 1;
+
     private final BarSeries series;
     private final int lookbackWindow;
 

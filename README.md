@@ -76,7 +76,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: `train` / `run` CLI split. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: feature-matrix caching. Replace this line when you pick the next thing up.)*
 
 ### Next
 
@@ -85,7 +85,6 @@ Roughly priority-ordered, but pick whatever's most useful when you sit down.
 **Perf / ML (was Phase 3):**
 - [ ] TimescaleDB **compression** policy on older candle chunks
 - [ ] **Continuous aggregates** for D1 → W1 / M1 rollups
-- [ ] Cache extracted feature matrices to disk (Parquet or ND4J binary), keyed by `(symbol, timeframe, range, lookback)`
 
 **Data pipeline polish (was Phase 4):**
 - [ ] Index tuning on `backtest_results` for the `report --list` query
@@ -103,6 +102,7 @@ Compressed view — see git log for per-step detail.
 - **Trained-model cache** (Phase 3.1): `PersistableModelStrategy` interface; `ModelStore` writes `model.zip` + `normalizer.bin` + `metadata.json` under `data/models/<strategy>/<sha256>/`; cache key fingerprints the training data + hyperparams + DL4J version; `--retrain` forces invalidation. See [Model cache](#model-cache).
 - **COPY-based bulk import** (was Phase 4): `CandleRepository.saveAll` now writes via PostgreSQL `COPY` into a temp staging table, then `INSERT ... SELECT ... ON CONFLICT DO UPDATE` from staging into `candles` — preserves the re-import overwrite semantics while skipping per-row JDBC batch round-trips. First DB-touching test (`CandleRepositoryBulkUpsertTest`) checks the upsert path; skips when no DB is reachable.
 - **`train` / `run` CLI split** (was Phase 3): new `train` subcommand trains a `PersistableModelStrategy` and caches the model on disk; `run` is now strict and refuses to backtest without a cached model (prints the exact `train` invocation to fix it). `ModelContext.forceRetrain` retired in favour of a `ModelLoadPolicy` enum (`LOAD_OR_TRAIN` / `TRAIN_FRESH` / `LOAD_ONLY`); `run --retrain` retired in favour of `train --force`. New `ModelNotCachedException` is what `run` catches to print the hint.
+- **Feature-matrix caching** (was Phase 3): `FeatureExtractor.buildFeatureMatrix(...)` output is now persisted to `data/features/<sha256>/features.bin` (Nd4j binary) + `metadata.json`. Strategy-agnostic — the key (`instrumentId`, `sourceId`, `timeframe`, `lookbackWindow`, `featuresPerBar`, `FEATURE_SCHEMA_VERSION`, BarSeries fingerprint) deliberately excludes model hyperparameters, label parameters, and DL4J version, so hyperparam sweeps + DL4J upgrades skip the expensive Ta4j indicator-extraction loop. Wired through `BacktestEngine` and `ModelContext.featureStore`; bumping `FeatureExtractor.FEATURE_SCHEMA_VERSION` invalidates every cached matrix.
 - **Web layer end-to-end** (Phases 5A–5D):
   - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
@@ -141,6 +141,24 @@ If `run` is invoked without a matching cached model, it prints the exact `train`
 ```
 
 **DL4J version pinning.** The runtime DL4J version is recorded in `metadata.json`. If the project bumps DL4J, cached models from the previous version are ignored (logged as `DL4J version mismatch`) and retrained. There is no automatic eviction of orphaned model directories — `rm -rf data/models/` is the manual cleanup.
+
+---
+
+## Feature cache
+
+A second on-disk cache sits one layer below the model cache: the unnormalized feature matrix produced by `FeatureExtractor.buildFeatureMatrix(...)`. Each entry lives at:
+
+```
+data/features/<sha256>/
+  features.bin       # Nd4j-native binary of the INDArray
+  metadata.json      # cacheKey, instrument/source/timeframe/lookback, fingerprint, shape, createdAt
+```
+
+The cache key is a SHA-256 of `(instrumentId, sourceId, timeframe, lookbackWindow, featuresPerBar, FEATURE_SCHEMA_VERSION, firstBarEpochSec, lastBarEpochSec, barCount)` — deliberately **excluding** model hyperparameters (`numEpochs`, `hiddenLayerSize`, etc.), label parameters (`forwardBars`, `buyThreshold`, `sellThreshold`), and the DL4J version. So when the model cache misses but the underlying data + lookback haven't changed (hyperparameter sweeps, DL4J version bumps, label tweaks), `train` reads features off disk instead of re-running the Ta4j indicator loop.
+
+The cache is consulted only when training; a model cache hit short-circuits before features are ever requested. No CLI flag controls it — it's transparent and read-write.
+
+**Invalidation.** Bump `FeatureExtractor.FEATURE_SCHEMA_VERSION` (currently `1`) whenever you change a feature definition, add/remove a feature, or change an indicator period inside `FeatureExtractor`. Every cached matrix gets a new key on the next train. The directory is strategy-agnostic — `rm -rf data/features/` clears it without affecting models.
 
 ---
 

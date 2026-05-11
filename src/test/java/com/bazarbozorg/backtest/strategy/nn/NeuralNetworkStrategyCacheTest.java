@@ -4,6 +4,7 @@ import com.bazarbozorg.backtest.model.Portfolio;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
+import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
@@ -71,7 +72,9 @@ class NeuralNetworkStrategyCacheTest {
     }
 
     private ModelContext ctx(ModelStore store, ModelLoadPolicy policy) {
-        return new ModelContext(1L, 2L, Timeframe.D1, policy, store);
+        // featureStore is null — these tests exercise the model cache only and the
+        // strategy falls back to direct feature extraction when no FeatureStore is wired.
+        return new ModelContext(1L, 2L, Timeframe.D1, policy, store, null);
     }
 
     private StrategyContext at(int barIndex) {
@@ -170,5 +173,79 @@ class NeuralNetworkStrategyCacheTest {
         NeuralNetworkStrategy s = new NeuralNetworkStrategy();
         s.initialize(series, params());
         assertNotNull(s.evaluate(at(s.getWarmupBars() + 1)));
+    }
+
+    @Test
+    void featureCacheIsWrittenOnTrainAndReusedAcrossDifferentModelHyperparams(
+            @TempDir Path modelTmp, @TempDir Path featureTmp) throws Exception {
+        ModelStore modelStore = new ModelStore(modelTmp);
+        FeatureStore featureStore = new FeatureStore(featureTmp);
+
+        NeuralNetworkStrategy first = new NeuralNetworkStrategy();
+        first.setModelContext(new ModelContext(1L, 2L, Timeframe.D1,
+                ModelLoadPolicy.LOAD_OR_TRAIN, modelStore, featureStore));
+        first.initialize(series, params());
+
+        long featureEntryCountAfterFirst = Files.walk(featureTmp)
+                .filter(p -> p.getFileName().toString().equals("features.bin"))
+                .count();
+        assertEquals(1, featureEntryCountAfterFirst, "first train should write one feature cache entry");
+
+        // Second train with different numEpochs (model cache miss) but identical feature
+        // inputs (same lookback, same data) — must hit the feature cache.
+        Path featuresBin = Files.walk(featureTmp)
+                .filter(p -> p.getFileName().toString().equals("features.bin"))
+                .findFirst().orElseThrow();
+        long mtimeBefore = Files.getLastModifiedTime(featuresBin).toMillis();
+
+        Map<String, String> differentModelParams = params();
+        differentModelParams.put("numEpochs", "5");
+
+        NeuralNetworkStrategy second = new NeuralNetworkStrategy();
+        second.setModelContext(new ModelContext(1L, 2L, Timeframe.D1,
+                ModelLoadPolicy.LOAD_OR_TRAIN, modelStore, featureStore));
+        second.initialize(series, differentModelParams);
+
+        long mtimeAfter = Files.getLastModifiedTime(featuresBin).toMillis();
+        assertEquals(mtimeBefore, mtimeAfter,
+                "feature cache file must not be rewritten when only model hyperparams change");
+
+        long featureEntryCountAfterSecond = Files.walk(featureTmp)
+                .filter(p -> p.getFileName().toString().equals("features.bin"))
+                .count();
+        assertEquals(1, featureEntryCountAfterSecond, "no duplicate feature cache entries");
+
+        long modelEntryCount = Files.walk(modelTmp)
+                .filter(p -> p.getFileName().toString().equals("model.zip"))
+                .count();
+        assertEquals(2, modelEntryCount,
+                "different numEpochs should produce two distinct model cache entries");
+    }
+
+    @Test
+    void featureCacheKeyChangesWhenLookbackChanges(
+            @TempDir Path modelTmp, @TempDir Path featureTmp) throws Exception {
+        ModelStore modelStore = new ModelStore(modelTmp);
+        FeatureStore featureStore = new FeatureStore(featureTmp);
+
+        NeuralNetworkStrategy first = new NeuralNetworkStrategy();
+        first.setModelContext(new ModelContext(1L, 2L, Timeframe.D1,
+                ModelLoadPolicy.LOAD_OR_TRAIN, modelStore, featureStore));
+        first.initialize(series, params());
+
+        // Bigger lookback → feature matrix shape changes → new cache entry under a new key.
+        Map<String, String> biggerLookback = params();
+        biggerLookback.put("lookbackWindow", "15");
+
+        NeuralNetworkStrategy second = new NeuralNetworkStrategy();
+        second.setModelContext(new ModelContext(1L, 2L, Timeframe.D1,
+                ModelLoadPolicy.LOAD_OR_TRAIN, modelStore, featureStore));
+        second.initialize(series, biggerLookback);
+
+        long featureEntryCount = Files.walk(featureTmp)
+                .filter(p -> p.getFileName().toString().equals("features.bin"))
+                .count();
+        assertEquals(2, featureEntryCount,
+                "different lookbackWindow should produce two distinct feature cache entries");
     }
 }

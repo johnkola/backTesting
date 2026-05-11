@@ -3,6 +3,8 @@ package com.bazarbozorg.backtest.strategy.nn;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
+import com.bazarbozorg.backtest.strategy.persistence.FeatureMetadata;
+import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
 import com.bazarbozorg.backtest.strategy.persistence.LoadedModel;
 import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
@@ -16,6 +18,7 @@ import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.dataset.api.preprocessor.NormalizerMinMaxScaler;
 import org.nd4j.linalg.factory.Nd4j;
+import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -153,11 +156,22 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         int totalSamples = lastSample - firstSample + 1;
         int trainSize = (int) (totalSamples * config.getTrainSplitRatio());
         int trainEnd = firstSample + trainSize;
+        int barCount = series.getBarCount();
 
         logger.info("NN training: {} total samples, {} train, {} validation",
                 totalSamples, trainSize, totalSamples - trainSize);
 
-        INDArray trainFeatures = featureExtractor.buildFeatureMatrix(firstSample, trainEnd);
+        // The feature cache stores the matrix from [firstSample, barCount) — independent of
+        // label parameters, so the key doesn't need to encode forwardBars/buyThreshold/etc.
+        // We slice down to [0, totalSamples) for the training-relevant subset.
+        INDArray fullMatrix = loadOrBuildFeatures(firstSample, barCount);
+        INDArray usable = fullMatrix.get(NDArrayIndex.interval(0, totalSamples), NDArrayIndex.all());
+        // dup() so normalize() on the train slice can't mutate the val slice through a shared view.
+        INDArray trainFeatures = usable.get(NDArrayIndex.interval(0, trainSize), NDArrayIndex.all()).dup();
+        INDArray valFeatures = trainSize < totalSamples
+                ? usable.get(NDArrayIndex.interval(trainSize, totalSamples), NDArrayIndex.all()).dup()
+                : null;
+
         INDArray trainLabels = labelGenerator.buildLabelMatrix(firstSample, trainEnd);
 
         featureExtractor.fitNormalizer(trainFeatures);
@@ -178,8 +192,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         }
 
         double accuracy = 0.0;
-        if (trainEnd <= lastSample) {
-            INDArray valFeatures = featureExtractor.buildFeatureMatrix(trainEnd, lastSample + 1);
+        if (valFeatures != null && trainEnd <= lastSample) {
             featureExtractor.normalize(valFeatures);
             INDArray valLabels = labelGenerator.buildLabelMatrix(trainEnd, lastSample + 1);
 
@@ -197,6 +210,70 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
 
         logger.info("Neural network training complete.");
         return accuracy;
+    }
+
+    /**
+     * Returns a feature matrix for {@code [fromIndex, toIndex)}, going through
+     * {@link FeatureStore} when available. Saves on miss so subsequent runs
+     * with different model hyperparameters skip extraction. Falls back to a
+     * direct build when no {@link FeatureStore} is wired (unit tests).
+     */
+    private INDArray loadOrBuildFeatures(int fromIndex, int toIndex) {
+        if (modelContext == null || modelContext.featureStore() == null) {
+            return featureExtractor.buildFeatureMatrix(fromIndex, toIndex);
+        }
+
+        FeatureStore store = modelContext.featureStore();
+        String key = computeFeatureCacheKey();
+        int expectedRows = toIndex - fromIndex;
+        int expectedCols = config.getLookbackWindow() * FeatureExtractor.FEATURES_PER_BAR;
+
+        Optional<INDArray> hit = store.load(key);
+        if (hit.isPresent()) {
+            INDArray cached = hit.get();
+            if (cached.rows() == expectedRows && cached.columns() == expectedCols) {
+                logger.info("Loaded feature matrix from cache (key={}, shape={}x{})",
+                        shortKey(key), cached.rows(), cached.columns());
+                return cached;
+            }
+            logger.warn("Cached feature matrix shape mismatch (expected {}x{}, got {}x{}); rebuilding.",
+                    expectedRows, expectedCols, cached.rows(), cached.columns());
+        } else {
+            logger.info("No cached feature matrix found; building fresh (key={}).", shortKey(key));
+        }
+
+        INDArray fresh = featureExtractor.buildFeatureMatrix(fromIndex, toIndex);
+        TrainingFingerprint fp = trainingFingerprint();
+        FeatureMetadata md = FeatureMetadata.fresh(
+                key,
+                modelContext.instrumentId(),
+                modelContext.sourceId(),
+                modelContext.timeframe().name(),
+                config.getLookbackWindow(),
+                FeatureExtractor.FEATURES_PER_BAR,
+                FeatureExtractor.FEATURE_SCHEMA_VERSION,
+                fp.firstBarEpochSec,
+                fp.lastBarEpochSec,
+                fp.barCount,
+                fresh.rows(),
+                fresh.columns());
+        store.save(key, fresh, md);
+        return fresh;
+    }
+
+    private String computeFeatureCacheKey() {
+        TrainingFingerprint fp = trainingFingerprint();
+        Map<String, String> inputs = new TreeMap<>();
+        inputs.put("instrumentId", String.valueOf(modelContext.instrumentId()));
+        inputs.put("sourceId", String.valueOf(modelContext.sourceId()));
+        inputs.put("timeframe", modelContext.timeframe().name());
+        inputs.put("lookbackWindow", String.valueOf(config.getLookbackWindow()));
+        inputs.put("featuresPerBar", String.valueOf(FeatureExtractor.FEATURES_PER_BAR));
+        inputs.put("featureSchemaVersion", String.valueOf(FeatureExtractor.FEATURE_SCHEMA_VERSION));
+        inputs.put("firstBarEpochSec", String.valueOf(fp.firstBarEpochSec));
+        inputs.put("lastBarEpochSec", String.valueOf(fp.lastBarEpochSec));
+        inputs.put("barCount", String.valueOf(fp.barCount));
+        return FeatureStore.computeCacheKey(inputs);
     }
 
     private Optional<LoadedModel> tryLoadCached() {
