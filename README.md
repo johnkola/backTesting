@@ -76,14 +76,13 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: feature-matrix caching. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: TimescaleDB compression on `candles`. Replace this line when you pick the next thing up.)*
 
 ### Next
 
 Roughly priority-ordered, but pick whatever's most useful when you sit down.
 
 **Perf / ML (was Phase 3):**
-- [ ] TimescaleDB **compression** policy on older candle chunks
 - [ ] **Continuous aggregates** for D1 → W1 / M1 rollups
 
 **Data pipeline polish (was Phase 4):**
@@ -103,6 +102,7 @@ Compressed view — see git log for per-step detail.
 - **COPY-based bulk import** (was Phase 4): `CandleRepository.saveAll` now writes via PostgreSQL `COPY` into a temp staging table, then `INSERT ... SELECT ... ON CONFLICT DO UPDATE` from staging into `candles` — preserves the re-import overwrite semantics while skipping per-row JDBC batch round-trips. First DB-touching test (`CandleRepositoryBulkUpsertTest`) checks the upsert path; skips when no DB is reachable.
 - **`train` / `run` CLI split** (was Phase 3): new `train` subcommand trains a `PersistableModelStrategy` and caches the model on disk; `run` is now strict and refuses to backtest without a cached model (prints the exact `train` invocation to fix it). `ModelContext.forceRetrain` retired in favour of a `ModelLoadPolicy` enum (`LOAD_OR_TRAIN` / `TRAIN_FRESH` / `LOAD_ONLY`); `run --retrain` retired in favour of `train --force`. New `ModelNotCachedException` is what `run` catches to print the hint.
 - **Feature-matrix caching** (was Phase 3): `FeatureExtractor.buildFeatureMatrix(...)` output is now persisted to `data/features/<sha256>/features.bin` (Nd4j binary) + `metadata.json`. Strategy-agnostic — the key (`instrumentId`, `sourceId`, `timeframe`, `lookbackWindow`, `featuresPerBar`, `FEATURE_SCHEMA_VERSION`, BarSeries fingerprint) deliberately excludes model hyperparameters, label parameters, and DL4J version, so hyperparam sweeps + DL4J upgrades skip the expensive Ta4j indicator-extraction loop. Wired through `BacktestEngine` and `ModelContext.featureStore`; bumping `FeatureExtractor.FEATURE_SCHEMA_VERSION` invalidates every cached matrix.
+- **TimescaleDB compression on `candles`** (was Phase 3): native compression enabled on the hypertable with `compress_segmentby='instrument_id, source_id, timeframe'` and `compress_orderby='timestamp DESC'`. Auto-compress policy targets chunks older than 7 days (typical 10–20× storage reduction). Re-imports of compressed chunks require manual `decompress_chunk()` — see Storage compression below. Schema bootstrap stays idempotent via a guard on `timescaledb_information.hypertables.compression_enabled`.
 - **Web layer end-to-end** (Phases 5A–5D):
   - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
@@ -159,6 +159,32 @@ The cache key is a SHA-256 of `(instrumentId, sourceId, timeframe, lookbackWindo
 The cache is consulted only when training; a model cache hit short-circuits before features are ever requested. No CLI flag controls it — it's transparent and read-write.
 
 **Invalidation.** Bump `FeatureExtractor.FEATURE_SCHEMA_VERSION` (currently `1`) whenever you change a feature definition, add/remove a feature, or change an indicator period inside `FeatureExtractor`. Every cached matrix gets a new key on the next train. The directory is strategy-agnostic — `rm -rf data/features/` clears it without affecting models.
+
+---
+
+## Storage compression
+
+The `candles` hypertable uses native TimescaleDB compression. Schema bootstrap (`DatabaseManager.initialize()`) enables it with:
+
+- `compress_segmentby = 'instrument_id, source_id, timeframe'` — keeps these columns outside the compressed blob so range scans filtered on instrument/source/timeframe stay fast
+- `compress_orderby = 'timestamp DESC'` — matches the engine's "most recent first" read pattern
+- An auto-compress policy targeting chunks **older than 7 days**
+
+Typical compression ratio for OHLCV is 10–20×. Recent (within-7-day) chunks stay uncompressed and writable.
+
+**Re-importing old data.** Because TimescaleDB refuses `INSERT ... ON CONFLICT DO UPDATE` against a compressed chunk, re-importing data older than 7 days will fail. The error message tells you which chunk(s) are involved. To recover, decompress them manually and re-run the import:
+
+```sql
+-- Find chunks that overlap the date range you're trying to re-import.
+SELECT show_chunks('candles', older_than => INTERVAL '7 days');
+
+-- Decompress the offending chunk(s) by hypertable + chunk name.
+SELECT decompress_chunk('_timescaledb_internal._hyper_1_3_chunk');
+```
+
+Then re-run `./gradlew run --args="import ..."`. The auto-compress policy will re-compress the chunk on its next pass (default every 12 hours).
+
+**Tuning.** The 7-day threshold lives in `schema.sql`. To change it, edit the `add_compression_policy('candles', INTERVAL '7 days', ...)` line, or run `SELECT remove_compression_policy('candles')` followed by a fresh `add_compression_policy(...)` at your preferred interval.
 
 ---
 
