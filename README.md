@@ -89,8 +89,6 @@ Roughly priority-ordered, but pick whatever's most useful when you sit down.
 - [ ] Index tuning on `backtest_results` for the `report --list` query
 - [ ] Dataset / model versioning — retain prior models per cache key instead of overwriting (the Models page already exposes the training fingerprint, but there's no historical retention)
 
-**Housekeeping:**
-- [ ] Delete the leftover `data/backtest.mv.db` H2 file (still on disk after the Postgres migration)
 
 ### Done
 
