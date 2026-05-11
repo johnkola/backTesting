@@ -76,14 +76,12 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: `backtest_results` index tuning. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: D1 → W1 / M1 continuous aggregates. Replace this line when you pick the next thing up.)*
 
 ### Next
 
 Roughly priority-ordered, but pick whatever's most useful when you sit down.
 
-**Perf / ML (was Phase 3):**
-- [ ] **Continuous aggregates** for D1 → W1 / M1 rollups
 
 **Data pipeline polish (was Phase 4):**
 - [ ] Dataset / model versioning — retain prior models per cache key instead of overwriting (the Models page already exposes the training fingerprint, but there's no historical retention)
@@ -101,6 +99,7 @@ Compressed view — see git log for per-step detail.
 - **Feature-matrix caching** (was Phase 3): `FeatureExtractor.buildFeatureMatrix(...)` output is now persisted to `data/features/<sha256>/features.bin` (Nd4j binary) + `metadata.json`. Strategy-agnostic — the key (`instrumentId`, `sourceId`, `timeframe`, `lookbackWindow`, `featuresPerBar`, `FEATURE_SCHEMA_VERSION`, BarSeries fingerprint) deliberately excludes model hyperparameters, label parameters, and DL4J version, so hyperparam sweeps + DL4J upgrades skip the expensive Ta4j indicator-extraction loop. Wired through `BacktestEngine` and `ModelContext.featureStore`; bumping `FeatureExtractor.FEATURE_SCHEMA_VERSION` invalidates every cached matrix.
 - **TimescaleDB compression on `candles`** (was Phase 3): native compression enabled on the hypertable with `compress_segmentby='instrument_id, source_id, timeframe'` and `compress_orderby='timestamp DESC'`. Auto-compress policy targets chunks older than 7 days (typical 10–20× storage reduction). Re-imports of compressed chunks require manual `decompress_chunk()` — see Storage compression below. Schema bootstrap stays idempotent via a guard on `timescaledb_information.hypertables.compression_enabled`.
 - **Index tuning on `backtest_results`** (was Phase 4): added `idx_backtest_results_created_at_desc` on `(created_at DESC)` so `report --list`, `report --last`, and `/api/results` can read in already-sorted order; added a partial `idx_backtest_results_model_cache_key` on `(model_cache_key) WHERE model_cache_key IS NOT NULL` for the Models page's `WHERE model_cache_key = ANY(...) GROUP BY` aggregate. Plus an `EXPLAIN`-based test guards against future regressions silently disabling the index.
+- **D1 → W1 / M1 continuous aggregates** (was Phase 3): TimescaleDB materialized views `candles_weekly` and `candles_monthly` computed lazily from `candles WHERE timeframe='D1'` (FIRST/LAST/MAX/MIN/SUM on each `time_bucket`). Refresh policies run hourly (W1, 90-day lookback) and twice-daily (M1, 365-day lookback). Infrastructure only — no engine or web consumer yet; the views sit alongside the hypertable so a future multi-timeframe path can `SELECT … FROM candles_weekly` instead of re-aggregating client-side.
 - **Web layer end-to-end** (Phases 5A–5D):
   - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
@@ -183,6 +182,38 @@ SELECT decompress_chunk('_timescaledb_internal._hyper_1_3_chunk');
 Then re-run `./gradlew run --args="import ..."`. The auto-compress policy will re-compress the chunk on its next pass (default every 12 hours).
 
 **Tuning.** The 7-day threshold lives in `schema.sql`. To change it, edit the `add_compression_policy('candles', INTERVAL '7 days', ...)` line, or run `SELECT remove_compression_policy('candles')` followed by a fresh `add_compression_policy(...)` at your preferred interval.
+
+---
+
+## Continuous aggregates (W1 + M1)
+
+`schema.sql` creates two TimescaleDB continuous aggregates over D1 candles:
+
+| View              | Bucket            | Refresh policy                            |
+|-------------------|-------------------|-------------------------------------------|
+| `candles_weekly`  | `time_bucket('7 days', timestamp)`   | hourly, 90-day lookback, 1-day end-gap   |
+| `candles_monthly` | `time_bucket('1 month', timestamp)`  | every 12h, 365-day lookback, 7-day end-gap |
+
+Both pull from `candles WHERE timeframe='D1'` and aggregate with `FIRST(open)`, `MAX(high)`, `MIN(low)`, `LAST(close)`, `SUM(volume)` per `(instrument_id, source_id, bucket)`. Created `WITH NO DATA`, so the initial materialization happens incrementally via the refresh policy rather than blocking schema bootstrap.
+
+**Read pattern.** Nothing in the Java engine or web layer queries these views yet — they're infrastructure for a future multi-timeframe consumer (e.g. a `run -t W1` that falls back to the aggregate when no W1 candles were imported, or a multi-TF chart in the web UI). To read them directly today:
+
+```sql
+SELECT bucket, open, high, low, close, volume
+  FROM candles_weekly
+ WHERE instrument_id = 1
+ ORDER BY bucket DESC
+ LIMIT 10;
+```
+
+**Manual refresh.** The policy catches up incrementally. If you need fresh data right after a big import:
+
+```sql
+CALL refresh_continuous_aggregate('candles_weekly',  NULL, NULL);
+CALL refresh_continuous_aggregate('candles_monthly', NULL, NULL);
+```
+
+**Tuning.** Buckets and policy intervals live in `schema.sql`. The policies are dropped + recreated by `remove_continuous_aggregate_policy(...)` + `add_continuous_aggregate_policy(...)` if you want to retune without editing the schema.
 
 ---
 
