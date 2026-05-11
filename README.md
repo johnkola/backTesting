@@ -76,7 +76,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: TimescaleDB compression on `candles`. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: `backtest_results` index tuning. Replace this line when you pick the next thing up.)*
 
 ### Next
 
@@ -86,7 +86,6 @@ Roughly priority-ordered, but pick whatever's most useful when you sit down.
 - [ ] **Continuous aggregates** for D1 → W1 / M1 rollups
 
 **Data pipeline polish (was Phase 4):**
-- [ ] Index tuning on `backtest_results` for the `report --list` query
 - [ ] Dataset / model versioning — retain prior models per cache key instead of overwriting (the Models page already exposes the training fingerprint, but there's no historical retention)
 
 
@@ -101,6 +100,7 @@ Compressed view — see git log for per-step detail.
 - **`train` / `run` CLI split** (was Phase 3): new `train` subcommand trains a `PersistableModelStrategy` and caches the model on disk; `run` is now strict and refuses to backtest without a cached model (prints the exact `train` invocation to fix it). `ModelContext.forceRetrain` retired in favour of a `ModelLoadPolicy` enum (`LOAD_OR_TRAIN` / `TRAIN_FRESH` / `LOAD_ONLY`); `run --retrain` retired in favour of `train --force`. New `ModelNotCachedException` is what `run` catches to print the hint.
 - **Feature-matrix caching** (was Phase 3): `FeatureExtractor.buildFeatureMatrix(...)` output is now persisted to `data/features/<sha256>/features.bin` (Nd4j binary) + `metadata.json`. Strategy-agnostic — the key (`instrumentId`, `sourceId`, `timeframe`, `lookbackWindow`, `featuresPerBar`, `FEATURE_SCHEMA_VERSION`, BarSeries fingerprint) deliberately excludes model hyperparameters, label parameters, and DL4J version, so hyperparam sweeps + DL4J upgrades skip the expensive Ta4j indicator-extraction loop. Wired through `BacktestEngine` and `ModelContext.featureStore`; bumping `FeatureExtractor.FEATURE_SCHEMA_VERSION` invalidates every cached matrix.
 - **TimescaleDB compression on `candles`** (was Phase 3): native compression enabled on the hypertable with `compress_segmentby='instrument_id, source_id, timeframe'` and `compress_orderby='timestamp DESC'`. Auto-compress policy targets chunks older than 7 days (typical 10–20× storage reduction). Re-imports of compressed chunks require manual `decompress_chunk()` — see Storage compression below. Schema bootstrap stays idempotent via a guard on `timescaledb_information.hypertables.compression_enabled`.
+- **Index tuning on `backtest_results`** (was Phase 4): added `idx_backtest_results_created_at_desc` on `(created_at DESC)` so `report --list`, `report --last`, and `/api/results` can read in already-sorted order; added a partial `idx_backtest_results_model_cache_key` on `(model_cache_key) WHERE model_cache_key IS NOT NULL` for the Models page's `WHERE model_cache_key = ANY(...) GROUP BY` aggregate. Plus an `EXPLAIN`-based test guards against future regressions silently disabling the index.
 - **Web layer end-to-end** (Phases 5A–5D):
   - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.

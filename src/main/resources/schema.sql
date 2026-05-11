@@ -133,3 +133,17 @@ ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS data_source VARCHAR(50) NO
 -- NULL for non-ML strategies and for runs that pre-date these columns.
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_cache_key VARCHAR(64);
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_cache_hit BOOLEAN;
+
+-- Indexes for the hot read paths:
+-- - report --list / report --last (BacktestResultRepository.findAll / findLatest)
+--   and the web /api/results endpoint all do ORDER BY created_at DESC. A DESC
+--   index lets the planner read the table in already-sorted order.
+-- - /api/models groups backtest_results by model_cache_key to count how many
+--   backtests reused each cached model. Partial index because the column is
+--   NULL for non-PersistableModelStrategy runs (which is most of them).
+CREATE INDEX IF NOT EXISTS idx_backtest_results_created_at_desc
+    ON backtest_results (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_results_model_cache_key
+    ON backtest_results (model_cache_key)
+    WHERE model_cache_key IS NOT NULL;

@@ -148,7 +148,7 @@ PostgreSQL + TimescaleDB with five tables (see `schema.sql`):
 - `data_sources` — `(id, name, description, created_at)`. Rows are auto-created on `import --source <name>` via `DataSourceRepository.getOrCreate`. The `default` row is seeded by the schema.
 - `candles` — hypertable, PK `(instrument_id, timeframe, source_id, timestamp)`. Same `(symbol, timeframe, timestamp)` from two sources coexist as separate rows.
 - `data_imports` — audit log of every CSV import (`source_id, instrument_id, timeframe, file_path, file_name, row_count, imported_at`). `CsvDataImporter` writes one row per successful import.
-- `backtest_results` — full `BacktestResult` as JSON in `result_json` plus denormalized summary columns (including `data_source`) for `report --list`.
+- `backtest_results` — full `BacktestResult` as JSON in `result_json` plus denormalized summary columns (including `data_source`) for `report --list`. Indexed by `(created_at DESC)` to serve the most-recent-first reads from `BacktestResultRepository.findAll`/`findLatest` and the web `/api/results` endpoint without a sort step; a partial index on `(model_cache_key) WHERE model_cache_key IS NOT NULL` serves the `/api/models` group-by-cache-key aggregate.
 
 `DatabaseManager` is a singleton; `initialize()` must be called before `getConnection()`, and `shutdown()` nulls the config. CLI commands are responsible for the init/shutdown pairing (see the `try/finally` blocks in `BacktestCommand`, `ImportDataCommand`, `ReportCommand`).
 
