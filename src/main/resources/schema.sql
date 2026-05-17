@@ -67,8 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_candles_lookup ON candles(instrument_id, timefram
 -- but we guard it in a DO block so schema bootstrap stays clean on every app
 -- start. compress_segmentby keeps the columns we filter on (instrument, source,
 -- timeframe) outside the compressed blob so range scans don't have to
--- decompress unrelated rows; compress_orderby DESC matches the engine's read
--- pattern (most recent first).
+-- decompress unrelated rows. compress_orderby DESC matches how the engine
+-- reads (most recent first).
 --
 -- Re-imports of compressed chunks require explicit decompression — TimescaleDB
 -- refuses INSERT ... ON CONFLICT DO UPDATE on a compressed chunk. See the

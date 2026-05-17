@@ -67,37 +67,85 @@ public class DatabaseManager {
         }
     }
 
-    // Splits SQL on `;` while respecting PostgreSQL `$tag$ ... $tag$` dollar quotes
-    // (so DO blocks and function bodies survive intact).
+    // Splits SQL on `;` while skipping over regions where a `;` is not a statement
+    // terminator: `'...'` strings, `--` line comments, `/* ... */` block comments,
+    // and PostgreSQL `$tag$ ... $tag$` dollar quotes (DO blocks, function bodies).
+    //
+    // Not handled (fine for our schema.sql, watch for it if you reuse this):
+    // E'...' escape strings, "double-quoted" identifiers, nested /* /* */ */
+    // block comments, dollar-quote tags containing digits.
     private static java.util.List<String> splitStatements(String sql) {
         java.util.List<String> out = new java.util.ArrayList<>();
         StringBuilder cur = new StringBuilder();
         String openTag = null;
-        for (int i = 0; i < sql.length(); i++) {
+        int i = 0;
+        while (i < sql.length()) {
             char c = sql.charAt(i);
-            if (openTag == null && c == '$') {
+
+            if (openTag != null) {
+                if (c == '$' && sql.startsWith(openTag, i)) {
+                    cur.append(openTag);
+                    i += openTag.length();
+                    openTag = null;
+                } else {
+                    cur.append(c);
+                    i++;
+                }
+                continue;
+            }
+
+            if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
+                int eol = sql.indexOf('\n', i);
+                if (eol < 0) eol = sql.length();
+                cur.append(sql, i, eol);
+                i = eol;
+                continue;
+            }
+            if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+                int end = sql.indexOf("*/", i + 2);
+                if (end < 0) end = sql.length();
+                else end += 2;
+                cur.append(sql, i, end);
+                i = end;
+                continue;
+            }
+            if (c == '\'') {
+                cur.append(c);
+                i++;
+                while (i < sql.length()) {
+                    char d = sql.charAt(i);
+                    cur.append(d);
+                    i++;
+                    if (d == '\'') {
+                        if (i < sql.length() && sql.charAt(i) == '\'') {
+                            cur.append('\'');
+                            i++;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (c == '$') {
                 int end = sql.indexOf('$', i + 1);
                 if (end > i) {
                     String tag = sql.substring(i, end + 1);
                     if (tag.matches("\\$[A-Za-z_]*\\$")) {
                         openTag = tag;
                         cur.append(tag);
-                        i = end;
+                        i = end + 1;
                         continue;
                     }
                 }
-            } else if (openTag != null && c == '$' && sql.startsWith(openTag, i)) {
-                cur.append(openTag);
-                i += openTag.length() - 1;
-                openTag = null;
-                continue;
             }
-            if (openTag == null && c == ';') {
+            if (c == ';') {
                 out.add(cur.toString());
                 cur.setLength(0);
             } else {
                 cur.append(c);
             }
+            i++;
         }
         if (cur.length() > 0) {
             out.add(cur.toString());
