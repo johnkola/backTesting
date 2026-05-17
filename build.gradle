@@ -7,20 +7,26 @@ group = 'com.bazarbozorg'
 version = '1.0-SNAPSHOT'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
 }
+
+// JPMS opens required by ND4J/DL4J native bindings on JDK 17+; --enable-native-access
+// silences JNI "restricted method" warnings on JDK 21 and is required on JDK 22+.
+def jvmRuntimeArgs = [
+    '--add-opens', 'java.base/java.nio=ALL-UNNAMED',
+    '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+    '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED',
+    '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
+    '--add-opens', 'java.base/java.util=ALL-UNNAMED',
+    '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED',
+    '--enable-native-access=ALL-UNNAMED'
+]
 
 application {
     mainClass = 'com.bazarbozorg.backtest.BacktestApplication'
-    applicationDefaultJvmArgs = [
-        '--add-opens', 'java.base/java.nio=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.util=ALL-UNNAMED',
-        '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED'
-    ]
+    applicationDefaultJvmArgs = jvmRuntimeArgs
 }
 
 repositories {
@@ -49,14 +55,7 @@ dependencies {
 
 test {
     useJUnitPlatform()
-    jvmArgs = [
-        '--add-opens', 'java.base/java.nio=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.lang.invoke=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
-        '--add-opens', 'java.base/java.util=ALL-UNNAMED',
-        '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED'
-    ]
+    jvmArgs = jvmRuntimeArgs
 }
 
 jar {

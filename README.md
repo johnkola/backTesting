@@ -1,6 +1,6 @@
 # BackTesting
 
-A Java 17 stock/forex backtesting CLI. Loads historical OHLCV candles into PostgreSQL/TimescaleDB, runs trading strategies (Ta4j indicator strategies + a DL4J neural-network strategy) bar-by-bar, simulates execution with commission and slippage, and reports performance metrics.
+A Java 21 stock/forex backtesting CLI. Loads historical OHLCV candles into PostgreSQL/TimescaleDB, runs trading strategies (Ta4j indicator strategies + a DL4J neural-network strategy) bar-by-bar, simulates execution with commission and slippage, and reports performance metrics.
 
 ## Quick start
 
@@ -36,7 +36,7 @@ The Vite dev server proxies `/api/*` to `:3000`, so visit **http://localhost:517
 ./gradlew run --args="--help"    # CLI help
 ```
 
-Java 17 is required. The Gradle config sets the `--add-opens` JVM flags needed by DL4J/ND4J.
+Java 21 is required. The `java { toolchain { languageVersion = 21 } }` block in `build.gradle` lets Gradle auto-provision a matching JDK if your `JAVA_HOME` points elsewhere. The Gradle config sets the `--add-opens` JVM flags needed by DL4J/ND4J, plus `--enable-native-access=ALL-UNNAMED` to silence JDK 21+ "restricted method" warnings from the JavaCPP/ND4J JNI bindings (and to keep the build forward-compatible with JDK 22, where the flag becomes mandatory).
 
 ## CLI subcommands
 
@@ -76,7 +76,9 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: model versioning, minimum cut. Replace this line when you pick the next thing up.)*
+**Polish / correctness pass** (uncommitted in working tree):
+- Hardened `DatabaseManager.splitStatements(...)` so the schema bootstrap also skips `;` inside `'...'` strings, `--` line comments, and `/* ... */` block comments — previously only `$tag$ ... $tag$` dollar quotes were respected. No `;` in those positions today, but defensive against future schema edits. See the docblock at the top of `splitStatements` for the known unsupported edge cases (E-strings, double-quoted identifiers, nested block comments, dollar-quote tags containing digits — none of which `schema.sql` uses).
+- `docker-compose.yml` now mounts the host `./data/models` into the web container at `/data/models:ro`, so `/api/models` and the Models page can see models trained on the host via `./gradlew run --args="train ..."` (see [Model cache](#model-cache) for the deployment note).
 
 ### Next
 
@@ -92,6 +94,9 @@ Roughly priority-ordered, but pick whatever's most useful when you sit down.
 
 Compressed view — see git log for per-step detail.
 
+- **Java 21 toolchain + dependency refresh**: `build.gradle` switched from `sourceCompatibility=17` to a Gradle toolchain at `JavaLanguageVersion.of(21)`, with `org.gradle.toolchains.foojay-resolver-convention` in `settings.gradle` so Gradle can auto-provision a matching JDK. JVM args hoisted into a shared `jvmRuntimeArgs` list shared by `application` + `test`, with `--enable-native-access=ALL-UNNAMED` added (JDK 21 warnings → JDK 22 errors for ND4J's JavaCPP JNI calls). Security bumps: `logback-classic 1.4.14 → 1.5.19` (CVE-2025-11226), `postgresql 42.7.4 → 42.7.11` (CVE-2026-42198). Drop-in bumps: HikariCP 7.0.2, gson 2.14.0, opencsv 5.12.0, picocli (+codegen) 4.7.7, junit-bom 5.13.0. `commons-math3 3.6.1` and `DL4J/ND4J 1.0.0-M2.1` left pinned (no newer GA available; M2.1 runs on JDK 21 with the native-access flag).
+- **ta4j 0.16 → 0.18**: `SMAIndicator` / `EMAIndicator` moved to `org.ta4j.core.indicators.averages` (5 strategy + feature files re-imported); `BaseBarSeriesBuilder.withNumTypeOf(DecimalNum::valueOf)` replaced by `.withNumFactory(DecimalNumFactory.getInstance())`; bars are now built via `series.barBuilder().…add()` instead of `BaseBar.builder(...)`. **Behavior change**: `Bar.getEndTime()` returns `Instant` in 0.18 (was `ZonedDateTime`); `BacktestEngine` canonicalises to `ZonedDateTime.ofInstant(..., ZoneOffset.UTC)` at the 6 call sites so `BacktestResult.startDate`/`endDate`, trade times, and equity points are now always UTC — previously they carried whatever zone the source candle was constructed with. Smoke-test on real data if you compare engine timestamps against external wall-clock sources.
+- **Shipped strategies**: six registered in `StrategyRegistry` (5 Ta4j-based + 1 DL4J neural-network). `nn-feedforward` is the only `PersistableModelStrategy` today, so the only one that exercises the model + feature caches. See the [Strategies](#strategies) table below for the catalog and `./gradlew run --args="list-strategies"` for the live list.
 - **Database on PostgreSQL + TimescaleDB** (Phases 1 & 2): H2 → PG, HikariCP pool with `reWriteBatchedInserts=true`, idempotent `schema.sql` bootstrapped from `DatabaseManager.initialize()`, `candles` as a hypertable with PK `(instrument_id, timeframe, source_id, timestamp)`, smoke-tested end-to-end.
 - **Multi-source candle histories** (Phase 2.5): `data_sources` table, `candles.source_id` folded into PK with guarded backfill DO block, `data_imports` audit log, `--source NAME` on both `import` and `run`, `BacktestResult.dataSource` persisted.
 - **Trained-model cache** (Phase 3.1): `PersistableModelStrategy` interface; `ModelStore` writes `model.zip` + `normalizer.bin` + `metadata.json` under `data/models/<strategy>/<sha256>/`; cache key fingerprints the training data + hyperparams + DL4J version; `--retrain` forces invalidation. See [Model cache](#model-cache).
@@ -103,7 +108,7 @@ Compressed view — see git log for per-step detail.
 - **D1 → W1 / M1 continuous aggregates** (was Phase 3): TimescaleDB materialized views `candles_weekly` and `candles_monthly` computed lazily from `candles WHERE timeframe='D1'` (FIRST/LAST/MAX/MIN/SUM on each `time_bucket`). Refresh policies run hourly (W1, 90-day lookback) and twice-daily (M1, 365-day lookback). Infrastructure only — no engine or web consumer yet; the views sit alongside the hypertable so a future multi-timeframe path can `SELECT … FROM candles_weekly` instead of re-aggregating client-side.
 - **Model versioning, minimum cut** (was Phase 4): `ModelStore.save()` now writes each train output to `data/models/<strategy>/<key>/<versionId>/` (where `versionId` is a compact UTC timestamp like `20260511T134522.123Z`) instead of overwriting the key dir. `load()` returns the lexicographically-latest version; legacy flat-layout entries still load transparently. `/api/models` walks the new layer and emits one row per version, and the Models page gains a Version column. Two ergonomic follow-ups (version pinning on `run`, retention policy) moved to Next.
 - **Web layer end-to-end** (Phases 5A–5D):
-  - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc).
+  - Express server on `:3000` with read-only API (`/api/health`, `/api/sources`, `/api/instruments`, `/api/imports`, `/api/results`, `/api/results/:id`, `/api/models`) and Markdown-rendered docs at `/readme` + `/architecture` (with revision history per doc). `/claude` is a 301 legacy redirect to `/architecture` for old bookmarks.
   - React + Vite + Tailwind/daisyUI + react-router + Recharts client. Pages: home, sources, instruments, imports, results (filterable), result detail (metrics + trade table + equity curve chart), models (with "Used in" links + expandable hyperparameter view). Cache-hit/fresh badges on result rows when the strategy uses the model cache.
   - Containerised: multi-stage `web/Dockerfile` bundles client `dist/` into the server image; `docker-compose.yml` brings DB + web up together.
 
@@ -123,6 +128,8 @@ data/models/<strategy>/<sha256-cache-key>/<versionId>/
 `<versionId>` is a compact UTC timestamp like `20260511T134522.123Z`. Each `train` invocation writes a new version subdir rather than overwriting the previous one, so a `train --force` (or any second train at the same cache key) preserves the prior model. `load()` returns the lexicographically-latest version under the key — that's "the current model" for `run` purposes.
 
 Legacy flat-layout entries (files directly under `<sha256-cache-key>/`, written before versioning shipped) still load transparently. No migration needed.
+
+**Docker deployment note.** Training runs on the host (`./gradlew run --args="train ..."`) write under `./data/models/` on the host filesystem, but `/api/models` runs inside the `web` container and walks `MODELS_DIR` (default `/data/models` in-container). `docker-compose.yml` bridges this by mounting `./data/models → /data/models:ro` into the web service, so the Models page reflects host-trained models without rebuilding the image. If you train inside the container instead, drop the `:ro` so the container can write back.
 
 The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last bar epoch + bar count), every hyperparameter, and the DL4J version. Any of those changing produces a new key and forces fresh training (and therefore a new version directory under a new key).
 

@@ -4,7 +4,7 @@ How the backtesting app is built. Read this before changing the engine, strategi
 
 ## Build & Run
 
-Java 17 + Gradle. The project uses the Gradle wrapper.
+Java 21 + Gradle. The project uses the Gradle wrapper, which auto-provisions JDK 21 via the toolchain block in `build.gradle` if your `JAVA_HOME` is older.
 
 ```bash
 docker compose up -d             # start TimescaleDB on localhost:5432 (db=backtest, user=backtest, pw=backtest)
@@ -181,7 +181,7 @@ The interaction with the bulk-upsert path is **the** thing to know: TimescaleDB 
 
 ## Conventions
 
-- Time is `ZonedDateTime` end-to-end. Use `DateTimeUtils.parse` for CLI date strings (accepts `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss`).
+- Time is `ZonedDateTime` end-to-end at the engine/result/persistence layer. Use `DateTimeUtils.parse` for CLI date strings (accepts `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss`). Note: ta4j 0.18 changed `Bar.getEndTime()` to return `Instant` (was `ZonedDateTime`); `BacktestEngine` canonicalises that `Instant` to `ZonedDateTime` at **UTC** when it reads bar times back out, so engine-emitted timestamps are always UTC regardless of the source candle's zone. Don't reintroduce a system-default-zone conversion at that boundary without thinking about the cross-machine reproducibility implications.
 - Money/prices are plain `double` throughout (not `BigDecimal`). Don't change this without considering the Ta4j integration — `BarSeriesConverter` and the engine all assume primitive doubles.
 - Logging is SLF4J + Logback (`logback.xml` on classpath). Keep `logger.info` for engine lifecycle, `logger.debug` for per-bar/per-trade events.
 - Tests use JUnit 5 (Jupiter). Strategy tests build a synthetic `BarSeries` in-memory; no DB needed.
