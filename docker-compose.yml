@@ -37,6 +37,15 @@ services:
       PGUSER: backtest
       PGPASSWORD: backtest
       PORT: 3000
+    volumes:
+      # Expose host-trained models to /api/models (host-side `gradlew train` writes here).
+      - ./data/models:/data/models:ro
+      # Live-mount the rendered docs so edits to README.md / ARCHITECTURE.md show up
+      # on /readme and /architecture without rebuilding the web image. The Dockerfile
+      # also bakes copies at /app/docs so the image is self-contained when run without
+      # compose; these mounts shadow those copies.
+      - ./README.md:/app/docs/README.md:ro
+      - ./ARCHITECTURE.md:/app/docs/ARCHITECTURE.md:ro
 
 volumes:
   timescaledb-data:
