@@ -2,12 +2,11 @@ package com.bazarbozorg.backtest.data;
 
 import com.bazarbozorg.backtest.model.Candle;
 import org.ta4j.core.BarSeries;
-import org.ta4j.core.BaseBar;
 import org.ta4j.core.BaseBarSeriesBuilder;
-import org.ta4j.core.num.DecimalNum;
+import org.ta4j.core.num.DecimalNumFactory;
 
 import java.time.Duration;
-import java.time.ZonedDateTime;
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -39,14 +38,14 @@ public final class BarSeriesConverter {
 
         BarSeries barSeries = new BaseBarSeriesBuilder()
                 .withName(name)
-                .withNumTypeOf(DecimalNum::valueOf)
+                .withNumFactory(DecimalNumFactory.getInstance())
                 .build();
 
         for (Candle candle : candles) {
             Duration timePeriod = candle.timeframe().getDuration();
-            ZonedDateTime endTime = candle.timestamp().plus(timePeriod);
+            Instant endTime = candle.timestamp().plus(timePeriod).toInstant();
 
-            BaseBar bar = BaseBar.builder(DecimalNum::valueOf, Number.class)
+            barSeries.barBuilder()
                     .timePeriod(timePeriod)
                     .endTime(endTime)
                     .openPrice(candle.open())
@@ -54,9 +53,7 @@ public final class BarSeriesConverter {
                     .lowPrice(candle.low())
                     .closePrice(candle.close())
                     .volume(candle.volume())
-                    .build();
-
-            barSeries.addBar(bar);
+                    .add();
         }
 
         return barSeries;

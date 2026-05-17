@@ -40,7 +40,15 @@ class FeatureExtractorTest {
         double open = close * 0.99;
         double high = close * 1.02;
         double low = close * 0.97;
-        series.addBar(Duration.ofDays(1), time, open, high, low, close, volume);
+        series.barBuilder()
+                .timePeriod(Duration.ofDays(1))
+                .endTime(time.toInstant())
+                .openPrice(open)
+                .highPrice(high)
+                .lowPrice(low)
+                .closePrice(close)
+                .volume(volume)
+                .add();
     }
 
     @Test

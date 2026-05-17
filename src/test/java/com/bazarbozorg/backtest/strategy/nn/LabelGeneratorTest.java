@@ -25,7 +25,15 @@ class LabelGeneratorTest {
     private void addBar(double close) {
         ZonedDateTime time = ZonedDateTime.of(2023, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC)
                 .plusDays(series.getBarCount());
-        series.addBar(Duration.ofDays(1), time, close, close + 1, close - 1, close, 100000);
+        series.barBuilder()
+                .timePeriod(Duration.ofDays(1))
+                .endTime(time.toInstant())
+                .openPrice(close)
+                .highPrice(close + 1)
+                .lowPrice(close - 1)
+                .closePrice(close)
+                .volume(100000)
+                .add();
     }
 
     @Test

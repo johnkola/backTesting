@@ -24,6 +24,7 @@ import org.ta4j.core.Bar;
 import org.ta4j.core.BarSeries;
 
 import java.nio.file.Path;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -158,7 +159,7 @@ public class BacktestEngine {
         for (int i = warmupBars; i < series.getBarCount(); i++) {
             Bar currentBar = series.getBar(i);
             double closePrice = currentBar.getClosePrice().doubleValue();
-            ZonedDateTime barTime = currentBar.getEndTime();
+            ZonedDateTime barTime = ZonedDateTime.ofInstant(currentBar.getEndTime(), ZoneOffset.UTC);
 
             // Create strategy context
             StrategyContext context = new StrategyContext(
@@ -179,7 +180,7 @@ public class BacktestEngine {
         if (portfolioManager.hasOpenPositions() && series.getBarCount() > 0) {
             Bar lastBar = series.getBar(series.getBarCount() - 1);
             double lastClose = lastBar.getClosePrice().doubleValue();
-            ZonedDateTime lastTime = lastBar.getEndTime();
+            ZonedDateTime lastTime = ZonedDateTime.ofInstant(lastBar.getEndTime(), ZoneOffset.UTC);
 
             logger.info("Force-closing {} remaining position(s) at last bar close",
                     portfolioManager.getOpenPositions().size());
@@ -192,8 +193,8 @@ public class BacktestEngine {
         Bar firstBar = series.getBar(0);
         Bar lastBar2 = series.getBar(series.getBarCount() - 1);
 
-        ZonedDateTime startDate = firstBar.getEndTime();
-        ZonedDateTime endDate = lastBar2.getEndTime();
+        ZonedDateTime startDate = ZonedDateTime.ofInstant(firstBar.getEndTime(), ZoneOffset.UTC);
+        ZonedDateTime endDate = ZonedDateTime.ofInstant(lastBar2.getEndTime(), ZoneOffset.UTC);
 
         double firstClose = firstBar.getClosePrice().doubleValue();
         double lastClose = lastBar2.getClosePrice().doubleValue();

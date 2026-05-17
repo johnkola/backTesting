@@ -3,7 +3,7 @@ package com.bazarbozorg.backtest.strategy.impl;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
-import org.ta4j.core.indicators.SMAIndicator;
+import org.ta4j.core.indicators.averages.SMAIndicator;
 import org.ta4j.core.indicators.bollinger.BollingerBandsLowerIndicator;
 import org.ta4j.core.indicators.bollinger.BollingerBandsMiddleIndicator;
 import org.ta4j.core.indicators.bollinger.BollingerBandsUpperIndicator;

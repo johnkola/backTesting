@@ -352,8 +352,8 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
 
     private TrainingFingerprint trainingFingerprint() {
         int n = series.getBarCount();
-        long firstSec = series.getBar(0).getEndTime().toEpochSecond();
-        long lastSec = series.getBar(n - 1).getEndTime().toEpochSecond();
+        long firstSec = series.getBar(0).getEndTime().getEpochSecond();
+        long lastSec = series.getBar(n - 1).getEndTime().getEpochSecond();
         return new TrainingFingerprint(firstSec, lastSec, n);
     }
 

@@ -3,7 +3,7 @@ package com.bazarbozorg.backtest.strategy.impl;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
-import org.ta4j.core.indicators.EMAIndicator;
+import org.ta4j.core.indicators.averages.EMAIndicator;
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
 
 import java.util.LinkedHashMap;
