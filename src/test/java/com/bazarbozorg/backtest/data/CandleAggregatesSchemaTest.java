@@ -68,18 +68,14 @@ class CandleAggregatesSchemaTest {
     }
 
     private void assertRefreshPolicyExists(String viewName) throws Exception {
-        // The refresh policy is a background job with proc_name 'policy_refresh_continuous_aggregate'.
-        // We use hypertable_name to filter — for cagg jobs, that's the materialization
-        // hypertable backing the view (TimescaleDB names it internally), so we join via
-        // continuous_aggregates to resolve the user-facing view_name → materialization_hypertable_name.
+        // In TimescaleDB 2.x the jobs view's hypertable_name for cagg refresh policies
+        // is the user-facing view name (e.g. 'candles_weekly'), not the internal
+        // materialization hypertable. No join needed.
         try (Connection c = db.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT COUNT(*) FROM timescaledb_information.jobs j " +
-                     "JOIN timescaledb_information.continuous_aggregates ca " +
-                     "  ON ca.materialization_hypertable_name = j.hypertable_name " +
-                     " AND ca.materialization_hypertable_schema = j.hypertable_schema " +
-                     "WHERE ca.view_name = ? " +
-                     "  AND j.proc_name = 'policy_refresh_continuous_aggregate'")) {
+                     "SELECT COUNT(*) FROM timescaledb_information.jobs " +
+                     "WHERE hypertable_name = ? " +
+                     "  AND proc_name = 'policy_refresh_continuous_aggregate'")) {
             ps.setString(1, viewName);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
