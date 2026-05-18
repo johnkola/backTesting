@@ -45,5 +45,8 @@ web/client/dist/
 *.log
 
 ### Trained-model cache (derived from training; can be regenerated) ###
-data/
+# Leading slash anchors this to the repo root — without it the rule matches
+# any directory named `data` in the tree, including `src/main/java/.../data/`
+# (the data-access source package), which then needs `git add -f` to commit.
+/data/
 .claude/
