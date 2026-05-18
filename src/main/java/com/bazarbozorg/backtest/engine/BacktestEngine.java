@@ -41,10 +41,18 @@ public class BacktestEngine {
 
     private static final Logger logger = LoggerFactory.getLogger(BacktestEngine.class);
 
-    /** Default location for the trained-model cache (relative to the working dir). */
-    private static final Path DEFAULT_MODEL_STORE_DIR = Path.of("data", "models");
-    /** Default location for the feature-matrix cache (relative to the working dir). */
-    private static final Path DEFAULT_FEATURE_STORE_DIR = Path.of("data", "features");
+    /**
+     * Default location for the trained-model cache (relative to the working
+     * dir). Exposed so CLI commands can build a retention-aware
+     * {@link ModelStore} pointing at the same path the no-arg engine
+     * constructor uses.
+     */
+    public static final Path DEFAULT_MODEL_STORE_DIR = Path.of("data", "models");
+    /**
+     * Default location for the feature-matrix cache (relative to the working
+     * dir). Exposed for the same reason as {@link #DEFAULT_MODEL_STORE_DIR}.
+     */
+    public static final Path DEFAULT_FEATURE_STORE_DIR = Path.of("data", "features");
 
     private final DatabaseManager databaseManager;
     private final CommissionModel commissionModel;
@@ -116,23 +124,28 @@ public class BacktestEngine {
                                TradingStrategy strategy, Map<String, String> params,
                                ZonedDateTime from, ZonedDateTime to, String sourceName) {
         return run(instrumentSymbol, timeframe, strategy, params, from, to, sourceName,
-                ModelLoadPolicy.LOAD_ONLY);
+                ModelLoadPolicy.LOAD_ONLY, null);
     }
 
     /**
      * Variant of {@link #run(String, Timeframe, TradingStrategy, Map, ZonedDateTime, ZonedDateTime, String)}
-     * with an explicit {@link ModelLoadPolicy} for strategies that implement
-     * {@link PersistableModelStrategy}. The {@code run} CLI subcommand passes
-     * {@link ModelLoadPolicy#LOAD_ONLY}, so a cache miss raises
+     * with an explicit {@link ModelLoadPolicy} and optional model-version pin
+     * for strategies that implement {@link PersistableModelStrategy}.
+     * <p>
+     * The {@code run} CLI subcommand passes {@link ModelLoadPolicy#LOAD_ONLY},
+     * so a cache miss raises
      * {@link com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException}
-     * instead of silently retraining.
+     * instead of silently retraining. When {@code pinnedVersionId} is non-null,
+     * only that specific version under the computed cache key is consulted
+     * &mdash; useful for reproducing an old backtest against the exact model
+     * that ran it. A null pin = "use the latest version" (default).
      */
     public BacktestResult run(String instrumentSymbol, Timeframe timeframe,
                                TradingStrategy strategy, Map<String, String> params,
                                ZonedDateTime from, ZonedDateTime to, String sourceName,
-                               ModelLoadPolicy policy) {
-        logger.info("Starting backtest: instrument={}, timeframe={}, strategy={}, source={}, from={}, to={}",
-                instrumentSymbol, timeframe, strategy.getName(), sourceName, from, to);
+                               ModelLoadPolicy policy, String pinnedVersionId) {
+        logger.info("Starting backtest: instrument={}, timeframe={}, strategy={}, source={}, from={}, to={}, pinnedVersion={}",
+                instrumentSymbol, timeframe, strategy.getName(), sourceName, from, to, pinnedVersionId);
 
         Prepared prep = prepare(instrumentSymbol, timeframe, from, to, sourceName);
         Instrument instrument = prep.instrument();
@@ -142,7 +155,8 @@ public class BacktestEngine {
         // Step 3: Initialize strategy (passing a persistence context first if supported)
         if (strategy instanceof PersistableModelStrategy persistable) {
             ModelContext ctx = new ModelContext(
-                    instrument.id(), source.id(), timeframe, policy, modelStore, featureStore);
+                    instrument.id(), source.id(), timeframe, policy, modelStore, featureStore,
+                    pinnedVersionId);
             persistable.setModelContext(ctx);
         }
         strategy.initialize(series, params);

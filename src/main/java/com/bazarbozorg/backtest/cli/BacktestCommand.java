@@ -65,6 +65,12 @@ public class BacktestCommand implements Runnable {
             description = "Data source name to backtest against (default: ${DEFAULT-VALUE})")
     private String source;
 
+    @Option(names = {"--model-version"},
+            description = "Pin a specific trained-model version id (e.g. 20260511T134522.123Z). "
+                    + "Defaults to the latest version under the strategy + hyperparam cache key. "
+                    + "List available versions via GET /api/models or the web Models page.")
+    private String modelVersion;
+
     @Override
     public void run() {
         DatabaseManager dbManager = DatabaseManager.getInstance();
@@ -109,6 +115,9 @@ public class BacktestCommand implements Runnable {
             if (!strategyParams.isEmpty()) {
                 System.out.printf("Parameters:  %s%n", strategyParams);
             }
+            if (modelVersion != null) {
+                System.out.printf("Model ver:   %s%n", modelVersion);
+            }
             System.out.println();
 
             // Create and run engine
@@ -117,7 +126,7 @@ public class BacktestCommand implements Runnable {
 
             BacktestResult result = engine.run(
                     instrumentSymbol, timeframe, strategy, strategyParams, from, to, source,
-                    ModelLoadPolicy.LOAD_ONLY);
+                    ModelLoadPolicy.LOAD_ONLY, modelVersion);
 
             if (result == null) {
                 System.err.println("Backtest returned no results.");
@@ -135,9 +144,11 @@ public class BacktestCommand implements Runnable {
 
         } catch (ModelNotCachedException e) {
             System.err.println(e.getMessage());
-            System.err.println("Hint: ./gradlew run --args=\"train -s " + strategyName
-                    + " -i " + instrumentSymbol + " -t " + timeframeCode
-                    + " --source " + source + "\"");
+            if (e.pinnedVersionId() == null) {
+                System.err.println("Hint: ./gradlew run --args=\"train -s " + strategyName
+                        + " -i " + instrumentSymbol + " -t " + timeframeCode
+                        + " --source " + source + "\"");
+            }
         } catch (Exception e) {
             System.err.println("Backtest failed: " + e.getMessage());
             e.printStackTrace();

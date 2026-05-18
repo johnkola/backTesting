@@ -19,7 +19,10 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -69,10 +72,24 @@ public class ModelStore {
             Pattern.compile("\\d{8}T\\d{6}\\.\\d{3}Z");
 
     private final Path baseDir;
+    /**
+     * Per-cache-key retention: how many lexicographically-latest version
+     * subdirs to keep after a {@link #save}. {@code <= 0} disables retention
+     * (unlimited history, the original behavior). Legacy flat-layout entries
+     * are never pruned regardless of this setting &mdash; they have no
+     * version id to participate in the ordering.
+     */
+    private final int keepLastN;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
+    /** Equivalent to {@code new ModelStore(baseDir, 0)} &mdash; retention disabled. */
     public ModelStore(Path baseDir) {
+        this(baseDir, 0);
+    }
+
+    public ModelStore(Path baseDir, int keepLastN) {
         this.baseDir = baseDir;
+        this.keepLastN = keepLastN;
     }
 
     /**
@@ -127,9 +144,29 @@ public class ModelStore {
      * cache miss, not an error.
      */
     public Optional<LoadedModel> load(String strategyName, String cacheKey) {
+        return load(strategyName, cacheKey, null);
+    }
+
+    /**
+     * Variant of {@link #load(String, String)} that pins a specific version.
+     * When {@code versionId} is non-null, only the matching
+     * {@code <keyDir>/<versionId>/} entry is consulted &mdash; the legacy flat
+     * layout is never returned, since pre-versioning entries have no id to
+     * match against. A null {@code versionId} falls back to the latest-version
+     * resolution described in {@link #load(String, String)}.
+     */
+    public Optional<LoadedModel> load(String strategyName, String cacheKey, String versionId) {
         Path keyDir = entryDir(strategyName, cacheKey);
         if (!Files.exists(keyDir)) {
             return Optional.empty();
+        }
+
+        if (versionId != null) {
+            Path dir = keyDir.resolve(versionId);
+            if (!Files.isDirectory(dir)) {
+                return Optional.empty();
+            }
+            return loadFromDir(dir);
         }
 
         Optional<Path> latest = findLatestVersionDir(keyDir);
@@ -187,6 +224,13 @@ public class ModelStore {
      * produces a fresh version directory; prior versions for the same key
      * are preserved. Returns the version id that was written so callers
      * can record it.
+     * <p>
+     * When this store was constructed with a positive {@code keepLastN},
+     * older version subdirs under the same key are pruned automatically
+     * after the write completes (newest {@code keepLastN} kept, the rest
+     * deleted recursively). Pruning failures are logged but do not fail
+     * the save &mdash; the model is already on disk and the next train
+     * will try again.
      */
     public String save(String strategyName,
                        String cacheKey,
@@ -203,11 +247,86 @@ public class ModelStore {
             String json = gson.toJson(metadata);
             Files.writeString(dir.resolve(METADATA_FILE), json, StandardCharsets.UTF_8);
             logger.info("Saved model to {}", dir);
-            return versionId;
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to save model to " + dir, e);
         } catch (Exception e) {
             throw new RuntimeException("Failed to save model to " + dir, e);
+        }
+
+        if (keepLastN > 0) {
+            try {
+                List<String> pruned = pruneTo(strategyName, cacheKey, keepLastN);
+                if (!pruned.isEmpty()) {
+                    logger.info("Retention (keepLastN={}) pruned {} old version(s) under {}: {}",
+                            keepLastN, pruned.size(),
+                            entryDir(strategyName, cacheKey), pruned);
+                }
+            } catch (RuntimeException e) {
+                // Pruning is opportunistic — never let it fail a save.
+                logger.warn("Retention prune failed for {}/{} (kept the just-saved version): {}",
+                        strategyName, cacheKey, e.getMessage());
+            }
+        }
+        return versionId;
+    }
+
+    /**
+     * Deletes all but the {@code keepLastN} lexicographically-latest version
+     * subdirs under {@code <baseDir>/<strategyName>/<cacheKey>/}. Returns
+     * the version ids that were removed (empty when nothing needed deleting,
+     * including when the key dir doesn't exist or holds &le; {@code keepLastN}
+     * versions).
+     * <p>
+     * Only directories matching {@link #VERSION_PATTERN} are considered &mdash;
+     * legacy flat-layout files (model.zip / normalizer.bin / metadata.json
+     * directly under the key dir) and any unrelated stray subdirs are left
+     * alone. A {@code keepLastN <= 0} argument is treated as "no retention"
+     * and returns immediately.
+     */
+    public List<String> pruneTo(String strategyName, String cacheKey, int keepLastN) {
+        if (keepLastN <= 0) {
+            return Collections.emptyList();
+        }
+        Path keyDir = entryDir(strategyName, cacheKey);
+        if (!Files.isDirectory(keyDir)) {
+            return Collections.emptyList();
+        }
+
+        List<Path> versionDirs;
+        try (Stream<Path> stream = Files.list(keyDir)) {
+            versionDirs = stream
+                    .filter(Files::isDirectory)
+                    .filter(p -> VERSION_PATTERN.matcher(p.getFileName().toString()).matches())
+                    .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+                    .toList();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to list versions under " + keyDir, e);
+        }
+
+        if (versionDirs.size() <= keepLastN) {
+            return Collections.emptyList();
+        }
+        List<Path> doomed = versionDirs.subList(0, versionDirs.size() - keepLastN);
+        List<String> pruned = new ArrayList<>(doomed.size());
+        for (Path dir : doomed) {
+            deleteRecursive(dir);
+            pruned.add(dir.getFileName().toString());
+        }
+        return pruned;
+    }
+
+    private static void deleteRecursive(Path root) {
+        try (Stream<Path> walk = Files.walk(root)) {
+            // Sort reverse so files are deleted before their parent dirs.
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    throw new UncheckedIOException("Failed to delete " + p, e);
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to walk " + root + " for delete", e);
         }
     }
 

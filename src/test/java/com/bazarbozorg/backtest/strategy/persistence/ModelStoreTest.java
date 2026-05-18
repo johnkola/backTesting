@@ -184,6 +184,58 @@ class ModelStoreTest {
     }
 
     @Test
+    void pinnedLoadReturnsTheRequestedVersionNotTheLatest(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp);
+        Saved first = trainAndSave(store, "nn-feedforward", "abc");
+        Thread.sleep(2);
+        Saved second = trainAndSave(store, "nn-feedforward", "abc");
+        assertNotEquals(first.versionId, second.versionId);
+
+        // Pin to the earlier version even though a later one exists.
+        Optional<LoadedModel> pinned = store.load("nn-feedforward", "abc", first.versionId);
+        assertTrue(pinned.isPresent(), "pinned load should resolve when the version exists");
+
+        // Sanity: the latest pin still works too, and unpinned matches the latest.
+        Optional<LoadedModel> latestPinned = store.load("nn-feedforward", "abc", second.versionId);
+        assertTrue(latestPinned.isPresent());
+
+        Optional<LoadedModel> unpinned = store.load("nn-feedforward", "abc");
+        assertTrue(unpinned.isPresent());
+    }
+
+    @Test
+    void pinnedLoadMissesWhenVersionDoesNotExist(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp);
+        trainAndSave(store, "nn-feedforward", "abc");
+
+        // Well-formed but absent version id.
+        Optional<LoadedModel> miss = store.load("nn-feedforward", "abc", "20990101T000000.000Z");
+        assertTrue(miss.isEmpty(), "non-existent pinned version must miss, not silently latest-fall-back");
+    }
+
+    @Test
+    void pinnedLoadDoesNotReturnLegacyFlatLayout(@TempDir Path tmp) throws Exception {
+        // Pinning is intentionally version-only: legacy flat entries have no id
+        // to match against, so a pinned lookup against a key dir that only holds
+        // a legacy entry must miss.
+        ModelStore store = new ModelStore(tmp);
+        Path keyDir = store.entryDir("nn-feedforward", "legacy");
+        Files.createDirectories(keyDir);
+
+        Saved s = trainAndSave(store, "nn-feedforward", "scratch");
+        Path scratch = store.versionDir("nn-feedforward", "scratch", s.versionId);
+        Files.copy(scratch.resolve("model.zip"), keyDir.resolve("model.zip"));
+        Files.copy(scratch.resolve("normalizer.bin"), keyDir.resolve("normalizer.bin"));
+        Files.copy(scratch.resolve("metadata.json"), keyDir.resolve("metadata.json"));
+
+        Optional<LoadedModel> unpinned = store.load("nn-feedforward", "legacy");
+        assertTrue(unpinned.isPresent(), "legacy flat entry must still load when no version pinned");
+
+        Optional<LoadedModel> pinned = store.load("nn-feedforward", "legacy", s.versionId);
+        assertTrue(pinned.isEmpty(), "legacy flat entry must not satisfy a version pin");
+    }
+
+    @Test
     void loadStillWorksOnLegacyFlatLayout(@TempDir Path tmp) throws Exception {
         // Simulate a pre-versioning entry by writing files directly under the
         // key dir. load() should treat it as the (sole) available version.
@@ -226,6 +278,136 @@ class ModelStoreTest {
         // Verify it actually came from the version subdir, not the legacy files.
         Path versionDir = store.versionDir("nn-feedforward", "mixed", versioned.versionId);
         assertTrue(Files.exists(versionDir.resolve("model.zip")));
+    }
+
+    // ---------------- retention (keepLastN) ----------------
+
+    @Test
+    void retentionPrunesOldVersionsOnSaveAndKeepsTheLatestN(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp, 2);
+
+        // Save 4 versions back-to-back; only the 2 newest should remain on disk.
+        Saved v1 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v2 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v3 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v4 = trainAndSave(store, "nn-feedforward", "abc");
+
+        Path keyDir = store.entryDir("nn-feedforward", "abc");
+        List<String> remaining;
+        try (Stream<Path> stream = Files.list(keyDir)) {
+            remaining = stream
+                    .filter(Files::isDirectory)
+                    .map(p -> p.getFileName().toString())
+                    .sorted()
+                    .toList();
+        }
+        assertEquals(List.of(v3.versionId, v4.versionId), remaining,
+                "only the 2 newest version dirs should survive auto-prune");
+
+        // The pruned dirs really are gone — and the latest is still loadable.
+        assertFalse(Files.exists(store.versionDir("nn-feedforward", "abc", v1.versionId)));
+        assertFalse(Files.exists(store.versionDir("nn-feedforward", "abc", v2.versionId)));
+        assertTrue(store.load("nn-feedforward", "abc").isPresent());
+        assertTrue(store.load("nn-feedforward", "abc", v4.versionId).isPresent());
+    }
+
+    @Test
+    void retentionZeroOrNegativeIsDisabled(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp, 0);
+        trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        trainAndSave(store, "nn-feedforward", "abc");
+
+        Path keyDir = store.entryDir("nn-feedforward", "abc");
+        long count;
+        try (Stream<Path> stream = Files.list(keyDir)) {
+            count = stream.filter(Files::isDirectory).count();
+        }
+        assertEquals(3, count, "retention disabled (0) must not delete anything");
+    }
+
+    @Test
+    void retentionDoesNotTouchLegacyFlatLayout(@TempDir Path tmp) throws Exception {
+        // Seed the key dir with a pre-versioning legacy entry by copying files
+        // from a scratch trainAndSave. Then trainAndSave into the same key with
+        // retention=1. The legacy files must survive (they have no version id
+        // and aren't in the ordering), and exactly one versioned subdir should
+        // exist.
+        ModelStore store = new ModelStore(tmp, 1);
+        Saved scratch = trainAndSave(store, "nn-feedforward", "scratch");
+        Path scratchDir = store.versionDir("nn-feedforward", "scratch", scratch.versionId);
+
+        Path keyDir = store.entryDir("nn-feedforward", "mixed");
+        Files.createDirectories(keyDir);
+        Files.copy(scratchDir.resolve("model.zip"), keyDir.resolve("model.zip"));
+        Files.copy(scratchDir.resolve("normalizer.bin"), keyDir.resolve("normalizer.bin"));
+        Files.copy(scratchDir.resolve("metadata.json"), keyDir.resolve("metadata.json"));
+
+        Saved versioned = trainAndSave(store, "nn-feedforward", "mixed");
+
+        assertTrue(Files.exists(keyDir.resolve("model.zip")),
+                "legacy flat-layout files must survive retention");
+        assertTrue(Files.exists(keyDir.resolve("normalizer.bin")));
+        assertTrue(Files.exists(keyDir.resolve("metadata.json")));
+        Path versionedDir = store.versionDir("nn-feedforward", "mixed", versioned.versionId);
+        assertTrue(Files.exists(versionedDir.resolve("model.zip")),
+                "just-saved versioned entry must be present");
+    }
+
+    @Test
+    void retentionLeavesUnrelatedStraySubdirsAlone(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp, 1);
+        Path keyDir = store.entryDir("nn-feedforward", "abc");
+        Files.createDirectories(keyDir.resolve("backup-2025"));
+        Files.writeString(keyDir.resolve("backup-2025").resolve("notes.txt"), "hi");
+
+        Saved v1 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v2 = trainAndSave(store, "nn-feedforward", "abc");
+
+        // v1 (matches version pattern) should be pruned; v2 kept; stray dir untouched.
+        assertFalse(Files.exists(store.versionDir("nn-feedforward", "abc", v1.versionId)));
+        assertTrue(Files.exists(store.versionDir("nn-feedforward", "abc", v2.versionId)));
+        assertTrue(Files.exists(keyDir.resolve("backup-2025").resolve("notes.txt")),
+                "subdirs that don't match the version pattern must be left alone");
+    }
+
+    @Test
+    void retentionDoesNotPruneWhenAtOrBelowLimit(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp, 5);
+        Saved v1 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v2 = trainAndSave(store, "nn-feedforward", "abc");
+
+        Path keyDir = store.entryDir("nn-feedforward", "abc");
+        try (Stream<Path> stream = Files.list(keyDir)) {
+            long count = stream.filter(Files::isDirectory).count();
+            assertEquals(2, count, "with N=5 and only 2 saved, neither version is pruned");
+        }
+        assertTrue(Files.exists(store.versionDir("nn-feedforward", "abc", v1.versionId)));
+        assertTrue(Files.exists(store.versionDir("nn-feedforward", "abc", v2.versionId)));
+    }
+
+    @Test
+    void pruneToIsCallableOutsideOfSave(@TempDir Path tmp) throws Exception {
+        // pruneTo is exposed for ad-hoc/operator use (e.g. tooling) as well —
+        // not just the auto-prune path. Verify it works on an existing entry
+        // even when the store itself has retention disabled.
+        ModelStore store = new ModelStore(tmp); // retention disabled
+        Saved v1 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v2 = trainAndSave(store, "nn-feedforward", "abc"); Thread.sleep(2);
+        Saved v3 = trainAndSave(store, "nn-feedforward", "abc");
+
+        List<String> pruned = store.pruneTo("nn-feedforward", "abc", 1);
+        assertEquals(List.of(v1.versionId, v2.versionId), pruned,
+                "explicit pruneTo must drop the two oldest, return both ids");
+        assertTrue(Files.exists(store.versionDir("nn-feedforward", "abc", v3.versionId)));
+    }
+
+    @Test
+    void pruneToNoopWhenKeyDirMissing(@TempDir Path tmp) {
+        ModelStore store = new ModelStore(tmp, 1);
+        // No save has happened, so the key dir doesn't exist. pruneTo must
+        // not blow up — it should just return empty.
+        assertEquals(List.of(), store.pruneTo("nn-feedforward", "never-trained", 1));
     }
 
     /** Minimal record bundling the version id with what was saved. */

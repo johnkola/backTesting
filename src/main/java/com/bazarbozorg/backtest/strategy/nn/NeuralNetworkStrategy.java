@@ -130,7 +130,8 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
                 return;
             }
             if (modelContext.policy() == ModelLoadPolicy.LOAD_ONLY) {
-                throw new ModelNotCachedException(getName(), computeCacheKey());
+                throw new ModelNotCachedException(
+                        getName(), computeCacheKey(), modelContext.pinnedVersionId());
             }
             logger.info("No cached NN model found; training fresh.");
         } else if (modelContext != null) {
@@ -279,7 +280,10 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
     private Optional<LoadedModel> tryLoadCached() {
         ModelStore store = modelContext.modelStore();
         String cacheKey = computeCacheKey();
-        Optional<LoadedModel> loaded = store.load(getName(), cacheKey);
+        String pinned = modelContext.pinnedVersionId();
+        Optional<LoadedModel> loaded = pinned != null
+                ? store.load(getName(), cacheKey, pinned)
+                : store.load(getName(), cacheKey);
         if (loaded.isEmpty()) {
             return Optional.empty();
         }

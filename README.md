@@ -76,22 +76,18 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: `DatabaseManager.splitStatements` hardening. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: keep-last-N model retention on `train`. Replace this line when you pick the next thing up.)*
 
 ### Next
 
-Roughly priority-ordered, but pick whatever's most useful when you sit down.
-
-
-**Data pipeline polish (was Phase 4):**
-- [ ] Version pinning on `run` — let users backtest against a specific historical model version, not just the latest. Builds on the versioning layout that just shipped.
-- [ ] Retention policy for old model versions (keep-last-N, age out, manual mark-and-prune)
-
+*(no concrete follow-ups queued — pick the next idea up from notes / issues when you sit down)*
 
 ### Done
 
 Compressed view — see git log for per-step detail.
 
+- **Model retention (`keep-last-N`)**: each `train` save now auto-prunes the oldest version subdirs under the same cache key, keeping only the N newest. Default `model.retention.keepLastN=5` in `application.properties`, overridable per-invocation with `train --keep-last <N>`; set to `0` or negative to disable (= unlimited history, old behaviour). The retention number is wired through `ModelStore`'s constructor: `TrainCommand` builds `new ModelStore(DEFAULT_MODEL_STORE_DIR, effectiveN)` (formerly used the default constructor) and passes it via `BacktestEngine`'s 6-arg constructor; the no-arg-stores constructor still defaults to `keepLastN=0` so tests and ad-hoc engine users keep their existing semantics. Pruning matches only `VERSION_PATTERN` subdirs — legacy flat-layout entries and unrelated stray dirs are left alone. Prune failures are logged and swallowed (the save itself never fails on retention). New `ModelStore.pruneTo(strategy, key, n)` is also exposed for ad-hoc/operator use.
+- **Model-version pinning on `run`**: `run` gains `--model-version <id>` to backtest against a specific historical model version (the compact-UTC version id surfaced by `/api/models` / the Models page) instead of the latest one under the cache key. Plumbed through as a nullable `pinnedVersionId` on `ModelContext` → `ModelStore.load(strategy, key, versionId)`, which consults only the requested `<keyDir>/<versionId>/` and skips the legacy flat-layout fallback (legacy entries have no id to match). Miss with a pin throws `ModelNotCachedException` carrying the pinned id; the CLI catches it and prints a "see /api/models" hint instead of the usual `train …` hint. `--model-version` is `run`-only; `train` doesn't accept it. Default behavior (no pin) is unchanged.
 - **Hardened `DatabaseManager.splitStatements`**: the schema-bootstrap splitter now skips `;` inside `'…'` string literals, `--` line comments, and `/* … */` block comments in addition to the `$tag$ … $tag$` dollar-quote handling it already had. No `;` lives in those positions in today's `schema.sql`, but the splitter is the one place where a future schema edit (e.g. a stored-procedure body with an inline string containing `;`) could silently truncate a statement and leave the DB in a half-bootstrapped state — so this is a defensive fix, not a bug fix. The docblock above the method enumerates known unsupported edge cases (E-strings, double-quoted identifiers, nested block comments, dollar-quote tags containing digits) — none of which `schema.sql` uses.
 - **Web container bind mounts** (`docker-compose.yml`): the web service now mounts `./data/models → /data/models:ro` so `/api/models` and the Models page see host-trained models (host-side `./gradlew run --args="train ..."` writes there) without rebuilding the image, and mounts `./README.md` + `./ARCHITECTURE.md` into `/app/docs/` (also `:ro`) so edits to the rendered `/readme` and `/architecture` pages flow live — `server.js` reads docs per-request via `fs.readFileSync` against `DOCS_DIR`. The Dockerfile's `COPY README.md ARCHITECTURE.md /app/docs/` is intentionally retained so the image stays self-contained outside compose; the mounts simply shadow those baked copies. See [Model cache](#model-cache) for the models-mount deployment note.
 - **Java 21 toolchain + dependency refresh**: `build.gradle` switched from `sourceCompatibility=17` to a Gradle toolchain at `JavaLanguageVersion.of(21)`, with `org.gradle.toolchains.foojay-resolver-convention` in `settings.gradle` so Gradle can auto-provision a matching JDK. JVM args hoisted into a shared `jvmRuntimeArgs` list shared by `application` + `test`, with `--enable-native-access=ALL-UNNAMED` added (JDK 21 warnings → JDK 22 errors for ND4J's JavaCPP JNI calls). Security bumps: `logback-classic 1.4.14 → 1.5.19` (CVE-2025-11226), `postgresql 42.7.4 → 42.7.11` (CVE-2026-42198). Drop-in bumps: HikariCP 7.0.2, gson 2.14.0, opencsv 5.12.0, picocli (+codegen) 4.7.7, junit-bom 5.13.0. `commons-math3 3.6.1` and `DL4J/ND4J 1.0.0-M2.1` left pinned (no newer GA available; M2.1 runs on JDK 21 with the native-access flag).
@@ -127,7 +123,15 @@ data/models/<strategy>/<sha256-cache-key>/<versionId>/
 
 `<versionId>` is a compact UTC timestamp like `20260511T134522.123Z`. Each `train` invocation writes a new version subdir rather than overwriting the previous one, so a `train --force` (or any second train at the same cache key) preserves the prior model. `load()` returns the lexicographically-latest version under the key — that's "the current model" for `run` purposes.
 
-Legacy flat-layout entries (files directly under `<sha256-cache-key>/`, written before versioning shipped) still load transparently. No migration needed.
+**Pinning a specific version.** Pass `--model-version <id>` to `run` to backtest against a non-latest version (the id is the compact-UTC timestamp shown by `/api/models` and the web Models page):
+
+```bash
+./gradlew run --args="run -s nn-feedforward -i AAPL -t D1 --model-version 20260511T134522.123Z"
+```
+
+If the pin doesn't match an on-disk version, `run` exits non-zero with a message naming the missing version and pointing at `/api/models`. The pin is `run`-only; `train` always writes a fresh version subdir.
+
+Legacy flat-layout entries (files directly under `<sha256-cache-key>/`, written before versioning shipped) still load transparently when no pin is set. A `--model-version` pin will **not** match a legacy entry — there's no id on disk to compare against — so to reproduce a legacy backtest you need to retrain (which writes a versioned entry).
 
 **Docker deployment note.** Training runs on the host (`./gradlew run --args="train ..."`) write under `./data/models/` on the host filesystem, but `/api/models` runs inside the `web` container and walks `MODELS_DIR` (default `/data/models` in-container). `docker-compose.yml` bridges this by mounting `./data/models → /data/models:ro` into the web service, so the Models page reflects host-trained models without rebuilding the image. If you train inside the container instead, drop the `:ro` so the container can write back.
 
@@ -150,7 +154,19 @@ If `run` is invoked without a matching cached model, it prints the exact `train`
 ./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --force"
 ```
 
-**DL4J version pinning.** The runtime DL4J version is recorded in `metadata.json`. If the project bumps DL4J, cached models from the previous version are ignored (logged as `DL4J version mismatch`) and retrained. There is no automatic eviction of orphaned model directories — `rm -rf data/models/` is the manual cleanup.
+**Retention (`keep-last-N`).** Every `train` save also prunes older versions under the same cache key, keeping only the newest `N`. The default lives in `application.properties` (`model.retention.keepLastN=5`); per-invocation override is `--keep-last`:
+
+```bash
+# Keep only the 3 newest versions per cache key after this save
+./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --keep-last 3"
+
+# Disable retention for this save (= keep unlimited history)
+./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --keep-last 0"
+```
+
+Pruning only matches the version-id pattern (`yyyyMMdd'T'HHmmss.SSS'Z'`), so legacy flat-layout entries and any unrelated subdirs you've dropped under a cache-key directory are left alone. If a prune step fails (e.g. a file is locked by another process), the just-saved model still lands — the prune is opportunistic, not part of the save's success contract.
+
+**DL4J version pinning.** The runtime DL4J version is recorded in `metadata.json`. If the project bumps DL4J, cached models from the previous version are ignored (logged as `DL4J version mismatch`) and retrained. There is no automatic eviction of orphaned model directories from a DL4J bump — retention handles same-key history, not cross-key orphans; `rm -rf data/models/` is still the manual cleanup for those.
 
 ---
 

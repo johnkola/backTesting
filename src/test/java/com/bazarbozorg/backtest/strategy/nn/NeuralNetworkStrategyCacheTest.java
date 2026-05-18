@@ -22,6 +22,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -83,6 +84,10 @@ class NeuralNetworkStrategyCacheTest {
         // featureStore is null — these tests exercise the model cache only and the
         // strategy falls back to direct feature extraction when no FeatureStore is wired.
         return new ModelContext(1L, 2L, Timeframe.D1, policy, store, null);
+    }
+
+    private ModelContext ctxPinned(ModelStore store, ModelLoadPolicy policy, String versionId) {
+        return new ModelContext(1L, 2L, Timeframe.D1, policy, store, null, versionId);
     }
 
     private StrategyContext at(int barIndex) {
@@ -172,6 +177,74 @@ class NeuralNetworkStrategyCacheTest {
 
         StrategySignal signal = reader.evaluate(at(reader.getWarmupBars() + 1));
         assertNotNull(signal);
+    }
+
+    @Test
+    void pinnedVersionLoadsEarlierTrainEvenWhenALaterOneExists(@TempDir Path tmp) throws Exception {
+        ModelStore store = new ModelStore(tmp);
+
+        // Two trains under the same hyperparams → same cache key → two distinct
+        // versions on disk. Second train uses TRAIN_FRESH so it doesn't just hit
+        // the cache.
+        NeuralNetworkStrategy first = new NeuralNetworkStrategy();
+        first.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
+        first.initialize(series, params());
+        Thread.sleep(2);
+        NeuralNetworkStrategy second = new NeuralNetworkStrategy();
+        second.setModelContext(ctx(store, ModelLoadPolicy.TRAIN_FRESH));
+        second.initialize(series, params());
+
+        // Discover both version ids on disk.
+        Path strategyDir = tmp.resolve("nn-feedforward");
+        List<Path> versionDirs = Files.walk(strategyDir)
+                .filter(p -> p.getFileName().toString().matches("\\d{8}T\\d{6}\\.\\d{3}Z"))
+                .sorted()
+                .toList();
+        assertEquals(2, versionDirs.size(), "two trains should produce two version dirs");
+        String earlier = versionDirs.get(0).getFileName().toString();
+        String later = versionDirs.get(1).getFileName().toString();
+
+        // Unpinned LOAD_ONLY → latest (the second train, which differs because TRAIN_FRESH
+        // re-shuffled the network init through the same seed pipeline).
+        NeuralNetworkStrategy unpinned = new NeuralNetworkStrategy();
+        unpinned.setModelContext(ctx(store, ModelLoadPolicy.LOAD_ONLY));
+        unpinned.initialize(series, params());
+
+        // Pinned to the earlier version → distinct loaded model.
+        NeuralNetworkStrategy pinnedEarlier = new NeuralNetworkStrategy();
+        pinnedEarlier.setModelContext(ctxPinned(store, ModelLoadPolicy.LOAD_ONLY, earlier));
+        pinnedEarlier.initialize(series, params());
+
+        // Pinned to the later version → same as unpinned.
+        NeuralNetworkStrategy pinnedLater = new NeuralNetworkStrategy();
+        pinnedLater.setModelContext(ctxPinned(store, ModelLoadPolicy.LOAD_ONLY, later));
+        pinnedLater.initialize(series, params());
+
+        // All three should produce signals (warm-up + non-null returns) without throwing.
+        int warmup = unpinned.getWarmupBars();
+        assertNotNull(unpinned.evaluate(at(warmup + 1)));
+        assertNotNull(pinnedEarlier.evaluate(at(warmup + 1)));
+        assertNotNull(pinnedLater.evaluate(at(warmup + 1)));
+    }
+
+    @Test
+    void pinnedVersionThatDoesNotExistThrowsModelNotCachedException(@TempDir Path tmp) {
+        ModelStore store = new ModelStore(tmp);
+
+        NeuralNetworkStrategy seeded = new NeuralNetworkStrategy();
+        seeded.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
+        seeded.initialize(series, params());
+
+        NeuralNetworkStrategy pinnedToMissing = new NeuralNetworkStrategy();
+        pinnedToMissing.setModelContext(
+                ctxPinned(store, ModelLoadPolicy.LOAD_ONLY, "20990101T000000.000Z"));
+
+        ModelNotCachedException ex = assertThrows(ModelNotCachedException.class,
+                () -> pinnedToMissing.initialize(series, params()));
+        assertEquals("20990101T000000.000Z", ex.pinnedVersionId(),
+                "exception should carry the pin for the CLI to switch its error message");
+        assertTrue(ex.getMessage().contains("20990101T000000.000Z"),
+                "message should mention the missing version");
     }
 
     @Test
