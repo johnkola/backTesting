@@ -64,6 +64,7 @@ export type ResultSummary = {
   winRate: number | null
   modelCacheKey: string | null
   modelCacheHit: boolean | null
+  modelVersionId: string | null
   createdAt: string
 }
 

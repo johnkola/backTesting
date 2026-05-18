@@ -209,7 +209,13 @@ public class ModelStore {
                     .restore(normalizerFile.toFile());
             String json = Files.readString(metadataFile, StandardCharsets.UTF_8);
             ModelMetadata metadata = gson.fromJson(json, ModelMetadata.class);
-            return Optional.of(new LoadedModel(network, normalizer, metadata));
+            // Derive versionId from the directory name when the layout is
+            // versioned (the dir name itself matches VERSION_PATTERN). For
+            // legacy flat-layout entries this name is the cache-key dir, so
+            // it won't match and we leave versionId null.
+            String dirName = dir.getFileName().toString();
+            String versionId = VERSION_PATTERN.matcher(dirName).matches() ? dirName : null;
+            return Optional.of(new LoadedModel(network, normalizer, metadata, versionId));
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to load cached model from " + dir, e);
         } catch (Exception e) {

@@ -231,11 +231,13 @@ public class BacktestEngine {
 
         String modelCacheKey = null;
         Boolean modelCacheHit = null;
+        String modelVersionId = null;
         if (strategy instanceof PersistableModelStrategy persistable) {
             ModelCacheOutcome outcome = persistable.getCacheOutcome().orElse(null);
             if (outcome != null) {
                 modelCacheKey = outcome.cacheKey();
                 modelCacheHit = outcome.hit();
+                modelVersionId = outcome.versionId();
             }
         }
 
@@ -252,7 +254,8 @@ public class BacktestEngine {
                 initialCapital,
                 finalEquity,
                 modelCacheKey,
-                modelCacheHit);
+                modelCacheHit,
+                modelVersionId);
     }
 
     /**

@@ -193,6 +193,13 @@ ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS data_source VARCHAR(50) NO
 -- NULL for non-ML strategies and for runs that pre-date these columns.
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_cache_key VARCHAR(64);
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_cache_hit BOOLEAN;
+-- Specific model-version subdir the strategy used (loaded or just saved).
+-- NULL for non-ML strategies, for runs that pre-date this column, and for
+-- hits against legacy flat-layout entries which have no on-disk version id.
+-- Format is the compact-UTC `yyyyMMdd'T'HHmmss.SSS'Z'` produced by
+-- ModelStore.VERSION_FORMAT — 24 chars; 32 leaves headroom for future
+-- format tweaks without another schema migration.
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_version_id VARCHAR(32);
 
 -- Indexes for the hot read paths:
 -- - report --list / report --last (BacktestResultRepository.findAll / findLatest)

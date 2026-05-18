@@ -68,8 +68,9 @@ public class BacktestResultRepository {
         String sql = "INSERT INTO backtest_results " +
                 "(instrument_symbol, strategy_name, timeframe, data_source, start_date, end_date, " +
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
-                "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, result_json) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, " +
+                "model_version_id, result_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -109,8 +110,13 @@ public class BacktestResultRepository {
             } else {
                 ps.setNull(15, Types.BOOLEAN);
             }
+            if (row.modelVersionId() != null) {
+                ps.setString(16, row.modelVersionId());
+            } else {
+                ps.setNull(16, Types.VARCHAR);
+            }
 
-            ps.setString(16, row.resultJson());
+            ps.setString(17, row.resultJson());
 
             ps.executeUpdate();
             logger.info("Saved backtest result: {} on {} ({})",
@@ -127,7 +133,7 @@ public class BacktestResultRepository {
         String sql = "SELECT id, instrument_symbol, strategy_name, timeframe, " +
                 "start_date, end_date, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, " +
-                "model_cache_key, model_cache_hit, created_at " +
+                "model_cache_key, model_cache_hit, model_version_id, created_at " +
                 "FROM backtest_results ORDER BY created_at DESC";
 
         List<BacktestResultSummaryRow> summaries = new ArrayList<>();
@@ -193,6 +199,7 @@ public class BacktestResultRepository {
                 .winRate(metrics.getWinRate())
                 .modelCacheKey(result.getModelCacheKey())
                 .modelCacheHit(result.getModelCacheHit())
+                .modelVersionId(result.getModelVersionId())
                 .resultJson(gson.toJson(result))
                 .build();
     }
@@ -222,6 +229,7 @@ public class BacktestResultRepository {
                 .winRate(rs.getDouble("win_rate"))
                 .modelCacheKey(rs.getString("model_cache_key"))
                 .modelCacheHit(cacheHit)
+                .modelVersionId(rs.getString("model_version_id"))
                 .createdAt(createdAt)
                 .build();
     }

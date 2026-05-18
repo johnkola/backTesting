@@ -76,7 +76,7 @@ export default function ResultDetailPage() {
         {detail.modelCacheHit === true && (
           <span
             className="badge badge-success"
-            title={`cache hit · key ${detail.modelCacheKey ?? ''}`}
+            title={`cache hit · key ${detail.modelCacheKey ?? ''}${detail.modelVersionId ? ` · version ${detail.modelVersionId}` : ''}`}
           >
             cached model
           </span>
@@ -84,7 +84,7 @@ export default function ResultDetailPage() {
         {detail.modelCacheHit === false && (
           <span
             className="badge badge-warning"
-            title={`trained fresh · key ${detail.modelCacheKey ?? ''}`}
+            title={`trained fresh · key ${detail.modelCacheKey ?? ''}${detail.modelVersionId ? ` · version ${detail.modelVersionId}` : ''}`}
           >
             trained fresh
           </span>
@@ -92,6 +92,14 @@ export default function ResultDetailPage() {
         {detail.modelCacheKey && (
           <span className="text-xs font-mono text-base-content/50" title={detail.modelCacheKey}>
             {detail.modelCacheKey.slice(0, 12)}…
+          </span>
+        )}
+        {detail.modelVersionId && (
+          <span
+            className="text-xs font-mono text-base-content/50"
+            title={`model version ${detail.modelVersionId}`}
+          >
+            v {detail.modelVersionId}
           </span>
         )}
         <span className="ml-auto text-sm text-base-content/60">

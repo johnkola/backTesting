@@ -236,6 +236,32 @@ class ModelStoreTest {
     }
 
     @Test
+    void loadedModelCarriesVersionIdFromVersionedDirAndNullForLegacy(@TempDir Path tmp) throws Exception {
+        // Versioned path: loaded.versionId() must match the dir name save() wrote to.
+        ModelStore store = new ModelStore(tmp);
+        Saved saved = trainAndSave(store, "nn-feedforward", "abc");
+
+        Optional<LoadedModel> versioned = store.load("nn-feedforward", "abc");
+        assertTrue(versioned.isPresent());
+        assertEquals(saved.versionId, versioned.get().versionId(),
+                "versioned load must surface the directory name as versionId");
+
+        // Legacy flat path: same files placed directly under <key>/. versionId is null
+        // because the dir name is the cache key, not a VERSION_PATTERN-shaped id.
+        Path keyDir = store.entryDir("nn-feedforward", "legacy");
+        Files.createDirectories(keyDir);
+        Path src = store.versionDir("nn-feedforward", "abc", saved.versionId);
+        Files.copy(src.resolve("model.zip"), keyDir.resolve("model.zip"));
+        Files.copy(src.resolve("normalizer.bin"), keyDir.resolve("normalizer.bin"));
+        Files.copy(src.resolve("metadata.json"), keyDir.resolve("metadata.json"));
+
+        Optional<LoadedModel> legacy = store.load("nn-feedforward", "legacy");
+        assertTrue(legacy.isPresent());
+        assertNull(legacy.get().versionId(),
+                "legacy flat-layout hits have no on-disk version id");
+    }
+
+    @Test
     void loadStillWorksOnLegacyFlatLayout(@TempDir Path tmp) throws Exception {
         // Simulate a pre-versioning entry by writing files directly under the
         // key dir. load() should treat it as the (sole) available version.

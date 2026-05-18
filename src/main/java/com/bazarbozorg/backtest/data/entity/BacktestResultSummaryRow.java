@@ -21,6 +21,7 @@ public record BacktestResultSummaryRow(long id,
                                        double winRate,
                                        String modelCacheKey,
                                        Boolean modelCacheHit,
+                                       String modelVersionId,
                                        ZonedDateTime createdAt) {
 
     public static Builder builder() {
@@ -41,6 +42,7 @@ public record BacktestResultSummaryRow(long id,
         private double winRate;
         private String modelCacheKey;
         private Boolean modelCacheHit;
+        private String modelVersionId;
         private ZonedDateTime createdAt;
 
         private Builder() {}
@@ -58,12 +60,13 @@ public record BacktestResultSummaryRow(long id,
         public Builder winRate(double v) { this.winRate = v; return this; }
         public Builder modelCacheKey(String s) { this.modelCacheKey = s; return this; }
         public Builder modelCacheHit(Boolean v) { this.modelCacheHit = v; return this; }
+        public Builder modelVersionId(String s) { this.modelVersionId = s; return this; }
         public Builder createdAt(ZonedDateTime d) { this.createdAt = d; return this; }
 
         public BacktestResultSummaryRow build() {
             return new BacktestResultSummaryRow(id, instrumentSymbol, strategyName, timeframe,
                     startDate, endDate, totalReturnPct, sharpeRatio, maxDrawdownPct,
-                    totalTrades, winRate, modelCacheKey, modelCacheHit, createdAt);
+                    totalTrades, winRate, modelCacheKey, modelCacheHit, modelVersionId, createdAt);
         }
     }
 }
