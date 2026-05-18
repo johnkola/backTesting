@@ -5,6 +5,7 @@ import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
+import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
@@ -245,6 +246,35 @@ class NeuralNetworkStrategyCacheTest {
                 "exception should carry the pin for the CLI to switch its error message");
         assertTrue(ex.getMessage().contains("20990101T000000.000Z"),
                 "message should mention the missing version");
+    }
+
+    @Test
+    void cacheOutcomeCarriesVersionIdOnBothFreshTrainAndCacheHit(@TempDir Path tmp) {
+        ModelStore store = new ModelStore(tmp);
+
+        // First run: fresh train → outcome.versionId must be the just-saved id.
+        NeuralNetworkStrategy fresh = new NeuralNetworkStrategy();
+        fresh.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
+        fresh.initialize(series, params());
+
+        ModelCacheOutcome freshOutcome = fresh.getCacheOutcome().orElseThrow();
+        assertFalse(freshOutcome.hit(), "first run is a cache miss");
+        assertNotNull(freshOutcome.versionId(),
+                "fresh train must record the version id ModelStore.save returned");
+        assertTrue(freshOutcome.versionId().matches("\\d{8}T\\d{6}\\.\\d{3}Z"),
+                "version id should be the compact-UTC format; got: " + freshOutcome.versionId());
+
+        // Second run: cache hit → outcome.versionId should match what was just saved.
+        NeuralNetworkStrategy reload = new NeuralNetworkStrategy();
+        reload.setModelContext(ctx(store, ModelLoadPolicy.LOAD_OR_TRAIN));
+        reload.initialize(series, params());
+
+        ModelCacheOutcome hitOutcome = reload.getCacheOutcome().orElseThrow();
+        assertTrue(hitOutcome.hit(), "second run is a cache hit");
+        assertEquals(freshOutcome.versionId(), hitOutcome.versionId(),
+                "hit must surface the same version id as the underlying load");
+        assertEquals(freshOutcome.cacheKey(), hitOutcome.cacheKey(),
+                "cache key is stable across hit/miss for the same inputs");
     }
 
     @Test

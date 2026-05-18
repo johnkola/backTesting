@@ -123,9 +123,11 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
                 LoadedModel loaded = hit.get();
                 model = loaded.network();
                 featureExtractor.setNormalizer(loaded.normalizer());
-                cacheOutcome = new ModelCacheOutcome(loaded.metadata().cacheKey(), true);
-                logger.info("Loaded cached NN model (key={}, validation accuracy={}%)",
+                cacheOutcome = new ModelCacheOutcome(
+                        loaded.metadata().cacheKey(), loaded.versionId(), true);
+                logger.info("Loaded cached NN model (key={}, version={}, validation accuracy={}%)",
                         shortKey(loaded.metadata().cacheKey()),
+                        loaded.versionId() != null ? loaded.versionId() : "legacy",
                         loaded.metadata().validationAccuracyPct());
                 return;
             }
@@ -143,8 +145,8 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         long trainDuration = System.currentTimeMillis() - trainStart;
 
         if (modelContext != null) {
-            saveCached(validationAccuracyPct, trainDuration);
-            cacheOutcome = new ModelCacheOutcome(computeCacheKey(), false);
+            String savedVersionId = saveCached(validationAccuracyPct, trainDuration);
+            cacheOutcome = new ModelCacheOutcome(computeCacheKey(), savedVersionId, false);
         }
     }
 
@@ -296,12 +298,20 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         return loaded;
     }
 
-    private void saveCached(double validationAccuracyPct, long trainingDurationMs) {
+    /**
+     * Persists the just-trained model and returns the version id the
+     * {@link ModelStore} wrote it under, or {@code null} when the normalizer
+     * wasn't fitted (rare edge case &mdash; we don't save partially-built
+     * models). The caller records the returned id on the
+     * {@link ModelCacheOutcome} so a future backtest can be traced to the
+     * exact version it ran against.
+     */
+    private String saveCached(double validationAccuracyPct, long trainingDurationMs) {
         ModelStore store = modelContext.modelStore();
         NormalizerMinMaxScaler normalizer = featureExtractor.getNormalizer();
         if (normalizer == null) {
             logger.warn("Skipping model save: normalizer was not fitted.");
-            return;
+            return null;
         }
         String cacheKey = computeCacheKey();
         TrainingFingerprint fp = trainingFingerprint();
@@ -318,7 +328,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
                 DL4J_VERSION,
                 validationAccuracyPct,
                 trainingDurationMs);
-        store.save(getName(), cacheKey, model, normalizer, metadata);
+        return store.save(getName(), cacheKey, model, normalizer, metadata);
     }
 
     private String computeCacheKey() {
