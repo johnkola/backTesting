@@ -37,15 +37,36 @@ services:
       PGUSER: backtest
       PGPASSWORD: backtest
       PORT: 3000
+      # Upstream for POST /api/imports (and future loader routes). Node proxies
+      # mutating import calls here; GET endpoints stay on Node itself.
+      LOADER_URL: http://loader:8001
     volumes:
-      # Expose host-trained models to /api/models (host-side `gradlew train` writes here).
       - ./data/models:/data/models:ro
-      # Live-mount the rendered docs so edits to README.md / ARCHITECTURE.md show up
-      # on /readme and /architecture without rebuilding the web image. The Dockerfile
-      # also bakes copies at /app/docs so the image is self-contained when run without
-      # compose; these mounts shadow those copies.
       - ./README.md:/app/docs/README.md:ro
       - ./ARCHITECTURE.md:/app/docs/ARCHITECTURE.md:ro
+
+  loader:
+    build:
+      context: .
+      dockerfile: python/Dockerfile
+    container_name: backtest-loader
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    environment:
+      PGHOST: timescaledb
+      PGPORT: 5432
+      PGDATABASE: backtest
+      PGUSER: backtest
+      PGPASSWORD: backtest
+      CSV_ARCHIVE_DIR: /data/csv-archive
+    volumes:
+      # CSV archive — owned by the loader, read by anyone who needs the on-disk
+      # slices (the host-side gradle path also writes here through the same mount).
+      - ./data/csv-archive:/data/csv-archive
 
 volumes:
   timescaledb-data:

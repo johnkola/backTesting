@@ -1,7 +1,6 @@
 package com.bazarbozorg.backtest;
 
 import com.bazarbozorg.backtest.cli.BacktestCommand;
-import com.bazarbozorg.backtest.cli.ImportDataCommand;
 import com.bazarbozorg.backtest.cli.ListInstrumentsCommand;
 import com.bazarbozorg.backtest.cli.ListStrategiesCommand;
 import com.bazarbozorg.backtest.cli.ReportCommand;
@@ -9,12 +8,13 @@ import com.bazarbozorg.backtest.cli.TrainCommand;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
+// CSV import moved to the Python loader service (POST /api/imports). The
+// `import` subcommand is gone — use the web UI or curl the loader directly.
 @Command(name = "backtest",
          mixinStandardHelpOptions = true,
          version = "Backtest 1.0",
          description = "Stock/Forex Backtesting CLI Application",
          subcommands = {
-             ImportDataCommand.class,
              ListStrategiesCommand.class,
              ListInstrumentsCommand.class,
              TrainCommand.class,

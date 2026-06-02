@@ -1,9 +1,14 @@
 const express = require('express');
 const fs = require('fs');
+const http = require('node:http');
 const path = require('path');
 const { marked } = require('marked');
 const { pool } = require('./db');
 const docs = require('./docs');
+
+// CSV upload is owned by the Python loader. In docker-compose this is the
+// loader service on :8001; locally it's whatever LOADER_URL points at.
+const LOADER_URL = process.env.LOADER_URL || 'http://localhost:8001';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -285,7 +290,8 @@ app.get('/api/imports', async (req, res) => {
              di.instrument_id, i.symbol AS instrument_symbol,
              di.timeframe,
              di.file_path, di.file_name,
-             di.row_count, di.imported_at
+             di.row_count, di.imported_at,
+             di.file_hash, di.archive_path
         FROM data_imports di
         JOIN data_sources ds ON ds.id = di.source_id
         JOIN instruments i ON i.id = di.instrument_id
@@ -310,6 +316,8 @@ app.get('/api/imports', async (req, res) => {
         fileName: r.file_name,
         rowCount: r.row_count,
         importedAt: r.imported_at,
+        fileHash: r.file_hash,
+        archivePath: r.archive_path,
       })),
       total: Number(countRows[0].total),
       limit,
@@ -318,6 +326,31 @@ app.get('/api/imports', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/imports → forwarded to the Python loader. We stream the
+// multipart body straight through without buffering so large CSVs don't
+// thrash memory. Read endpoints (GET /api/imports above) stay on Node.
+app.post('/api/imports', (req, res) => {
+  const upstream = new URL(LOADER_URL);
+  const proxied = http.request(
+    {
+      hostname: upstream.hostname,
+      port: upstream.port || (upstream.protocol === 'https:' ? 443 : 80),
+      method: 'POST',
+      path: '/api/imports',
+      headers: req.headers,
+    },
+    (r) => {
+      res.status(r.statusCode || 502);
+      for (const [k, v] of Object.entries(r.headers)) if (v !== undefined) res.setHeader(k, v);
+      r.pipe(res);
+    },
+  );
+  proxied.on('error', (err) => {
+    res.status(502).json({ error: `loader unreachable: ${err.message}` });
+  });
+  req.pipe(proxied);
 });
 
 app.get('/api/results', async (req, res) => {

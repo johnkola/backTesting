@@ -45,6 +45,44 @@ export type ImportRecord = {
   fileName: string
   rowCount: number
   importedAt: string
+  /** SHA-256 of the imported CSV's content. Null for rows imported before
+   *  the CSV archive feature shipped. */
+  fileHash: string | null
+  /** Relative path the file is archived under, e.g. "yahoo/QQQ/2008/H1.csv".
+   *  Null for legacy pre-archive rows. */
+  archivePath: string | null
+}
+
+/** One slice of an upload — multi-year files are split server-side, so a
+ *  single POST returns N of these (one per year present in the input). */
+export type SliceOutcome =
+  | { year: number; status: 'created' | 'overwritten'; import: ImportRecord }
+  | { year: number; status: 'skipped'; import: ImportRecord }
+
+/** Preview entry returned with a 409 conflict — describes what each year
+ *  WOULD do if the user resubmits with force=true. */
+export type SlicePreview = {
+  year: number
+  archivePath: string
+  status: 'would-create' | 'would-skip' | 'would-overwrite' | 'conflict'
+  rowCount: number
+  fileHash: string
+  existing: ImportRecord | null
+}
+
+/** Discriminated union of POST /api/imports response shapes. */
+export type UploadImportResponse =
+  | { status: 'completed'; imports: SliceOutcome[] }
+  | { status: 'conflict'; message: string; imports: SlicePreview[] }
+  | { status: 'compressed_chunk'; error: string; hint: string; detail: string }
+
+export type UploadImportRequest = {
+  file: File
+  symbol: string
+  type: string
+  timeframe: string
+  source: string
+  force: boolean
 }
 
 export type ResultSummary = {
@@ -178,6 +216,27 @@ export const api = {
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
   models: (signal?: AbortSignal) =>
     getJson<{ items: TrainedModel[]; modelsDir: string }>('/api/models', signal),
+  uploadImport: async (req: UploadImportRequest): Promise<UploadImportResponse> => {
+    const fd = new FormData()
+    fd.append('file', req.file)
+    fd.append('symbol', req.symbol)
+    fd.append('type', req.type)
+    fd.append('timeframe', req.timeframe)
+    fd.append('source', req.source)
+    fd.append('force', String(req.force))
+    const res = await fetch('/api/imports', { method: 'POST', body: fd })
+    // 200 and 409 both carry a structured body (created/skipped/overwritten/conflict).
+    // 4xx other than 409 surface as plain { error } — convert to a throw.
+    let body: unknown
+    try { body = await res.json() } catch { body = null }
+    if (res.status === 200 || res.status === 409) {
+      return body as UploadImportResponse
+    }
+    const msg = (body && typeof body === 'object' && 'error' in body)
+      ? String((body as { error: string }).error)
+      : `${res.status} ${res.statusText}`
+    throw new Error(msg)
+  },
 }
 
 function qs(params: Record<string, unknown>): string {
