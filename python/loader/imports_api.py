@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
+from loader.aggregate import aggregate, is_valid_pair
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
@@ -40,13 +41,28 @@ async def post_imports(
     timeframe: str = Form(...),
     source: str = Form("default"),
     force: str = Form("false"),
+    aggregate_to: str = Form(""),
 ) -> JSONResponse:
+    """`aggregate_to` is a comma-separated list of higher timeframes
+    (e.g. "D1,W1,MN1"). When set, the just-imported candles are rolled
+    up into each target after the upload commits. Default is off, so
+    operators who manage W1/M1 with their own CSV imports aren't
+    surprised by overwrites."""
+
     if not symbol:
         return _bad("symbol is required")
     if timeframe not in ALLOWED_TIMEFRAMES:
         return _bad(f"timeframe must be one of {', '.join(sorted(ALLOWED_TIMEFRAMES))}")
     if type not in ALLOWED_TYPES:
         return _bad(f"type must be one of {', '.join(sorted(ALLOWED_TYPES))}")
+
+    fanout: list[str] = [t.strip() for t in aggregate_to.split(",") if t.strip()]
+    invalid_fanout = [t for t in fanout if not is_valid_pair(timeframe, t)]
+    if invalid_fanout:
+        return _bad(
+            f"aggregate_to has invalid target(s) for source {timeframe}: "
+            f"{', '.join(invalid_fanout)}"
+        )
 
     force_flag = str(force).strip().lower() == "true"
     source_name = source or "default"
@@ -124,10 +140,42 @@ async def post_imports(
         # match their on-disk file by hash, so they're left alone.
         write_archive_files(slices)
 
-        return JSONResponse(
-            status_code=200,
-            content={"status": "completed", "imports": results},
-        )
+        # Opt-in fan-out. Runs after the import transaction is durable so a
+        # failure here doesn't roll back the underlying candle write.
+        aggregate_results: list[dict[str, object]] = []
+        if fanout:
+            committed_years = [s.year for s in slices if s.plan != "skip"]
+            if committed_years:
+                since = f"{min(committed_years)}-01-01T00:00:00Z"
+                until = f"{max(committed_years) + 1}-01-01T00:00:00Z"
+            else:
+                since = until = None
+            with pool().connection() as conn:
+                # Resolved within the same DB call to dodge a race where the
+                # import created the instrument/source row mid-flight.
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM instruments WHERE symbol = %s", (symbol,))
+                    inst_row = cur.fetchone()
+                    cur.execute("SELECT id FROM data_sources WHERE name = %s", (source_name,))
+                    src_row = cur.fetchone()
+                if inst_row and src_row:
+                    with conn.transaction():
+                        for tf in fanout:
+                            written = aggregate(
+                                conn,
+                                instrument_id=int(inst_row[0]),
+                                source_id=int(src_row[0]),
+                                source_tf=timeframe,
+                                target_tf=tf,
+                                since=since,
+                                until=until,
+                            )
+                            aggregate_results.append({"timeframe": tf, "rowsWritten": written})
+
+        payload: dict[str, object] = {"status": "completed", "imports": results}
+        if aggregate_results:
+            payload["aggregated"] = aggregate_results
+        return JSONResponse(status_code=200, content=payload)
     finally:
         try:
             os.unlink(tmp_path)
