@@ -9,6 +9,8 @@ dependencies = [
     "python-multipart>=0.0.18",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
+    "numpy>=2.0",
+    "torch>=2.6",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +28,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["loader*"]
+include = ["loader*", "nn*"]
 
 [tool.ruff]
 line-length = 100
