@@ -63,10 +63,17 @@ services:
       PGUSER: backtest
       PGPASSWORD: backtest
       CSV_ARCHIVE_DIR: /data/csv-archive
+      MODELS_DIR: /data/models
+      # Keep-last-N retention for trained NN models. 0 disables retention,
+      # matching the Java side's default when --keep-last-N isn't passed.
+      MODEL_KEEP_LAST_N: "0"
     volumes:
       # CSV archive — owned by the loader, read by anyone who needs the on-disk
       # slices (the host-side gradle path also writes here through the same mount).
       - ./data/csv-archive:/data/csv-archive
+      # Trained NN models. RW because the loader writes new versions; the
+      # web service mounts the same host dir read-only above.
+      - ./data/models:/data/models
 
 volumes:
   timescaledb-data:

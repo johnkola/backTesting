@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from loader.aggregate_api import router as aggregate_router
 from loader.db import close_pool, pool
 from loader.imports_api import router as imports_router
+from nn.nn_api import router as nn_router
 
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="backtest-loader", lifespan=lifespan)
 app.include_router(imports_router)
 app.include_router(aggregate_router)
+app.include_router(nn_router)
 
 
 @app.get("/health")

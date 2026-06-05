@@ -10,6 +10,7 @@ COPY python/pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
 
 COPY python/loader ./loader
+COPY python/nn ./nn
 
 EXPOSE 8001
 CMD ["uvicorn", "loader.main:app", "--host", "0.0.0.0", "--port", "8001"]

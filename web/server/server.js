@@ -328,17 +328,18 @@ app.get('/api/imports', async (req, res) => {
   }
 });
 
-// POST /api/imports → forwarded to the Python loader. We stream the
-// multipart body straight through without buffering so large CSVs don't
-// thrash memory. Read endpoints (GET /api/imports above) stay on Node.
-app.post('/api/imports', (req, res) => {
+// Loader-owned routes: POST /api/imports, POST /api/aggregate, and the
+// /api/nn/* family (train + predict + models). Streamed straight through
+// so multipart uploads and large prediction batches don't buffer here.
+// Read endpoints (GET /api/imports above) stay on Node.
+function proxyToLoader(req, res) {
   const upstream = new URL(LOADER_URL);
   const proxied = http.request(
     {
       hostname: upstream.hostname,
       port: upstream.port || (upstream.protocol === 'https:' ? 443 : 80),
-      method: 'POST',
-      path: '/api/imports',
+      method: req.method,
+      path: req.originalUrl,
       headers: req.headers,
     },
     (r) => {
@@ -351,7 +352,11 @@ app.post('/api/imports', (req, res) => {
     res.status(502).json({ error: `loader unreachable: ${err.message}` });
   });
   req.pipe(proxied);
-});
+}
+
+app.post('/api/imports', proxyToLoader);
+app.post('/api/aggregate', proxyToLoader);
+app.use('/api/nn', proxyToLoader);
 
 app.get('/api/results', async (req, res) => {
   try {

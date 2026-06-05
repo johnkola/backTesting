@@ -3,12 +3,20 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import http from 'node:http'
 
-// Method-aware split for /api/imports: POST goes to the Python loader, GET
-// (and everything else) falls through to the standard /api proxy below
-// (Node, :3000). Production uses the same split via the Node `web` service,
-// which proxies POST upstream via $LOADER_URL.
+// Path-based split: requests under /api/nn/* and POST /api/imports go to
+// the Python loader; everything else under /api falls through to Node.
+// Production uses the same split via the Node `web` service, which proxies
+// the same set of paths upstream via $LOADER_URL.
 const NODE_URL = process.env.NODE_URL || 'http://localhost:3000'
 const LOADER_URL = process.env.LOADER_URL || 'http://localhost:8001'
+
+function _routeToLoader(method: string | undefined, url: string | undefined): boolean {
+  if (!url) return false
+  if (url.startsWith('/api/nn/')) return true
+  if (method === 'POST' && url.startsWith('/api/imports')) return true
+  if (method === 'POST' && url.startsWith('/api/aggregate')) return true
+  return false
+}
 
 function loaderProxyPlugin(): Plugin {
   const loader = new URL(LOADER_URL)
@@ -16,7 +24,7 @@ function loaderProxyPlugin(): Plugin {
     name: 'loader-proxy',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (req.method === 'POST' && req.url?.startsWith('/api/imports')) {
+        if (_routeToLoader(req.method, req.url)) {
           const proxied = http.request(
             {
               hostname: loader.hostname,
