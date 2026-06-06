@@ -3,59 +3,77 @@ package com.bazarbozorg.backtest.strategy.nn;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
-import com.bazarbozorg.backtest.strategy.persistence.FeatureMetadata;
-import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
-import com.bazarbozorg.backtest.strategy.persistence.LoadedModel;
 import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
-import com.bazarbozorg.backtest.strategy.persistence.ModelMetadata;
 import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
-import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
-import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
-import org.nd4j.linalg.api.ndarray.INDArray;
-import org.nd4j.linalg.dataset.DataSet;
-import org.nd4j.linalg.dataset.api.preprocessor.NormalizerMinMaxScaler;
-import org.nd4j.linalg.factory.Nd4j;
-import org.nd4j.linalg.indexing.NDArrayIndex;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.TreeMap;
 
 /**
- * Neural network feedforward trading strategy.
+ * Neural-network feedforward strategy backed by the Python loader service.
  *
- * Uses a DL4J multi-layer perceptron to classify each bar as BUY, HOLD, or SELL
- * based on a lookback window of technical indicator features. The network is
- * trained during {@link #buildIndicators()} on a portion of the historical data,
- * then used for inference on subsequent bars.
+ * <p>The DL4J in-process implementation lived here previously; that path has
+ * moved to {@code python/nn/} (features + labels + PyTorch model + min-max
+ * scaler + on-disk registry, all served from the loader's FastAPI). This
+ * class is now a thin RPC client:
  *
- * If a {@link ModelContext} is supplied via
- * {@link #setModelContext(ModelContext)} before initialization, the strategy
- * will attempt to load a previously trained model whose cache key matches the
- * current (instrument, source, timeframe, training-data fingerprint, hyperparams)
- * tuple. On a cache miss it trains from scratch and saves the result for
- * future runs.
+ * <ol>
+ *   <li>{@code buildIndicators()} POSTs to {@code /api/nn/train} (mode taken
+ *       from the {@link ModelContext}'s {@link ModelLoadPolicy}), then POSTs
+ *       to {@code /api/nn/predict_range} for the BarSeries window. The
+ *       response is a flat list of (timestamp, classIndex) which we keep in
+ *       memory keyed by bar timestamp.</li>
+ *   <li>{@code evaluate(ctx)} looks up the prediction by the current bar's
+ *       timestamp — no per-bar network call. Safe because the feedforward
+ *       strategy is non-recursive: each bar's prediction is a pure function
+ *       of its lookback window, so batch-predict-upfront is equivalent to
+ *       per-bar predict.</li>
+ * </ol>
+ *
+ * <p>Loader URL comes from {@code $LOADER_URL} with a localhost default.
+ * Network errors fail the strategy hard rather than degrading silently —
+ * a backtest that's secretly emitting HOLDs because the loader was down
+ * is worse than a clean exit with a useful message.
  */
 public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         implements PersistableModelStrategy {
 
     private static final Logger logger = LoggerFactory.getLogger(NeuralNetworkStrategy.class);
 
-    /** Pinned DL4J version. Cached models from a different version are ignored. */
-    static final String DL4J_VERSION = "1.0.0-M2.1";
+    private static final String LOADER_URL = System.getenv()
+            .getOrDefault("LOADER_URL", "http://localhost:8001");
 
-    private NeuralNetworkConfig config;
-    private FeatureExtractor featureExtractor;
-    private MultiLayerNetwork model;
-    private int warmupBars;
+    /** Generous timeout so a long train (minutes) doesn't get aborted. */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(15);
+
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    private static final Gson GSON = new Gson();
+
     private ModelContext modelContext;
     private ModelCacheOutcome cacheOutcome;
+    private int warmupBars;
+
+    /** epochSecond → predicted class (0/1/2). Built once in buildIndicators(). */
+    private Map<Long, Integer> predictionsByEpochSecond = new HashMap<>();
 
     @Override
     public String getName() {
@@ -64,11 +82,13 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
 
     @Override
     public String getDescription() {
-        return "Neural Network Feedforward (DL4J)";
+        return "Neural Network Feedforward (Python loader)";
     }
 
     @Override
     public Map<String, String> getDefaultParameters() {
+        // Same defaults as the Python TrainConfig — kept in sync manually
+        // because the Java side defines the CLI surface.
         Map<String, String> defaults = new LinkedHashMap<>();
         defaults.put("lookbackWindow", "20");
         defaults.put("forwardBars", "5");
@@ -96,312 +116,217 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
     }
 
     @Override
-    protected void buildIndicators() {
-        config = NeuralNetworkConfig.fromParameters(parameters);
-        featureExtractor = new FeatureExtractor(series, config.getLookbackWindow());
-        warmupBars = featureExtractor.getMinBarIndex();
-
-        LabelGenerator labelGenerator = new LabelGenerator(
-                series, config.getForwardBars(),
-                config.getBuyThreshold(), config.getSellThreshold());
-
-        int firstSample = featureExtractor.getMinBarIndex();
-        int lastSample = labelGenerator.getMaxLabelIndex();
-
-        if (lastSample <= firstSample) {
-            logger.warn("Not enough data to train the neural network. "
-                    + "Need at least {} bars, have {}", firstSample + config.getForwardBars() + 1,
-                    series.getBarCount());
-            model = NetworkBuilder.build(config);
-            return;
-        }
-
-        // Cache-vs-train decision driven by ModelContext.policy.
-        if (modelContext != null && modelContext.policy() != ModelLoadPolicy.TRAIN_FRESH) {
-            Optional<LoadedModel> hit = tryLoadCached();
-            if (hit.isPresent()) {
-                LoadedModel loaded = hit.get();
-                model = loaded.network();
-                featureExtractor.setNormalizer(loaded.normalizer());
-                cacheOutcome = new ModelCacheOutcome(
-                        loaded.metadata().cacheKey(), loaded.versionId(), true);
-                logger.info("Loaded cached NN model (key={}, version={}, validation accuracy={}%)",
-                        shortKey(loaded.metadata().cacheKey()),
-                        loaded.versionId() != null ? loaded.versionId() : "legacy",
-                        loaded.metadata().validationAccuracyPct());
-                return;
-            }
-            if (modelContext.policy() == ModelLoadPolicy.LOAD_ONLY) {
-                throw new ModelNotCachedException(
-                        getName(), computeCacheKey(), modelContext.pinnedVersionId());
-            }
-            logger.info("No cached NN model found; training fresh.");
-        } else if (modelContext != null) {
-            logger.info("TRAIN_FRESH policy set; ignoring any cached NN model.");
-        }
-
-        long trainStart = System.currentTimeMillis();
-        double validationAccuracyPct = train(firstSample, lastSample, labelGenerator);
-        long trainDuration = System.currentTimeMillis() - trainStart;
-
-        if (modelContext != null) {
-            String savedVersionId = saveCached(validationAccuracyPct, trainDuration);
-            cacheOutcome = new ModelCacheOutcome(computeCacheKey(), savedVersionId, false);
-        }
-    }
-
-    /**
-     * Trains the model on a 80/20 train/validation split and returns the
-     * validation accuracy as a percentage. Mutates {@link #model} and the
-     * normalizer state of {@link #featureExtractor}.
-     */
-    private double train(int firstSample, int lastSample, LabelGenerator labelGenerator) {
-        int totalSamples = lastSample - firstSample + 1;
-        int trainSize = (int) (totalSamples * config.getTrainSplitRatio());
-        int trainEnd = firstSample + trainSize;
-        int barCount = series.getBarCount();
-
-        logger.info("NN training: {} total samples, {} train, {} validation",
-                totalSamples, trainSize, totalSamples - trainSize);
-
-        // The feature cache stores the matrix from [firstSample, barCount) — independent of
-        // label parameters, so the key doesn't need to encode forwardBars/buyThreshold/etc.
-        // We slice down to [0, totalSamples) for the training-relevant subset.
-        INDArray fullMatrix = loadOrBuildFeatures(firstSample, barCount);
-        INDArray usable = fullMatrix.get(NDArrayIndex.interval(0, totalSamples), NDArrayIndex.all());
-        // dup() so normalize() on the train slice can't mutate the val slice through a shared view.
-        INDArray trainFeatures = usable.get(NDArrayIndex.interval(0, trainSize), NDArrayIndex.all()).dup();
-        INDArray valFeatures = trainSize < totalSamples
-                ? usable.get(NDArrayIndex.interval(trainSize, totalSamples), NDArrayIndex.all()).dup()
-                : null;
-
-        INDArray trainLabels = labelGenerator.buildLabelMatrix(firstSample, trainEnd);
-
-        featureExtractor.fitNormalizer(trainFeatures);
-        featureExtractor.normalize(trainFeatures);
-
-        model = NetworkBuilder.build(config);
-
-        DataSet trainData = new DataSet(trainFeatures, trainLabels);
-
-        logger.info("Training neural network for {} epochs...", config.getNumEpochs());
-        for (int epoch = 0; epoch < config.getNumEpochs(); epoch++) {
-            trainData.shuffle(config.getSeed() + epoch);
-            model.fit(trainData);
-            if ((epoch + 1) % 10 == 0 || epoch == 0) {
-                double score = model.score();
-                logger.info("Epoch {}/{} - loss: {}", epoch + 1, config.getNumEpochs(), score);
-            }
-        }
-
-        double accuracy = 0.0;
-        if (valFeatures != null && trainEnd <= lastSample) {
-            featureExtractor.normalize(valFeatures);
-            INDArray valLabels = labelGenerator.buildLabelMatrix(trainEnd, lastSample + 1);
-
-            INDArray predictions = model.output(valFeatures);
-            int correct = 0;
-            int valSize = (int) valFeatures.rows();
-            for (int i = 0; i < valSize; i++) {
-                int predicted = Nd4j.argMax(predictions.getRow(i)).getInt(0);
-                int actual = Nd4j.argMax(valLabels.getRow(i)).getInt(0);
-                if (predicted == actual) correct++;
-            }
-            accuracy = valSize > 0 ? (double) correct / valSize * 100.0 : 0.0;
-            logger.info("Validation accuracy: {}/{} ({:.1f}%)", correct, valSize, accuracy);
-        }
-
-        logger.info("Neural network training complete.");
-        return accuracy;
-    }
-
-    /**
-     * Returns a feature matrix for {@code [fromIndex, toIndex)}, going through
-     * {@link FeatureStore} when available. Saves on miss so subsequent runs
-     * with different model hyperparameters skip extraction. Falls back to a
-     * direct build when no {@link FeatureStore} is wired (unit tests).
-     */
-    private INDArray loadOrBuildFeatures(int fromIndex, int toIndex) {
-        if (modelContext == null || modelContext.featureStore() == null) {
-            return featureExtractor.buildFeatureMatrix(fromIndex, toIndex);
-        }
-
-        FeatureStore store = modelContext.featureStore();
-        String key = computeFeatureCacheKey();
-        int expectedRows = toIndex - fromIndex;
-        int expectedCols = config.getLookbackWindow() * FeatureExtractor.FEATURES_PER_BAR;
-
-        Optional<INDArray> hit = store.load(key);
-        if (hit.isPresent()) {
-            INDArray cached = hit.get();
-            if (cached.rows() == expectedRows && cached.columns() == expectedCols) {
-                logger.info("Loaded feature matrix from cache (key={}, shape={}x{})",
-                        shortKey(key), cached.rows(), cached.columns());
-                return cached;
-            }
-            logger.warn("Cached feature matrix shape mismatch (expected {}x{}, got {}x{}); rebuilding.",
-                    expectedRows, expectedCols, cached.rows(), cached.columns());
-        } else {
-            logger.info("No cached feature matrix found; building fresh (key={}).", shortKey(key));
-        }
-
-        INDArray fresh = featureExtractor.buildFeatureMatrix(fromIndex, toIndex);
-        TrainingFingerprint fp = trainingFingerprint();
-        FeatureMetadata md = FeatureMetadata.fresh(
-                key,
-                modelContext.instrumentId(),
-                modelContext.sourceId(),
-                modelContext.timeframe().name(),
-                config.getLookbackWindow(),
-                FeatureExtractor.FEATURES_PER_BAR,
-                FeatureExtractor.FEATURE_SCHEMA_VERSION,
-                fp.firstBarEpochSec,
-                fp.lastBarEpochSec,
-                fp.barCount,
-                fresh.rows(),
-                fresh.columns());
-        store.save(key, fresh, md);
-        return fresh;
-    }
-
-    private String computeFeatureCacheKey() {
-        TrainingFingerprint fp = trainingFingerprint();
-        Map<String, String> inputs = new TreeMap<>();
-        inputs.put("instrumentId", String.valueOf(modelContext.instrumentId()));
-        inputs.put("sourceId", String.valueOf(modelContext.sourceId()));
-        inputs.put("timeframe", modelContext.timeframe().name());
-        inputs.put("lookbackWindow", String.valueOf(config.getLookbackWindow()));
-        inputs.put("featuresPerBar", String.valueOf(FeatureExtractor.FEATURES_PER_BAR));
-        inputs.put("featureSchemaVersion", String.valueOf(FeatureExtractor.FEATURE_SCHEMA_VERSION));
-        inputs.put("firstBarEpochSec", String.valueOf(fp.firstBarEpochSec));
-        inputs.put("lastBarEpochSec", String.valueOf(fp.lastBarEpochSec));
-        inputs.put("barCount", String.valueOf(fp.barCount));
-        return FeatureStore.computeCacheKey(inputs);
-    }
-
-    private Optional<LoadedModel> tryLoadCached() {
-        ModelStore store = modelContext.modelStore();
-        String cacheKey = computeCacheKey();
-        String pinned = modelContext.pinnedVersionId();
-        Optional<LoadedModel> loaded = pinned != null
-                ? store.load(getName(), cacheKey, pinned)
-                : store.load(getName(), cacheKey);
-        if (loaded.isEmpty()) {
-            return Optional.empty();
-        }
-        ModelMetadata md = loaded.get().metadata();
-        if (!DL4J_VERSION.equals(md.dl4jVersion())) {
-            logger.warn("Cached model DL4J version {} != runtime {}; ignoring.",
-                    md.dl4jVersion(), DL4J_VERSION);
-            return Optional.empty();
-        }
-        return loaded;
-    }
-
-    /**
-     * Persists the just-trained model and returns the version id the
-     * {@link ModelStore} wrote it under, or {@code null} when the normalizer
-     * wasn't fitted (rare edge case &mdash; we don't save partially-built
-     * models). The caller records the returned id on the
-     * {@link ModelCacheOutcome} so a future backtest can be traced to the
-     * exact version it ran against.
-     */
-    private String saveCached(double validationAccuracyPct, long trainingDurationMs) {
-        ModelStore store = modelContext.modelStore();
-        NormalizerMinMaxScaler normalizer = featureExtractor.getNormalizer();
-        if (normalizer == null) {
-            logger.warn("Skipping model save: normalizer was not fitted.");
-            return null;
-        }
-        String cacheKey = computeCacheKey();
-        TrainingFingerprint fp = trainingFingerprint();
-        ModelMetadata metadata = ModelMetadata.fresh(
-                cacheKey,
-                getName(),
-                modelContext.instrumentId(),
-                modelContext.sourceId(),
-                modelContext.timeframe().name(),
-                fp.firstBarEpochSec,
-                fp.lastBarEpochSec,
-                fp.barCount,
-                hyperparamsAsMap(),
-                DL4J_VERSION,
-                validationAccuracyPct,
-                trainingDurationMs);
-        return store.save(getName(), cacheKey, model, normalizer, metadata);
-    }
-
-    private String computeCacheKey() {
-        TrainingFingerprint fp = trainingFingerprint();
-        Map<String, String> inputs = new TreeMap<>();
-        inputs.put("strategy", getName());
-        inputs.put("instrumentId", String.valueOf(modelContext.instrumentId()));
-        inputs.put("sourceId", String.valueOf(modelContext.sourceId()));
-        inputs.put("timeframe", modelContext.timeframe().name());
-        inputs.put("featuresPerBar", String.valueOf(FeatureExtractor.FEATURES_PER_BAR));
-        inputs.put("firstBarEpochSec", String.valueOf(fp.firstBarEpochSec));
-        inputs.put("lastBarEpochSec", String.valueOf(fp.lastBarEpochSec));
-        inputs.put("barCount", String.valueOf(fp.barCount));
-        inputs.put("dl4jVersion", DL4J_VERSION);
-        inputs.putAll(hyperparamsAsMap());
-        return ModelStore.computeCacheKey(inputs);
-    }
-
-    private Map<String, String> hyperparamsAsMap() {
-        Map<String, String> m = new TreeMap<>();
-        m.put("lookbackWindow", String.valueOf(config.getLookbackWindow()));
-        m.put("forwardBars", String.valueOf(config.getForwardBars()));
-        m.put("buyThreshold", String.valueOf(config.getBuyThreshold()));
-        m.put("sellThreshold", String.valueOf(config.getSellThreshold()));
-        m.put("hiddenLayerSize", String.valueOf(config.getHiddenLayerSize()));
-        m.put("numHiddenLayers", String.valueOf(config.getNumHiddenLayers()));
-        m.put("learningRate", String.valueOf(config.getLearningRate()));
-        m.put("numEpochs", String.valueOf(config.getNumEpochs()));
-        m.put("batchSize", String.valueOf(config.getBatchSize()));
-        m.put("dropoutRate", String.valueOf(config.getDropoutRate()));
-        m.put("seed", String.valueOf(config.getSeed()));
-        m.put("trainSplitRatio", String.valueOf(config.getTrainSplitRatio()));
-        return m;
-    }
-
-    private TrainingFingerprint trainingFingerprint() {
-        int n = series.getBarCount();
-        long firstSec = series.getBar(0).getEndTime().getEpochSecond();
-        long lastSec = series.getBar(n - 1).getEndTime().getEpochSecond();
-        return new TrainingFingerprint(firstSec, lastSec, n);
-    }
-
-    private record TrainingFingerprint(long firstBarEpochSec, long lastBarEpochSec, int barCount) {
-    }
-
-    private static String shortKey(String key) {
-        return key == null || key.length() < 12 ? key : key.substring(0, 12);
-    }
-
-    @Override
     public int getWarmupBars() {
         return warmupBars;
     }
 
     @Override
-    public StrategySignal evaluate(StrategyContext context) {
-        int currentIndex = context.currentBarIndex();
-
-        if (currentIndex < warmupBars || model == null) {
-            return StrategySignal.HOLD;
+    protected void buildIndicators() {
+        if (modelContext == null
+                || modelContext.instrumentSymbol() == null
+                || modelContext.sourceName() == null) {
+            throw new IllegalStateException(
+                    "NeuralNetworkStrategy requires a ModelContext with instrumentSymbol + sourceName"
+            );
         }
 
-        double[] windowFeatures = featureExtractor.extractWindow(currentIndex);
-        INDArray input = Nd4j.create(windowFeatures).reshape(1, windowFeatures.length);
-        featureExtractor.normalize(input);
+        int barCount = series.getBarCount();
+        if (barCount == 0) {
+            warmupBars = 0;
+            return;
+        }
+        // BarSeries.getBar(i).getEndTime() returns an Instant. We use ISO-8601
+        // with `since` inclusive and `until` exclusive set to last+1ms so the
+        // loader's `<` semantics include the final bar.
+        Instant firstTs = series.getBar(0).getEndTime();
+        Instant lastTs = series.getBar(barCount - 1).getEndTime();
+        String since = firstTs.toString();
+        String until = lastTs.plusMillis(1).toString();
 
-        INDArray output = model.output(input);
-        int predictedClass = Nd4j.argMax(output, 1).getInt(0);
+        String trainMode = switch (modelContext.policy()) {
+            case LOAD_OR_TRAIN -> "auto";
+            case LOAD_ONLY -> "load_only";
+            case TRAIN_FRESH -> "force";
+        };
 
-        return switch (predictedClass) {
-            case LabelGenerator.CLASS_BUY -> StrategySignal.ENTRY_LONG;
-            case LabelGenerator.CLASS_SELL -> StrategySignal.EXIT_LONG;
+        String cacheKey;
+        String versionId;
+        boolean hit;
+        try {
+            JsonObject trainResp = postJson("/api/nn/train", buildTrainBody(since, until, trainMode));
+            cacheKey = trainResp.get("cacheKey").getAsString();
+            versionId = trainResp.get("versionId").getAsString();
+            hit = "cached".equals(stringOrNull(trainResp, "status"));
+        } catch (ModelNotCachedException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new RuntimeException("nn-feedforward: /api/nn/train failed: " + e.getMessage(), e);
+        }
+
+        // For LOAD_ONLY the loader returned 'cached' or 404 (already mapped to
+        // ModelNotCachedException). Either way we now have a cacheKey + versionId
+        // we can predict against.
+        cacheOutcome = new ModelCacheOutcome(cacheKey, versionId, hit);
+        logger.info("NN model resolved (key={}, version={}, hit={})",
+                shortKey(cacheKey), versionId, hit);
+
+        // Pin the version on predict so the prediction is reproducibly tied to
+        // the model the train call returned, even if a concurrent train rolled
+        // a newer version while we were resolving.
+        JsonObject body = new JsonObject();
+        body.addProperty("cache_key", cacheKey);
+        body.addProperty("version_id", versionId);
+        body.addProperty("symbol", modelContext.instrumentSymbol());
+        body.addProperty("source", modelContext.sourceName());
+        body.addProperty("timeframe", modelContext.timeframe().name());
+        body.addProperty("since", since);
+        body.addProperty("until", until);
+
+        JsonObject predResp;
+        try {
+            predResp = postJson("/api/nn/predict_range", body);
+        } catch (RuntimeException e) {
+            throw new RuntimeException(
+                    "nn-feedforward: /api/nn/predict_range failed: " + e.getMessage(), e);
+        }
+
+        int firstPredictedBarIndex = predResp.get("firstPredictedBarIndex").getAsInt();
+        warmupBars = firstPredictedBarIndex;
+        var preds = predResp.getAsJsonArray("predictions");
+        predictionsByEpochSecond = new HashMap<>(preds.size());
+        for (int i = 0; i < preds.size(); i++) {
+            JsonObject p = preds.get(i).getAsJsonObject();
+            Instant ts = Instant.parse(p.get("timestamp").getAsString());
+            int cls = p.get("classIndex").getAsInt();
+            predictionsByEpochSecond.put(ts.getEpochSecond(), cls);
+        }
+        logger.info("Loaded {} predictions from loader; warmupBars={}",
+                predictionsByEpochSecond.size(), warmupBars);
+    }
+
+    @Override
+    public StrategySignal evaluate(StrategyContext context) {
+        int i = context.currentBarIndex();
+        if (i < warmupBars) {
+            return StrategySignal.HOLD;
+        }
+        Instant ts = series.getBar(i).getEndTime();
+        Integer cls = predictionsByEpochSecond.get(ts.getEpochSecond());
+        if (cls == null) {
+            // Bar didn't get a prediction — happens for bars beyond what the
+            // loader returned (e.g. a partial range). Fail safe to HOLD.
+            return StrategySignal.HOLD;
+        }
+        // 0 = BUY, 1 = HOLD, 2 = SELL — matches nn.labels.CLASS_*.
+        return switch (cls) {
+            case 0 -> StrategySignal.ENTRY_LONG;
+            case 2 -> StrategySignal.EXIT_LONG;
             default -> StrategySignal.HOLD;
         };
+    }
+
+    // ----- HTTP plumbing ----------------------------------------------------
+
+    private JsonObject buildTrainBody(String since, String until, String mode) {
+        JsonObject body = new JsonObject();
+        body.addProperty("symbol", modelContext.instrumentSymbol());
+        body.addProperty("source", modelContext.sourceName());
+        body.addProperty("timeframe", modelContext.timeframe().name());
+        body.addProperty("since", since);
+        body.addProperty("until", until);
+        body.addProperty("mode", mode);
+
+        // Pass through every known hyperparam override. Names match the
+        // Python TrainRequest schema (snake_case).
+        addIntParam(body, "lookback_window", "lookbackWindow");
+        addIntParam(body, "forward_bars", "forwardBars");
+        addDoubleParam(body, "buy_threshold", "buyThreshold");
+        addDoubleParam(body, "sell_threshold", "sellThreshold");
+        addIntParam(body, "hidden_size", "hiddenLayerSize");
+        addIntParam(body, "num_hidden", "numHiddenLayers");
+        addDoubleParam(body, "dropout_rate", "dropoutRate");
+        addDoubleParam(body, "learning_rate", "learningRate");
+        addIntParam(body, "num_epochs", "numEpochs");
+        addIntParam(body, "batch_size", "batchSize");
+        addDoubleParam(body, "train_split_ratio", "trainSplitRatio");
+        addIntParam(body, "seed", "seed");
+        return body;
+    }
+
+    private void addIntParam(JsonObject body, String pyName, String javaKey) {
+        String v = parameters.get(javaKey);
+        if (v == null) return;
+        try {
+            body.addProperty(pyName, Integer.parseInt(v));
+        } catch (NumberFormatException ignored) { /* fall through to default */ }
+    }
+
+    private void addDoubleParam(JsonObject body, String pyName, String javaKey) {
+        String v = parameters.get(javaKey);
+        if (v == null) return;
+        try {
+            body.addProperty(pyName, Double.parseDouble(v));
+        } catch (NumberFormatException ignored) { /* fall through to default */ }
+    }
+
+    /**
+     * Sends a JSON POST and returns the parsed response body. Maps HTTP
+     * status to specific exceptions: 404 on load_only becomes
+     * {@link ModelNotCachedException}; everything else surfaces as a
+     * RuntimeException with the loader's error payload included.
+     */
+    private JsonObject postJson(String path, JsonObject body) {
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(LOADER_URL + path))
+                .timeout(REQUEST_TIMEOUT)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)))
+                .build();
+        HttpResponse<String> resp;
+        try {
+            resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw new RuntimeException("network error calling " + path + ": " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("interrupted calling " + path, e);
+        }
+        JsonObject parsed = parseOrThrow(resp.body(), path, resp.statusCode());
+
+        if (resp.statusCode() == 404 && "/api/nn/train".equals(path)) {
+            // load_only mode + no cached model. Translate to the existing
+            // pin-not-found exception so engine callers don't need to learn
+            // a new failure shape.
+            throw new ModelNotCachedException(getName(),
+                    stringOrNull(parsed, "cacheKey"), modelContext.pinnedVersionId());
+        }
+        if (resp.statusCode() / 100 != 2) {
+            String err = stringOrNull(parsed, "error");
+            throw new RuntimeException(
+                    "loader " + path + " returned " + resp.statusCode()
+                            + (err != null ? ": " + err : ""));
+        }
+        return parsed;
+    }
+
+    private JsonObject parseOrThrow(String body, String path, int status) {
+        try {
+            return GSON.fromJson(body, JsonObject.class);
+        } catch (RuntimeException e) {
+            throw new RuntimeException(
+                    "loader " + path + " returned non-JSON body (status " + status + "): "
+                            + (body != null && body.length() > 200
+                                    ? body.substring(0, 200) + "..." : body),
+                    e);
+        }
+    }
+
+    private static String stringOrNull(JsonObject obj, String key) {
+        return obj != null && obj.has(key) && !obj.get(key).isJsonNull()
+                ? obj.get(key).getAsString() : null;
+    }
+
+    private static String shortKey(String key) {
+        return key == null || key.length() < 12 ? key : key.substring(0, 12);
     }
 }

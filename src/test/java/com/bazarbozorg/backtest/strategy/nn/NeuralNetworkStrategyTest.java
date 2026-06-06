@@ -4,6 +4,7 @@ import com.bazarbozorg.backtest.model.Portfolio;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.ta4j.core.BarSeries;
@@ -20,9 +21,13 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Integration test for the NeuralNetworkStrategy.
- * Uses a synthetic bar series with enough data for training and evaluation.
+ * Integration test for the NeuralNetworkStrategy. Tested the in-process DL4J
+ * training path which has moved to the Python loader (task 21). Task 22
+ * deletes this class entirely; until then it stays disabled because the
+ * strategy now requires a live loader + Postgres instead of an in-memory
+ * BarSeries.
  */
+@Disabled("strategy moved to HTTP RPC; replaced by end-to-end parity in task 23")
 class NeuralNetworkStrategyTest {
 
     private NeuralNetworkStrategy strategy;

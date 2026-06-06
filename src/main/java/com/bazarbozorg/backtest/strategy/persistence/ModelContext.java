@@ -4,41 +4,59 @@ import com.bazarbozorg.backtest.model.enums.Timeframe;
 
 /**
  * Per-backtest persistence context handed to strategies that implement
- * {@link PersistableModelStrategy}. Carries the identifiers needed to compute
- * a deterministic cache key plus the on-disk stores the strategy should
- * load from / save to.
+ * {@link PersistableModelStrategy}.
+ *
+ * <p>{@code instrumentSymbol} and {@code sourceName} are needed by the RPC
+ * nn strategy, which talks to the Python loader by symbol/source name
+ * rather than database id. May be null when the caller doesn't have them
+ * (older test code paths).
+ *
+ * <p>{@code modelStore} / {@code featureStore} are leftovers from the
+ * in-process DL4J era — the RPC strategy ignores them. They stay on the
+ * record so the engine doesn't have to plumb a different shape per
+ * strategy; task 22 collapses this once DL4J is gone.
  *
  * @param instrumentId     database id of the instrument being backtested
  * @param sourceId         database id of the data source
+ * @param instrumentSymbol the instrument's symbol (e.g. "AAPL"); may be null
+ * @param sourceName       the data source's name (e.g. "default"); may be null
  * @param timeframe        the candle timeframe (e.g. D1, H1)
  * @param policy           cache-vs-train decision for this invocation
- * @param modelStore       the filesystem-backed store used to load/save trained models
- * @param featureStore     the filesystem-backed store used to load/save extracted
- *                         feature matrices (may be {@code null} for strategies that
- *                         don't use feature caching)
+ * @param modelStore       legacy: unused by the RPC strategy
+ * @param featureStore     legacy: unused by the RPC strategy
  * @param pinnedVersionId  when non-null, the strategy must load this specific
- *                         model version instead of the latest one for the
- *                         computed cache key. Null = "use the latest"
- *                         (default). Only meaningful for {@link ModelLoadPolicy#LOAD_ONLY}
- *                         &mdash; {@code TRAIN_FRESH} ignores the cache and
- *                         pinning under {@code LOAD_OR_TRAIN} is a CLI surface
- *                         that doesn't exist today.
+ *                         model version. Null = "use the latest".
  */
 public record ModelContext(long instrumentId,
                            long sourceId,
+                           String instrumentSymbol,
+                           String sourceName,
                            Timeframe timeframe,
                            ModelLoadPolicy policy,
                            ModelStore modelStore,
                            FeatureStore featureStore,
                            String pinnedVersionId) {
 
-    /** Backwards-compatible constructor: no version pin (= latest). */
+    /** Backwards-compatible: no symbol/name, no version pin. */
     public ModelContext(long instrumentId,
                         long sourceId,
                         Timeframe timeframe,
                         ModelLoadPolicy policy,
                         ModelStore modelStore,
                         FeatureStore featureStore) {
-        this(instrumentId, sourceId, timeframe, policy, modelStore, featureStore, null);
+        this(instrumentId, sourceId, null, null, timeframe, policy,
+                modelStore, featureStore, null);
+    }
+
+    /** Backwards-compatible: no symbol/name. */
+    public ModelContext(long instrumentId,
+                        long sourceId,
+                        Timeframe timeframe,
+                        ModelLoadPolicy policy,
+                        ModelStore modelStore,
+                        FeatureStore featureStore,
+                        String pinnedVersionId) {
+        this(instrumentId, sourceId, null, null, timeframe, policy,
+                modelStore, featureStore, pinnedVersionId);
     }
 }

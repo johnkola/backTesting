@@ -155,8 +155,9 @@ public class BacktestEngine {
         // Step 3: Initialize strategy (passing a persistence context first if supported)
         if (strategy instanceof PersistableModelStrategy persistable) {
             ModelContext ctx = new ModelContext(
-                    instrument.id(), source.id(), timeframe, policy, modelStore, featureStore,
-                    pinnedVersionId);
+                    instrument.id(), source.id(),
+                    instrument.symbol(), source.name(),
+                    timeframe, policy, modelStore, featureStore, pinnedVersionId);
             persistable.setModelContext(ctx);
         }
         strategy.initialize(series, params);
@@ -283,7 +284,9 @@ public class BacktestEngine {
         Prepared prep = prepare(instrumentSymbol, timeframe, from, to, sourceName);
 
         ModelContext ctx = new ModelContext(
-                prep.instrument().id(), prep.source().id(), timeframe, policy, modelStore, featureStore);
+                prep.instrument().id(), prep.source().id(),
+                prep.instrument().symbol(), prep.source().name(),
+                timeframe, policy, modelStore, featureStore, null);
         persistable.setModelContext(ctx);
         strategy.initialize(prep.series(), params);
 

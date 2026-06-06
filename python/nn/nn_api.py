@@ -21,7 +21,13 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from nn.data import load_candles, resolve_instrument, resolve_source
+from nn.data import (
+    load_candles,
+    load_candles_with_timestamps,
+    resolve_instrument,
+    resolve_source,
+)
+from nn.features import FEATURES_PER_BAR, build_feature_matrix, min_bar_index
 from nn.infer import load_for_inference, predict_batch
 from nn.store import ModelRegistry
 from nn.train import TrainConfig, train_model
@@ -58,6 +64,15 @@ class TrainRequest(BaseModel):
     timeframe: str = Field(..., description="Source timeframe to train against")
     since: str | None = Field(None, description="Optional ISO-8601 lower bound (inclusive)")
     until: str | None = Field(None, description="Optional ISO-8601 upper bound (exclusive)")
+
+    mode: str = Field(
+        "force",
+        description=(
+            "'force' (default) always trains a new version. 'auto' checks for "
+            "an existing model with the same cache key first and returns it "
+            "without re-training. 'load_only' fails with 404 instead of training."
+        ),
+    )
 
     # Hyperparameter overrides; everything not set falls back to TrainConfig
     # defaults, which mirror NeuralNetworkConfig.java exactly.
@@ -144,6 +159,41 @@ def post_train(req: TrainRequest) -> JSONResponse:
         "train_split_ratio": f"{cfg.train_split_ratio:.6f}",
         "seed": str(cfg.seed),
     }
+
+    # `mode` decides whether to honour an existing model at this cache key.
+    if req.mode not in {"force", "auto", "load_only"}:
+        return JSONResponse(
+            status_code=400, content={"error": f"unknown mode: {req.mode}"}
+        )
+
+    from nn.store import compute_cache_key
+
+    cache_key = compute_cache_key(cache_inputs)
+    if req.mode in {"auto", "load_only"}:
+        existing_versions = _registry().list_versions(_STRATEGY, cache_key)
+        if existing_versions:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "cached",
+                    "strategy": _STRATEGY,
+                    "cacheKey": cache_key,
+                    "versionId": existing_versions[-1],  # latest
+                    "symbol": req.symbol,
+                    "source": req.source,
+                    "timeframe": req.timeframe,
+                },
+            )
+        if req.mode == "load_only":
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": (
+                        f"no cached model for cacheKey={cache_key}; "
+                        f"pass mode=auto or mode=force to train"
+                    ),
+                },
+            )
 
     try:
         result = train_model(
@@ -234,6 +284,120 @@ def post_predict(req: PredictRequest) -> JSONResponse:
                     "probabilities": r.probabilities,
                 }
                 for r in results
+            ],
+        },
+    )
+
+
+# ----------------------------------------------------------------------------
+# GET /api/nn/models
+# ----------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------
+# POST /api/nn/predict_range
+#
+# Engine-facing endpoint: predict signals for every bar in a (symbol, source,
+# timeframe, since, until) window using a previously-trained model. The loader
+# fetches candles + extracts features + predicts in one call, so the Java
+# engine doesn't carry a feature extractor anymore.
+# ----------------------------------------------------------------------------
+
+
+class PredictRangeRequest(BaseModel):
+    cache_key: str = Field(..., description="Cache key returned from /api/nn/train")
+    version_id: str | None = Field(None, description="Pin to a specific version; latest if omitted")
+    symbol: str
+    source: str = "default"
+    timeframe: str
+    since: str | None = None
+    until: str | None = None
+
+
+@router.post("/api/nn/predict_range")
+def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
+    loaded = load_for_inference(
+        _registry(),
+        strategy=_STRATEGY,
+        cache_key=req.cache_key,
+        version_id=req.version_id,
+    )
+    if loaded is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": (
+                    f"no model found for cacheKey={req.cache_key} "
+                    f"versionId={req.version_id or '<latest>'}"
+                ),
+            },
+        )
+
+    with pool().connection() as conn:
+        instrument_id = resolve_instrument(conn, req.symbol)
+        if instrument_id is None:
+            return JSONResponse(
+                status_code=404, content={"error": f"unknown instrument symbol: {req.symbol}"}
+            )
+        source_id = resolve_source(conn, req.source)
+        if source_id is None:
+            return JSONResponse(
+                status_code=404, content={"error": f"unknown data source: {req.source}"}
+            )
+        timestamps, candles = load_candles_with_timestamps(
+            conn,
+            instrument_id=instrument_id,
+            source_id=source_id,
+            timeframe=req.timeframe,
+            since=req.since,
+            until=req.until,
+        )
+
+    if not candles:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    f"no candles for {req.symbol}/{req.source}/{req.timeframe} "
+                    f"in the requested range"
+                ),
+            },
+        )
+
+    # Reconstruct the lookback from the model's input size — we don't
+    # trust the caller to pass it, since a mismatch would silently
+    # produce garbage predictions.
+    lookback = loaded.metadata.input_size // FEATURES_PER_BAR
+    first_idx = min_bar_index(lookback)
+    if first_idx >= len(candles):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    f"not enough candles to predict: need at least {first_idx + 1}, "
+                    f"got {len(candles)}"
+                ),
+            },
+        )
+
+    feats = build_feature_matrix(candles, first_idx, len(candles), lookback)
+    matrix = np.asarray(feats, dtype=np.float32)
+    results = predict_batch(loaded, matrix)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "completed",
+            "versionId": loaded.metadata.version_id,
+            "firstPredictedBarIndex": first_idx,
+            "predictions": [
+                {
+                    "timestamp": timestamps[first_idx + i],
+                    "classIndex": r.class_index,
+                    "className": r.class_name,
+                    "probabilities": r.probabilities,
+                }
+                for i, r in enumerate(results)
             ],
         },
     )

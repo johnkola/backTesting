@@ -15,22 +15,9 @@ if TYPE_CHECKING:
 from nn.features import Candle
 
 
-def load_candles(
-    conn: "Connection",
-    *,
-    instrument_id: int,
-    source_id: int,
-    timeframe: str,
-    since: str | None = None,
-    until: str | None = None,
-) -> list[Candle]:
-    """Load OHLCV rows ordered by timestamp asc. `since` / `until` are
-    optional ISO-8601 bounds (since inclusive, until exclusive).
-
-    Float casts are explicit so the Candle dataclass — which is the
-    contract every feature/label call in this module sees — never has
-    to handle Decimal."""
-
+def _build_clauses(
+    instrument_id: int, source_id: int, timeframe: str, since: str | None, until: str | None
+) -> tuple[str, dict[str, object]]:
     clauses = [
         "instrument_id = %(instrument_id)s",
         "source_id = %(source_id)s",
@@ -47,13 +34,27 @@ def load_candles(
     if until:
         clauses.append("timestamp <  %(until)s")
         params["until"] = until
+    return " AND ".join(clauses), params
 
-    sql = f"""
-        SELECT open, high, low, close, volume
-          FROM candles
-         WHERE {' AND '.join(clauses)}
-         ORDER BY timestamp ASC
-    """
+
+def load_candles(
+    conn: "Connection",
+    *,
+    instrument_id: int,
+    source_id: int,
+    timeframe: str,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[Candle]:
+    """Load OHLCV rows ordered by timestamp asc. `since` / `until` are
+    optional ISO-8601 bounds (since inclusive, until exclusive).
+
+    Float casts are explicit so the Candle dataclass — which is the
+    contract every feature/label call in this module sees — never has
+    to handle Decimal."""
+
+    where, params = _build_clauses(instrument_id, source_id, timeframe, since, until)
+    sql = f"SELECT open, high, low, close, volume FROM candles WHERE {where} ORDER BY timestamp ASC"
     out: list[Candle] = []
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -68,6 +69,42 @@ def load_candles(
                 )
             )
     return out
+
+
+def load_candles_with_timestamps(
+    conn: "Connection",
+    *,
+    instrument_id: int,
+    source_id: int,
+    timeframe: str,
+    since: str | None = None,
+    until: str | None = None,
+) -> tuple[list[str], list[Candle]]:
+    """Same as load_candles, but also returns a parallel list of ISO-8601
+    timestamps. Used by the predict_range endpoint so the Java engine can
+    align predictions back to its BarSeries by timestamp."""
+
+    where, params = _build_clauses(instrument_id, source_id, timeframe, since, until)
+    sql = (
+        f"SELECT timestamp, open, high, low, close, volume FROM candles "
+        f"WHERE {where} ORDER BY timestamp ASC"
+    )
+    timestamps: list[str] = []
+    candles: list[Candle] = []
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        for row in cur:
+            timestamps.append(row[0].isoformat())
+            candles.append(
+                Candle(
+                    open=float(row[1]),
+                    high=float(row[2]),
+                    low=float(row[3]),
+                    close=float(row[4]),
+                    volume=float(row[5]),
+                )
+            )
+    return timestamps, candles
 
 
 def resolve_instrument(conn: "Connection", symbol: str) -> int | None:

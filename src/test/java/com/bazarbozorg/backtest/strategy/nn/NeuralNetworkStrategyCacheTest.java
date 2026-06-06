@@ -11,6 +11,7 @@ import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.ta4j.core.BarSeries;
@@ -30,12 +31,12 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies that {@link NeuralNetworkStrategy} uses the model cache when given
- * a {@link ModelContext}: training writes files to disk, a second strategy
- * with the same context loads the cached model, {@link ModelLoadPolicy#TRAIN_FRESH}
- * bypasses the cache, and {@link ModelLoadPolicy#LOAD_ONLY} raises
- * {@link ModelNotCachedException} on miss.
+ * Verified the in-process model-cache behaviour that has now moved to the
+ * Python loader (task 21). Disabled until task 22 deletes it — the cache
+ * file layout assertions look for model.zip / normalizer.bin paths the
+ * RPC strategy no longer produces.
  */
+@Disabled("model cache moved to Python loader; replaced by end-to-end parity in task 23")
 class NeuralNetworkStrategyCacheTest {
 
     private BarSeries series;
