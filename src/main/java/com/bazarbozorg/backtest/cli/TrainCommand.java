@@ -1,6 +1,5 @@
 package com.bazarbozorg.backtest.cli;
 
-import com.bazarbozorg.backtest.config.AppConfig;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.model.commission.FixedCommission;
@@ -8,9 +7,7 @@ import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.slippage.FixedSlippage;
 import com.bazarbozorg.backtest.strategy.StrategyRegistry;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
-import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
-import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
 import com.bazarbozorg.backtest.util.DateTimeUtils;
 import picocli.CommandLine.Command;
@@ -60,11 +57,8 @@ public class TrainCommand implements Runnable {
             description = "Ignore any cached model and train from scratch")
     private boolean force;
 
-    @Option(names = {"--keep-last"},
-            description = "After saving, keep only the N newest version subdirs under the cache key "
-                    + "and delete the rest. 0 or negative disables retention. "
-                    + "Overrides `model.retention.keepLastN` from application.properties.")
-    private Integer keepLast;
+    // Retention is now controlled by $MODEL_KEEP_LAST_N on the Python
+    // loader process; a Java-side --keep-last flag would be a no-op.
 
     @Override
     public void run() {
@@ -96,36 +90,21 @@ public class TrainCommand implements Runnable {
             Map<String, String> strategyParams = params != null ? params : new HashMap<>();
             ModelLoadPolicy policy = force ? ModelLoadPolicy.TRAIN_FRESH : ModelLoadPolicy.LOAD_OR_TRAIN;
 
-            int effectiveKeepLast = keepLast != null
-                    ? keepLast
-                    : AppConfig.getInstance().getModelRetentionKeepLastN();
-
             System.out.println("=== Training Model ===");
             System.out.printf("Strategy:    %s%n", strategyName);
             System.out.printf("Instrument:  %s%n", instrumentSymbol);
             System.out.printf("Timeframe:   %s%n", timeframe);
             System.out.printf("Source:      %s%n", source);
             System.out.printf("Policy:      %s%n", policy);
-            System.out.printf("Retention:   %s%n",
-                    effectiveKeepLast > 0
-                            ? "keep last " + effectiveKeepLast + " version(s) per cache key"
-                            : "unlimited (disabled)");
             if (!strategyParams.isEmpty()) {
                 System.out.printf("Parameters:  %s%n", strategyParams);
             }
             System.out.println();
 
-            // The engine wants a commission/slippage model + initial capital even though
-            // train() doesn't run the bar loop. Use noop instances rather than reading
-            // application.properties to make it clear these don't affect training.
-            // We build the ModelStore explicitly here so the retention setting flows in;
-            // BacktestEngine's no-arg-stores constructor would otherwise use retention=0.
-            ModelStore modelStore = new ModelStore(
-                    BacktestEngine.DEFAULT_MODEL_STORE_DIR, effectiveKeepLast);
-            FeatureStore featureStore = new FeatureStore(BacktestEngine.DEFAULT_FEATURE_STORE_DIR);
+            // Commission/slippage/initial-capital are required by the engine
+            // constructor but unused by train(), which skips the bar loop.
             BacktestEngine engine = new BacktestEngine(
-                    dbManager, new FixedCommission(0.0), new FixedSlippage(0.0), 0.0,
-                    modelStore, featureStore);
+                    dbManager, new FixedCommission(0.0), new FixedSlippage(0.0), 0.0);
 
             BacktestEngine.TrainingSummary summary = engine.train(
                     instrumentSymbol, timeframe, strategy, strategyParams, from, to, source, policy);

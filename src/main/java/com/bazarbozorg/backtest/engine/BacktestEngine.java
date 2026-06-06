@@ -12,18 +12,15 @@ import com.bazarbozorg.backtest.model.slippage.SlippageModel;
 import com.bazarbozorg.backtest.report.MetricsCalculator;
 import com.bazarbozorg.backtest.report.PerformanceMetrics;
 import com.bazarbozorg.backtest.strategy.TradingStrategy;
-import com.bazarbozorg.backtest.strategy.persistence.FeatureStore;
 import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
-import com.bazarbozorg.backtest.strategy.persistence.ModelStore;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.ta4j.core.Bar;
 import org.ta4j.core.BarSeries;
 
-import java.nio.file.Path;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -41,25 +38,10 @@ public class BacktestEngine {
 
     private static final Logger logger = LoggerFactory.getLogger(BacktestEngine.class);
 
-    /**
-     * Default location for the trained-model cache (relative to the working
-     * dir). Exposed so CLI commands can build a retention-aware
-     * {@link ModelStore} pointing at the same path the no-arg engine
-     * constructor uses.
-     */
-    public static final Path DEFAULT_MODEL_STORE_DIR = Path.of("data", "models");
-    /**
-     * Default location for the feature-matrix cache (relative to the working
-     * dir). Exposed for the same reason as {@link #DEFAULT_MODEL_STORE_DIR}.
-     */
-    public static final Path DEFAULT_FEATURE_STORE_DIR = Path.of("data", "features");
-
     private final DatabaseManager databaseManager;
     private final CommissionModel commissionModel;
     private final SlippageModel slippageModel;
     private final double initialCapital;
-    private final ModelStore modelStore;
-    private final FeatureStore featureStore;
 
     /**
      * Creates a new backtest engine.
@@ -71,24 +53,10 @@ public class BacktestEngine {
      */
     public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
                           SlippageModel slippageModel, double initialCapital) {
-        this(databaseManager, commissionModel, slippageModel, initialCapital,
-                new ModelStore(DEFAULT_MODEL_STORE_DIR),
-                new FeatureStore(DEFAULT_FEATURE_STORE_DIR));
-    }
-
-    /**
-     * Constructor variant that lets callers (typically tests) override the
-     * directories used for the on-disk caches.
-     */
-    public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
-                          SlippageModel slippageModel, double initialCapital,
-                          ModelStore modelStore, FeatureStore featureStore) {
         this.databaseManager = databaseManager;
         this.commissionModel = commissionModel;
         this.slippageModel = slippageModel;
         this.initialCapital = initialCapital;
-        this.modelStore = modelStore;
-        this.featureStore = featureStore;
     }
 
     /**
@@ -157,7 +125,7 @@ public class BacktestEngine {
             ModelContext ctx = new ModelContext(
                     instrument.id(), source.id(),
                     instrument.symbol(), source.name(),
-                    timeframe, policy, modelStore, featureStore, pinnedVersionId);
+                    timeframe, policy, pinnedVersionId);
             persistable.setModelContext(ctx);
         }
         strategy.initialize(series, params);
@@ -286,7 +254,7 @@ public class BacktestEngine {
         ModelContext ctx = new ModelContext(
                 prep.instrument().id(), prep.source().id(),
                 prep.instrument().symbol(), prep.source().name(),
-                timeframe, policy, modelStore, featureStore, null);
+                timeframe, policy);
         persistable.setModelContext(ctx);
         strategy.initialize(prep.series(), params);
 

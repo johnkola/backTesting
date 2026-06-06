@@ -25,7 +25,6 @@ public class AppConfig {
     private final double defaultCommissionValue;
     private final String defaultSlippageType;
     private final double defaultSlippageValue;
-    private final int modelRetentionKeepLastN;
 
     private AppConfig() {
         Properties props = new Properties();
@@ -55,10 +54,6 @@ public class AppConfig {
         this.defaultSlippageType = props.getProperty("default.slippage.type", "percentage");
         this.defaultSlippageValue = Double.parseDouble(
                 props.getProperty("default.slippage.value", "0.0005"));
-        // 0 / negative = retention disabled (unbounded history). Default 5 means
-        // each train auto-prunes back to the 5 newest versions per cache key.
-        this.modelRetentionKeepLastN = Integer.parseInt(
-                props.getProperty("model.retention.keepLastN", "5"));
     }
 
     public static AppConfig getInstance() {
@@ -114,13 +109,5 @@ public class AppConfig {
 
     public double getDefaultSlippageValue() {
         return defaultSlippageValue;
-    }
-
-    /**
-     * Number of model-version subdirs to keep per cache key when {@code train}
-     * saves a new model. {@code <= 0} disables retention (unlimited history).
-     */
-    public int getModelRetentionKeepLastN() {
-        return modelRetentionKeepLastN;
     }
 }
