@@ -1,13 +1,15 @@
 # BackTesting
 
-A Java 21 stock/forex backtesting CLI. Loads historical OHLCV candles into PostgreSQL/TimescaleDB, runs trading strategies (Ta4j indicator strategies + a DL4J neural-network strategy) bar-by-bar, simulates execution with commission and slippage, and reports performance metrics.
+A Java 21 stock/forex backtesting CLI with a companion **Python loader service**. Loads historical OHLCV candles into PostgreSQL/TimescaleDB, runs trading strategies (Ta4j indicator strategies + a PyTorch neural-network strategy served by the loader) bar-by-bar, simulates execution with commission and slippage, and reports performance metrics. The Java CLI owns backtest runs; CSV import, multi-timeframe aggregation, and NN train/predict live in the Python loader (`python/`).
 
 ## Quick start
 
 ```bash
-docker compose up -d                                                                  # start TimescaleDB + web UI
-./gradlew generateTestData                                                            # write test-data/AAPL_daily.csv
-./gradlew run --args="import -f test-data/AAPL_daily.csv -i AAPL -t STOCK --timeframe D1 --source yahoo"
+docker compose up -d                          # TimescaleDB + Python loader (:8001) + web UI (:3000)
+./gradlew generateTestData                    # write test-data/AAPL_daily.csv
+# Import goes through the loader; the web server proxies POST /api/imports to it:
+curl -F file=@test-data/AAPL_daily.csv -F symbol=AAPL -F type=STOCK \
+     -F timeframe=D1 -F source=yahoo http://localhost:3000/api/imports
 ./gradlew run --args="run -s sma-crossover -i AAPL -t D1 --source yahoo"
 ./gradlew run --args="report --last"
 ```
@@ -19,14 +21,17 @@ Then open **http://localhost:3000/** for the React UI (instruments, imports, res
 ## Web UI (development)
 
 ```bash
-# Terminal 1: API + docs (also serves the prod React build if present)
+# Terminal 1: Python loader (CSV import, aggregation, NN train/predict)
+cd python && pip install . && uvicorn loader.main:app --port 8001   # http://localhost:8001
+
+# Terminal 2: API + docs (also serves the prod React build if present)
 cd web/server && npm install && npm start          # http://localhost:3000
 
-# Terminal 2: Vite dev server with HMR
+# Terminal 3: Vite dev server with HMR
 cd web/client && npm install && npm run dev        # http://localhost:5173
 ```
 
-The Vite dev server proxies `/api/*` to `:3000`, so visit **http://localhost:5173** while developing the React UI. The dockerized stack at `:3000` serves the same UI from the production build — useful for sanity-checking but no HMR.
+Visit **http://localhost:5173** while developing the React UI. Both the Node server (`:3000`) and the Vite dev proxy send the loader-owned routes — `POST /api/imports`, `POST /api/aggregate`, and `/api/nn/*` — to the loader at `:8001`, and everything else to Node. Set `LOADER_URL` (Node) / `NODE_URL` (Vite) to point elsewhere. The dockerized stack at `:3000` serves the same UI from the production build — useful for sanity-checking but no HMR.
 
 ## Build
 
@@ -36,35 +41,41 @@ The Vite dev server proxies `/api/*` to `:3000`, so visit **http://localhost:517
 ./gradlew run --args="--help"    # CLI help
 ```
 
-Java 21 is required. The `java { toolchain { languageVersion = 21 } }` block in `build.gradle` lets Gradle auto-provision a matching JDK if your `JAVA_HOME` points elsewhere. The Gradle config sets the `--add-opens` JVM flags needed by DL4J/ND4J, plus `--enable-native-access=ALL-UNNAMED` to silence JDK 21+ "restricted method" warnings from the JavaCPP/ND4J JNI bindings (and to keep the build forward-compatible with JDK 22, where the flag becomes mandatory).
+Java 21 is required. The `java { toolchain { languageVersion = 21 } }` block in `build.gradle` lets Gradle auto-provision a matching JDK if your `JAVA_HOME` points elsewhere. (DL4J/ND4J are gone since the NN moved to Python, so the old `--add-opens` / `--enable-native-access` JVM flags are no longer set or needed.)
+
+The Python loader is built and run separately: `cd python && pip install . && uvicorn loader.main:app --port 8001` for a local run, or `docker compose up -d loader` for the containerised version (`python/Dockerfile`).
 
 ## CLI subcommands
 
 | Command            | Purpose                                                              |
 |--------------------|----------------------------------------------------------------------|
-| `import`           | Load OHLCV CSV (`Date,Open,High,Low,Close,Volume`); supports `--source` |
 | `list-instruments` | Show imported instruments                                            |
 | `list-strategies`  | Show registered strategies                                           |
-| `train`            | Train a `PersistableModelStrategy` and cache it on disk (`-s strategy -i SYMBOL -t timeframe [--source] [--force]`) — required before `run` for NN strategies |
-| `run`              | Execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source]`); errors out if a `PersistableModelStrategy` has no cached model |
+| `train`            | Train a `PersistableModelStrategy` and cache it on disk (`-s strategy -i SYMBOL -t timeframe [--source] [--force]`) — required before `run` for NN strategies. For `nn-feedforward` this delegates to the loader's `/api/nn/train`. |
+| `run`              | Execute a backtest (`-s strategy -i SYMBOL -t timeframe [--source] [--model-version ID]`); errors out if a `PersistableModelStrategy` has no cached model |
 | `report --last`    | Print full report of the most recent backtest                        |
 | `report --list`    | Tabular summary of all saved backtests                               |
+
+There is no `import` subcommand — CSV import moved to the Python loader (`POST /api/imports`, via the web upload form or `curl`). See [Model cache](#model-cache) for the NN cache contract and [Multi-timeframe aggregation](#multi-timeframe-aggregation) for rollups.
 
 ## Architecture
 
 ```
 CLI (picocli) → DatabaseManager (HikariCP/PG) → BacktestEngine
                                                     │
-                                                    ├─ Strategy (Ta4j or DL4J NN)
+                                                    ├─ Strategy (Ta4j, or NN via RPC to the Python loader)
                                                     ├─ PortfolioManager
                                                     ├─ ExecutionSimulator (commission + slippage)
                                                     └─ MetricsCalculator → BacktestResult
                                                                               │
                                                                               ├─ ConsoleReportFormatter
                                                                               └─ BacktestResultRepository (JSON in TEXT column)
+
+Python loader (FastAPI, :8001) → CSV import · multi-timeframe aggregation · NN train/predict
+                                  (Postgres via psycopg; web server proxies its routes)
 ```
 
-Storage: PostgreSQL with the TimescaleDB extension. Five tables: `instruments`, `data_sources`, `candles` (hypertable, PK `(instrument_id, timeframe, source_id, timestamp)`), `data_imports` (audit log of CSV imports — file path, name, row count), and `backtest_results`. Schema lives in `src/main/resources/schema.sql` and is bootstrapped (with idempotent migration for pre-source DBs) on every `DatabaseManager.initialize()`.
+Storage: PostgreSQL with the TimescaleDB extension. Five tables: `instruments`, `data_sources`, `candles` (hypertable, PK `(instrument_id, timeframe, source_id, timestamp)`), `data_imports` (audit log of CSV imports — archive path, file hash, name, row count, one row per imported year slice), and `backtest_results`. Schema lives in `src/main/resources/schema.sql` and is bootstrapped (with idempotent migration for pre-source DBs) on every `DatabaseManager.initialize()`.
 
 See `ARCHITECTURE.md` for deeper architecture notes (bar-by-bar loop semantics, strategy plugin model, NN training quirks).
 
@@ -76,7 +87,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: backtest → model-version linkage. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: the Java→Python port of the NN strategy, CSV import, and timeframe aggregation. Replace this line when you pick the next thing up.)*
 
 ### Next
 
@@ -86,6 +97,9 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 Compressed view — see git log for per-step detail.
 
+- **NN ported to Python (PyTorch) behind a Java RPC client**: the DL4J/ND4J in-process network was deleted; feature extraction, 3-class labels, the PyTorch MLP, the min-max scaler, training, and the on-disk model registry now live in `python/nn/` and are served from the loader's FastAPI (`/api/nn/train`, `/api/nn/predict_range`, `/api/nn/models`). `NeuralNetworkStrategy` is now a thin RPC client (`$LOADER_URL`, default `:8001`); `train`/`run -s nn-feedforward` still drive it from the Java CLI. Model layout is unchanged in shape (`data/models/<strategy>/<key>/<versionId>/`) but the files are now `model.pt` + `scaler.json` + `metadata.json`, and the cache key drops the DL4J-version contributor. Retention moved to the loader (`MODEL_KEEP_LAST_N`); the on-disk feature cache (`data/features/`) was dropped. Known gap: `run --model-version` is not yet forwarded to the loader, so it resolves to the latest version under the cache key. See [Model cache](#model-cache).
+- **CSV import ported to the Python loader**: the Java `import` subcommand and the Node `web/server/imports.js` write path are gone; import is now `POST /api/imports` on the loader (multipart upload from the web form or `curl`), which the Node server and Vite dev proxy forward. The loader splits a file into one slice per calendar year, dedups each against `data_imports.archive_path` (create / skip / overwrite / conflict), and archives accepted slices under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`.
+- **W1/MN1 aggregation replaces the continuous aggregates**: the `candles_weekly` / `candles_monthly` continuous aggregates were dropped; rollups are now produced on demand by the loader's `/api/aggregate` (and an opt-in `aggregate_to` fan-out on import) and written back into `candles` at the target timeframe, so every timeframe reads through one table. See [Multi-timeframe aggregation](#multi-timeframe-aggregation).
 - **Backtest → model-version linkage**: every `BacktestResult` now records which specific model version (compact-UTC subdir name) the run used, in addition to the cache key it already tracked. New nullable column `backtest_results.model_version_id VARCHAR(32)` (idempotent ALTER in `schema.sql`). Plumbed end-to-end: `ModelStore.loadFromDir` resolves the id from the directory name (null for legacy flat-layout entries), `LoadedModel` and `ModelCacheOutcome` carry it through, `NeuralNetworkStrategy` captures it on hit (from the loaded model) and on miss (from `ModelStore.save`'s return). Repository write/read paths and entity rows pick it up; `/api/results` and `/api/results/:id` surface `modelVersionId`; the React result-detail page shows it as a `v <id>` chip alongside the cache-key short hash, and adds the version to the cached/fresh badge's tooltip. Old rows and JSON (no `model_version_id` column / field) deserialize cleanly with the new field at `null` — no migration needed beyond the ALTER.
 - **Model retention (`keep-last-N`)**: each `train` save now auto-prunes the oldest version subdirs under the same cache key, keeping only the N newest. Default `model.retention.keepLastN=5` in `application.properties`, overridable per-invocation with `train --keep-last <N>`; set to `0` or negative to disable (= unlimited history, old behaviour). The retention number is wired through `ModelStore`'s constructor: `TrainCommand` builds `new ModelStore(DEFAULT_MODEL_STORE_DIR, effectiveN)` (formerly used the default constructor) and passes it via `BacktestEngine`'s 6-arg constructor; the no-arg-stores constructor still defaults to `keepLastN=0` so tests and ad-hoc engine users keep their existing semantics. Pruning matches only `VERSION_PATTERN` subdirs — legacy flat-layout entries and unrelated stray dirs are left alone. Prune failures are logged and swallowed (the save itself never fails on retention). New `ModelStore.pruneTo(strategy, key, n)` is also exposed for ad-hoc/operator use.
 - **Model-version pinning on `run`**: `run` gains `--model-version <id>` to backtest against a specific historical model version (the compact-UTC version id surfaced by `/api/models` / the Models page) instead of the latest one under the cache key. Plumbed through as a nullable `pinnedVersionId` on `ModelContext` → `ModelStore.load(strategy, key, versionId)`, which consults only the requested `<keyDir>/<versionId>/` and skips the legacy flat-layout fallback (legacy entries have no id to match). Miss with a pin throws `ModelNotCachedException` carrying the pinned id; the CLI catches it and prints a "see /api/models" hint instead of the usual `train …` hint. `--model-version` is `run`-only; `train` doesn't accept it. Default behavior (no pin) is unchanged.
@@ -113,30 +127,22 @@ Compressed view — see git log for per-step detail.
 
 ## Model cache
 
-Strategies that implement `PersistableModelStrategy` (currently just `nn-feedforward`) cache their trained model on disk so repeated backtests with the same configuration skip the train step. The DL4J network and its fitted feature normalizer are saved under:
+Strategies that implement `PersistableModelStrategy` (currently just `nn-feedforward`) cache their trained model on disk so repeated backtests with the same configuration skip the train step. The model is trained and saved by the **Python loader**; the Java `train`/`run` commands reach it over RPC. Artifacts are written under:
 
 ```
 data/models/<strategy>/<sha256-cache-key>/<versionId>/
-  model.zip         # serialized MultiLayerNetwork (weights + updater)
-  normalizer.bin    # serialized NormalizerMinMaxScaler
-  metadata.json     # cache key, hyperparams, training fingerprint, validation accuracy, dl4j version
+  model.pt          # PyTorch state_dict
+  scaler.json       # the fitted min-max scaler (replaces the old normalizer.bin)
+  metadata.json     # cache key, hyperparams, training fingerprint, validation accuracy
 ```
 
 `<versionId>` is a compact UTC timestamp like `20260511T134522.123Z`. Each `train` invocation writes a new version subdir rather than overwriting the previous one, so a `train --force` (or any second train at the same cache key) preserves the prior model. `load()` returns the lexicographically-latest version under the key — that's "the current model" for `run` purposes.
 
-**Pinning a specific version.** Pass `--model-version <id>` to `run` to backtest against a non-latest version (the id is the compact-UTC timestamp shown by `/api/models` and the web Models page):
+**Pinning a specific version (partial).** `run` still accepts `--model-version <id>` (the compact-UTC timestamp shown by `/api/models` and the web Models page), wired through the Java side as a `LOAD_ONLY` pin. **However, the current RPC client does not forward the pin to the loader** — it resolves the version via its `load_only` train call, which returns the latest version under the cache key, and pins predictions to that. So today `--model-version` is effectively a no-op for `nn-feedforward`. The loader's predict endpoints do accept an explicit `version_id`, so closing the gap is a matter of threading `pinnedVersionId` into the train/predict request bodies.
 
-```bash
-./gradlew run --args="run -s nn-feedforward -i AAPL -t D1 --model-version 20260511T134522.123Z"
-```
+**Docker deployment note.** Models are written by the **loader** container, which mounts `./data/models -> /data/models` read-write (`MODELS_DIR=/data/models`). The `web` container mounts the same host dir **read-only** so its `/api/models` walker reflects loader-trained models without rebuilding the image. Both the loader's `/api/nn/models` and Node's `/api/models` read this tree.
 
-If the pin doesn't match an on-disk version, `run` exits non-zero with a message naming the missing version and pointing at `/api/models`. The pin is `run`-only; `train` always writes a fresh version subdir.
-
-Legacy flat-layout entries (files directly under `<sha256-cache-key>/`, written before versioning shipped) still load transparently when no pin is set. A `--model-version` pin will **not** match a legacy entry — there's no id on disk to compare against — so to reproduce a legacy backtest you need to retrain (which writes a versioned entry).
-
-**Docker deployment note.** Training runs on the host (`./gradlew run --args="train ..."`) write under `./data/models/` on the host filesystem, but `/api/models` runs inside the `web` container and walks `MODELS_DIR` (default `/data/models` in-container). `docker-compose.yml` bridges this by mounting `./data/models → /data/models:ro` into the web service, so the Models page reflects host-trained models without rebuilding the image. If you train inside the container instead, drop the `:ro` so the container can write back.
-
-The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last bar epoch + bar count), every hyperparameter, and the DL4J version. Any of those changing produces a new key and forces fresh training (and therefore a new version directory under a new key).
+The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last close + bar count), and every hyperparameter. (The old DL4J-version contributor is gone — a PyTorch model simply lives in a different key space.) Any of those changing produces a new key and forces fresh training under a new key.
 
 **Train first, then run.** Since the `train` / `run` split, `run` will refuse to backtest an NN strategy without a cached model. The workflow is:
 
@@ -155,37 +161,13 @@ If `run` is invoked without a matching cached model, it prints the exact `train`
 ./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --force"
 ```
 
-**Retention (`keep-last-N`).** Every `train` save also prunes older versions under the same cache key, keeping only the newest `N`. The default lives in `application.properties` (`model.retention.keepLastN=5`); per-invocation override is `--keep-last`:
-
-```bash
-# Keep only the 3 newest versions per cache key after this save
-./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --keep-last 3"
-
-# Disable retention for this save (= keep unlimited history)
-./gradlew run --args="train -s nn-feedforward -i AAPL -t D1 --keep-last 0"
-```
-
-Pruning only matches the version-id pattern (`yyyyMMdd'T'HHmmss.SSS'Z'`), so legacy flat-layout entries and any unrelated subdirs you've dropped under a cache-key directory are left alone. If a prune step fails (e.g. a file is locked by another process), the just-saved model still lands — the prune is opportunistic, not part of the save's success contract.
-
-**DL4J version pinning.** The runtime DL4J version is recorded in `metadata.json`. If the project bumps DL4J, cached models from the previous version are ignored (logged as `DL4J version mismatch`) and retrained. There is no automatic eviction of orphaned model directories from a DL4J bump — retention handles same-key history, not cross-key orphans; `rm -rf data/models/` is still the manual cleanup for those.
+**Retention (`keep-last-N`).** Pruning is owned by the loader. `ModelRegistry` reads `MODEL_KEEP_LAST_N` (default `0` = disabled; `docker-compose.yml` sets `0`), and each save deletes all but the newest `N` version subdirs under the cache key. There is intentionally **no** Java-side `train --keep-last` flag anymore — it would be a no-op since the loader process owns the store. To change retention, set `MODEL_KEEP_LAST_N` on the loader (env var / compose). Pruning only matches the version-id pattern (`yyyyMMddTHHmmss.SSSZ`); a failed prune (e.g. a locked file) doesn't fail the save.
 
 ---
 
 ## Feature cache
 
-A second on-disk cache sits one layer below the model cache: the unnormalized feature matrix produced by `FeatureExtractor.buildFeatureMatrix(...)`. Each entry lives at:
-
-```
-data/features/<sha256>/
-  features.bin       # Nd4j-native binary of the INDArray
-  metadata.json      # cacheKey, instrument/source/timeframe/lookback, fingerprint, shape, createdAt
-```
-
-The cache key is a SHA-256 of `(instrumentId, sourceId, timeframe, lookbackWindow, featuresPerBar, FEATURE_SCHEMA_VERSION, firstBarEpochSec, lastBarEpochSec, barCount)` — deliberately **excluding** model hyperparameters (`numEpochs`, `hiddenLayerSize`, etc.), label parameters (`forwardBars`, `buyThreshold`, `sellThreshold`), and the DL4J version. So when the model cache misses but the underlying data + lookback haven't changed (hyperparameter sweeps, DL4J version bumps, label tweaks), `train` reads features off disk instead of re-running the Ta4j indicator loop.
-
-The cache is consulted only when training; a model cache hit short-circuits before features are ever requested. No CLI flag controls it — it's transparent and read-write.
-
-**Invalidation.** Bump `FeatureExtractor.FEATURE_SCHEMA_VERSION` (currently `1`) whenever you change a feature definition, add/remove a feature, or change an indicator period inside `FeatureExtractor`. Every cached matrix gets a new key on the next train. The directory is strategy-agnostic — `rm -rf data/features/` clears it without affecting models.
+The Java `FeatureStore` (`data/features/`) was **removed** in the Python port. `python/nn/features.py` now builds the 12-features-per-bar matrix in memory on each train, which is cheap relative to training, so there's no second on-disk cache to manage. A `FEATURE_SCHEMA_VERSION` constant still exists in `features.py`, but note it is **not** currently folded into the model cache key — changing a feature formula won't by itself invalidate cached models, so bump a hyperparameter or use `train --force` to retrain after a feature change.
 
 ---
 
@@ -209,41 +191,30 @@ SELECT show_chunks('candles', older_than => INTERVAL '7 days');
 SELECT decompress_chunk('_timescaledb_internal._hyper_1_3_chunk');
 ```
 
-Then re-run `./gradlew run --args="import ..."`. The auto-compress policy will re-compress the chunk on its next pass (default every 12 hours).
+Then re-run the import (re-`POST /api/imports`). The loader surfaces the compressed-chunk rejection as an HTTP 409 `compressed_chunk` with a `decompress_chunk` hint. The auto-compress policy will re-compress the chunk on its next pass (default every 12 hours).
 
 **Tuning.** The 7-day threshold lives in `schema.sql`. To change it, edit the `add_compression_policy('candles', INTERVAL '7 days', ...)` line, or run `SELECT remove_compression_policy('candles')` followed by a fresh `add_compression_policy(...)` at your preferred interval.
 
 ---
 
-## Continuous aggregates (W1 + M1)
+## Multi-timeframe aggregation
 
-`schema.sql` creates two TimescaleDB continuous aggregates over D1 candles:
+The TimescaleDB continuous aggregates (`candles_weekly` / `candles_monthly`) that previously rolled up D1 candles were **dropped** — `schema.sql` now `DROP MATERIALIZED VIEW IF EXISTS`-es them on bootstrap. Higher-timeframe candles are instead produced **on demand** by the Python loader (`python/loader/aggregate.py`) and written back into `candles` at the target timeframe, so every timeframe reads through the one `candles` table (no special multi-TF reader; `run -t W1` just works once the rollup exists).
 
-| View              | Bucket            | Refresh policy                            |
-|-------------------|-------------------|-------------------------------------------|
-| `candles_weekly`  | `time_bucket('7 days', timestamp)`   | hourly, 90-day lookback, 1-day end-gap   |
-| `candles_monthly` | `time_bucket('1 month', timestamp)`  | every 12h, 365-day lookback, 7-day end-gap |
+Each call is a single `INSERT … SELECT` that buckets source rows with `time_bucket(interval, timestamp)` and rolls them up with `FIRST(open)` / `MAX(high)` / `MIN(low)` / `LAST(close)` / `SUM(volume)`, upserting on the candle PK (`ON CONFLICT … DO UPDATE`, so re-running is idempotent). The target must be strictly coarser than the source over `M1 < M5 < M15 < M30 < H1 < H4 < D1 < W1 < MN1`. Two entry points:
 
-Both pull from `candles WHERE timeframe='D1'` and aggregate with `FIRST(open)`, `MAX(high)`, `MIN(low)`, `LAST(close)`, `SUM(volume)` per `(instrument_id, source_id, bucket)`. Created `WITH NO DATA`, so the initial materialization happens incrementally via the refresh policy rather than blocking schema bootstrap.
+```bash
+# Standalone backfill for existing candles (optional since/until ISO-8601 bounds):
+curl -X POST http://localhost:3000/api/aggregate \
+  -H 'content-type: application/json' \
+  -d '{"symbol":"AAPL","source":"yahoo","source_tf":"D1","target_tfs":["W1","MN1"]}'
 
-**Read pattern.** Nothing in the Java engine or web layer queries these views yet — they're infrastructure for a future multi-timeframe consumer (e.g. a `run -t W1` that falls back to the aggregate when no W1 candles were imported, or a multi-TF chart in the web UI). To read them directly today:
-
-```sql
-SELECT bucket, open, high, low, close, volume
-  FROM candles_weekly
- WHERE instrument_id = 1
- ORDER BY bucket DESC
- LIMIT 10;
+# Or fan out right after an import by adding the aggregate_to form field:
+curl -F file=@AAPL_daily.csv -F symbol=AAPL -F type=STOCK -F timeframe=D1 \
+     -F source=yahoo -F aggregate_to=W1,MN1 http://localhost:3000/api/imports
 ```
 
-**Manual refresh.** The policy catches up incrementally. If you need fresh data right after a big import:
-
-```sql
-CALL refresh_continuous_aggregate('candles_weekly',  NULL, NULL);
-CALL refresh_continuous_aggregate('candles_monthly', NULL, NULL);
-```
-
-**Tuning.** Buckets and policy intervals live in `schema.sql`. The policies are dropped + recreated by `remove_continuous_aggregate_policy(...)` + `add_continuous_aggregate_policy(...)` if you want to retune without editing the schema.
+The import fan-out is off by default (so operators who import their own W1/MN1 CSVs aren't surprised by overwrites) and runs after the import transaction commits.
 
 ---
 
@@ -264,6 +235,16 @@ CALL refresh_continuous_aggregate('candles_monthly', NULL, NULL);
 | `default.slippage.type`          | `percentage`                               | `percentage` or `fixed`                |
 | `default.slippage.value`         | `0.0005`                                   | 5 bps per fill                         |
 
+The Python loader is configured via environment variables (set in `docker-compose.yml` for the `loader` service):
+
+| Env var             | Default                | Notes                                                        |
+|---------------------|------------------------|--------------------------------------------------------------|
+| `PGHOST` / `PGPORT` / `PGDATABASE` / `PGUSER` / `PGPASSWORD` | from `application.properties` locally | Postgres connection (psycopg) |
+| `CSV_ARCHIVE_DIR`   | `data/csv-archive`     | Root for archived CSV slices                                 |
+| `MODELS_DIR`        | `data/models`          | Root for the on-disk model registry                          |
+| `MODEL_KEEP_LAST_N` | `0`                    | NN model retention; `0` disables pruning                     |
+| `LOADER_URL`        | `http://localhost:8001`| Where the Java NN strategy / Node proxy reach the loader     |
+
 ## Strategies
 
 Registered in `StrategyRegistry`:
@@ -275,7 +256,7 @@ Registered in `StrategyRegistry`:
 | `macd`           | MACD signal-line crossover                           |
 | `bollinger`      | Bollinger Band mean-reversion                        |
 | `ema-triple`     | Triple EMA crossover                                 |
-| `nn-feedforward` | DL4J multi-layer perceptron (BUY/HOLD/SELL classifier) |
+| `nn-feedforward` | PyTorch multi-layer perceptron (BUY/HOLD/SELL classifier), trained + served by the Python loader |
 
 Pass strategy params via `-p key=value` (e.g. `-p shortPeriod=20 -p longPeriod=100`). See each strategy's `getDefaultParameters()` for available keys.
 
