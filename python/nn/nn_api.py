@@ -73,6 +73,14 @@ class TrainRequest(BaseModel):
             "without re-training. 'load_only' fails with 404 instead of training."
         ),
     )
+    version_id: str | None = Field(
+        None,
+        description=(
+            "Pin to a specific cached version (auto/load_only only). Returns "
+            "that exact version under the resolved cache key, or 404 if it's "
+            "not on disk — never trains a different version to satisfy the pin."
+        ),
+    )
 
     # Hyperparameter overrides; everything not set falls back to TrainConfig
     # defaults, which mirror NeuralNetworkConfig.java exactly.
@@ -171,6 +179,36 @@ def post_train(req: TrainRequest) -> JSONResponse:
     cache_key = compute_cache_key(cache_inputs)
     if req.mode in {"auto", "load_only"}:
         existing_versions = _registry().list_versions(_STRATEGY, cache_key)
+
+        # Explicit version pin (from `run --model-version`): succeed only if
+        # that exact version exists under this cache key. Never train or fall
+        # back to "latest" to satisfy a pin — the caller asked for a specific
+        # model, so a different one is wrong, not a convenience.
+        if req.version_id is not None:
+            if req.version_id in existing_versions:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "status": "cached",
+                        "strategy": _STRATEGY,
+                        "cacheKey": cache_key,
+                        "versionId": req.version_id,
+                        "symbol": req.symbol,
+                        "source": req.source,
+                        "timeframe": req.timeframe,
+                    },
+                )
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": (
+                        f"pinned version {req.version_id} not found for "
+                        f"cacheKey={cache_key}"
+                    ),
+                    "cacheKey": cache_key,
+                },
+            )
+
         if existing_versions:
             return JSONResponse(
                 status_code=200,
@@ -192,6 +230,7 @@ def post_train(req: TrainRequest) -> JSONResponse:
                         f"no cached model for cacheKey={cache_key}; "
                         f"pass mode=auto or mode=force to train"
                     ),
+                    "cacheKey": cache_key,
                 },
             )
 

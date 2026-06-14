@@ -236,6 +236,13 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         body.addProperty("until", until);
         body.addProperty("mode", mode);
 
+        // Forward a version pin (`run --model-version <id>`) so the loader
+        // resolves that exact version instead of the latest under the key.
+        // A missing pin comes back as 404 → ModelNotCachedException below.
+        if (modelContext.pinnedVersionId() != null) {
+            body.addProperty("version_id", modelContext.pinnedVersionId());
+        }
+
         // Pass through every known hyperparam override. Names match the
         // Python TrainRequest schema (snake_case).
         addIntParam(body, "lookback_window", "lookbackWindow");
