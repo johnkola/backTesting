@@ -56,7 +56,47 @@ The Python loader is built and run separately: `cd python && pip install . && uv
 | `report --last`    | Print full report of the most recent backtest                        |
 | `report --list`    | Tabular summary of all saved backtests                               |
 
-There is no `import` subcommand — CSV import moved to the Python loader (`POST /api/imports`, via the web upload form or `curl`). See [Model cache](#model-cache) for the NN cache contract and [Multi-timeframe aggregation](#multi-timeframe-aggregation) for rollups.
+There is no `import` subcommand — CSV import moved to the Python loader (`POST /api/imports`, via the web upload form or `curl`). See [Bulk CSV import (drop folder)](#bulk-csv-import-drop-folder) for the batch path, [Data cohesiveness checks](#data-cohesiveness-checks) for the validation layer, [Model cache](#model-cache) for the NN cache contract, and [Multi-timeframe aggregation](#multi-timeframe-aggregation) for rollups.
+
+## Bulk CSV import (drop folder)
+
+For loading many files at once without crafting a `curl` per file, drop them in the **inbox** and run one command:
+
+```bash
+# 1. Drop CSVs (one instrument per file) into the inbox, naming each by convention:
+#    SYMBOL__TF.csv  ·  SOURCE__SYMBOL__TF.csv  ·  SOURCE__SYMBOL__TYPE__TF.csv
+cp yahoo__AAPL__D1.csv yahoo__EURUSD__FOREX__H1.csv data/csv-inbox/
+
+# 2. Import everything (run from python/, or use the installed `backtest-ingest`):
+cd python && python -m loader.ingest            # --dry-run to preview, --force to overwrite
+```
+
+Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / overwrite / conflict), and upserted into `candles` in one transaction. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
+
+## Data cohesiveness checks
+
+A **read-only advisory layer** (`python/loader/cohesion.py`) validates OHLCV candle data. It never blocks an import or modifies data — it only reports findings, so you decide what to act on. Four independent check families:
+
+| Check | What it flags |
+|-------|---------------|
+| `ohlc` | Per-bar structural breaks: `high < low`, high below open/close, low above open/close, non-positive price, negative volume |
+| `duplicate` | The same timestamp appearing more than once (visible pre-dedup; the DB upsert collapses these) |
+| `order` | Timestamps not strictly increasing in the input |
+| `gap` | Missing bars for the timeframe — weekday-aware for `D1` (weekends don't count; holidays do, since there's no trading calendar), same-day-only for intraday (overnight/weekend boundaries aren't gaps), month-based for `MN1` |
+| `outlier` | Bar-to-bar close moves beyond ±50% or volume beyond 20× the series median — the shape of a bad data blob |
+
+It runs in two places:
+
+- **At import time** (both `POST /api/imports` and the drop-folder ingest), report-only. The HTTP response gains a `cohesion` object (`{ok, totalIssues, counts, examples}`); `ingest` prints a one-line summary plus the first few findings. Neither changes whether the data imports.
+- **As a standalone audit** over candles already in the DB:
+
+  ```bash
+  cd python && python -m loader.audit                 # audit every series (or `backtest-audit`)
+  python -m loader.audit -i AAPL -t D1 --source yahoo  # one series
+  python -m loader.audit --checks ohlc,gap -v          # subset of checks + example findings
+  ```
+
+  `audit` is read-only: exit `0` when clean, `1` when any series has findings (handy for CI), and it never writes or deletes. Outlier thresholds are overridable in the API (`return_threshold`, `volume_factor`); the gap heuristics' false positives (holidays for `D1`, half-days intraday) are documented in `check_gaps`.
 
 ## Architecture
 

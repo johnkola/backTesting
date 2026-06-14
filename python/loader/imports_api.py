@@ -14,6 +14,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from loader.aggregate import aggregate, is_valid_pair
+from loader.cohesion import check_import
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
@@ -175,6 +176,9 @@ async def post_imports(
         payload: dict[str, object] = {"status": "completed", "imports": results}
         if aggregate_results:
             payload["aggregated"] = aggregate_results
+        # Read-only cohesiveness advisory over the uploaded bars. Never blocks
+        # the import; the client surfaces it if it cares.
+        payload["cohesion"] = check_import(header, rows_by_year, timeframe).to_dict()
         return JSONResponse(status_code=200, content=payload)
     finally:
         try:
