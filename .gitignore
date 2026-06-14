@@ -42,6 +42,7 @@ bin/
 ### Node / web layer ###
 node_modules/
 web/client/dist/
+package-lock.json
 *.log
 
 ### Trained-model cache (derived from training; can be regenerated) ###
