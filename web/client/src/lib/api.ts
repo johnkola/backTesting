@@ -70,9 +70,28 @@ export type SlicePreview = {
   existing: ImportRecord | null
 }
 
+/** The read-only data-cohesiveness advisory the loader attaches to a
+ *  completed import. Never blocks the import — purely informational. */
+export type CohesionCategory = 'ohlc' | 'duplicate' | 'order' | 'gap' | 'outlier'
+
+export type CohesionFinding = {
+  category: CohesionCategory
+  timestamp: string
+  detail: string
+}
+
+export type CohesionReport = {
+  totalBars: number
+  ok: boolean
+  totalIssues: number
+  counts: Record<CohesionCategory, number>
+  /** Sample findings (capped server-side); counts stay exact. */
+  examples: CohesionFinding[]
+}
+
 /** Discriminated union of POST /api/imports response shapes. */
 export type UploadImportResponse =
-  | { status: 'completed'; imports: SliceOutcome[] }
+  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport }
   | { status: 'conflict'; message: string; imports: SlicePreview[] }
   | { status: 'compressed_chunk'; error: string; hint: string; detail: string }
 

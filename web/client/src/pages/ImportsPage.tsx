@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   isAbortError,
+  type CohesionCategory,
+  type CohesionReport,
   type ImportRecord,
   type Paginated,
   type SliceOutcome,
@@ -304,6 +306,7 @@ function UploadFeedback({ state }: { state: UploadState }) {
             {summarize(counts, result.imports.length)}
           </div>
           <SliceList rows={result.imports} />
+          {result.cohesion && <CohesionPanel report={result.cohesion} />}
         </div>
       </div>
     )
@@ -346,6 +349,67 @@ const STATUS_BADGE: Record<string, string> = {
   'would-overwrite':'badge-info',
   'would-skip':     'badge-ghost',
   conflict:         'badge-warning',
+}
+
+const COHESION_LABEL: Record<CohesionCategory, string> = {
+  ohlc: 'OHLC',
+  duplicate: 'duplicate',
+  order: 'order',
+  gap: 'gaps',
+  outlier: 'outliers',
+}
+const COHESION_ORDER: CohesionCategory[] = ['ohlc', 'duplicate', 'order', 'gap', 'outlier']
+
+/** Read-only cohesiveness advisory for a just-completed import. The data was
+ *  imported regardless; this only surfaces what looks off. */
+function CohesionPanel({ report }: { report: CohesionReport }) {
+  if (report.ok) {
+    return (
+      <div className="mt-2 text-xs opacity-70">
+        ✓ Data cohesion: no issues across {report.totalBars.toLocaleString()} bars.
+      </div>
+    )
+  }
+  return (
+    <div className="mt-3 rounded-box bg-warning/10 p-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-medium text-warning">
+          ⚠ Data cohesion: {report.totalIssues.toLocaleString()}{' '}
+          {report.totalIssues === 1 ? 'issue' : 'issues'} over {report.totalBars.toLocaleString()} bars
+        </span>
+        {COHESION_ORDER.filter((c) => report.counts[c] > 0).map((c) => (
+          <span key={c} className="badge badge-warning badge-sm">
+            {COHESION_LABEL[c]}: {report.counts[c]}
+          </span>
+        ))}
+      </div>
+      {report.examples.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs opacity-80">
+            Show example findings ({report.examples.length})
+          </summary>
+          <table className="table table-xs mt-1">
+            <thead>
+              <tr><th>Check</th><th>Timestamp</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+              {report.examples.map((f, i) => (
+                <tr key={`${f.category}-${f.timestamp}-${i}`}>
+                  <td><span className="badge badge-ghost badge-xs">{COHESION_LABEL[f.category]}</span></td>
+                  <td className="font-mono text-xs whitespace-nowrap">{f.timestamp}</td>
+                  <td className="text-xs">{f.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+      <div className="mt-1 text-xs opacity-60">
+        Advisory only — the data was imported. Re-check stored data anytime with{' '}
+        <span className="font-mono">backtest-audit</span>.
+      </div>
+    </div>
+  )
 }
 
 function SliceList({ rows }: { rows: (SliceOutcome | SlicePreview)[] }) {
