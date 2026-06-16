@@ -27,6 +27,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
+from loader.market_calendar import missing_trading_days
+
 # Per-bar nominal length, in seconds. MN1 is calendar-month-based so it has
 # no fixed second count; check_gaps handles it via month arithmetic.
 BASE_SECONDS: dict[str, int] = {
@@ -167,26 +169,15 @@ def check_timestamps(candles: Sequence[Candle]) -> list[Finding]:
     return dup + order
 
 
-def _weekdays_strictly_between(a: _dt.date, b: _dt.date) -> int:
-    """Count weekday (Mon–Fri) dates x with a < x < b. Used for D1 gaps so
-    weekends don't read as missing; market holidays still will (we have no
-    trading calendar) — that's an accepted false positive for an advisory."""
-    n = 0
-    d = a + _dt.timedelta(days=1)
-    while d < b:
-        if d.weekday() < 5:
-            n += 1
-        d += _dt.timedelta(days=1)
-    return n
-
-
 def check_gaps(candles: Sequence[Candle], timeframe: str) -> list[Finding]:
     """Missing bars for the timeframe. Heuristic and per-timeframe:
 
       * intraday — only flags holes *within the same UTC date*; cross-day
         deltas are treated as overnight/weekend session boundaries, not gaps.
-      * D1       — weekday-aware: missing = weekdays strictly between bars
-        (flags holidays too, since we have no calendar).
+      * D1       — trading-day-aware: missing = weekdays strictly between
+        bars that are not NYSE holidays (so weekends and US market holidays
+        don't read as gaps; see loader.market_calendar for the calendar's
+        US-equity scope and its caveats for non-US / 24-7 instruments).
       * W1       — missing = round(delta / 7d) - 1.
       * MN1      — missing = whole months between bars - 1.
     """
@@ -200,7 +191,7 @@ def check_gaps(candles: Sequence[Candle], timeframe: str) -> list[Finding]:
             if prev.date() == cur.date():
                 missing = int(round((cur - prev).total_seconds() / base)) - 1
         elif timeframe == "D1":
-            missing = _weekdays_strictly_between(prev.date(), cur.date())
+            missing = missing_trading_days(prev.date(), cur.date())
         elif timeframe == "W1" and base:
             missing = int(round((cur - prev).total_seconds() / base)) - 1
         elif timeframe == "MN1":

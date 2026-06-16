@@ -64,6 +64,22 @@ def test_gaps_d1_is_weekday_aware():
     assert "missing" in gaps[0].detail
 
 
+def test_gaps_d1_does_not_flag_market_holidays():
+    # Thu before Good Friday (2023-04-06) -> Mon after Easter (2023-04-10):
+    # the only weekday between is Good Friday, a holiday -> no gap.
+    good_friday = [
+        _c("2023-04-06T00:00:00Z", 1, 1, 1, 1),
+        _c("2023-04-10T00:00:00Z", 1, 1, 1, 1),
+    ]
+    assert check_gaps(good_friday, "D1") == []
+    # Around Independence Day (Tue 2023-07-04): likewise no gap.
+    july4 = [
+        _c("2023-07-03T00:00:00Z", 1, 1, 1, 1),
+        _c("2023-07-05T00:00:00Z", 1, 1, 1, 1),
+    ]
+    assert check_gaps(july4, "D1") == []
+
+
 def test_gaps_intraday_ignores_cross_day_boundaries():
     candles = [
         _c("2023-01-09T09:00:00Z", 1, 1, 1, 1),
