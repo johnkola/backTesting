@@ -110,10 +110,18 @@ def _coerce_ts(value: object) -> _dt.datetime:
     return _dt.datetime.fromisoformat(s.replace("Z", "+00:00").replace("z", "+00:00"))
 
 
+def _fmt_dt(dt: _dt.datetime) -> str:
+    """Canonical timestamp rendering for findings: UTC with a trailing 'Z'
+    rather than '+00:00', so every check formats timestamps identically
+    regardless of whether the input was an ISO string or a datetime."""
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 def _ts_str(value: object) -> str:
-    if isinstance(value, _dt.datetime):
-        return value.isoformat()
-    return str(value)
+    try:
+        return _fmt_dt(_coerce_ts(value))
+    except (ValueError, TypeError):
+        return str(value)
 
 
 def check_ohlc(candles: Sequence[Candle]) -> list[Finding]:
@@ -153,7 +161,7 @@ def check_timestamps(candles: Sequence[Candle]) -> list[Finding]:
         # separate ordering issue, so it isn't double-counted across categories.
         if prev is not None and ts < prev:
             order.append(
-                Finding("order", _ts_str(row[0]), f"before previous bar {prev.isoformat()}")
+                Finding("order", _ts_str(row[0]), f"before previous bar {_fmt_dt(prev)}")
             )
         prev = ts
     return dup + order
@@ -206,7 +214,7 @@ def check_gaps(candles: Sequence[Candle], timeframe: str) -> list[Finding]:
                 Finding(
                     "gap",
                     _ts_str(cur),
-                    f"~{missing} missing bar(s) since {prev.isoformat()}",
+                    f"~{missing} missing bar(s) since {_fmt_dt(prev)}",
                 )
             )
     return out

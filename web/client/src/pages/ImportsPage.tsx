@@ -371,7 +371,7 @@ function CohesionPanel({ report }: { report: CohesionReport }) {
     )
   }
   return (
-    <div className="mt-3 rounded-box bg-warning/10 p-2">
+    <div className="mt-3 rounded-box border border-warning bg-base-100 p-2 text-base-content">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="font-medium text-warning">
           ⚠ Data cohesion: {report.totalIssues.toLocaleString()}{' '}
