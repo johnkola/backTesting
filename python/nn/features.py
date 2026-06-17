@@ -4,8 +4,11 @@ bar, lookback window flattens to lookback × 12 input dims.
 
 Numerical contract: identical formulas to the Java side, including the
 division-by-zero fallbacks (1.0 for normalised close / volume ratio,
-0.0 for divisions, 0.5 for Bollinger %B when bands collide). Bumps to
-FEATURE_SCHEMA_VERSION invalidate the on-disk feature cache."""
+0.0 for divisions, 0.5 for Bollinger %B when bands collide).
+
+FEATURE_SCHEMA_VERSION contributes to the model cache key (see
+nn_api.cache_inputs), so bumping it whenever a feature formula changes
+forces a fresh train rather than reusing a model built on old features."""
 
 from __future__ import annotations
 

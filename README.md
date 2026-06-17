@@ -188,7 +188,7 @@ The id is forwarded to the loader's `/api/nn/train`, which returns that exact ve
 
 **Docker deployment note.** Models are written by the **loader** container, which mounts `./data/models -> /data/models` read-write (`MODELS_DIR=/data/models`). The `web` container mounts the same host dir **read-only** so its `/api/models` walker reflects loader-trained models without rebuilding the image. Both the loader's `/api/nn/models` and Node's `/api/models` read this tree.
 
-The cache key is a SHA-256 of: strategy name, `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last close + bar count), and every hyperparameter. (The old DL4J-version contributor is gone — a PyTorch model simply lives in a different key space.) Any of those changing produces a new key and forces fresh training under a new key.
+The cache key is a SHA-256 of: strategy name, `FEATURE_SCHEMA_VERSION` (so editing a feature formula and bumping the version invalidates existing models), `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last close + bar count), and every hyperparameter. (The old DL4J-version contributor is gone — a PyTorch model simply lives in a different key space.) Any of those changing produces a new key and forces fresh training under a new key.
 
 **Train first, then run.** Since the `train` / `run` split, `run` will refuse to backtest an NN strategy without a cached model. The workflow is:
 

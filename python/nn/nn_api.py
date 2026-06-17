@@ -27,7 +27,12 @@ from nn.data import (
     resolve_instrument,
     resolve_source,
 )
-from nn.features import FEATURES_PER_BAR, build_feature_matrix, min_bar_index
+from nn.features import (
+    FEATURE_SCHEMA_VERSION,
+    FEATURES_PER_BAR,
+    build_feature_matrix,
+    min_bar_index,
+)
 from nn.infer import load_for_inference, predict_batch
 from nn.store import ModelRegistry
 from nn.train import TrainConfig, train_model
@@ -145,9 +150,12 @@ def post_train(req: TrainRequest) -> JSONResponse:
     # Cache-key inputs: instrument + source + timeframe + every hyperparam
     # that affects training output, plus a coarse data-window fingerprint
     # (first/last bar close + count) so a re-import that changes the data
-    # ends up in a different key bucket.
+    # ends up in a different key bucket. FEATURE_SCHEMA_VERSION is folded in
+    # so editing a feature formula (and bumping the version) invalidates
+    # existing models rather than silently reusing ones built on old features.
     cache_inputs: dict[str, str] = {
         "strategy": _STRATEGY,
+        "feature_schema_version": str(FEATURE_SCHEMA_VERSION),
         "instrument_id": str(instrument_id),
         "source_id": str(source_id),
         "timeframe": req.timeframe,
