@@ -312,6 +312,28 @@ Important behaviors to preserve:
 - Only **one open position per `(instrument, side)`** is allowed; duplicate ENTRY signals are ignored while a position exists (`findOpenPosition`).
 - Position size = `cash * 1.0 / closePrice` (i.e. all-in). `PortfolioManager.calculatePositionSize` accepts a risk fraction but the engine currently passes 1.0.
 
+### Portfolio accounting & execution costs (`PortfolioManager`, `ExecutionSimulator`)
+
+`PortfolioManager` owns the mutable per-run state — `cash`, `openPositions`, `completedTrades`, `equityHistory`, `peakEquity`. `Position` is an immutable record; every mutation (`.closed(...)`, `.withCommission(...)`, `.withOrderId(...)`) returns a copy and the manager swaps the list entry.
+
+**Cash mechanics.** The same debit runs for both sides on open, which is what makes shorts a *collateral* model rather than a proceeds model:
+
+| Event | Cash change |
+|-------|-------------|
+| Open (long or short) | `-(price*qty + commission)` |
+| Close long | `+(price*qty - commission)` |
+| Close short | `+(entryPrice*qty + realizedPnl - commission)` |
+
+Netting a short round-trip: `-(entry*qty + c_open) + (entry*qty + realizedPnl - c_close) = realizedPnl - c_open - c_close`, i.e. `(entry-exit)*qty` net of fees — correct. `getEquity` mirrors the model: longs mark at `currentPrice*qty`, shorts at `entryPrice*qty + unrealizedPnl`, so with the notional already debited from cash a short's equity works out to `initial - commission + unrealizedPnl`.
+
+**Fill path.** `ExecutionSimulator.fillMarketOrder` applies `slippageModel.calculate(price, side)` first, then `commissionModel.calculate(adjustedPrice, qty)` — commission is on the *slipped* price, and the returned `FillResult` also carries `abs(adjusted - raw)` as the reported slippage amount. `SlippageModel` / `CommissionModel` each have `Percentage` and `Fixed` implementations; slippage always moves the price against the order side (BUY up, SELL down).
+
+**Load-bearing quirks (safe today, watch when extending):**
+
+- *All-in overdraw.* `calculatePositionSize(price, 1.0) = cash/price`; `openPosition` then debits `price*qty + commission = cash + commission`, so post-entry `cash = -commission`. Self-correcting on the next close. The failure mode is a second same-bar entry (different instrument) sizing off negative cash → `qty <= 0` → silently skipped. Fine for the current single-instrument, all-in runs.
+- *Two close paths.* `PortfolioManager.closeAllPositions` (force-close at end of run) recomputes slippage/commission inline via the simulator's exposed `getSlippageModel()` / `getCommissionModel()`, whereas per-signal exits build an `Order` and call `fillMarketOrder`. Same result today; a fill-logic change must update both to avoid drift.
+- *Fills at current close.* No next-bar-open logic — see [Known limitations](#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
+
 ### Strategy plugin model
 
 Strategies implement `TradingStrategy` and are typically subclasses of `AbstractTa4jStrategy`, which provides typed `getIntParam` / `getDoubleParam` helpers and a `buildIndicators()` hook called automatically after `initialize`.

@@ -121,6 +121,69 @@ See `ARCHITECTURE.md` for deeper architecture notes (bar-by-bar loop semantics, 
 
 ---
 
+## Execution engine
+
+The Java `BacktestEngine` (`engine/BacktestEngine.java`) is where a run actually happens. `run` and `train` share one prep path and differ only in the tail — `train` stops once the model is resolved; `run` continues into the bar loop.
+
+### The run, step by step
+
+1. **Prepare** (`prepare`) — resolve the `-i` symbol and `--source` name to their DB rows, load candles for `(instrument, source, timeframe, from, to)`, fail loudly if none match, and convert them to a Ta4j `BarSeries` (`BarSeriesConverter`).
+2. **Wire the model context** — if the strategy is a `PersistableModelStrategy` (only `nn-feedforward` today), hand it a `ModelContext`. `run` uses `ModelLoadPolicy.LOAD_ONLY`, so a cache miss raises `ModelNotCachedException` instead of silently training; `--model-version` pins an exact version.
+3. **Initialize** — `strategy.initialize(series, params)` builds indicators (and, for the NN, calls the loader to resolve the model and batch-predict every bar). `getWarmupBars()` tells the loop how many leading bars to skip.
+4. **Loop** from `warmupBars` to the last bar. Each bar: build a `StrategyContext`, call `strategy.evaluate(...)` for a `StrategySignal`, apply it via `processSignal`, then record an `EquityPoint`.
+5. **Force-close** any still-open positions at the final bar's close.
+6. **Report** — compute the buy-and-hold benchmark and `PerformanceMetrics`, stamp the NN cache triple (`modelCacheKey` / `modelCacheHit` / `modelVersionId`), and return a `BacktestResult`.
+
+Every bar time is canonicalised to **UTC** (`ZonedDateTime.ofInstant(bar.getEndTime(), ZoneOffset.UTC)`), so engine-emitted timestamps are independent of the source candle's zone.
+
+### Signals
+
+`processSignal` switches over `StrategySignal`:
+
+| Signal | Effect |
+|--------|--------|
+| `ENTRY_LONG` / `ENTRY_SHORT` | Open a position **only if none exists on that side** (`findOpenPosition`), sized all-in. |
+| `EXIT_LONG` / `EXIT_SHORT` | Close the matching open position, if any. |
+| `EXIT_ALL` | Close every open position. |
+| `HOLD` | No-op. |
+
+Short entries/exits are wired end-to-end, but the shipped Ta4j strategies are long-only in practice — only a strategy that emits `ENTRY_SHORT` exercises that path.
+
+### Portfolio accounting (`PortfolioManager`)
+
+Holds cash, open positions, completed trades, and the equity/drawdown series for one run. `Position` is an immutable record — every change swaps in a fresh copy.
+
+- **Open** (long or short): `cash -= price*qty + commission`. A short posts its full notional as cash collateral rather than receiving sale proceeds.
+- **Close long**: `cash += price*qty - commission`.
+- **Close short**: `cash += entryPrice*qty + realizedPnl - commission` (collateral back + P&L).
+- **Equity**: `cash +` mark-to-market of open positions (longs at current price; shorts as collateral + unrealized P&L). Recorded once per bar, updating `peakEquity` → drawdown.
+- **Sizing**: all-in — `qty = cash / price` (the engine always passes risk fraction `1.0`).
+- **One open position per `(instrument, side)`.**
+
+### Execution costs (`ExecutionSimulator`)
+
+Each fill applies **slippage first, then commission on the slipped price**:
+
+```
+adjustedPrice = slippageModel.calculate(closePrice, side)    # BUY up, SELL down
+commission    = commissionModel.calculate(adjustedPrice, qty)
+```
+
+Both slippage and commission come in `Percentage` and `Fixed` flavors, configured in `application.properties` (defaults: 5 bps slippage, 0.1% commission). See [Configuration](#configuration).
+
+### Behaviors & quirks to know
+
+Deliberate simplifications (see also `ARCHITECTURE.md` → Known limitations), called out so they aren't surprises:
+
+- **Fills at the current bar's close**, not the next bar's open — a small but real lookahead advantage.
+- **All-in sizing overdraws cash by the commission.** `calculatePositionSize` returns `cash / price` with no room for the fee, so after any entry `cash = -commission` (a tiny negative). It self-corrects on the next close, but a *second* same-bar entry on another instrument would size off negative cash and be skipped — a corner that only matters if multi-instrument sizing is ever added.
+- **Commission is charged on the post-slippage price**, so slippage slightly inflates the fee.
+- **Two force-close paths.** `PortfolioManager.closeAllPositions` computes slippage/commission inline, while per-signal exits go through `ExecutionSimulator.fillMarketOrder`. They use the same models today and agree, but a future change to fill logic must touch both to stay consistent.
+
+For the deepest detail (exact cash math for shorts, why each quirk is safe today), see `ARCHITECTURE.md`.
+
+---
+
 ## Roadmap & status
 
 The roadmap is organised as **Done / Now / Next** so the current focus is always the middle section. Old phase numbers (1, 2, 2.5, 3.1, 5A–5D) are kept in parentheses where useful so git history and prior commit messages still line up. Note that phases didn't ship in numeric order — Phase 5 (web) finished before most of Phase 3 (perf).

@@ -7,7 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 COPY python/pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
+# Install the CPU-only PyTorch wheel first so `pip install .` sees torch already
+# satisfied and skips the multi-GB CUDA build from PyPI. The NN strategy is a small
+# MLP that runs fine on CPU — no GPU stack needed.
+RUN pip install --upgrade pip \
+    && pip install torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install .
 
 COPY python/loader ./loader
 COPY python/nn ./nn
