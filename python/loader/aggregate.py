@@ -130,6 +130,21 @@ def aggregate(
         return cur.rowcount or 0
 
 
+def target_row_count(
+    conn: "Connection", *, instrument_id: int, source_id: int, target_tf: str
+) -> int:
+    """How many rows already exist for this (instrument, source, timeframe).
+    Used by the API's missing-only mode to skip targets already populated."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM candles "
+            "WHERE instrument_id = %s AND source_id = %s AND timeframe = %s",
+            (instrument_id, source_id, target_tf),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+
 def resolve_instrument(conn: "Connection", symbol: str) -> int | None:
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM instruments WHERE symbol = %s", (symbol,))

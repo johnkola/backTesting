@@ -104,6 +104,28 @@ export type UploadImportRequest = {
   force: boolean
 }
 
+/** POST /api/aggregate — build higher-timeframe rollups from a source tf. */
+export type AggregateRequest = {
+  symbol: string
+  source: string
+  sourceTf: string
+  targetTfs: string[]
+  /** Missing-only: skip a target that already has rows. */
+  skipExisting: boolean
+}
+
+export type AggregateTargetResult =
+  | { timeframe: string; status: 'aggregated'; rowsWritten: number }
+  | { timeframe: string; status: 'skipped'; existingRows: number }
+
+export type AggregateResponse = {
+  status: 'completed'
+  symbol: string
+  source: string
+  sourceTf: string
+  results: AggregateTargetResult[]
+}
+
 export type ResultSummary = {
   id: string
   instrumentSymbol: string
@@ -239,6 +261,28 @@ export const api = {
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
   models: (signal?: AbortSignal) =>
     getJson<{ items: TrainedModel[]; modelsDir: string }>('/api/models', signal),
+  aggregate: async (req: AggregateRequest): Promise<AggregateResponse> => {
+    const res = await fetch('/api/aggregate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: req.symbol,
+        source: req.source,
+        source_tf: req.sourceTf,
+        target_tfs: req.targetTfs,
+        skip_existing: req.skipExisting,
+      }),
+    })
+    let body: unknown
+    try { body = await res.json() } catch { body = null }
+    if (!res.ok) {
+      const msg = (body && typeof body === 'object' && 'error' in body)
+        ? String((body as { error: string }).error)
+        : `${res.status} ${res.statusText}`
+      throw new Error(msg)
+    }
+    return body as AggregateResponse
+  },
   uploadImport: async (req: UploadImportRequest): Promise<UploadImportResponse> => {
     const fd = new FormData()
     fd.append('file', req.file)

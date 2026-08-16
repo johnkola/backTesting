@@ -10,7 +10,13 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from loader.aggregate import aggregate, is_valid_pair, resolve_instrument, resolve_source
+from loader.aggregate import (
+    aggregate,
+    is_valid_pair,
+    resolve_instrument,
+    resolve_source,
+    target_row_count,
+)
 from loader.db import pool
 
 router = APIRouter()
@@ -26,6 +32,14 @@ class AggregateRequest(BaseModel):
     )
     until: str | None = Field(
         None, description="Optional ISO-8601 upper bound on source rows (exclusive)"
+    )
+    skip_existing: bool = Field(
+        False,
+        description=(
+            "Missing-only mode: skip any target timeframe that already has "
+            "rows for this (instrument, source) instead of rebuilding it. "
+            "False (default) always rebuilds via ON CONFLICT overwrite."
+        ),
     )
 
 
@@ -61,6 +75,15 @@ def post_aggregate(req: AggregateRequest) -> JSONResponse:
         results: list[dict[str, Any]] = []
         with conn.transaction():
             for tf in req.target_tfs:
+                if req.skip_existing:
+                    existing = target_row_count(
+                        conn, instrument_id=instrument_id, source_id=source_id, target_tf=tf
+                    )
+                    if existing > 0:
+                        results.append(
+                            {"timeframe": tf, "status": "skipped", "existingRows": existing}
+                        )
+                        continue
                 written = aggregate(
                     conn,
                     instrument_id=instrument_id,
@@ -70,7 +93,7 @@ def post_aggregate(req: AggregateRequest) -> JSONResponse:
                     since=req.since,
                     until=req.until,
                 )
-                results.append({"timeframe": tf, "rowsWritten": written})
+                results.append({"timeframe": tf, "status": "aggregated", "rowsWritten": written})
 
     return JSONResponse(
         status_code=200,
