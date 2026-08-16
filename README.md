@@ -190,7 +190,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight — last shipped: the Java→Python port of the NN strategy, CSV import, and timeframe aggregation. Replace this line when you pick the next thing up.)*
+*(nothing in flight — last shipped: the Instruments-page rollup button with missing-only aggregation, and server-side sorting on the imports table. Replace this line when you pick the next thing up.)*
 
 ### Next
 
@@ -200,6 +200,8 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 Compressed view — see git log for per-step detail.
 
+- **On-demand rollups from the Instruments page**: each D1 source row now has a "Roll up → W1 · MN1" button that calls `POST /api/aggregate` for that (instrument, source) and refreshes the card in place. The endpoint gained `skip_existing` (missing-only mode): a target timeframe that already has rows for the pair comes back as `{"status":"skipped","existingRows":N}` instead of being rebuilt, backed by a new `aggregate.target_row_count()`. The default is still `false` — the always-rebuild-via-`ON CONFLICT` behaviour — so existing callers are unaffected; per-target results now carry an explicit `status: aggregated | skipped` alongside the counts. The button is missing-only by default with a `force` checkbox for rebuilds. Covered by `python/tests/test_aggregate_integration.py` (build → skip → force-rebuild, plus invalid-target rejection), which skips unless compose Postgres is reachable. See [Multi-timeframe aggregation](#multi-timeframe-aggregation).
+- **Sortable imports table**: `GET /api/imports` takes `sort` + `dir`. Sort keys are whitelisted to a fixed column expression (raw query input is never interpolated into SQL) and always carry a `di.id DESC` tiebreak so pagination stays deterministic when the sort column has ties; unknown keys fall back to `imported`. The imports page renders its headers as sort buttons with a per-column default direction (newest/largest-first for Imported and Rows, A→Z for text), flipping on re-click and resetting to page 1. Hash stays unsortable. The "superseded" row highlight only holds under the default newest-first ordering, so it switches itself off once the user sorts by anything else.
 - **NN ported to Python (PyTorch) behind a Java RPC client**: the DL4J/ND4J in-process network was deleted; feature extraction, 3-class labels, the PyTorch MLP, the min-max scaler, training, and the on-disk model registry now live in `python/nn/` and are served from the loader's FastAPI (`/api/nn/train`, `/api/nn/predict_range`, `/api/nn/models`). `NeuralNetworkStrategy` is now a thin RPC client (`$LOADER_URL`, default `:8001`); `train`/`run -s nn-feedforward` still drive it from the Java CLI. Model layout is unchanged in shape (`data/models/<strategy>/<key>/<versionId>/`) but the files are now `model.pt` + `scaler.json` + `metadata.json`, and the cache key drops the DL4J-version contributor. Retention moved to the loader (`MODEL_KEEP_LAST_N`); the on-disk feature cache (`data/features/`) was dropped. `run --model-version` is forwarded to the loader, which resolves that exact pinned version (or 404s). See [Model cache](#model-cache).
 - **CSV import ported to the Python loader**: the Java `import` subcommand and the Node `web/server/imports.js` write path are gone; import is now `POST /api/imports` on the loader (multipart upload from the web form or `curl`), which the Node server and Vite dev proxy forward. The loader splits a file into one slice per calendar year, dedups each against `data_imports.archive_path` (create / skip / overwrite / conflict), and archives accepted slices under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`.
 - **W1/MN1 aggregation replaces the continuous aggregates**: the `candles_weekly` / `candles_monthly` continuous aggregates were dropped; rollups are now produced on demand by the loader's `/api/aggregate` (and an opt-in `aggregate_to` fan-out on import) and written back into `candles` at the target timeframe, so every timeframe reads through one table. See [Multi-timeframe aggregation](#multi-timeframe-aggregation).
@@ -310,7 +312,7 @@ Then re-run the import (re-`POST /api/imports`). The loader surfaces the compres
 
 The TimescaleDB continuous aggregates (`candles_weekly` / `candles_monthly`) that previously rolled up D1 candles were **dropped** — `schema.sql` now `DROP MATERIALIZED VIEW IF EXISTS`-es them on bootstrap. Higher-timeframe candles are instead produced **on demand** by the Python loader (`python/loader/aggregate.py`) and written back into `candles` at the target timeframe, so every timeframe reads through the one `candles` table (no special multi-TF reader; `run -t W1` just works once the rollup exists).
 
-Each call is a single `INSERT … SELECT` that buckets source rows with `time_bucket(interval, timestamp)` and rolls them up with `FIRST(open)` / `MAX(high)` / `MIN(low)` / `LAST(close)` / `SUM(volume)`, upserting on the candle PK (`ON CONFLICT … DO UPDATE`, so re-running is idempotent). The target must be strictly coarser than the source over `M1 < M5 < M15 < M30 < H1 < H4 < D1 < W1 < MN1`. Two entry points:
+Each call is a single `INSERT … SELECT` that buckets source rows with `time_bucket(interval, timestamp)` and rolls them up with `FIRST(open)` / `MAX(high)` / `MIN(low)` / `LAST(close)` / `SUM(volume)`, upserting on the candle PK (`ON CONFLICT … DO UPDATE`, so re-running is idempotent). The target must be strictly coarser than the source over `M1 < M5 < M15 < M30 < H1 < H4 < D1 < W1 < MN1`. Three entry points:
 
 ```bash
 # Standalone backfill for existing candles (optional since/until ISO-8601 bounds):
@@ -318,10 +320,19 @@ curl -X POST http://localhost:3000/api/aggregate \
   -H 'content-type: application/json' \
   -d '{"symbol":"AAPL","source":"yahoo","source_tf":"D1","target_tfs":["W1","MN1"]}'
 
+# Missing-only: leave target timeframes that already have rows alone.
+curl -X POST http://localhost:3000/api/aggregate \
+  -H 'content-type: application/json' \
+  -d '{"symbol":"AAPL","source":"yahoo","source_tf":"D1","target_tfs":["W1","MN1"],"skip_existing":true}'
+
 # Or fan out right after an import by adding the aggregate_to form field:
 curl -F file=@AAPL_daily.csv -F symbol=AAPL -F type=STOCK -F timeframe=D1 \
      -F source=yahoo -F aggregate_to=W1,MN1 http://localhost:3000/api/imports
 ```
+
+`skip_existing` defaults to `false`, which always rebuilds (the upsert makes that safe). With it set, any target that already has rows for the `(instrument, source)` pair is reported as `{"timeframe":"W1","status":"skipped","existingRows":N}` and left untouched; built targets report `{"status":"aggregated","rowsWritten":N}`. Note the check is "has any rows at all", not "is up to date" — it's for filling in absent rollups, so extending an existing one after new source candles land needs a rebuild (`skip_existing:false`).
+
+The third entry point is the Instruments page: every D1 source row carries a **Roll up → W1 · MN1** button that posts the missing-only form of the first call, with a `force` checkbox that flips `skip_existing` off.
 
 The import fan-out is off by default (so operators who import their own W1/MN1 CSVs aren't surprised by overwrites) and runs after the import transaction commits.
 
