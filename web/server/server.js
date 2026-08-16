@@ -277,6 +277,22 @@ app.get('/api/imports', async (req, res) => {
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    // Whitelist sort columns (never interpolate raw query input into SQL). The
+    // client sends a logical key; we map it to a fixed column expression and
+    // always append di.id as a stable tiebreak so pagination is deterministic.
+    const SORT_COLUMNS = {
+      imported: 'di.imported_at',
+      source: 'ds.name',
+      instrument: 'i.symbol',
+      timeframe: 'di.timeframe',
+      archive: 'di.archive_path',
+      file: 'di.file_name',
+      rows: 'di.row_count',
+    };
+    const sortCol = SORT_COLUMNS[req.query.sort] ?? SORT_COLUMNS.imported;
+    const sortDir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
+    const orderSql = `ORDER BY ${sortCol} ${sortDir}, di.id DESC`;
+
     const countSql = `
       SELECT COUNT(*) AS total
         FROM data_imports di
@@ -296,7 +312,7 @@ app.get('/api/imports', async (req, res) => {
         JOIN data_sources ds ON ds.id = di.source_id
         JOIN instruments i ON i.id = di.instrument_id
         ${whereSql}
-        ORDER BY di.imported_at DESC
+        ${orderSql}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
 
     const [{ rows: countRows }, { rows: items }] = await Promise.all([

@@ -224,7 +224,11 @@ export const api = {
   instruments: (signal?: AbortSignal) =>
     getJson<{ items: Instrument[] }>('/api/instruments', signal),
   imports: (
-    params: { limit?: number; offset?: number; source?: string; instrument?: string } = {},
+    params: {
+      limit?: number; offset?: number; source?: string; instrument?: string;
+      sort?: 'imported' | 'source' | 'instrument' | 'timeframe' | 'archive' | 'file' | 'rows';
+      dir?: 'asc' | 'desc';
+    } = {},
     signal?: AbortSignal,
   ) => getJson<Paginated<ImportRecord>>(`/api/imports?${qs(params)}`, signal),
   results: (

@@ -17,6 +17,27 @@ const LIMIT = 25
 const TIMEFRAMES = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'] as const
 const TYPES = ['STOCK', 'FOREX', 'CRYPTO', 'INDEX', 'COMMODITY'] as const
 
+type SortKey = 'imported' | 'source' | 'instrument' | 'timeframe' | 'archive' | 'file' | 'rows'
+type SortDir = 'asc' | 'desc'
+
+// Table columns. `key: null` = not sortable (hash order is meaningless). The
+// default direction when first clicking a column: newest/largest-first for the
+// date and row-count columns, A→Z for the text ones.
+const COLUMNS: { key: SortKey | null; label: string; align?: 'right' }[] = [
+  { key: 'imported', label: 'Imported' },
+  { key: 'source', label: 'Source' },
+  { key: 'instrument', label: 'Instrument' },
+  { key: 'timeframe', label: 'Timeframe' },
+  { key: 'archive', label: 'Archive path' },
+  { key: 'file', label: 'File (uploaded)' },
+  { key: null, label: 'Hash' },
+  { key: 'rows', label: 'Rows', align: 'right' },
+]
+const DEFAULT_DIR: Record<SortKey, SortDir> = {
+  imported: 'desc', rows: 'desc',
+  source: 'asc', instrument: 'asc', timeframe: 'asc', archive: 'asc', file: 'asc',
+}
+
 type UploadState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
@@ -29,16 +50,18 @@ export default function ImportsPage() {
   const [offset, setOffset] = useState(0)
   const [source, setSource] = useState('')
   const [instrument, setInstrument] = useState('')
+  const [sort, setSort] = useState<SortKey>('imported')
+  const [dir, setDir] = useState<SortDir>('desc')
   const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     setError(null)
     const ctrl = new AbortController()
-    api.imports({ limit: LIMIT, offset, source, instrument }, ctrl.signal)
+    api.imports({ limit: LIMIT, offset, source, instrument, sort, dir }, ctrl.signal)
       .then(setData)
       .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
     return () => ctrl.abort()
-  }, [offset, source, instrument, reloadKey])
+  }, [offset, source, instrument, sort, dir, reloadKey])
 
   function applyFilters(s: string, i: string) {
     setOffset(0)
@@ -46,12 +69,26 @@ export default function ImportsPage() {
     setInstrument(i)
   }
 
+  // Clicking a header sorts by it (server-side, across all pages); clicking the
+  // active column again flips direction. Any sort change resets to page 1.
+  function toggleSort(key: SortKey) {
+    setOffset(0)
+    if (key === sort) {
+      setDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSort(key)
+      setDir(DEFAULT_DIR[key])
+    }
+  }
+
   // Mark older audit rows that share an archive_path with a newer row as
   // "superseded" — visual cue so the user can see at a glance which file
-  // currently occupies each archive slot. List is sorted DESC by importedAt,
-  // so the first occurrence per archivePath is the active one.
+  // currently occupies each archive slot. This assumes the default newest-first
+  // ordering (first occurrence per archivePath = the active one), so we skip it
+  // once the user re-sorts, where that assumption no longer holds.
   const supersededIds = useMemo(() => {
-    if (!data) return new Set<string>()
+    const empty = new Set<string>()
+    if (!data || sort !== 'imported' || dir !== 'desc') return empty
     const seen = new Set<string>()
     const superseded = new Set<string>()
     for (const r of data.items) {
@@ -61,7 +98,7 @@ export default function ImportsPage() {
       }
     }
     return superseded
-  }, [data])
+  }, [data, sort, dir])
 
   function refreshHistory() {
     setReloadKey((k) => k + 1)
@@ -101,14 +138,23 @@ export default function ImportsPage() {
             <table className="table table-sm">
               <thead>
                 <tr>
-                  <th>Imported</th>
-                  <th>Source</th>
-                  <th>Instrument</th>
-                  <th>Timeframe</th>
-                  <th>Archive path</th>
-                  <th>File (uploaded)</th>
-                  <th>Hash</th>
-                  <th className="text-right">Rows</th>
+                  {COLUMNS.map((c) => (
+                    <th key={c.label} className={c.align === 'right' ? 'text-right' : undefined}>
+                      {c.key ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 hover:text-primary"
+                          onClick={() => toggleSort(c.key!)}
+                          aria-sort={sort === c.key ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        >
+                          {c.label}
+                          <span className="opacity-60 w-2 text-xs">
+                            {sort === c.key ? (dir === 'asc' ? '▲' : '▼') : ''}
+                          </span>
+                        </button>
+                      ) : c.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
