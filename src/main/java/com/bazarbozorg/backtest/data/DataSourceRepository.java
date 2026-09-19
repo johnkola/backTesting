@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.*;
 import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -87,6 +88,49 @@ public class DataSourceRepository {
             throw new RuntimeException("Failed to list data sources", e);
         }
     }
+
+    /**
+     * Every source with what it actually holds — instrument and candle counts
+     * and the newest bar seen. LEFT JOIN so a source that was created but never
+     * imported into still lists, with zeroes.
+     */
+    public List<SourceSummary> findAllWithStats() {
+        String sql =
+                "SELECT ds.name, ds.description, " +
+                "       COUNT(DISTINCT c.instrument_id) AS instrument_count, " +
+                "       COUNT(c.instrument_id)          AS candle_count, " +
+                "       MAX(c.timestamp)                AS latest_ts " +
+                "  FROM data_sources ds " +
+                "  LEFT JOIN candles c ON c.source_id = ds.id " +
+                " GROUP BY ds.id, ds.name, ds.description " +
+                " ORDER BY ds.name";
+
+        List<SourceSummary> summaries = new ArrayList<>();
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                OffsetDateTime latest = rs.getObject("latest_ts", OffsetDateTime.class);
+                summaries.add(new SourceSummary(
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getLong("instrument_count"),
+                        rs.getLong("candle_count"),
+                        latest != null ? latest.toZonedDateTime() : null));
+            }
+            return summaries;
+
+        } catch (SQLException e) {
+            logger.error("Failed to list data sources with stats", e);
+            throw new RuntimeException("Failed to list data sources with stats", e);
+        }
+    }
+
+    /** A data source plus the volume of candle data filed under it. */
+    public record SourceSummary(String name, String description, long instrumentCount,
+                                 long candleCount, ZonedDateTime latestCandle) {}
 
     private DataSourceRow mapRow(ResultSet rs) throws SQLException {
         OffsetDateTime created = rs.getObject("created_at", OffsetDateTime.class);

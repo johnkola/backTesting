@@ -104,6 +104,35 @@ export type UploadImportRequest = {
   force: boolean
 }
 
+/** What one import's undo would touch — shared by the preview and the result. */
+type ImportDeleteTarget = {
+  importId: number
+  symbol: string
+  source: string
+  timeframe: string
+  /** The calendar year the import's archive path encodes; it bounds the delete. */
+  year: number
+  fileName: string
+  archivePath: string
+  /** Rows the import recorded writing. */
+  rowsRecorded: number
+  /** Candles present in that (instrument, source, timeframe, year) window now. */
+  candlesInWindow: number
+}
+
+/** DELETE /api/imports/:id?dry_run=true — what would go, with nothing removed. */
+export type ImportDeletePreview = ImportDeleteTarget & {
+  status: 'dry_run'
+  candlesWouldDelete: number
+}
+
+/** DELETE /api/imports/:id — what went. The archived CSV is deliberately kept. */
+export type ImportDeleteResult = ImportDeleteTarget & {
+  status: 'deleted'
+  candlesDeleted: number
+  archiveKept: boolean
+}
+
 /** POST /api/aggregate — build higher-timeframe rollups from a source tf. */
 export type AggregateRequest = {
   symbol: string
@@ -182,16 +211,18 @@ export type PerformanceMetrics = {
 }
 
 export type TrainedModel = {
-  cacheKey: string
+  /** Null only for a metadata.json that predates or omits it — see ModelsPage. */
+  cacheKey: string | null
   /** Compact ISO-8601 UTC timestamp (e.g. "20260511T134522.123Z"). Null for
    *  legacy entries written before model versioning shipped. */
   versionId: string | null
-  strategyName: string
+  strategyName: string | null
   instrumentId: string | number | null
   instrumentSymbol: string | null
   sourceId: string | number | null
   sourceName: string | null
-  timeframe: string
+  /** The loader does not record the timeframe it trained on; Java-era entries did. */
+  timeframe: string | null
   trainingFromEpochSec: number | null
   trainingToEpochSec: number | null
   trainingBarCount: number | null
@@ -220,8 +251,157 @@ export type ResultDetail = ResultSummary & {
   } | null
 }
 
+/**
+ * Base URL of the API. The client is a standalone SPA served on its own origin,
+ * so it has to be told where the API lives — set VITE_API_URL at build time
+ * (docker compose passes it) or in a .env file for local dev. Falls back to a
+ * same-origin relative path, which is what the Vite dev server's proxy expects.
+ */
+const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
+
+/**
+ * Prefixes a path with the configured API base.
+ *
+ * Exported because not every API URL is fetched: the docs pages are rendered by
+ * the API service and opened as ordinary links, and those must be absolute too.
+ * A relative `/readme` resolves against the client's own origin, where nginx's
+ * SPA fallback answers with index.html and the router redirects to home.
+ */
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`
+}
+
+/** One registered strategy, from GET /api/strategies (served by the Java engine). */
+export type Strategy = {
+  name: string
+  description: string
+  /** Parameter name -> default value, as strings. Drives the parameter form. */
+  defaultParameters: Record<string, string>
+  /** True for strategies that need a cached trained model before they can run. */
+  requiresTrainedModel: boolean
+}
+
+export type RunRequest = {
+  strategy: string
+  instrument: string
+  timeframe: string
+  source: string
+  from?: string
+  to?: string
+  capital?: number
+  parameters?: Record<string, string>
+  modelVersion?: string
+  aggregateMissing?: boolean
+}
+
+/** The full result POST /api/run returns — same shape GET /api/results/:id nests under `result`. */
+export type RunResult = {
+  strategyName: string
+  instrumentSymbol: string
+  timeframe: string
+  dataSource: string
+  startDate: string
+  endDate: string
+  initialCapital: number
+  finalEquity: number
+  metrics: PerformanceMetrics
+  trades: Trade[]
+  equityHistory: EquityPoint[]
+  modelCacheKey: string | null
+  modelCacheHit: boolean | null
+  modelVersionId: string | null
+}
+
+export type AuditRequest = {
+  symbol?: string
+  source?: string
+  timeframe?: string
+  checks?: string[]
+  examples?: boolean
+}
+
+export type AuditSeries = {
+  symbol: string
+  source: string
+  timeframe: string
+  bars: number
+  ok: boolean
+  totalIssues: number
+  counts: Record<string, number>
+  summary: string
+  examples?: { category: string; timestamp: string | null; detail: string }[]
+}
+
+export type AuditResponse = {
+  status: string
+  checks: string[]
+  seriesAudited: number
+  totalIssues: number
+  ok: boolean
+  items: AuditSeries[]
+}
+
+/** One dependency's verdict in the health report. */
+export type ServiceHealth = {
+  name: string
+  ok: boolean
+  /** "connected"/"reachable" when up; the failure text when not. */
+  detail: string
+  latencyMs: number
+}
+
+/**
+ * GET /api/health — the whole system's liveness, not just the API's. Always
+ * arrives with HTTP 200 when the API is alive, so a rejected promise means the
+ * API itself is unreachable and `ok: false` means something behind it is.
+ */
+export type HealthReport = {
+  status: 'ok' | 'degraded' | 'maintenance'
+  ok: boolean
+  /** True when the API's MAINTENANCE switch is on — services may all be fine. */
+  maintenance?: boolean
+  maintenanceMessage?: string
+  db: boolean
+  services: ServiceHealth[]
+}
+
+/**
+ * Build-time maintenance switch: set VITE_MAINTENANCE=1 and the client shows
+ * the maintenance page without asking anything.
+ *
+ * The API's own MAINTENANCE env var is the one to reach for normally — it is a
+ * restart rather than a rebuild, and it can still say why. This one exists for
+ * the case that one cannot cover: taking the UI down while the API itself is
+ * being replaced, when there is nothing left to ask.
+ */
+export const FORCE_MAINTENANCE = /^(1|true|yes|on)$/i.test(
+  import.meta.env.VITE_MAINTENANCE ?? '',
+)
+
+/** One entry in the doc registry, from GET /api/docs. */
+export type DocSummary = {
+  name: string
+  label: string
+  /** The segment this doc lives at under /docs/. */
+  slug: string
+}
+
+/** A rendered doc. `html` is the API's markdown render, headings already anchored. */
+export type DocContent = DocSummary & {
+  html: string
+  /** Set only when viewing a captured revision rather than the live file. */
+  revision: { id: number; capturedAt: string } | null
+}
+
+export type DocRevision = {
+  id: number
+  capturedAt: string
+  contentHash: string
+  sizeBytes: number
+}
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, { signal })
+  const res = await fetch(apiUrl(url), { signal })
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`
     try {
@@ -238,9 +418,26 @@ export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError'
 }
 
+/** POST/DELETE with a JSON body, surfacing the API's `error` field as the thrown message. */
+async function sendJson<T>(url: string, method: 'POST' | 'DELETE', body?: unknown): Promise<T> {
+  const res = await fetch(apiUrl(url), {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  let parsed: unknown
+  try { parsed = await res.json() } catch { parsed = null }
+  if (!res.ok) {
+    const msg = (parsed && typeof parsed === 'object' && 'error' in parsed)
+      ? String((parsed as { error: string }).error)
+      : `${res.status} ${res.statusText}`
+    throw new Error(msg)
+  }
+  return parsed as T
+}
+
 export const api = {
-  health: (signal?: AbortSignal) =>
-    getJson<{ status: string; db: boolean }>('/api/health', signal),
+  health: (signal?: AbortSignal) => getJson<HealthReport>('/api/health', signal),
   sources: (signal?: AbortSignal) =>
     getJson<{ items: Source[] }>('/api/sources', signal),
   instruments: (signal?: AbortSignal) =>
@@ -261,8 +458,33 @@ export const api = {
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
   models: (signal?: AbortSignal) =>
     getJson<{ items: TrainedModel[]; modelsDir: string }>('/api/models', signal),
+  strategies: (signal?: AbortSignal) =>
+    getJson<{ items: Strategy[] }>('/api/strategies', signal),
+  docs: (signal?: AbortSignal) => getJson<{ items: DocSummary[] }>('/api/docs', signal),
+  doc: (slug: string, rev?: string | null, signal?: AbortSignal) =>
+    getJson<DocContent>(
+      `/api/docs/${encodeURIComponent(slug)}${rev ? `?rev=${encodeURIComponent(rev)}` : ''}`,
+      signal,
+    ),
+  docHistory: (slug: string, signal?: AbortSignal) =>
+    getJson<{ label: string; items: DocRevision[] }>(
+      `/api/docs/${encodeURIComponent(slug)}/history`,
+      signal,
+    ),
+  /** Runs a backtest and returns the saved result. Synchronous: expect ~a second. */
+  run: (req: RunRequest) => sendJson<RunResult>('/api/run', 'POST', req),
+  deleteResult: (id: string | number) =>
+    sendJson<{ status: string; id: number }>(`/api/results/${encodeURIComponent(String(id))}`, 'DELETE'),
+  /** Preview an import undo: returns the candle count without deleting anything. */
+  previewDeleteImport: (id: string | number) =>
+    sendJson<ImportDeletePreview>(
+      `/api/imports/${encodeURIComponent(String(id))}?dry_run=true`, 'DELETE',
+    ),
+  deleteImport: (id: string | number) =>
+    sendJson<ImportDeleteResult>(`/api/imports/${encodeURIComponent(String(id))}`, 'DELETE'),
+  audit: (req: AuditRequest) => sendJson<AuditResponse>('/api/audit', 'POST', req),
   aggregate: async (req: AggregateRequest): Promise<AggregateResponse> => {
-    const res = await fetch('/api/aggregate', {
+    const res = await fetch(apiUrl('/api/aggregate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -291,7 +513,7 @@ export const api = {
     fd.append('timeframe', req.timeframe)
     fd.append('source', req.source)
     fd.append('force', String(req.force))
-    const res = await fetch('/api/imports', { method: 'POST', body: fd })
+    const res = await fetch(apiUrl('/api/imports'), { method: 'POST', body: fd })
     // 200 and 409 both carry a structured body (created/skipped/overwritten/conflict).
     // 4xx other than 409 surface as plain { error } — convert to a throw.
     let body: unknown

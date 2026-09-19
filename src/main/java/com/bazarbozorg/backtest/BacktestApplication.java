@@ -1,9 +1,14 @@
 package com.bazarbozorg.backtest;
 
+import com.bazarbozorg.backtest.cli.AggregateCommand;
 import com.bazarbozorg.backtest.cli.BacktestCommand;
+import com.bazarbozorg.backtest.cli.ListImportsCommand;
 import com.bazarbozorg.backtest.cli.ListInstrumentsCommand;
+import com.bazarbozorg.backtest.cli.ListModelsCommand;
+import com.bazarbozorg.backtest.cli.ListSourcesCommand;
 import com.bazarbozorg.backtest.cli.ListStrategiesCommand;
 import com.bazarbozorg.backtest.cli.ReportCommand;
+import com.bazarbozorg.backtest.cli.ServeCommand;
 import com.bazarbozorg.backtest.cli.TrainCommand;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -17,9 +22,14 @@ import picocli.CommandLine.Command;
          subcommands = {
              ListStrategiesCommand.class,
              ListInstrumentsCommand.class,
+             ListImportsCommand.class,
+             ListSourcesCommand.class,
+             ListModelsCommand.class,
+             AggregateCommand.class,
              TrainCommand.class,
              BacktestCommand.class,
              ReportCommand.class,
+             ServeCommand.class,
          })
 public class BacktestApplication implements Runnable {
 

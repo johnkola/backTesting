@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { pool } = require('./db');
 
-const KNOWN_DOCS = new Set(['README', 'ARCHITECTURE']);
+const KNOWN_DOCS = new Set(['GETTING_STARTED', 'README', 'ARCHITECTURE']);
 
 async function ensureSchema() {
   // Owned by the web layer, not the Java backtester. Idempotent.
@@ -51,7 +51,7 @@ async function captureIfChanged(name, content) {
      VALUES ($1, $2, $3)
      ON CONFLICT (doc_name, content_hash) DO NOTHING
      RETURNING id, captured_at`,
-    [name, content, hash]
+    [name, content, hash],
   );
   if (inserted.rows.length > 0) {
     return { id: inserted.rows[0].id, captured_at: inserted.rows[0].captured_at, isNew: true };
@@ -61,7 +61,7 @@ async function captureIfChanged(name, content) {
     `SELECT id, captured_at FROM doc_revisions
       WHERE doc_name = $1 AND content_hash = $2
       LIMIT 1`,
-    [name, hash]
+    [name, hash],
   );
   return { id: existing.rows[0].id, captured_at: existing.rows[0].captured_at, isNew: false };
 }
@@ -72,7 +72,7 @@ async function getRevision(name, id) {
     `SELECT id, doc_name, content, content_hash, captured_at
        FROM doc_revisions
       WHERE doc_name = $1 AND id = $2`,
-    [name, id]
+    [name, id],
   );
   return rows[0] || null;
 }
@@ -85,7 +85,7 @@ async function listHistory(name, limit = 100) {
       WHERE doc_name = $1
       ORDER BY captured_at DESC, id DESC
       LIMIT $2`,
-    [name, limit]
+    [name, limit],
   );
   return rows.map((r) => ({
     id: r.id,

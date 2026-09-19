@@ -25,13 +25,29 @@ public class ReportCommand implements Runnable {
     @Option(names = {"--last"}, description = "Show the last backtest result")
     private boolean showLast;
 
-    @Option(names = {"--list"}, description = "List all saved results")
+    @Option(names = {"--list"}, description = "List saved results (newest first)")
     private boolean listAll;
+
+    @Option(names = {"--id"}, description = "Show the full report for one saved result by id")
+    private Long id;
+
+    @Option(names = {"-s", "--strategy"}, description = "Filter --list by strategy name")
+    private String strategy;
+
+    @Option(names = {"-i", "--instrument"}, description = "Filter --list by instrument symbol")
+    private String instrument;
+
+    @Option(names = {"--source"}, description = "Filter --list by data source")
+    private String source;
+
+    @Option(names = {"-n", "--limit"}, description = "Show at most this many rows in --list")
+    private Integer limit;
 
     @Override
     public void run() {
-        if (!showLast && !listAll) {
-            System.out.println("Please specify --last or --list. Use --help for more information.");
+        if (!showLast && !listAll && id == null) {
+            System.out.println("Please specify --last, --list or --id. "
+                    + "Use --help for more information.");
             return;
         }
 
@@ -49,6 +65,10 @@ public class ReportCommand implements Runnable {
                 showLastResult(resultRepo);
             }
 
+            if (id != null) {
+                showResultById(resultRepo, id);
+            }
+
         } catch (Exception e) {
             System.err.println("Failed to load reports: " + e.getMessage());
             e.printStackTrace();
@@ -61,15 +81,18 @@ public class ReportCommand implements Runnable {
      * Lists all saved backtest results as a summary table.
      */
     private void listAllResults(BacktestResultRepository resultRepo) {
-        List<BacktestResultSummaryRow> summaries = resultRepo.findAll();
+        List<BacktestResultSummaryRow> summaries =
+                resultRepo.findFiltered(strategy, instrument, source, limit);
 
         if (summaries.isEmpty()) {
-            System.out.println("No saved backtest results found.");
+            System.out.println(describeFilters().isEmpty()
+                    ? "No saved backtest results found."
+                    : "No saved backtest results match " + describeFilters() + ".");
             return;
         }
 
         List<String> headers = List.of(
-                "ID", "Strategy", "Instrument", "Timeframe",
+                "ID", "Strategy", "Instrument", "Timeframe", "Source",
                 "Period", "Return%", "Sharpe", "Drawdown%",
                 "Trades", "Win Rate%", "Created"
         );
@@ -81,6 +104,7 @@ public class ReportCommand implements Runnable {
             row.add(summary.strategyName());
             row.add(summary.instrumentSymbol());
             row.add(summary.timeframe());
+            row.add(summary.dataSource() != null ? summary.dataSource() : "");
             row.add(DateTimeUtils.formatDate(summary.startDate())
                     + " to " + DateTimeUtils.formatDate(summary.endDate()));
             row.add(String.valueOf(MathUtils.round(summary.totalReturnPct(), 2)));
@@ -93,8 +117,34 @@ public class ReportCommand implements Runnable {
         }
 
         System.out.println();
-        System.out.printf("  Saved Backtest Results (%d total):%n%n", summaries.size());
+        System.out.printf("  Saved Backtest Results (%d shown%s):%n%n",
+                summaries.size(),
+                describeFilters().isEmpty() ? "" : ", filtered by " + describeFilters());
         System.out.println(TableFormatter.formatTable(headers, rows));
+        System.out.println("  Full report for one row: report --id <ID>");
+    }
+
+    /** Human-readable echo of the active filters, for the header and the empty case. */
+    private String describeFilters() {
+        List<String> parts = new ArrayList<>();
+        if (strategy != null) parts.add("strategy=" + strategy);
+        if (instrument != null) parts.add("instrument=" + instrument);
+        if (source != null) parts.add("source=" + source);
+        if (limit != null) parts.add("limit=" + limit);
+        return String.join(", ", parts);
+    }
+
+    /** Full report for one saved result, the same rendering as {@code --last}. */
+    private void showResultById(BacktestResultRepository resultRepo, long resultId) {
+        Optional<BacktestResult> result = resultRepo.findById(resultId);
+
+        if (result.isEmpty()) {
+            System.out.println("No saved backtest result with id " + resultId
+                    + ". List what exists with `report --list`.");
+            return;
+        }
+
+        System.out.println(new ConsoleReportFormatter().formatReport(result.get()));
     }
 
     /**

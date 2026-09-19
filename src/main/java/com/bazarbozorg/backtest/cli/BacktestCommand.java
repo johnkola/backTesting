@@ -5,6 +5,7 @@ import com.bazarbozorg.backtest.data.BacktestResultRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.engine.BacktestResult;
+import com.bazarbozorg.backtest.loader.LoaderAggregator;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.commission.CommissionModel;
 import com.bazarbozorg.backtest.model.commission.FixedCommission;
@@ -65,6 +66,12 @@ public class BacktestCommand implements Runnable {
             description = "Data source name to backtest against (default: ${DEFAULT-VALUE})")
     private String source;
 
+    @Option(names = {"--no-aggregate"},
+            description = "Don't build the requested timeframe from a finer one when it has no "
+                    + "candles. By default a missing higher timeframe (e.g. -t W1 with only D1 "
+                    + "imported) is rolled up via the loader before the backtest runs.")
+    private boolean noAggregate;
+
     @Option(names = {"--model-version"},
             description = "Pin a specific trained-model version id (e.g. 20260511T134522.123Z). "
                     + "Defaults to the latest version under the strategy + hyperparam cache key. "
@@ -120,6 +127,10 @@ public class BacktestCommand implements Runnable {
             }
             System.out.println();
 
+            if (!noAggregate) {
+                aggregateIfMissing(dbManager, timeframe);
+            }
+
             // Create and run engine
             BacktestEngine engine = new BacktestEngine(
                     dbManager, commissionModel, slippageModel, initialCapital);
@@ -154,6 +165,29 @@ public class BacktestCommand implements Runnable {
             e.printStackTrace();
         } finally {
             dbManager.shutdown();
+        }
+    }
+
+    /**
+     * Rolls the requested timeframe up from a finer one when it has no candles
+     * for this (instrument, source) — the CLI counterpart of the Instruments
+     * page's "Roll up" button, so weekly and monthly backtests don't need a
+     * separate aggregate call first.
+     *
+     * <p>The loader being down is a warning, not a failure: the run continues
+     * and the engine raises its own "No candle data found" a moment later,
+     * which is the more useful message when aggregation was never the problem.
+     */
+    private void aggregateIfMissing(DatabaseManager dbManager, Timeframe timeframe) {
+        try {
+            new LoaderAggregator(dbManager)
+                    .buildIfMissing(instrumentSymbol, source, timeframe)
+                    .ifPresent(r -> System.out.printf("Built %s candles from %s: %,d rows.%n%n",
+                            r.targetTf(), r.sourceTf(), r.rowsWritten()));
+        } catch (RuntimeException e) {
+            System.err.printf("Warning: could not build %s candles via the loader (%s).%n"
+                    + "Continuing with the candles already in the database.%n%n",
+                    timeframe, e.getMessage());
         }
     }
 

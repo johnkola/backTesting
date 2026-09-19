@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   api,
-  isAbortError,
   type CohesionCategory,
+  type ImportDeletePreview,
   type CohesionReport,
   type ImportRecord,
   type Paginated,
@@ -10,7 +10,9 @@ import {
   type SlicePreview,
   type UploadImportResponse,
 } from '../lib/api'
+import { useApiData } from '../lib/useApiData'
 import Pagination from '../components/Pagination'
+import FieldLabel, { tipClass } from '../components/FieldLabel'
 
 const LIMIT = 25
 
@@ -32,6 +34,7 @@ const COLUMNS: { key: SortKey | null; label: string; align?: 'right' }[] = [
   { key: 'file', label: 'File (uploaded)' },
   { key: null, label: 'Hash' },
   { key: 'rows', label: 'Rows', align: 'right' },
+  { key: null, label: '' },
 ]
 const DEFAULT_DIR: Record<SortKey, SortDir> = {
   imported: 'desc', rows: 'desc',
@@ -45,8 +48,6 @@ type UploadState =
   | { kind: 'error'; message: string }
 
 export default function ImportsPage() {
-  const [data, setData] = useState<Paginated<ImportRecord> | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [offset, setOffset] = useState(0)
   const [source, setSource] = useState('')
   const [instrument, setInstrument] = useState('')
@@ -54,14 +55,10 @@ export default function ImportsPage() {
   const [dir, setDir] = useState<SortDir>('desc')
   const [reloadKey, setReloadKey] = useState(0)
 
-  useEffect(() => {
-    setError(null)
-    const ctrl = new AbortController()
-    api.imports({ limit: LIMIT, offset, source, instrument, sort, dir }, ctrl.signal)
-      .then(setData)
-      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
-    return () => ctrl.abort()
-  }, [offset, source, instrument, sort, dir, reloadKey])
+  const { data, error } = useApiData<Paginated<ImportRecord>>(
+    (signal) => api.imports({ limit: LIMIT, offset, source, instrument, sort, dir }, signal),
+    [offset, source, instrument, sort, dir, reloadKey],
+  )
 
   function applyFilters(s: string, i: string) {
     setOffset(0)
@@ -111,18 +108,22 @@ export default function ImportsPage() {
       <UploadCard onSuccess={refreshHistory} />
 
       <div className="flex flex-wrap gap-2 mb-4">
-        <input
-          className="input input-sm input-bordered"
-          placeholder="filter by source (e.g. yahoo)"
-          value={source}
-          onChange={(e) => applyFilters(e.target.value, instrument)}
-        />
-        <input
-          className="input input-sm input-bordered"
-          placeholder="filter by instrument (e.g. AAPL)"
-          value={instrument}
-          onChange={(e) => applyFilters(source, e.target.value)}
-        />
+        <span className={tipClass} data-tip="Show only imports filed under this source. Matched exactly.">
+          <input
+            className="input input-sm input-bordered"
+            placeholder="filter by source (e.g. yahoo)"
+            value={source}
+            onChange={(e) => applyFilters(e.target.value, instrument)}
+          />
+        </span>
+        <span className={tipClass} data-tip="Show only imports for this symbol. Matched exactly.">
+          <input
+            className="input input-sm input-bordered"
+            placeholder="filter by instrument (e.g. AAPL)"
+            value={instrument}
+            onChange={(e) => applyFilters(source, e.target.value)}
+          />
+        </span>
         {(source || instrument) && (
           <button className="btn btn-sm btn-ghost" onClick={() => applyFilters('', '')}>
             clear
@@ -181,11 +182,14 @@ export default function ImportsPage() {
                         )}
                       </td>
                       <td className="text-right tabular-nums">{r.rowCount.toLocaleString()}</td>
+                      <td className="text-right">
+                        <DeleteImportButton record={r} onDeleted={refreshHistory} />
+                      </td>
                     </tr>
                   )
                 })}
                 {data.items.length === 0 && (
-                  <tr><td colSpan={8} className="text-center text-base-content/60">No imports match.</td></tr>
+                  <tr><td colSpan={9} className="text-center text-base-content/60">No imports match.</td></tr>
                 )}
               </tbody>
             </table>
@@ -194,6 +198,127 @@ export default function ImportsPage() {
         </>
       )}
     </section>
+  )
+}
+
+/**
+ * Undo one import: delete the candles it wrote, keep the archived CSV.
+ *
+ * Never deletes on the first click. The loader's `dry_run` mode answers the
+ * only question worth asking first — how many candles are actually in that
+ * window — because the row count an import *recorded* and what is in the table
+ * *now* can differ once a later import has overwritten part of the year. So the
+ * confirmation states the real number, and says the archive survives, which is
+ * what makes this reversible: re-import the same file and the rows come back.
+ */
+function DeleteImportButton({
+  record,
+  onDeleted,
+}: {
+  record: ImportRecord
+  onDeleted: () => void
+}) {
+  const [preview, setPreview] = useState<ImportDeletePreview | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function openPreview() {
+    setBusy(true)
+    setError(null)
+    try {
+      setPreview(await api.previewDeleteImport(record.id))
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function confirm() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteImport(record.id)
+      setPreview(null)
+      onDeleted()
+    } catch (err) {
+      setError((err as Error).message)
+      setBusy(false)
+    }
+  }
+
+  function cancel() {
+    setPreview(null)
+    setError(null)
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="btn btn-ghost btn-xs text-error"
+        onClick={openPreview}
+        disabled={busy}
+        title={`Undo import #${record.id}`}
+        aria-label={`Undo import ${record.id}`}
+      >
+        {busy && !preview ? <span className="loading loading-spinner loading-xs" /> : 'Undo'}
+      </button>
+
+      {error && !preview && (
+        <div className="text-xs text-error mt-1 whitespace-normal">{error}</div>
+      )}
+
+      {preview && (
+        <dialog className="modal modal-open">
+          <div className="modal-box">
+            <h3 className="font-semibold text-lg">Undo this import?</h3>
+            <p className="py-2 text-sm">
+              Deletes{' '}
+              <span className="font-semibold tabular-nums">
+                {preview.candlesWouldDelete.toLocaleString()}
+              </span>{' '}
+              candle{preview.candlesWouldDelete === 1 ? '' : 's'} for{' '}
+              <span className="font-mono">{preview.symbol}</span> ·{' '}
+              <span className="font-mono">{preview.source}</span> ·{' '}
+              <span className="font-mono">{preview.timeframe}</span> in{' '}
+              <span className="font-mono">{preview.year}</span>, and removes the audit row.
+            </p>
+
+            {preview.candlesWouldDelete !== preview.rowsRecorded && (
+              <p className="text-xs text-base-content/60 pb-2">
+                The import recorded {preview.rowsRecorded.toLocaleString()} rows; the window holds{' '}
+                {preview.candlesInWindow.toLocaleString()} now — a later import for the same year
+                has overwritten part of it.
+              </p>
+            )}
+
+            <div className="alert alert-info text-sm">
+              <span>
+                The archived CSV{' '}
+                <span className="font-mono text-xs">{preview.archivePath}</span> is kept, so this
+                can be undone by re-importing it.
+              </span>
+            </div>
+
+            {error && <div className="alert alert-error text-sm mt-3">{error}</div>}
+
+            <div className="modal-action">
+              <button type="button" className="btn btn-sm" onClick={cancel} disabled={busy}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-sm btn-error" onClick={confirm} disabled={busy}>
+                {busy && <span className="loading loading-spinner loading-xs" />}
+                Delete candles
+              </button>
+            </div>
+          </div>
+          <form method="dialog" className="modal-backdrop">
+            <button type="button" onClick={cancel}>close</button>
+          </form>
+        </dialog>
+      )}
+    </>
   )
 }
 
@@ -238,7 +363,11 @@ function UploadCard({ onSuccess }: { onSuccess: () => void }) {
         <h2 className="card-title text-lg">Upload CSV</h2>
         <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
           <label className="form-control md:col-span-2">
-            <span className="label-text text-xs">CSV file</span>
+            <FieldLabel
+              text="CSV file"
+              className="text-xs"
+              hint="The candle file to import. Its header must read Date,Open,High,Low,Close,Volume."
+            />
             <input
               ref={fileInputRef}
               type="file"
@@ -250,7 +379,11 @@ function UploadCard({ onSuccess }: { onSuccess: () => void }) {
           </label>
 
           <label className="form-control">
-            <span className="label-text text-xs">Symbol</span>
+            <FieldLabel
+              text="Symbol"
+              className="text-xs"
+              hint="Ticker these candles belong to. Uppercased as you type."
+            />
             <input
               type="text"
               className="input input-sm input-bordered"
@@ -262,7 +395,11 @@ function UploadCard({ onSuccess }: { onSuccess: () => void }) {
           </label>
 
           <label className="form-control">
-            <span className="label-text text-xs">Type</span>
+            <FieldLabel
+              text="Type"
+              className="text-xs"
+              hint="Instrument class the symbol is filed under: STOCK, FOREX, CRYPTO, INDEX or COMMODITY."
+            />
             <select
               className="select select-sm select-bordered"
               value={type}
@@ -273,7 +410,11 @@ function UploadCard({ onSuccess }: { onSuccess: () => void }) {
           </label>
 
           <label className="form-control">
-            <span className="label-text text-xs">Timeframe</span>
+            <FieldLabel
+              text="Timeframe"
+              className="text-xs"
+              hint="Candle size the rows actually are. It is not detected from the file — say what you are importing."
+            />
             <select
               className="select select-sm select-bordered"
               value={timeframe}
@@ -284,7 +425,11 @@ function UploadCard({ onSuccess }: { onSuccess: () => void }) {
           </label>
 
           <label className="form-control">
-            <span className="label-text text-xs">Source</span>
+            <FieldLabel
+              text="Source"
+              className="text-xs"
+              hint="Label for where the data came from, such as yahoo or a broker export. Empty files it under default."
+            />
             <input
               type="text"
               className="input input-sm input-bordered"
@@ -295,7 +440,10 @@ function UploadCard({ onSuccess }: { onSuccess: () => void }) {
           </label>
 
           <div className="md:col-span-6 flex flex-wrap gap-3 items-center">
-            <label className="label cursor-pointer gap-2">
+            <label
+              className={`label cursor-pointer gap-2 ${tipClass}`}
+              data-tip="Overwrite year slices that are already archived with different content. Without it a clash returns 409 and nothing is written."
+            >
               <input
                 type="checkbox"
                 className="checkbox checkbox-sm"

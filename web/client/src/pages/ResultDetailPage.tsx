@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { api, isAbortError, type ResultDetail } from '../lib/api'
+import { useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   CartesianGrid,
   Line,
@@ -10,6 +9,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { api, type ResultDetail } from '../lib/api'
+import { useApiData } from '../lib/useApiData'
 
 function pct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -26,21 +27,65 @@ function num(n: number | null | undefined, fractionDigits = 2): string {
   return n.toFixed(fractionDigits)
 }
 
-export default function ResultDetailPage() {
-  const { id } = useParams<{ id: string }>()
-  const [detail, setDetail] = useState<ResultDetail | null>(null)
+/**
+ * Delete control. Confirms first — a saved result is not recoverable, since the
+ * trades and equity curve live only in its row — and reports failure inline
+ * rather than navigating away from a delete that didn't happen.
+ */
+function DeleteResultButton({ id }: { id: string }) {
+  const navigate = useNavigate()
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
 
-  useEffect(() => {
-    if (!id) return
-    setDetail(null)
+  async function remove() {
+    setDeleting(true)
     setError(null)
-    const ctrl = new AbortController()
-    api.result(id, ctrl.signal)
-      .then(setDetail)
-      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
-    return () => ctrl.abort()
-  }, [id])
+    try {
+      await api.deleteResult(id)
+      navigate('/results')
+    } catch (err) {
+      setError((err as Error).message)
+      setDeleting(false)
+      setConfirming(false)
+    }
+  }
+
+  if (error) {
+    return (
+      <div className="ml-auto flex items-center gap-2">
+        <span className="text-error text-sm">{error}</span>
+        <button className="btn btn-sm btn-ghost" onClick={() => setError(null)}>dismiss</button>
+      </div>
+    )
+  }
+
+  return confirming ? (
+    <div className="ml-auto flex items-center gap-2">
+      <span className="text-sm text-base-content/70">Delete this result permanently?</span>
+      <button className="btn btn-sm btn-error" onClick={remove} disabled={deleting}>
+        {deleting && <span className="loading loading-spinner loading-xs" />}
+        Delete
+      </button>
+      <button className="btn btn-sm btn-ghost" onClick={() => setConfirming(false)} disabled={deleting}>
+        Cancel
+      </button>
+    </div>
+  ) : (
+    <button className="btn btn-sm btn-outline btn-error ml-auto" onClick={() => setConfirming(true)}>
+      Delete
+    </button>
+  )
+}
+
+export default function ResultDetailPage() {
+  // The route is `/results/:id`, so react-router always has a value here; the
+  // fallback only exists because the param type admits `undefined`.
+  const { id = '' } = useParams<{ id: string }>()
+  const { data: detail, error } = useApiData<ResultDetail>(
+    (signal) => api.result(id, signal),
+    [id],
+  )
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!detail) return <span className="loading loading-spinner" />
@@ -73,6 +118,7 @@ export default function ResultDetailPage() {
         </h1>
         <span className="badge">{detail.timeframe}</span>
         <span className="badge badge-outline font-mono">{detail.dataSource}</span>
+        <DeleteResultButton id={String(detail.id)} />
         {detail.modelCacheHit === true && (
           <span
             className="badge badge-success"

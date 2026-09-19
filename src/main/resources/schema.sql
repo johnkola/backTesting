@@ -34,7 +34,22 @@ CREATE TABLE IF NOT EXISTS candles (
     PRIMARY KEY (instrument_id, timeframe, source_id, timestamp)
 );
 
-SELECT create_hypertable('candles', 'timestamp', if_not_exists => TRUE);
+-- Chunk interval: one year, not TimescaleDB's 7-day default. This table is
+-- daily-bar dominant and spans decades of history, so 7-day chunks produce
+-- thousands of near-empty chunks — and every full-table scan takes a lock per
+-- chunk per parallel worker, which exhausts max_locks_per_transaction ("out of
+-- shared memory") on queries like the cohesion audit's series listing. Revisit
+-- if this database becomes minute-bar dominant: a month is the better interval
+-- once one year of one instrument stops fitting comfortably in a chunk.
+SELECT create_hypertable('candles', 'timestamp',
+                         chunk_time_interval => INTERVAL '1 year',
+                         if_not_exists => TRUE);
+
+-- Existing databases created before the interval change keep their 7-day
+-- setting, which only ever applies to *new* chunks — this makes future ones
+-- yearly. Chunks already on disk are unaffected; see the note in README's
+-- "Storage compression" for the one-off migration that consolidates them.
+SELECT set_chunk_time_interval('candles', INTERVAL '1 year');
 
 -- Idempotent migration for pre-source candles tables.
 DO $migrate_candles$

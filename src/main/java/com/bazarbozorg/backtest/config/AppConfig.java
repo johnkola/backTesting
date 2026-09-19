@@ -67,16 +67,46 @@ public class AppConfig {
         return instance;
     }
 
+    /**
+     * JDBC URL, with {@code PG*} environment variables taking precedence over
+     * {@code application.properties} when they are set.
+     *
+     * <p>The properties file hard-codes {@code localhost:5432}, which is right
+     * for a developer running the CLI and wrong for anything inside a
+     * container, where Postgres answers on the compose service name. The Node
+     * server has always resolved this the same way ({@code db.js} prefers env
+     * vars when set); Java did not, so the engine container could not reach the
+     * database at all until it did.
+     *
+     * <p>{@code PGHOST} alone is enough — the rest fall back to the values in
+     * the properties file, then to Postgres's own conventional defaults.
+     */
     public String getDbUrl() {
-        return dbUrl;
+        String host = env("PGHOST");
+        if (host == null) {
+            return dbUrl;
+        }
+        String port = firstNonBlank(env("PGPORT"), "5432");
+        String database = firstNonBlank(env("PGDATABASE"), "backtest");
+        return "jdbc:postgresql://" + host + ":" + port + "/" + database;
     }
 
     public String getDbUser() {
-        return dbUser;
+        return firstNonBlank(env("PGUSER"), dbUser);
     }
 
     public String getDbPassword() {
-        return dbPassword;
+        return firstNonBlank(env("PGPASSWORD"), dbPassword);
+    }
+
+    /** Environment variable, or null when unset or blank. */
+    private static String env(String name) {
+        String value = System.getenv(name);
+        return value != null && !value.isBlank() ? value : null;
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
     }
 
     public int getDbPoolMaxSize() {

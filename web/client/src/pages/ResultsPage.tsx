@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { api, isAbortError, type ResultSummary, type Paginated } from '../lib/api'
+import { Link, useSearchParams } from 'react-router-dom'
+import { api, type ResultSummary, type Paginated } from '../lib/api'
+import { useApiData } from '../lib/useApiData'
 import Pagination from '../components/Pagination'
+import { tipClass } from '../components/FieldLabel'
 
 const LIMIT = 25
 
@@ -10,25 +11,44 @@ function pct(n: number | null | undefined): string {
   return `${n.toFixed(2)}%`
 }
 
+/**
+ * Filters live in the URL, not in component state.
+ *
+ * The Models page links here as `/results?strategy=nn-feedforward` — its
+ * "used in N backtests" count, titled "Filter results by this strategy". While
+ * these were `useState`, that query string was read by nothing: the link landed
+ * on an unfiltered table and quietly showed every strategy. Reading them from
+ * the URL fixes that link and makes a filtered view shareable and reachable with
+ * the back button, which is what a query string is for.
+ */
 export default function ResultsPage() {
-  const [data, setData] = useState<Paginated<ResultSummary> | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(0)
-  const [strategy, setStrategy] = useState('')
-  const [instrument, setInstrument] = useState('')
-  const [source, setSource] = useState('')
+  const [params, setParams] = useSearchParams()
+  const strategy = params.get('strategy') ?? ''
+  const instrument = params.get('instrument') ?? ''
+  const source = params.get('source') ?? ''
+  const offset = Math.max(0, Number(params.get('offset')) || 0)
 
-  useEffect(() => {
-    setError(null)
-    const ctrl = new AbortController()
-    api.results({ limit: LIMIT, offset, strategy, instrument, source }, ctrl.signal)
-      .then(setData)
-      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
-    return () => ctrl.abort()
-  }, [offset, strategy, instrument, source])
+  const { data, error } = useApiData<Paginated<ResultSummary>>(
+    (signal) => api.results({ limit: LIMIT, offset, strategy, instrument, source }, signal),
+    [offset, strategy, instrument, source],
+  )
 
-  function update<T extends string>(setter: (v: T) => void) {
-    return (v: T) => { setOffset(0); setter(v) }
+  /** Writes one filter and returns to page 1; an empty value drops the key entirely. */
+  function setFilter(key: 'strategy' | 'instrument' | 'source') {
+    return (value: string) => {
+      const next = new URLSearchParams(params)
+      if (value) next.set(key, value)
+      else next.delete(key)
+      next.delete('offset')
+      setParams(next, { replace: true })
+    }
+  }
+
+  function setOffset(next: number) {
+    const q = new URLSearchParams(params)
+    if (next > 0) q.set('offset', String(next))
+    else q.delete('offset')
+    setParams(q)
   }
 
   return (
@@ -36,28 +56,34 @@ export default function ResultsPage() {
       <h1 className="text-2xl font-semibold mb-4">Backtest results</h1>
 
       <div className="flex flex-wrap gap-2 mb-4">
-        <input
-          className="input input-sm input-bordered"
-          placeholder="strategy"
-          value={strategy}
-          onChange={(e) => update(setStrategy)(e.target.value)}
-        />
-        <input
-          className="input input-sm input-bordered"
-          placeholder="instrument"
-          value={instrument}
-          onChange={(e) => update(setInstrument)(e.target.value)}
-        />
-        <input
-          className="input input-sm input-bordered"
-          placeholder="source"
-          value={source}
-          onChange={(e) => update(setSource)(e.target.value)}
-        />
+        <span className={tipClass} data-tip="Show only runs of this strategy. Matched exactly, so it is the name as the Run page spells it.">
+          <input
+            className="input input-sm input-bordered"
+            placeholder="strategy"
+            value={strategy}
+            onChange={(e) => setFilter('strategy')(e.target.value)}
+          />
+        </span>
+        <span className={tipClass} data-tip="Show only runs on this symbol. Matched exactly.">
+          <input
+            className="input input-sm input-bordered"
+            placeholder="instrument"
+            value={instrument}
+            onChange={(e) => setFilter('instrument')(e.target.value)}
+          />
+        </span>
+        <span className={tipClass} data-tip="Show only runs against candles from this source. Matched exactly.">
+          <input
+            className="input input-sm input-bordered"
+            placeholder="source"
+            value={source}
+            onChange={(e) => setFilter('source')(e.target.value)}
+          />
+        </span>
         {(strategy || instrument || source) && (
           <button
             className="btn btn-sm btn-ghost"
-            onClick={() => { setOffset(0); setStrategy(''); setInstrument(''); setSource('') }}
+            onClick={() => setParams(new URLSearchParams(), { replace: true })}
           >
             clear
           </button>

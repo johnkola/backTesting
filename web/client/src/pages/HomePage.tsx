@@ -4,8 +4,10 @@ const cards = [
   { to: '/sources', title: 'Sources', desc: 'Data providers known to the system (yahoo, alpha-vantage, etc.).' },
   { to: '/instruments', title: 'Instruments', desc: 'Symbols loaded into the database with per-source candle counts and date ranges.' },
   { to: '/imports', title: 'Imports', desc: 'Audit log of every CSV import: which file, which source, when, how many rows.' },
+  { to: '/run', title: 'Run', desc: 'Run a backtest: pick a strategy, an instrument and a timeframe, and see the result.' },
   { to: '/results', title: 'Results', desc: 'Saved backtest runs. Open one to see metrics, trades, and the equity curve.' },
   { to: '/models', title: 'Models', desc: 'Trained NN models on disk: hyperparameters, validation accuracy, and which backtests reused them.' },
+  { to: '/docs', title: 'Docs', desc: 'Getting started, the README and the architecture reference, rendered live from the repo with revision history.' },
 ]
 
 export default function HomePage() {
@@ -16,7 +18,8 @@ export default function HomePage() {
           <div className="max-w-xl">
             <h1 className="text-4xl font-bold">backtest</h1>
             <p className="py-3 text-base-content/70">
-              Read-only view of the Java backtesting app: candle data, import history, and saved results.
+              Candle data, import history and saved results — and a form to run a
+              backtest against any of it.
             </p>
           </div>
         </div>

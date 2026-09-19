@@ -185,3 +185,128 @@ async def post_imports(
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+@router.delete("/api/imports/{import_id}")
+def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
+    """Undo one import: delete the candles it wrote, then its audit row.
+
+    An import is one calendar-year slice of one (instrument, source,
+    timeframe) — that is exactly what `plan_slices` writes and what
+    `archive_path` encodes as `<source>/<symbol>/<year>/<TF>.csv` — so the
+    year in that path bounds precisely what this removes. Nothing outside
+    that window is touched.
+
+    The archived CSV is deliberately **left on disk**. It is the record of
+    what was imported and the way to put the data back; deleting the rows
+    is recoverable by re-importing that file, and would not be if this
+    removed it too.
+
+    Pass `dry_run=true` to see the row count that would go without
+    deleting anything. Re-importing into a compressed chunk is a known
+    TimescaleDB limitation and so is deleting from one: that surfaces as
+    409 with the same decompress hint the import path gives.
+    """
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT di.instrument_id, i.symbol, di.source_id, ds.name,
+                       di.timeframe, di.archive_path, di.row_count, di.file_name
+                  FROM data_imports di
+                  JOIN instruments i   ON i.id  = di.instrument_id
+                  JOIN data_sources ds ON ds.id = di.source_id
+                 WHERE di.id = %s
+                """,
+                (import_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            return _bad(f"no import with id {import_id}", code=404)
+
+        instrument_id, symbol, source_id, source, timeframe, archive, row_count, file_name = row
+
+        # `<source>/<symbol>/<year>/<TF>.csv` — the year is the third segment
+        # from the end. Guard rather than assume: a hand-edited archive_path
+        # must not turn into an unbounded delete.
+        parts = (archive or "").split("/")
+        year = None
+        if len(parts) >= 2 and parts[-2].isdigit():
+            year = int(parts[-2])
+        if year is None:
+            return _bad(
+                f"cannot determine the year for import {import_id} from archive path "
+                f"{archive!r}; refusing to delete candles without a bounded window",
+                code=422,
+            )
+
+        since = f"{year}-01-01T00:00:00+00:00"
+        until = f"{year + 1}-01-01T00:00:00+00:00"
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*) FROM candles
+                 WHERE instrument_id = %s AND source_id = %s AND timeframe = %s
+                   AND timestamp >= %s AND timestamp < %s
+                """,
+                (instrument_id, source_id, timeframe, since, until),
+            )
+            present = int(cur.fetchone()[0])
+
+        target = {
+            "importId": import_id,
+            "symbol": symbol,
+            "source": source,
+            "timeframe": timeframe,
+            "year": year,
+            "fileName": file_name,
+            "archivePath": archive,
+            "rowsRecorded": row_count,
+            "candlesInWindow": present,
+        }
+
+        if dry_run:
+            return JSONResponse(
+                status_code=200,
+                content={"status": "dry_run", **target, "candlesWouldDelete": present},
+            )
+
+        try:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM candles
+                         WHERE instrument_id = %s AND source_id = %s AND timeframe = %s
+                           AND timestamp >= %s AND timestamp < %s
+                        """,
+                        (instrument_id, source_id, timeframe, since, until),
+                    )
+                    deleted = cur.rowcount or 0
+                    cur.execute("DELETE FROM data_imports WHERE id = %s", (import_id,))
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it's the known case
+            if is_compressed_chunk_error(exc):
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "status": "compressed_chunk",
+                        "error": (
+                            "these candles live in a compressed chunk; run "
+                            "SELECT decompress_chunk(...) for the affected chunk and retry"
+                        ),
+                        **target,
+                    },
+                )
+            raise
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "deleted",
+            **target,
+            "candlesDeleted": deleted,
+            "archiveKept": True,
+        },
+    )

@@ -55,3 +55,6 @@ package-lock.json
 # (the data-access source package), which then needs `git add -f` to commit.
 /data/
 .claude/
+
+# Local DB dumps taken before migrations — never commit data.
+backups/

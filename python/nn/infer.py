@@ -46,36 +46,26 @@ def load_for_inference(
     API layer turns that into 404 with enough detail for the operator
     to retry training."""
 
-    # The registry needs a factory because torch.load_state_dict needs
-    # an already-built module of the right shape. Metadata carries the
-    # arch dimensions; we rebuild from those, never trusting the
-    # caller's TrainConfig (which might have drifted).
-    def _factory_from_metadata() -> torch.nn.Module:
-        # Two-step load: first peek at the metadata to recover the arch
-        # spec, then build an empty Sequential of matching shape.
-        head = registry.load(
-            strategy,
-            cache_key,
-            version_id=version_id,
-            build_model=lambda: build(ArchSpec(input_size=1, hidden_size=1, num_hidden=1)),
-        )
-        if head is None:
-            raise RuntimeError("internal: metadata pass returned None despite directory existing")
-        spec = ArchSpec(
-            input_size=head.metadata.input_size,
-            hidden_size=head.metadata.hidden_size,
-            num_hidden=head.metadata.num_hidden,
-        )
-        return build(spec)
+    # The registry needs a factory because torch.load_state_dict needs an
+    # already-built module of the right shape, and a state_dict can't report
+    # its own shape before it's loaded. So the arch dimensions come from
+    # metadata.json, read on its own first — never from the caller's
+    # TrainConfig, which might have drifted from what was actually trained.
+    metadata = registry.read_metadata(strategy, cache_key, version_id=version_id)
+    if metadata is None:
+        return None
 
-    # In practice the metadata pass and the real load both read the
-    # same files; this is fine for the model counts the registry holds.
-    # If model count grows, swap in a lazy metadata-only peek.
+    spec = ArchSpec(
+        input_size=metadata.input_size,
+        hidden_size=metadata.hidden_size,
+        num_hidden=metadata.num_hidden,
+    )
+
     return registry.load(
         strategy,
         cache_key,
         version_id=version_id,
-        build_model=_factory_from_metadata,
+        build_model=lambda: build(spec),
     )
 
 

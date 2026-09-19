@@ -1,2 +1,38 @@
 @import "tailwindcss";
-@plugin "daisyui";
+@plugin "@tailwindcss/typography";
+
+/* The themes the picker offers. `light` is the default and `dark` is what a
+ * system dark-mode preference resolves to, so a first-time visitor gets the
+ * right one with no stored choice. The rest are opt-in, chosen to cover the
+ * usual reasons people switch: contrast, dimness, and taste. */
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark, corporate, business, emerald, night, dracula, nord;
+}
+
+/* daisyUI 5 dropped the v4 form classes: `form-control`, `label-text` and
+ * `label-text-alt` are gone, and `label` became an inline-flex row meant to sit
+ * *inside* an input. The Run and Imports forms are written in the v4 idiom, so
+ * they lost their column stacking and their label typography — label and
+ * control ended up on the same line, and `label`'s `nowrap` pushed the hint
+ * text out of its grid cell. These rules restore that missing layer, rather
+ * than rewriting the idiom across three pages. */
+@layer components {
+  .form-control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .label-text {
+    color: var(--color-base-content);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    white-space: normal;
+  }
+
+  .label-text-alt {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    white-space: normal;
+  }
+}

@@ -155,20 +155,45 @@ class ModelRegistry:
         because state_dict reload needs an empty module of the right
         shape first."""
 
+        dir_ = self.resolve_version_dir(strategy, cache_key, version_id)
+        if dir_ is None:
+            return None
+        return self._load_from_dir(dir_, build_model)
+
+    def resolve_version_dir(
+        self, strategy: str, cache_key: str, version_id: str | None = None
+    ) -> Path | None:
+        """Directory holding one saved version: the pinned one when
+        `version_id` is given, otherwise the lexicographically-latest.
+        None when the entry doesn't exist or the pin doesn't resolve —
+        the API layer turns that into a 404."""
+
         entry = self.entry_dir(strategy, cache_key)
         if not entry.exists():
             return None
-
         if version_id is not None:
             dir_ = entry / version_id
-            if not dir_.is_dir():
-                return None
-            return self._load_from_dir(dir_, build_model)
+            return dir_ if dir_.is_dir() else None
+        return self._find_latest(entry)
 
-        latest = self._find_latest(entry)
-        if latest is None:
+    def read_metadata(
+        self, strategy: str, cache_key: str, version_id: str | None = None
+    ) -> MetadataRecord | None:
+        """Read metadata.json without touching model.pt.
+
+        Rehydrating a state_dict needs an empty module of the right shape
+        first, and the weights can't report their own shape before they're
+        loaded — so the architecture has to come from metadata, read on its
+        own. Applies the same all-three-files-present rule as the full load,
+        so a half-written version directory reads as a miss either way."""
+
+        dir_ = self.resolve_version_dir(strategy, cache_key, version_id)
+        if dir_ is None:
             return None
-        return self._load_from_dir(latest, build_model)
+        if not all((dir_ / f).exists() for f in (MODEL_FILE, SCALER_FILE, METADATA_FILE)):
+            return None
+        blob = json.loads((dir_ / METADATA_FILE).read_text(encoding="utf-8"))
+        return MetadataRecord(**blob)
 
     def _find_latest(self, entry: Path) -> Path | None:
         versions = [p for p in entry.iterdir() if p.is_dir() and _VERSION_RE.fullmatch(p.name)]
