@@ -1,22 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
-import { api, isAbortError, type AggregateResponse, type Instrument } from '../lib/api'
+import { useMemo, useState } from 'react'
+import { api, type AggregateResponse, type AuditResponse, type Instrument } from '../lib/api'
+import { useApiData } from '../lib/useApiData'
+import { tipClass } from '../components/FieldLabel'
 
 // Rollups we offer to build from a D1 series (matches the old
 // candles_weekly / candles_monthly continuous aggregates).
 const ROLLUP_TARGETS = ['W1', 'MN1'] as const
 
 export default function InstrumentsPage() {
-  const [instruments, setInstruments] = useState<Instrument[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
 
-  useEffect(() => {
-    const ctrl = new AbortController()
-    api.instruments(ctrl.signal)
-      .then((r) => setInstruments(r.items))
-      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
-    return () => ctrl.abort()
-  }, [reloadKey])
+  const { data: instruments, error } = useApiData<Instrument[]>(
+    (signal) => api.instruments(signal).then((r) => r.items),
+    [reloadKey],
+  )
 
   const refresh = () => setReloadKey((k) => k + 1)
 
@@ -36,6 +33,70 @@ export default function InstrumentsPage() {
         </div>
       )}
     </section>
+  )
+}
+
+/**
+ * Runs the cohesion checks over what is already stored for this instrument and
+ * shows the per-series verdict. Advisory only — it never changes data, which is
+ * why it can be a one-click action with no confirmation.
+ */
+function AuditButton({ symbol }: { symbol: string }) {
+  const [running, setRunning] = useState(false)
+  const [report, setReport] = useState<AuditResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function run() {
+    setRunning(true)
+    setError(null)
+    try {
+      setReport(await api.audit({ symbol, examples: true }))
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-3">
+        <button className="btn btn-sm btn-outline" onClick={run} disabled={running}>
+          {running && <span className="loading loading-spinner loading-xs" />}
+          Check data quality
+        </button>
+        {report && (
+          <span className={`badge ${report.ok ? 'badge-success' : 'badge-warning'}`}>
+            {report.ok
+              ? `${report.seriesAudited} series clean`
+              : `${report.totalIssues} issue${report.totalIssues === 1 ? '' : 's'}`}
+          </span>
+        )}
+        {error && <span className="text-error text-sm">{error}</span>}
+      </div>
+
+      {report && report.items.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {report.items.map((s) => (
+            <details key={`${s.source}-${s.timeframe}`} className="text-sm">
+              <summary className={`cursor-pointer ${s.ok ? 'text-base-content/60' : 'text-warning'}`}>
+                <span className="font-mono">{s.source}/{s.timeframe}</span> — {s.summary}
+              </summary>
+              {s.examples && s.examples.length > 0 && (
+                <ul className="ml-6 mt-1 text-xs text-base-content/70 space-y-0.5">
+                  {s.examples.slice(0, 10).map((f, n) => (
+                    <li key={n}>
+                      <span className="badge badge-xs badge-outline mr-2">{f.category}</span>
+                      {f.timestamp?.slice(0, 19) ?? ''} — {f.detail}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </details>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -99,6 +160,7 @@ function InstrumentCard({ instrument: i, onAggregated }: { instrument: Instrumen
           </table>
         </div>
       )}
+      {i.sources.length > 0 && <AuditButton symbol={i.symbol} />}
     </div>
   )
 }
@@ -162,8 +224,8 @@ function AggregateButton({
           Roll up → W1 · MN1
         </button>
         <label
-          className="label cursor-pointer gap-1 p-0"
-          title="Rebuild even if the target rollup already exists"
+          className={`label cursor-pointer gap-1 p-0 ${tipClass}`}
+          data-tip="Rebuild even if the target rollup already exists"
         >
           <input
             type="checkbox"

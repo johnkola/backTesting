@@ -3,7 +3,8 @@ layer. Nothing here blocks an import or mutates data; callers run a check
 and surface the findings (in an import response, a CLI summary, or a
 standalone audit) and decide what to do.
 
-Four families of check, each independent:
+Five finding categories, from four independent check functions
+(`duplicate` and `order` both come out of check_timestamps):
 
   * ohlc      — per-bar structural invariants (high >= low, high >= open/
                 close, low <= open/close, prices > 0, volume >= 0)

@@ -10,8 +10,47 @@ const docs = require('./docs');
 // loader service on :8001; locally it's whatever LOADER_URL points at.
 const LOADER_URL = process.env.LOADER_URL || 'http://localhost:8001';
 
+// The Java engine: the only component that can list strategies or run a
+// backtest. Reached inside the compose network; not published to the host.
+const ENGINE_URL = process.env.ENGINE_URL || 'http://localhost:8002';
+
+// Where the React client is served. The API redirects to it for the app itself
+// and for the old doc URLs it used to render; it is not a runtime dependency.
+const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/$/, '');
+
+// Global maintenance switch. Set MAINTENANCE to 1/true/yes and the health
+// endpoint reports maintenance regardless of how healthy everything is, so the
+// client shows its maintenance page — the way to take the UI down during a
+// migration or a deploy without stopping any service. Lives here rather than in
+// the client because flipping it is a restart, not a rebuild.
+const MAINTENANCE = /^(1|true|yes|on)$/i.test(process.env.MAINTENANCE || '');
+const MAINTENANCE_MESSAGE =
+  process.env.MAINTENANCE_MESSAGE || 'The system is down for scheduled maintenance.';
+
+// How long an upstream gets to answer a health probe. Short on purpose: the
+// client blocks its first paint on /api/health, so a hung service must fail
+// fast enough to show the maintenance page rather than an indefinite spinner.
+const HEALTH_TIMEOUT_MS = Number(process.env.HEALTH_TIMEOUT_MS) || 3000;
+
 const app = express();
-const port = process.env.PORT || 3000;
+// This process is the API, and only the API — the React client is served
+// separately on :3000 as a standalone SPA. It used to do both, which meant the
+// client could not be deployed without dragging a backend along.
+const port = process.env.PORT || 8001;
+
+// The client runs on its own origin, so every browser call here is
+// cross-origin. Allow it, and answer the preflight before any route matches.
+// Defaults to '*' since this binds inside the compose network and serves
+// nothing private; pin CORS_ALLOW_ORIGIN once it runs anywhere real.
+const CORS_ALLOW_ORIGIN = process.env.CORS_ALLOW_ORIGIN || '*';
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', CORS_ALLOW_ORIGIN);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '600');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 // Where to find README.md / CLAUDE.md. Defaults to the repo root for local
 // development; overridden by DOCS_DIR in container builds (Dockerfile copies
@@ -25,81 +64,73 @@ const docsDir = process.env.DOCS_DIR || path.resolve(__dirname, '..', '..');
 // endpoint returns an empty list.
 const modelsDir = process.env.MODELS_DIR || path.resolve(__dirname, '..', '..', 'data', 'models');
 
-// Built React assets land here when the Dockerfile copies the client `dist/`.
-// In local dev (no `public/`), we fall back to the legacy daisyUI home page.
-const clientDist = path.join(__dirname, 'public');
-const hasClientBuild = fs.existsSync(path.join(clientDist, 'index.html'));
-
-const NAV_LINKS = [
-  { href: '/', label: 'Home' },
-  { href: '/readme', label: 'README' },
-  { href: '/architecture', label: 'Architecture' },
-];
-
-function navbar(activeHref) {
-  const items = NAV_LINKS.map(({ href, label }) => {
-    const cls = href === activeHref ? 'class="active"' : '';
-    return `<li><a ${cls} href="${href}">${label}</a></li>`;
-  }).join('');
-  return `<div class="navbar bg-base-200 shadow-sm sticky top-0 z-10">
-  <div class="flex-1">
-    <a href="/" class="btn btn-ghost text-xl">backtest</a>
-  </div>
-  <div class="flex-none">
-    <ul class="menu menu-horizontal px-1 gap-1">${items}</ul>
-  </div>
-</div>`;
+/**
+ * Renders markdown to HTML with GitHub-style heading anchors.
+ *
+ * marked stopped emitting heading ids in v5, so every in-page link in the docs
+ * ("see [Model cache](#model-cache)" — 21 of them across the two files) landed
+ * nowhere. The client renders this HTML inside its own layout, so the ids have
+ * to come from here.
+ */
+function renderMarkdown(markdown) {
+  const seen = new Map();
+  const renderer = new marked.Renderer();
+  renderer.heading = function heading({ tokens, text: raw, depth }) {
+    const text = this.parser.parseInline(tokens);
+    // Slug from the RAW markdown, not the rendered inline HTML: the renderer
+    // escapes `&` to `&amp;`, which turned "Build & Run" into `build-amp-run`
+    // and broke every link written against GitHub's `#build--run`.
+    const base = slugify(raw);
+    // GitHub disambiguates repeats with -1, -2, …; match that so copied links work.
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    const id = n === 0 ? base : `${base}-${n}`;
+    return `<h${depth} id="${id}">${text}</h${depth}>\n`;
+  };
+  return marked.parse(markdown, { renderer });
 }
 
-function layout({ title, activeHref, content, container = 'prose lg:prose-lg max-w-4xl mx-auto p-8' }) {
-  return `<!doctype html>
-<html lang="en" data-theme="corporate">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-<link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.23/dist/full.min.css" rel="stylesheet" type="text/css">
-<script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-</head>
-<body class="bg-base-100 min-h-screen">
-${navbar(activeHref)}
-<main class="${container}">
-${content}
-</main>
-</body>
-</html>`;
+/**
+ * GitHub's heading-anchor rules: lowercase, drop punctuation, each space to a
+ * hyphen.
+ *
+ * `\s` and not `\s+` — that is the whole difference between `build--run` and
+ * `build-run`. Dropping the `&` from "Build & Run" leaves two spaces behind, and
+ * GitHub turns both into hyphens; collapsing them produces an id no existing
+ * link points at.
+ */
+function slugify(text) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s/g, '-');
 }
 
-// Rendered-doc registry. Adding a new file means adding a row here and
-// two `app.get` lines (the page + the /:name/history page).
+// Rendered-doc registry. `slug` is what the client's /docs/:slug route uses;
+// adding a doc means a row here and nothing else — /api/docs enumerates it.
 const DOCS = {
-  README: {
-    file: 'README.md',
-    label: 'README',
-    pageHref: '/readme',
-    historyHref: '/readme/history',
-  },
-  ARCHITECTURE: {
-    file: 'ARCHITECTURE.md',
-    label: 'Architecture',
-    pageHref: '/architecture',
-    historyHref: '/architecture/history',
-  },
+  GETTING_STARTED: { file: 'GETTING-STARTED.md', label: 'Getting Started', slug: 'getting-started' },
+  README: { file: 'README.md', label: 'README', slug: 'readme' },
+  ARCHITECTURE: { file: 'ARCHITECTURE.md', label: 'Architecture', slug: 'architecture' },
 };
 
-function renderDocBody(markdown, conf, revBanner) {
-  // Banner + history link sit outside the prose article so Tailwind
-  // typography styles don't bleed into them.
-  const banner = revBanner
-    ? `<div class="not-prose mb-4">${revBanner}</div>`
-    : '';
-  const header = `<div class="not-prose flex justify-end mb-2">
-    <a href="${conf.historyHref}" class="link link-primary text-sm">View history</a>
-  </div>`;
-  return banner + header + marked.parse(markdown);
-}
+/** slug → registry key, so the client can address docs by the name in its URL. */
+const DOC_BY_SLUG = new Map(Object.entries(DOCS).map(([name, c]) => [c.slug, name]));
 
-async function serveDocPage(name, req, res) {
+/**
+ * GET /api/docs/:name — one rendered doc.
+ *
+ * The docs used to be server-rendered pages with their own navbar, their own
+ * daisyUI version and a hard-coded theme, which is why they read as a separate
+ * application. They are now data: this returns the HTML body, and the React
+ * client renders it inside the same layout and theme as every other page.
+ *
+ * `?rev=N` returns a captured revision instead of the live file. Visiting the
+ * live doc still snapshots it when its hash has changed, so history keeps
+ * filling exactly as before.
+ */
+async function serveDocJson(name, req, res) {
   const conf = DOCS[name];
   const filePath = path.join(docsDir, conf.file);
 
@@ -107,7 +138,7 @@ async function serveDocPage(name, req, res) {
   try {
     liveContent = fs.readFileSync(filePath, 'utf8');
   } catch (err) {
-    return res.status(500).type('text/plain').send(`failed to read ${conf.file}: ${err.message}`);
+    return res.status(500).json({ error: `failed to read ${conf.file}: ${err.message}` });
   }
 
   // Snapshot the current file (no-op if hash unchanged).
@@ -115,138 +146,133 @@ async function serveDocPage(name, req, res) {
     await docs.captureIfChanged(name, liveContent);
   } catch (err) {
     console.error(`docs.captureIfChanged(${name}) failed:`, err);
-    // Don't fail the page render — still serve live content.
+    // Don't fail the request — still serve live content.
   }
 
-  // Honor ?rev=N if present, else render the live file.
   const revParam = req.query.rev;
-  let content = liveContent;
-  let revBanner = null;
-  if (revParam !== undefined) {
-    if (!/^\d+$/.test(revParam)) {
-      return res.status(400).type('text/plain').send('rev must be a non-negative integer');
-    }
-    let rev;
-    try {
-      rev = await docs.getRevision(name, revParam);
-    } catch (err) {
-      return res.status(500).type('text/plain').send(err.message);
-    }
-    if (!rev) {
-      return res.status(404).type('text/plain').send(`revision ${revParam} not found`);
-    }
-    content = rev.content;
-    revBanner = `<div class="alert alert-warning">
-      Viewing historical revision <span class="font-mono">#${rev.id}</span> captured ${new Date(rev.captured_at).toLocaleString()}.
-      <a class="link" href="${conf.pageHref}">Back to current</a>
-    </div>`;
+  if (revParam === undefined) {
+    return res.json({
+      name,
+      label: conf.label,
+      slug: conf.slug,
+      html: renderMarkdown(liveContent),
+      revision: null,
+    });
   }
 
-  res.type('html').send(layout({
-    title: revParam !== undefined ? `${conf.label} (rev ${revParam})` : conf.label,
-    activeHref: conf.pageHref,
-    content: renderDocBody(content, conf, revBanner),
-  }));
-}
-
-async function serveDocHistory(name, req, res) {
-  const conf = DOCS[name];
-  let history;
+  if (!/^\d+$/.test(revParam)) {
+    return res.status(400).json({ error: 'rev must be a non-negative integer' });
+  }
+  let rev;
   try {
-    history = await docs.listHistory(name, 200);
+    rev = await docs.getRevision(name, revParam);
   } catch (err) {
-    return res.status(500).type('text/plain').send(err.message);
+    return res.status(500).json({ error: err.message });
   }
-
-  const rows = history.length === 0
-    ? `<tr><td colspan="5" class="text-center text-base-content/60 p-4">No revisions captured yet — visit <a class="link" href="${conf.pageHref}">${conf.label}</a> once to record the first one.</td></tr>`
-    : history.map((h) => `
-        <tr>
-          <td class="font-mono">${h.id}</td>
-          <td class="whitespace-nowrap">${new Date(h.capturedAt).toLocaleString()}</td>
-          <td class="font-mono text-base-content/60">${h.contentHash.slice(0, 12)}…</td>
-          <td class="text-right tabular-nums">${h.sizeBytes.toLocaleString()} B</td>
-          <td><a class="btn btn-xs btn-outline" href="${conf.pageHref}?rev=${h.id}">view</a></td>
-        </tr>`).join('');
-
-  const content = `
-    <h1 class="text-2xl font-semibold mb-4">${conf.label} — revision history</h1>
-    <p class="mb-4 text-base-content/70 text-sm">
-      A new revision is recorded whenever the file's content hash changes (checked on every page load).
-      <a class="link" href="${conf.pageHref}">Back to ${conf.label}</a>
-    </p>
-    <div class="overflow-x-auto bg-base-200 rounded-box">
-      <table class="table table-sm">
-        <thead><tr><th>ID</th><th>Captured</th><th>Hash</th><th class="text-right">Size</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-
-  res.type('html').send(layout({
-    title: `${conf.label} history`,
-    activeHref: conf.pageHref,
-    content,
-    container: 'max-w-5xl mx-auto p-8',
-  }));
-}
-
-function renderHome() {
-  // Dev-only fallback: rendered when the React client hasn't been built yet
-  // (no web/server/public/ directory). In production (Dockerfile copies the
-  // built client over) this is unreachable — express.static serves index.html
-  // for `/` instead.
-  const content = `<div class="hero bg-base-200 rounded-box mb-8">
-  <div class="hero-content text-center py-12">
-    <div class="max-w-md">
-      <h1 class="text-4xl font-bold">backtest</h1>
-      <p class="py-4">Java backtesting CLI on PostgreSQL + TimescaleDB. The React UI isn't built — run <code>npm run build</code> in <code>web/client/</code>, or use the Vite dev server on :5173 — but the docs and read-only API are live.</p>
-    </div>
-  </div>
-</div>
-<div class="grid gap-4 md:grid-cols-2">
-  <a href="/readme" class="card bg-base-200 hover:bg-base-300 transition">
-    <div class="card-body">
-      <h2 class="card-title">README</h2>
-      <p>Quick start, CLI reference, configuration, and the project roadmap.</p>
-    </div>
-  </a>
-  <a href="/architecture" class="card bg-base-200 hover:bg-base-300 transition">
-    <div class="card-body">
-      <h2 class="card-title">Architecture</h2>
-      <p>Architecture deep-dive: bar-by-bar engine loop, strategy plugin model, NN training quirks, data layer schema.</p>
-    </div>
-  </a>
-</div>`;
-  return layout({
-    title: 'backtest',
-    activeHref: '/',
-    content,
-    container: 'max-w-5xl mx-auto p-8',
+  if (!rev) {
+    return res.status(404).json({ error: `revision ${revParam} not found` });
+  }
+  res.json({
+    name,
+    label: conf.label,
+    slug: conf.slug,
+    html: renderMarkdown(rev.content),
+    revision: { id: rev.id, capturedAt: rev.captured_at },
   });
 }
 
-if (!hasClientBuild) {
-  // Local dev: nothing static to serve at /, so render the legacy daisyUI
-  // landing page that links to /readme and /architecture. In production (with the
-  // built React app present), the static middleware below serves /.
-  app.get('/', (req, res) => {
-    res.type('html').send(renderHome());
-  });
+/** GET /api/docs/:name/history — the captured revisions, newest first. */
+async function serveDocHistoryJson(name, res) {
+  try {
+    const history = await docs.listHistory(name, 200);
+    res.json({
+      name,
+      label: DOCS[name].label,
+      items: history.map((h) => ({
+        id: h.id,
+        capturedAt: h.capturedAt,
+        contentHash: h.contentHash,
+        sizeBytes: h.sizeBytes,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
+// This service is the API. It used to render a landing page here, left over
+// from when it also served the SPA — by the end it only ever said "the React UI
+// isn't built", which stopped being true once the client became its own
+// service. Send people to the app instead.
+app.get('/', (req, res) => res.redirect(302, CLIENT_URL));
+
+/**
+ * Liveness for the whole system, not just this process.
+ *
+ * The client gates itself on this at startup: one degraded upstream and it
+ * shows a maintenance page instead of letting every page fail separately with
+ * its own inscrutable network error. So this has to answer for the database,
+ * the loader and the engine too — a reachable API in front of a dead engine is
+ * not a working system.
+ *
+ * Always 200 when this process is alive, with the verdict in the body. A status
+ * code would collapse "the API is down" and "the API is up but the engine is
+ * not" into the same failure, and those need different words on screen.
+ */
 app.get('/api/health', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT 1 AS ok');
-    res.json({ status: 'ok', db: rows[0].ok === 1 });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
+  const services = await Promise.all([
+    probe('database', async () => {
+      const { rows } = await pool.query('SELECT 1 AS ok');
+      if (rows[0].ok !== 1) throw new Error('unexpected reply');
+      return 'connected';
+    }),
+    probe('loader', () => getUpstream(`${LOADER_URL}/health`)),
+    probe('engine', () => getUpstream(`${ENGINE_URL}/api/health`)),
+  ]);
+
+  const healthy = services.every((s) => s.ok);
+  // The switch wins over the probes: during maintenance the services are
+  // usually fine, and that is the point.
+  const ok = healthy && !MAINTENANCE;
+  res.json({
+    status: MAINTENANCE ? 'maintenance' : healthy ? 'ok' : 'degraded',
+    ok,
+    maintenance: MAINTENANCE,
+    ...(MAINTENANCE ? { maintenanceMessage: MAINTENANCE_MESSAGE } : {}),
+    // Kept for older clients that read the flat boolean.
+    db: services[0].ok,
+    services,
+  });
 });
+
+/** Runs one health probe, turning any failure into a reportable row. */
+async function probe(name, check) {
+  const started = Date.now();
+  try {
+    const detail = await check();
+    return { name, ok: true, detail, latencyMs: Date.now() - started };
+  } catch (err) {
+    return { name, ok: false, detail: err.message, latencyMs: Date.now() - started };
+  }
+}
+
+/** GETs an upstream health URL, rejecting on a bad status, a timeout, or a socket error. */
+function getUpstream(url) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout: HEALTH_TIMEOUT_MS }, (r) => {
+      r.resume(); // drain, so the socket is released
+      if (r.statusCode && r.statusCode >= 200 && r.statusCode < 300) resolve('reachable');
+      else reject(new Error(`HTTP ${r.statusCode}`));
+    });
+    req.on('timeout', () => req.destroy(new Error(`no reply within ${HEALTH_TIMEOUT_MS}ms`)));
+    req.on('error', reject);
+  });
+}
 
 app.get('/api/sources', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, description, created_at FROM data_sources ORDER BY name'
+      'SELECT id, name, description, created_at FROM data_sources ORDER BY name',
     );
     res.json({ items: rows });
   } catch (err) {
@@ -348,8 +374,17 @@ app.get('/api/imports', async (req, res) => {
 // /api/nn/* family (train + predict + models). Streamed straight through
 // so multipart uploads and large prediction batches don't buffer here.
 // Read endpoints (GET /api/imports above) stay on Node.
+/** Builds a proxy handler for one upstream service. */
+function proxyTo(targetUrl, label) {
+  return (req, res) => proxyRequest(req, res, targetUrl, label);
+}
+
 function proxyToLoader(req, res) {
-  const upstream = new URL(LOADER_URL);
+  return proxyRequest(req, res, LOADER_URL, 'loader');
+}
+
+function proxyRequest(req, res, targetUrl, label) {
+  const upstream = new URL(targetUrl);
   const proxied = http.request(
     {
       hostname: upstream.hostname,
@@ -365,14 +400,25 @@ function proxyToLoader(req, res) {
     },
   );
   proxied.on('error', (err) => {
-    res.status(502).json({ error: `loader unreachable: ${err.message}` });
+    res.status(502).json({ error: `${label} unreachable: ${err.message}` });
   });
   req.pipe(proxied);
 }
 
+// Writes go to the Python loader: imports, aggregation, everything NN. The
+// audit is a read, but it lives there too because that is where the cohesion
+// checks are implemented.
 app.post('/api/imports', proxyToLoader);
+app.delete('/api/imports/:id', proxyToLoader);
 app.post('/api/aggregate', proxyToLoader);
+app.post('/api/audit', proxyToLoader);
 app.use('/api/nn', proxyToLoader);
+
+// Strategy listing and backtest execution live in Java — nothing else can read
+// StrategyRegistry or drive BacktestEngine.
+app.get('/api/strategies', proxyTo(ENGINE_URL, 'engine'));
+app.post('/api/run', proxyTo(ENGINE_URL, 'engine'));
+app.delete('/api/results/:id', proxyTo(ENGINE_URL, 'engine'));
 
 app.get('/api/results', async (req, res) => {
   try {
@@ -507,13 +553,55 @@ function pushEntryIfMetadata(out, dir, versionId) {
   if (!fs.existsSync(metaPath)) return;
   try {
     const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    // metadata.json mirrors Java's ModelMetadata record (camelCase). Pass
-    // through verbatim; the DB join later adds instrumentSymbol +
-    // sourceName + backtestCount. versionId is null for legacy flat entries.
-    out.push({ ...raw, diskPath: dir, versionId });
+    // The DB join later adds instrumentSymbol + sourceName + backtestCount.
+    // versionId is null for legacy flat entries.
+    out.push({ ...normaliseMetadata(raw), diskPath: dir, versionId });
   } catch (err) {
     console.error(`Failed to parse ${metaPath}:`, err);
   }
+}
+
+/**
+ * Brings both metadata dialects to one camelCase shape.
+ *
+ * Two writers have produced `metadata.json` over this project's life. Java's
+ * `ModelMetadata` record wrote camelCase with the training range and instrument
+ * ids inline. The Python loader that replaced it (`python/nn/store.py`) writes
+ * snake_case with a nested `extra` block instead, so reading it as camelCase
+ * yields a row where every field but the version id is `undefined` — which is
+ * exactly what reached the Models page and crashed it on `cacheKey.slice()`.
+ *
+ * Fields the loader simply does not record (instrument, source, timeframe, the
+ * training date range) stay null: they are genuinely absent from disk, not
+ * mis-read, and the page already renders "—" for them.
+ */
+function normaliseMetadata(raw) {
+  if (raw.cache_key === undefined) return raw; // already camelCase (Java-era)
+
+  const extra = raw.extra ?? {};
+  const config = extra.config ?? {};
+  const samples = [extra.train_samples, extra.val_samples].filter((n) => typeof n === 'number');
+
+  return {
+    cacheKey: raw.cache_key,
+    strategyName: raw.strategy,
+    createdAt: raw.created_at,
+    instrumentId: null,
+    sourceId: null,
+    timeframe: null,
+    trainingFromEpochSec: null,
+    trainingToEpochSec: null,
+    // The loader counts training rows, not candles, so this is the sample count
+    // the split was taken from — the nearest honest equivalent of "bars".
+    trainingBarCount: samples.length ? samples.reduce((a, b) => a + b, 0) : null,
+    // Stored as a 0–1 fraction; the column is a percentage.
+    validationAccuracyPct:
+      typeof extra.final_val_acc === 'number' ? extra.final_val_acc * 100 : null,
+    // The page renders hyperparams as strings, which is what Java wrote.
+    hyperparams: Object.fromEntries(Object.entries(config).map(([k, v]) => [k, String(v)])),
+    dl4jVersion: null, // there is no DL4J any more
+    trainingDurationMs: null, // the loader does not time the train
+  };
 }
 
 function readModelsFromDisk() {
@@ -619,7 +707,7 @@ app.get('/api/instruments', async (req, res) => {
     const instrumentsQ = pool.query(
       `SELECT id, symbol, name, type, price_precision, pip_size
          FROM instruments
-        ORDER BY symbol`
+        ORDER BY symbol`,
     );
     const breakdownQ = pool.query(
       `SELECT c.instrument_id,
@@ -632,7 +720,7 @@ app.get('/api/instruments', async (req, res) => {
          FROM candles c
          JOIN data_sources ds ON ds.id = c.source_id
         GROUP BY c.instrument_id, c.source_id, ds.name, c.timeframe
-        ORDER BY ds.name, c.timeframe`
+        ORDER BY ds.name, c.timeframe`,
     );
     const [{ rows: instruments }, { rows: breakdown }] = await Promise.all([instrumentsQ, breakdownQ]);
 
@@ -666,32 +754,43 @@ app.get('/api/instruments', async (req, res) => {
   }
 });
 
-app.get('/readme', (req, res) => serveDocPage('README', req, res));
-app.get('/readme/history', (req, res) => serveDocHistory('README', req, res));
-
-app.get('/architecture', (req, res) => serveDocPage('ARCHITECTURE', req, res));
-app.get('/architecture/history', (req, res) => serveDocHistory('ARCHITECTURE', req, res));
-
-// Legacy redirects for the old CLAUDE.md path; preserves query string so
-// /claude?rev=N → /architecture?rev=N still works.
-app.get('/claude', (req, res) => {
-  const qIdx = req.originalUrl.indexOf('?');
-  const qs = qIdx >= 0 ? req.originalUrl.slice(qIdx) : '';
-  res.redirect(301, `/architecture${qs}`);
-});
-app.get('/claude/history', (req, res) => res.redirect(301, '/architecture/history'));
-
-if (hasClientBuild) {
-  app.use(express.static(clientDist));
-  // SPA fallback: any non-API, non-docs GET serves index.html so client-side
-  // routes (/sources, /results/:id, etc.) work on direct page loads.
-  app.get('*', (req, res, next) => {
-    if (req.method !== 'GET') return next();
-    if (req.path.startsWith('/api/')) return next();
-    if (req.path === '/readme' || req.path === '/architecture') return next();
-    if (req.path === '/readme/history' || req.path === '/architecture/history') return next();
-    res.sendFile(path.join(clientDist, 'index.html'));
+// The docs, as data for the client to render.
+app.get('/api/docs', (req, res) => {
+  res.json({
+    items: Object.entries(DOCS).map(([name, c]) => ({ name, label: c.label, slug: c.slug })),
   });
+});
+
+app.get('/api/docs/:slug', (req, res) => {
+  const name = DOC_BY_SLUG.get(req.params.slug);
+  if (!name) return res.status(404).json({ error: `unknown doc: ${req.params.slug}` });
+  return serveDocJson(name, req, res);
+});
+
+app.get('/api/docs/:slug/history', (req, res) => {
+  const name = DOC_BY_SLUG.get(req.params.slug);
+  if (!name) return res.status(404).json({ error: `unknown doc: ${req.params.slug}` });
+  return serveDocHistoryJson(name, res);
+});
+
+// The old server-rendered doc URLs, and the older /claude one before them, are
+// bookmarked and linked from commit messages. They now live in the client, so
+// redirect rather than 404 — query strings included, so ?rev=N survives.
+for (const [slug, target] of [
+  ['getting-started', 'getting-started'],
+  ['readme', 'readme'],
+  ['architecture', 'architecture'],
+  ['claude', 'architecture'], // legacy CLAUDE.md path
+]) {
+  app.get(`/${slug}`, (req, res) => res.redirect(301, `${CLIENT_URL}/docs/${target}${queryOf(req)}`));
+  app.get(`/${slug}/history`, (req, res) =>
+    res.redirect(301, `${CLIENT_URL}/docs/${target}/history`));
+}
+
+/** The request's query string including the `?`, or '' when there is none. */
+function queryOf(req) {
+  const i = req.originalUrl.indexOf('?');
+  return i >= 0 ? req.originalUrl.slice(i) : '';
 }
 
 async function start() {
@@ -701,8 +800,9 @@ async function start() {
     console.error('Failed to ensure docs schema (continuing anyway):', err);
   }
   app.listen(port, () => {
-    const mode = hasClientBuild ? 'production (serving built client)' : 'dev (no client build)';
-    console.log(`backtest web server listening on http://localhost:${port} [${mode}]`);
+    console.log(`backtest API listening on http://localhost:${port}`);
+    console.log(`  loader upstream: ${LOADER_URL}`);
+    console.log(`  engine upstream: ${ENGINE_URL}`);
   });
 }
 start();

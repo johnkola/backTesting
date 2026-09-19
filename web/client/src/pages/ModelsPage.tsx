@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, isAbortError, type TrainedModel } from '../lib/api'
+import { api, type TrainedModel } from '../lib/api'
+import { useApiData } from '../lib/useApiData'
 
 function pct(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -31,21 +32,30 @@ function formatVersion(v: string | null): string {
 
 /** Stable React key per row: a (cacheKey, versionId) pair uniquely identifies a row. */
 function rowKey(m: TrainedModel): string {
-  return `${m.cacheKey}:${m.versionId ?? 'legacy'}`
+  return `${m.cacheKey ?? 'unkeyed'}:${m.versionId ?? 'legacy'}`
+}
+
+/**
+ * First 12 characters of the cache key, or a placeholder.
+ *
+ * This used to be `m.cacheKey.slice(0, 12)` on a field the type says is a
+ * string. It reached the page as undefined anyway — the API was reading the
+ * loader's metadata with the wrong key names — and the throw blanked the entire
+ * app. The API is fixed; this stays because a model directory is a file on
+ * disk, and the page should degrade to a dash rather than a white screen.
+ */
+function shortKey(cacheKey: string | null): string {
+  if (!cacheKey) return '—'
+  return `${cacheKey.slice(0, 12)}…`
 }
 
 export default function ModelsPage() {
-  const [data, setData] = useState<{ items: TrainedModel[]; modelsDir: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
 
-  useEffect(() => {
-    const ctrl = new AbortController()
-    api.models(ctrl.signal)
-      .then(setData)
-      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
-    return () => ctrl.abort()
-  }, [])
+  const { data, error } = useApiData<{ items: TrainedModel[]; modelsDir: string }>(
+    (signal) => api.models(signal),
+    [],
+  )
 
   return (
     <section>
@@ -100,10 +110,10 @@ export default function ModelsPage() {
                 return (
                   <Fragment key={key}>
                     <tr className="hover:bg-base-300">
-                      <td className="font-mono">{m.strategyName}</td>
+                      <td className="font-mono">{m.strategyName ?? '—'}</td>
                       <td className="font-mono">{m.instrumentSymbol ?? `#${m.instrumentId ?? '?'}`}</td>
                       <td className="font-mono">{m.sourceName ?? `#${m.sourceId ?? '?'}`}</td>
-                      <td>{m.timeframe}</td>
+                      <td>{m.timeframe ?? '—'}</td>
                       <td className="whitespace-nowrap text-base-content/80">
                         {epochRange(m.trainingFromEpochSec, m.trainingToEpochSec)}
                       </td>
@@ -121,7 +131,7 @@ export default function ModelsPage() {
                       <td className="text-right tabular-nums">
                         {m.backtestCount > 0 ? (
                           <Link
-                            to={`/results?strategy=${encodeURIComponent(m.strategyName)}`}
+                            to={`/results?strategy=${encodeURIComponent(m.strategyName ?? '')}`}
                             className="link link-hover"
                             title="Filter results by this strategy"
                           >
@@ -134,9 +144,9 @@ export default function ModelsPage() {
                       <td>
                         <span
                           className="font-mono text-xs text-base-content/60"
-                          title={m.cacheKey}
+                          title={m.cacheKey ?? 'no cache key in metadata.json'}
                         >
-                          {m.cacheKey.slice(0, 12)}…
+                          {shortKey(m.cacheKey)}
                         </span>
                       </td>
                       <td>
@@ -157,7 +167,7 @@ export default function ModelsPage() {
                                 DL4J {m.dl4jVersion ?? '?'}
                               </span>
                               <span className="badge badge-outline font-mono">
-                                key {m.cacheKey}
+                                key {m.cacheKey ?? '—'}
                               </span>
                             </div>
                             <div>

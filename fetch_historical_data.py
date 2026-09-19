@@ -10,9 +10,9 @@ Usage:
     python fetch_historical_data.py QQQ --out test-data/QQQ_daily.csv
     python fetch_historical_data.py AAPL --from 2015-01-01 --interval 1d
 
-Then import it (loader must be running):
+Then import it (the API must be running; it proxies the upload to the loader):
     curl -F file=@test-data/QQQ_daily.csv -F symbol=QQQ -F type=STOCK \
-         -F timeframe=D1 -F source=yahoo http://localhost:3000/api/imports
+         -F timeframe=D1 -F source=yahoo http://localhost:8001/api/imports
 """
 import argparse
 import csv
@@ -49,8 +49,21 @@ def fetch(symbol: str, period1: int, period2: int, interval: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def to_rows(payload: dict, symbol: str) -> list[list]:
-    """Reshape Yahoo's columnar JSON into Date,Open,High,Low,Close,Volume rows."""
+def to_rows(payload: dict, symbol: str, adjusted: bool = False) -> list[list]:
+    """Reshape Yahoo's columnar JSON into Date,Open,High,Low,Close,Volume rows.
+
+    With `adjusted`, emit the dividend-adjusted (total-return) series instead
+    of the raw prints. Yahoo's `close` is already split-adjusted; `adjclose`
+    is split *and* dividend adjusted, so `adjclose / close` is the dividend
+    factor for that bar. We scale all four prices by it — the same positive
+    factor on each, so OHLC stays internally consistent — and leave volume
+    alone, since it is already split-adjusted.
+
+    Why it matters: on raw prices, buy-and-hold looks worse than it was,
+    because the cash paid out as dividends simply vanishes from the series.
+    On SPY that is roughly 1.7 points of annual return, which is the
+    difference between a strategy beating the index and losing to it.
+    """
     chart = payload.get("chart", {})
     if chart.get("error"):
         raise SystemExit(f"Yahoo error for '{symbol}': {chart['error']}")
@@ -67,6 +80,15 @@ def to_rows(payload: dict, symbol: str) -> list[list]:
     if not timestamps:
         raise SystemExit(f"No candles for '{symbol}' (check symbol / range).")
 
+    adjcloses = []
+    if adjusted:
+        adjcloses = (result.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose", [])
+        if not adjcloses:
+            raise SystemExit(
+                f"'{symbol}' returned no adjclose series — Yahoo has no "
+                f"dividend-adjusted data for it (indices don't pay dividends)."
+            )
+
     rows: list[list] = [["Date", "Open", "High", "Low", "Close", "Volume"]]
     dropped = 0
     for i, ts in enumerate(timestamps):
@@ -76,6 +98,13 @@ def to_rows(payload: dict, symbol: str) -> list[list]:
         if None in (o, h, l, c):
             dropped += 1
             continue
+        if adjusted:
+            adj = adjcloses[i] if i < len(adjcloses) else None
+            if adj is None or not c:
+                dropped += 1
+                continue
+            factor = adj / c
+            o, h, l, c = o * factor, h * factor, l * factor, adj
         date = dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%d")
         rows.append([date, round(o, 6), round(h, 6), round(l, 6),
                      round(c, 6), int(v) if v is not None else 0])
@@ -97,9 +126,13 @@ def main() -> None:
     p.add_argument("--interval", default="1d", choices=["1d", "1wk", "1mo"],
                    help="Bar size: 1d (default), 1wk, 1mo")
     p.add_argument("--out", help="Output path (default: test-data/<SYMBOL>_daily.csv)")
+    p.add_argument("--adjusted", action="store_true",
+                   help="Emit the dividend-adjusted (total-return) series instead of raw "
+                        "prints; default output name becomes <SYMBOL>_adjusted.csv")
     args = p.parse_args()
 
-    out = args.out or f"test-data/{args.symbol.upper()}_daily.csv"
+    default_name = "_adjusted" if args.adjusted else "_daily"
+    out = args.out or f"test-data/{args.symbol.upper()}{default_name}.csv"
 
     def epoch(date_str: str) -> int:
         return int(dt.datetime.strptime(date_str, "%Y-%m-%d")
@@ -118,12 +151,13 @@ def main() -> None:
     except urllib.error.URLError as e:
         raise SystemExit(f"Download failed: {e}")
 
-    rows = to_rows(payload, args.symbol)
+    rows = to_rows(payload, args.symbol, adjusted=args.adjusted)
 
     with open(out, "w", newline="") as f:
         csv.writer(f).writerows(rows)
 
-    print(f"Wrote {len(rows) - 1} bars to {out} ({rows[1][0]} … {rows[-1][0]})")
+    kind = "dividend-adjusted" if args.adjusted else "raw"
+    print(f"Wrote {len(rows) - 1} {kind} bars to {out} ({rows[1][0]} … {rows[-1][0]})")
 
 
 if __name__ == "__main__":

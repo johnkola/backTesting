@@ -71,6 +71,18 @@ class CandleRepositoryBulkUpsertTest {
                 ps.setLong(1, instrument.id());
                 ps.executeUpdate();
             }
+            // The source too, or every run leaves a "test-bulk-upsert" row
+            // behind for `list-sources` to display alongside the real ones.
+            // Guarded on emptiness so a name collision with a real source
+            // can never delete data.
+            if (source != null) {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "DELETE FROM data_sources ds WHERE ds.id = ? AND NOT EXISTS ("
+                                + "SELECT 1 FROM candles WHERE source_id = ds.id)")) {
+                    ps.setLong(1, source.id());
+                    ps.executeUpdate();
+                }
+            }
         } catch (Exception ignored) {
         }
     }

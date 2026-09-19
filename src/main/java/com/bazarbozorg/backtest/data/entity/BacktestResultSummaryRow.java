@@ -12,6 +12,7 @@ public record BacktestResultSummaryRow(long id,
                                        String instrumentSymbol,
                                        String strategyName,
                                        String timeframe,
+                                       String dataSource,
                                        ZonedDateTime startDate,
                                        ZonedDateTime endDate,
                                        double totalReturnPct,
@@ -33,6 +34,7 @@ public record BacktestResultSummaryRow(long id,
         private String instrumentSymbol;
         private String strategyName;
         private String timeframe;
+        private String dataSource;
         private ZonedDateTime startDate;
         private ZonedDateTime endDate;
         private double totalReturnPct;
@@ -51,6 +53,7 @@ public record BacktestResultSummaryRow(long id,
         public Builder instrumentSymbol(String s) { this.instrumentSymbol = s; return this; }
         public Builder strategyName(String s) { this.strategyName = s; return this; }
         public Builder timeframe(String s) { this.timeframe = s; return this; }
+        public Builder dataSource(String s) { this.dataSource = s; return this; }
         public Builder startDate(ZonedDateTime d) { this.startDate = d; return this; }
         public Builder endDate(ZonedDateTime d) { this.endDate = d; return this; }
         public Builder totalReturnPct(double v) { this.totalReturnPct = v; return this; }
@@ -65,7 +68,7 @@ public record BacktestResultSummaryRow(long id,
 
         public BacktestResultSummaryRow build() {
             return new BacktestResultSummaryRow(id, instrumentSymbol, strategyName, timeframe,
-                    startDate, endDate, totalReturnPct, sharpeRatio, maxDrawdownPct,
+                    dataSource, startDate, endDate, totalReturnPct, sharpeRatio, maxDrawdownPct,
                     totalTrades, winRate, modelCacheKey, modelCacheHit, modelVersionId, createdAt);
         }
     }

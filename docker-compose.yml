@@ -11,6 +11,13 @@ services:
       POSTGRES_PASSWORD: backtest
       TS_TUNE_MEMORY: 2GB
       TS_TUNE_NUM_CPUS: 2
+    # One lock per chunk per parallel worker on a full-table scan, so the
+    # default 128 is not enough for a hypertable with a long history — an
+    # audit over `candles` fails with "out of shared memory". schema.sql now
+    # creates yearly chunks, which keeps the count low, but databases created
+    # before that change still carry their old chunks; this is the headroom
+    # that keeps them queryable either way.
+    command: postgres -c max_locks_per_transaction=1024
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
     healthcheck:
@@ -19,31 +26,87 @@ services:
       timeout: 5s
       retries: 10
 
-  web:
+  # The single API origin. Reads Postgres directly, proxies writes to the
+  # loader and strategy/run calls to the engine, so the client needs one base
+  # URL and one CORS origin.
+  api:
     build:
       context: .
       dockerfile: web/Dockerfile
-    container_name: backtest-web
+    container_name: backtest-api
     restart: unless-stopped
     depends_on:
       timescaledb:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "8001:8001"
     environment:
       PGHOST: timescaledb
       PGPORT: 5432
       PGDATABASE: backtest
       PGUSER: backtest
       PGPASSWORD: backtest
-      PORT: 3000
-      # Upstream for POST /api/imports (and future loader routes). Node proxies
-      # mutating import calls here; GET endpoints stay on Node itself.
+      PORT: 8001
+      # Upstreams. Both are internal to this network — the browser never talks
+      # to either directly.
+      LOADER_URL: http://loader:8001
+      ENGINE_URL: http://engine:8002
+      # Where the browser reaches the client. Used only for redirects — `/` and
+      # the old server-rendered doc URLs now point back into the app.
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:3000}
+      # Global maintenance switch for the UI. `MAINTENANCE=1 docker compose up -d api`
+      # makes /api/health report maintenance, so the client shows its maintenance
+      # page while every service keeps running. Unset it and bring the service up
+      # again to return to normal.
+      MAINTENANCE: ${MAINTENANCE:-}
+      MAINTENANCE_MESSAGE: ${MAINTENANCE_MESSAGE:-}
+    volumes:
+      - ./data/models:/data/models:ro
+      - ./GETTING-STARTED.md:/app/docs/GETTING-STARTED.md:ro
+      - ./README.md:/app/docs/README.md:ro
+      - ./ARCHITECTURE.md:/app/docs/ARCHITECTURE.md:ro
+
+  # The React SPA, static files behind nginx. No backend of its own: it calls
+  # the API by the URL baked in at build time.
+  client:
+    build:
+      context: .
+      dockerfile: web/client/Dockerfile
+      args:
+        # Where the browser reaches the API. Baked into the bundle at build
+        # time (Vite substitutes import.meta.env at compile time), so changing
+        # it means rebuilding this image, not restarting it.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8001}
+    container_name: backtest-client
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+  # Java: the strategy registry and the backtest engine. Not published — the
+  # API service proxies it. Run the CLI from the host for everything else.
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    container_name: backtest-engine
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    expose:
+      - "8002"
+    environment:
+      PGHOST: timescaledb
+      PGPORT: 5432
+      PGDATABASE: backtest
+      PGUSER: backtest
+      PGPASSWORD: backtest
+      ENGINE_PORT: "8002"
       LOADER_URL: http://loader:8001
     volumes:
       - ./data/models:/data/models:ro
-      - ./README.md:/app/docs/README.md:ro
-      - ./ARCHITECTURE.md:/app/docs/ARCHITECTURE.md:ro
 
   loader:
     build:
@@ -55,7 +118,12 @@ services:
       timescaledb:
         condition: service_healthy
     ports:
-      - "8001:8001"
+      # Container port stays 8001; the host port moved to 8003 because the API
+      # service now owns 8001. Published at all only so the host-run Java CLI
+      # (`aggregate`, `train`, `run -s nn-feedforward`) can reach it — set
+      # LOADER_URL=http://localhost:8003 for those. In-network callers use
+      # http://loader:8001 and are unaffected.
+      - "8003:8001"
     environment:
       PGHOST: timescaledb
       PGPORT: 5432

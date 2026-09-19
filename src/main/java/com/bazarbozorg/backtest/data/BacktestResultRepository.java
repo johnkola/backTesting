@@ -128,30 +128,125 @@ public class BacktestResultRepository {
         }
     }
 
+    private static final String SUMMARY_COLUMNS =
+            "SELECT id, instrument_symbol, strategy_name, timeframe, data_source, " +
+            "start_date, end_date, total_return_pct, sharpe_ratio, " +
+            "max_drawdown_pct, total_trades, win_rate, " +
+            "model_cache_key, model_cache_hit, model_version_id, created_at " +
+            "FROM backtest_results";
+
     /** Returns lightweight summaries (no result_json), ordered most-recent first. */
     public List<BacktestResultSummaryRow> findAll() {
-        String sql = "SELECT id, instrument_symbol, strategy_name, timeframe, " +
-                "start_date, end_date, total_return_pct, sharpe_ratio, " +
-                "max_drawdown_pct, total_trades, win_rate, " +
-                "model_cache_key, model_cache_hit, model_version_id, created_at " +
-                "FROM backtest_results ORDER BY created_at DESC";
+        return findFiltered(null, null, null, null);
+    }
+
+    /**
+     * Same projection as {@link #findAll()}, narrowed by any combination of
+     * strategy name, instrument symbol and data source, and optionally capped.
+     * A null filter means "don't constrain on this"; matching is exact, since
+     * every one of these is an identifier the user can read off a listing.
+     * Mirrors the filters {@code GET /api/results} accepts.
+     */
+    public List<BacktestResultSummaryRow> findFiltered(String strategyName, String instrumentSymbol,
+                                                        String dataSource, Integer limit) {
+        List<String> where = new ArrayList<>();
+        List<String> params = new ArrayList<>();
+        if (strategyName != null) {
+            where.add("strategy_name = ?");
+            params.add(strategyName);
+        }
+        if (instrumentSymbol != null) {
+            where.add("instrument_symbol = ?");
+            params.add(instrumentSymbol);
+        }
+        if (dataSource != null) {
+            where.add("data_source = ?");
+            params.add(dataSource);
+        }
+
+        StringBuilder sql = new StringBuilder(SUMMARY_COLUMNS);
+        if (!where.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", where));
+        }
+        sql.append(" ORDER BY created_at DESC");
+        if (limit != null && limit > 0) {
+            sql.append(" LIMIT ?");
+        }
 
         List<BacktestResultSummaryRow> summaries = new ArrayList<>();
 
         try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
 
-            while (rs.next()) {
-                summaries.add(mapSummaryRow(rs));
+            int i = 1;
+            for (String p : params) {
+                ps.setString(i++, p);
+            }
+            if (limit != null && limit > 0) {
+                ps.setInt(i, limit);
+            }
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    summaries.add(mapSummaryRow(rs));
+                }
             }
 
             logger.debug("Found {} saved backtest result(s)", summaries.size());
             return summaries;
 
         } catch (SQLException e) {
-            logger.error("Failed to find all backtest results", e);
-            throw new RuntimeException("Failed to find all backtest results", e);
+            logger.error("Failed to find backtest results", e);
+            throw new RuntimeException("Failed to find backtest results", e);
+        }
+    }
+
+    /**
+     * Deletes one saved result. Returns false when no row had that id, which the
+     * API turns into a 404. Nothing references backtest_results, so there is no
+     * cascade to worry about — the row is self-contained, trades and equity
+     * curve included, inside result_json.
+     */
+    public boolean deleteById(long id) {
+        String sql = "DELETE FROM backtest_results WHERE id = ?";
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setLong(1, id);
+            int deleted = ps.executeUpdate();
+            if (deleted > 0) {
+                logger.info("Deleted backtest result {}", id);
+            }
+            return deleted > 0;
+
+        } catch (SQLException e) {
+            logger.error("Failed to delete backtest result {}", id, e);
+            throw new RuntimeException("Failed to delete backtest result " + id, e);
+        }
+    }
+
+    /** One saved backtest, fully reconstructed from {@code result_json}. */
+    public Optional<BacktestResult> findById(long id) {
+        String sql = "SELECT result_json FROM backtest_results WHERE id = ?";
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String json = rs.getString("result_json");
+                    if (json != null && !json.isBlank()) {
+                        return Optional.ofNullable(gson.fromJson(json, BacktestResult.class));
+                    }
+                }
+            }
+            return Optional.empty();
+
+        } catch (SQLException e) {
+            logger.error("Failed to load backtest result {}", id, e);
+            throw new RuntimeException("Failed to load backtest result " + id, e);
         }
     }
 
@@ -220,6 +315,7 @@ public class BacktestResultRepository {
                 .instrumentSymbol(rs.getString("instrument_symbol"))
                 .strategyName(rs.getString("strategy_name"))
                 .timeframe(rs.getString("timeframe"))
+                .dataSource(rs.getString("data_source"))
                 .startDate(startOdt != null ? startOdt.toZonedDateTime() : null)
                 .endDate(endOdt != null ? endOdt.toZonedDateTime() : null)
                 .totalReturnPct(rs.getDouble("total_return_pct"))

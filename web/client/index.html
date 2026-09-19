@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>backtest</title>
+    <!-- Applies the stored theme before the first paint. Waiting for React to
+         mount would show one frame of the default theme first, which reads as a
+         flash on every page load. Kept inline and tiny for that reason. -->
+    <script>
+      try {
+        var t = localStorage.getItem('backtest.theme')
+        if (t) document.documentElement.setAttribute('data-theme', t)
+      } catch (e) { /* blocked storage: fall back to the default theme */ }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -194,6 +194,103 @@ public class CandleRepository {
         }
     }
 
+    /**
+     * Distinct timeframes that currently have candles for this (instrument, source),
+     * in no particular order. Rows carrying a code this enum doesn't know are
+     * skipped rather than failing the query — the loader owns the write side and
+     * could introduce a timeframe before Java learns about it.
+     */
+    public List<Timeframe> findAvailableTimeframes(long instrumentId, long sourceId) {
+        String sql = "SELECT DISTINCT timeframe FROM candles WHERE instrument_id = ? AND source_id = ?";
+
+        List<Timeframe> timeframes = new ArrayList<>();
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setLong(1, instrumentId);
+            ps.setLong(2, sourceId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String code = rs.getString(1);
+                    try {
+                        timeframes.add(Timeframe.fromCode(code));
+                    } catch (IllegalArgumentException e) {
+                        logger.debug("Skipping unknown timeframe code '{}' for instrumentId={}, sourceId={}",
+                                code, instrumentId, sourceId);
+                    }
+                }
+            }
+
+            return timeframes;
+
+        } catch (SQLException e) {
+            logger.error("Failed to list timeframes for instrumentId={}, sourceId={}",
+                    instrumentId, sourceId, e);
+            throw new RuntimeException("Failed to list timeframes", e);
+        }
+    }
+
+    /**
+     * One row per distinct (instrument, source, timeframe) that has candles,
+     * with its count and covered range — the breakdown `list-instruments
+     * --detail` prints and the same shape the web Instruments page renders.
+     * Rows whose timeframe code this enum doesn't know are skipped.
+     */
+    public List<SeriesSummary> findSeriesBreakdown() {
+        String sql =
+                "SELECT c.instrument_id, i.symbol, c.source_id, ds.name AS source_name, " +
+                "       c.timeframe, COUNT(*) AS candle_count, " +
+                "       MIN(c.timestamp) AS from_ts, MAX(c.timestamp) AS to_ts " +
+                "  FROM candles c " +
+                "  JOIN instruments i ON i.id = c.instrument_id " +
+                "  JOIN data_sources ds ON ds.id = c.source_id " +
+                " GROUP BY c.instrument_id, i.symbol, c.source_id, ds.name, c.timeframe " +
+                " ORDER BY i.symbol, ds.name, c.timeframe";
+
+        List<SeriesSummary> series = new ArrayList<>();
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                String code = rs.getString("timeframe");
+                Timeframe tf;
+                try {
+                    tf = Timeframe.fromCode(code);
+                } catch (IllegalArgumentException e) {
+                    logger.debug("Skipping unknown timeframe code '{}' in series breakdown", code);
+                    continue;
+                }
+                series.add(new SeriesSummary(
+                        rs.getLong("instrument_id"),
+                        rs.getString("symbol"),
+                        rs.getLong("source_id"),
+                        rs.getString("source_name"),
+                        tf,
+                        rs.getLong("candle_count"),
+                        toZoned(rs.getObject("from_ts", OffsetDateTime.class)),
+                        toZoned(rs.getObject("to_ts", OffsetDateTime.class))));
+            }
+            return series;
+
+        } catch (SQLException e) {
+            logger.error("Failed to build the series breakdown", e);
+            throw new RuntimeException("Failed to build the series breakdown", e);
+        }
+    }
+
+    private static ZonedDateTime toZoned(OffsetDateTime odt) {
+        return odt != null ? odt.toZonedDateTime() : null;
+    }
+
+    /** One (instrument, source, timeframe) series and what it covers. */
+    public record SeriesSummary(long instrumentId, String symbol, long sourceId, String sourceName,
+                                 Timeframe timeframe, long candleCount,
+                                 ZonedDateTime from, ZonedDateTime to) {}
+
     public Optional<DateRange> getDateRange(long instrumentId, long sourceId, Timeframe timeframe) {
         String sql = "SELECT MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts " +
                 "FROM candles WHERE instrument_id = ? AND source_id = ? AND timeframe = ?";

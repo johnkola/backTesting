@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 // when set, so docker-compose overrides Just Work.
 
 const PROPERTIES_PATH = path.resolve(
-  __dirname, '..', '..', 'src', 'main', 'resources', 'application.properties'
+  __dirname, '..', '..', 'src', 'main', 'resources', 'application.properties',
 );
 
 function loadProperties(filePath) {

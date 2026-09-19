@@ -1,17 +1,11 @@
-import { useEffect, useState } from 'react'
-import { api, isAbortError, type Source } from '../lib/api'
+import { api, type Source } from '../lib/api'
+import { useApiData } from '../lib/useApiData'
 
 export default function SourcesPage() {
-  const [sources, setSources] = useState<Source[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    const ctrl = new AbortController()
-    api.sources(ctrl.signal)
-      .then((r) => setSources(r.items))
-      .catch((e: Error) => { if (!isAbortError(e)) setError(e.message) })
-    return () => ctrl.abort()
-  }, [])
+  const { data: sources, error } = useApiData<Source[]>(
+    (signal) => api.sources(signal).then((r) => r.items),
+    [],
+  )
 
   return (
     <section>

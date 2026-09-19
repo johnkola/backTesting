@@ -14,7 +14,7 @@ public enum Timeframe {
     H4("4 Hours", Duration.ofHours(4)),
     D1("1 Day", Duration.ofDays(1)),
     W1("1 Week", Duration.ofDays(7)),
-    MN("1 Month", Duration.ofDays(30));
+    MN1("1 Month", Duration.ofDays(30));
 
     private final String displayName;
     private final Duration duration;
@@ -27,6 +27,12 @@ public enum Timeframe {
             CODE_MAP.put(tf.name().toLowerCase(), tf);
             CODE_MAP.put(tf.displayName.toLowerCase(), tf);
         }
+        // The monthly constant used to be MN, but the loader, the candles table
+        // and the web UI have always spelled it MN1 (loader.csv_import
+        // .ALLOWED_TIMEFRAMES). MN1 is therefore the canonical code — the enum
+        // name is what gets written to and queried from the DB — and "MN" stays
+        // parseable so older scripts keep working.
+        CODE_MAP.put("mn", MN1);
     }
 
     Timeframe(String displayName, Duration duration) {

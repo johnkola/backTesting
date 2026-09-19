@@ -57,16 +57,27 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
     private static final Logger logger = LoggerFactory.getLogger(NeuralNetworkStrategy.class);
 
     private static final String LOADER_URL = System.getenv()
-            .getOrDefault("LOADER_URL", "http://localhost:8001");
+            .getOrDefault("LOADER_URL", "http://localhost:8003");
 
     /** Generous timeout so a long train (minutes) doesn't get aborted. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(15);
 
+    // Pin HTTP/1.1 like LoaderClient does. On the default (HTTP/2 with an h2c
+    // upgrade attempt) the request body is lost against uvicorn, which speaks
+    // 1.1 only, and every POST here comes back 422 with an empty-body
+    // complaint. Not caught by the Python tests: they drive FastAPI through
+    // TestClient, so nothing exercises this over the wire.
     private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
     private static final Gson GSON = new Gson();
+
+    /** Visible for testing: guards the HTTP/1.1 pin above. */
+    static HttpClient httpClient() {
+        return HTTP;
+    }
 
     private ModelContext modelContext;
     private ModelCacheOutcome cacheOutcome;
