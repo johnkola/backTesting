@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  api, engineWindow, isAbortError, isTradeable,
+  api, engineWindow, isAbortError, isTradeable, strategyDocHref,
   type AuditResponse, type Instrument, type Strategy, type TrainResponse,
 } from '../lib/api'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
@@ -179,6 +179,18 @@ export default function TrainPage() {
                       <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
                     ))}
                   </select>
+                  <div className="label">
+                    <span className="label-text-alt">
+                      <a
+                        className="link link-hover text-base-content/60"
+                        href={strategyDocHref(strategyName)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        What {strategyName} learns, and how to read its accuracy →
+                      </a>
+                    </span>
+                  </div>
                 </label>
 
                 <label className="form-control">

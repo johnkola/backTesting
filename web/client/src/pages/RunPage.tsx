@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  api, beatBuyAndHold, isAbortError, isTradeable, vsBuyAndHold,
+  api, beatBuyAndHold, isAbortError, isTradeable, strategyDocHref, vsBuyAndHold,
   type Instrument, type RunResult, type Strategy,
 } from '../lib/api'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
@@ -140,10 +140,23 @@ export default function RunPage() {
                   <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
                 ))}
               </select>
+              <div className="label">
+                <span className="label-text-alt">
+                  <a
+                    className="link link-hover text-base-content/60"
+                    href={strategyDocHref(strategyName)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    How {strategyName} works, and where it fails →
+                  </a>
+                </span>
+              </div>
               {strategy?.requiresTrainedModel && (
-                <div className="label">
+                <div className="label pt-0">
                   <span className="label-text-alt text-warning">
-                    Needs a trained model. Train it first, or the run returns 409.
+                    Needs a trained model. <Link className="link" to="/train">Train it</Link>{' '}
+                    first, or the run returns 409.
                   </span>
                 </div>
               )}

@@ -49,6 +49,18 @@ export function isTradeable(instrument: { type: string }): boolean {
  * before the strategy's warmup, which flattered nothing and punished the longest
  * indicator periods hardest.
  */
+/**
+ * Where a strategy is explained, in the docs rendered at /docs.
+ *
+ * Each strategy has its own section in README.md headed with its registry name,
+ * so the anchor is the name itself — no mapping table to fall out of step with
+ * the registry. A strategy added without a doc section links to the list, which
+ * is a wrong-but-harmless destination rather than a dead anchor.
+ */
+export function strategyDocHref(name: string): string {
+  return `/docs/readme#${encodeURIComponent(name)}`
+}
+
 export function beatBuyAndHold(
   r: { totalReturnPct?: number | null; buyAndHoldReturnPct?: number | null },
 ): boolean | null {

@@ -13,7 +13,7 @@ same shape (not weights — those differ across DL4J and PyTorch RNGs)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 import torch
@@ -110,6 +110,7 @@ def train_model(
     registry: ModelRegistry,
     cache_key_inputs: dict[str, str],
     strategy_name: str = "nn-feedforward",
+    training_window: Mapping[str, object] | None = None,
 ) -> TrainResult:
     """End-to-end training run.
 
@@ -209,6 +210,16 @@ def train_model(
         hidden_size=spec.hidden_size,
         num_hidden=spec.num_hidden,
         metadata_extra={
+            # Provenance, not identity. The cache key deliberately excludes the
+            # data window so a model can be backtested over any range; this is
+            # what lets a reader see which bars it actually learned from, and
+            # notice when that is not the range they are testing over.
+            "training_window": {
+                **dict(training_window or {}),
+                "bar_count": len(candles),
+                "first_close": float(candles[0].close),
+                "last_close": float(candles[-1].close),
+            },
             "train_samples": int(train_x_np.shape[0]),
             "val_samples": int(val_x_np.shape[0]),
             "final_train_loss": final_train_loss,

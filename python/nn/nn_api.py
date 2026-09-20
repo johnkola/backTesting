@@ -147,21 +147,27 @@ def post_train(req: TrainRequest) -> JSONResponse:
             },
         )
 
-    # Cache-key inputs: instrument + source + timeframe + every hyperparam
-    # that affects training output, plus a coarse data-window fingerprint
-    # (first/last bar close + count) so a re-import that changes the data
-    # ends up in a different key bucket. FEATURE_SCHEMA_VERSION is folded in
-    # so editing a feature formula (and bumping the version) invalidates
-    # existing models rather than silently reusing ones built on old features.
+    # Cache-key inputs: what the model IS, not what it happened to see.
+    #
+    # The data window used to be folded in here -- first/last close and bar
+    # count -- so that a re-import landed in a different key bucket. It also
+    # made a model unreachable from any run whose date range differed from the
+    # training range by even one bar, because `run` recomputes this key from its
+    # own candles. That made "backtest the NN over 2021-2024" impossible: the
+    # only range that could ever resolve was the exact one trained on.
+    #
+    # A model's identity is its configuration. What it was trained on is
+    # provenance, recorded in metadata (training_window below) and surfaced on
+    # the Models page, so a model trained on different data is visible rather
+    # than silently unreachable. FEATURE_SCHEMA_VERSION stays in the key: a
+    # feature-formula change makes the stored weights genuinely wrong, not
+    # merely stale.
     cache_inputs: dict[str, str] = {
         "strategy": _STRATEGY,
         "feature_schema_version": str(FEATURE_SCHEMA_VERSION),
         "instrument_id": str(instrument_id),
         "source_id": str(source_id),
         "timeframe": req.timeframe,
-        "data_first_close": f"{candles[0].close:.8f}",
-        "data_last_close": f"{candles[-1].close:.8f}",
-        "data_count": str(len(candles)),
         "lookback_window": str(cfg.lookback_window),
         "forward_bars": str(cfg.forward_bars),
         "buy_threshold": f"{cfg.buy_threshold:.8f}",
@@ -249,6 +255,17 @@ def post_train(req: TrainRequest) -> JSONResponse:
             registry=_registry(),
             cache_key_inputs=cache_inputs,
             strategy_name=_STRATEGY,
+            # Provenance for the saved model. The cache key no longer encodes
+            # the window, so this is the only record of which bars produced
+            # these weights -- and the only way a reader can tell that a model
+            # is being backtested over a range it never saw.
+            training_window={
+                "since": req.since,
+                "until": req.until,
+                "symbol": req.symbol,
+                "source": req.source,
+                "timeframe": req.timeframe,
+            },
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})

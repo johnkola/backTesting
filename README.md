@@ -627,17 +627,185 @@ The Python loader is configured via environment variables (set in `docker-compos
 
 ## Strategies
 
-Registered in `StrategyRegistry`:
+Six are registered in `StrategyRegistry`. All are **long-only**: they buy and they
+sell, and none of them shorts. The engine supports short entries, but no shipped
+strategy emits one.
 
-| Name             | Description                                          |
-|------------------|------------------------------------------------------|
-| `sma-crossover`  | Short/long SMA crossover                             |
-| `rsi`            | RSI overbought/oversold                              |
-| `macd`           | MACD signal-line crossover                           |
-| `bollinger`      | Bollinger Band mean-reversion                        |
-| `ema-triple`     | Triple EMA crossover                                 |
-| `nn-feedforward` | PyTorch multi-layer perceptron (BUY/HOLD/SELL classifier), trained + served by the Python loader |
+Each section below says what the rule is, what its knobs do, how much history it
+needs before it can trade, and where it tends to fail. Pass parameters with
+`-p key=value` on the CLI (`-p shortPeriod=20 -p longPeriod=100`), or in the Run
+form, which generates its inputs from each strategy's declared defaults.
 
-Pass strategy params via `-p key=value` (e.g. `-p shortPeriod=20 -p longPeriod=100`). See each strategy's `getDefaultParameters()` for available keys.
+| Name | In one line | Warmup |
+|---|---|---|
+| [`sma-crossover`](#sma-crossover) | Fast average crosses slow average | `longPeriod + 1` |
+| [`ema-triple`](#ema-triple) | Three averages line up | `slowPeriod + 1` |
+| [`macd`](#macd) | Momentum crosses its own smoothed self | `longPeriod + signalPeriod + 1` |
+| [`rsi`](#rsi) | Buy exhaustion, sell euphoria | `period + 1` |
+| [`bollinger`](#bollinger) | Buy the dip below the band | `period + 1` |
+| [`nn-feedforward`](#nn-feedforward) | A small network predicts the next move | `lookbackWindow` plus indicator history |
 
-To add a new strategy: implement `TradingStrategy` (typically by extending `AbstractTa4jStrategy`) and add a `registerStrategy("name", MyStrategy::new)` line in `StrategyRegistry`.
+**Warmup is not free.** The engine skips that many bars before the strategy may
+act, and they come out of the *front* of your date range. A 200-period setting on
+a one-year backtest leaves roughly fifty bars to trade in. The benchmark is
+measured over the same shortened window, so the comparison stays fair — but the
+run has far less to work with than the range suggests.
+
+---
+
+### `sma-crossover`
+
+**Simple moving average crossover.** The textbook trend-following rule, and the
+one most people mean by "a crossover strategy".
+
+- **Buys** when the short SMA crosses from below to above the long SMA.
+- **Sells** when it crosses back below.
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `shortPeriod` | 10 | Bars in the fast average. Lower reacts sooner and whipsaws more. |
+| `longPeriod` | 50 | Bars in the slow average. This also sets the warmup. |
+
+`shortPeriod=50, longPeriod=200` is the **golden cross**, the most-watched version
+of this rule.
+
+**Where it fails.** It is insurance against slow declines, paid for in rallies. It
+exits every dip and re-enters late, so a sustained uptrend costs it real money —
+on SPY 1999–2026 it trailed simply holding by about 2 points a year, while cutting
+the worst drawdown from 55% to 34%. It is useless against a V-shaped crash like
+2020: by the time it sells, the bottom is in.
+
+---
+
+### `ema-triple`
+
+**Triple EMA alignment.** A stricter trend filter than a two-average crossover:
+it wants all three averages stacked in order before it will buy.
+
+- **Buys** on the bar where fast > medium > slow becomes true, and fast was *not*
+  above medium on the previous bar — so it fires once when alignment forms, not
+  every bar it persists.
+- **Sells** as soon as fast drops back below medium, without waiting for the full
+  stack to break.
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `fastPeriod` | 5 | The quickest average. |
+| `mediumPeriod` | 13 | The middle one; the exit is keyed off fast vs medium. |
+| `slowPeriod` | 34 | The trend filter. Sets the warmup. |
+
+The asymmetry is deliberate: slow to enter, quick to leave. That makes it trade
+more often than its entry rule suggests.
+
+---
+
+### `macd`
+
+**MACD signal-line crossover.** MACD is the gap between a fast and a slow EMA;
+the signal line is an EMA of that gap. Crossings say momentum is turning, and
+turn sooner than a price crossover does.
+
+- **Buys** when the MACD line crosses above its signal line.
+- **Sells** when it crosses back below.
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `shortPeriod` | 12 | Fast EMA inside the MACD line. |
+| `longPeriod` | 26 | Slow EMA inside the MACD line. |
+| `signalPeriod` | 9 | EMA applied to the MACD line itself. |
+
+**It trades a lot.** Momentum crosses back and forth far more often than price
+crosses an average — on real Apple over 2020–2023 it made 33 round trips where
+`sma-crossover` made 13. Every one pays commission and slippage. It is usually the
+best of the indicator strategies on drawdown and the worst on cost.
+
+---
+
+### `rsi`
+
+**RSI reversion.** RSI measures how one-sided recent moves have been, on a 0–100
+scale. This strategy fades extremes rather than following them.
+
+- **Buys** when RSI crosses *down* through `oversold` — as selling looks exhausted.
+- **Sells** when RSI crosses *up* through `overbought`.
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `period` | 14 | Lookback for the RSI calculation. Sets the warmup. |
+| `overbought` | 70 | Exit level. |
+| `oversold` | 30 | Entry level. |
+
+**Where it fails.** It buys weakness, so in a genuine decline it buys early and
+keeps holding: RSI can sit under 30 for weeks. It trades rarely — often single
+digits over years — which means almost any result it produces is below the ~20
+trades needed for a metric to mean anything.
+
+---
+
+### `bollinger`
+
+**Bollinger Band mean reversion.** The bands sit a number of standard deviations
+around a moving average, so they widen when the market is volatile.
+
+- **Buys** when the close crosses from above to below the **lower** band.
+- **Sells** when the close crosses back above the **middle** band — the moving
+  average itself, not the upper band. It takes the reversion, not the full swing.
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `period` | 20 | Bars in the middle average and the deviation. Sets the warmup. |
+| `deviations` | 2.0 | Band width. Higher demands a more extreme move to trigger. |
+
+**Where it fails.** Like `rsi`, it buys falling prices, and a band break is often
+the start of a real move rather than an overreaction. It was the weakest performer
+on real Apple over 2020–2023, returning 8% where holding returned 149%.
+
+---
+
+### `nn-feedforward`
+
+**A small neural network**, in place of a hand-written rule. PyTorch, trained and
+served by the Python loader; the Java side is a thin client. It is the only
+strategy that **must be trained before it can run** — without a cached model the
+run returns 409. Train it on the [Train page](/docs/getting-started) or through
+`POST /api/nn/train`.
+
+It learns a three-way label: from each bar, did the price `forwardBars` later move
+up more than `buyThreshold`, down past `sellThreshold`, or neither? Class BUY
+becomes an entry, SELL an exit, HOLD does nothing.
+
+| Parameter | Default | What it does |
+|---|---|---|
+| `lookbackWindow` | 20 | Bars of history in each input vector. |
+| `forwardBars` | 5 | How far ahead the label looks. |
+| `buyThreshold` / `sellThreshold` | 0.02 / −0.02 | Move size that counts as a real signal. |
+| `hiddenLayerSize` / `numHiddenLayers` | 64 / 2 | Network size. |
+| `learningRate`, `numEpochs`, `batchSize`, `dropoutRate` | 0.001, 50, 32, 0.5 | Training. |
+| `trainSplitRatio` | 0.8 | Fraction used for learning; the rest scores it. |
+| `seed` | 42 | Reproducibility. |
+
+**Read its accuracy sceptically.** With three classes, always answering HOLD
+already scores whatever share of bars are HOLD — often 40–50%. A model reporting
+45% "validation accuracy" may have learned nothing but the base rate. Compare it
+against that share, which is why the label distribution is recorded with each
+model. On a random-walk series the network correctly collapses to predicting HOLD
+on every bar and never trades at all.
+
+**The thresholds are calibrated for daily bars.** ±2% over 5 bars is a normal week
+on D1 and an implausible two hours on M30, where nearly every bar becomes HOLD.
+Scale them down for intraday timeframes — `tools/datagen/README.md` works through
+the arithmetic.
+
+**Validation is not walk-forward.** The held-out split is the tail of the training
+range, and the labels look forward by construction, so a good score says the model
+fits this history — not that it would have predicted it. See
+[Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
+
+---
+
+**Adding one:** implement `TradingStrategy` — usually by extending
+`AbstractTa4jStrategy`, which supplies typed parameter getters and a
+`buildIndicators()` hook — then add a `registerStrategy("name", MyStrategy::new)`
+line to `StrategyRegistry`'s constructor. The Run form, the CLI and this table all
+read from the registry, so nothing else needs changing. Return an honest
+`getWarmupBars()`: the engine trusts it to decide when the strategy may first act.
