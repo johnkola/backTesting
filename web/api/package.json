@@ -1,5 +1,5 @@
 {
-  "name": "backtest-web-server",
+  "name": "backtest-api",
   "version": "0.1.0",
   "private": true,
   "description": "Backtest API: reads Postgres, proxies the loader and the engine, and serves the project docs as rendered HTML for the client.",

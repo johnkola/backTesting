@@ -49,11 +49,9 @@ __pycache__/
 
 ### Node / web layer ###
 node_modules/
+# Built React assets. The client image builds its own copy (web/client/Dockerfile);
+# a local dist/ is only ever a hand-run build.
 web/client/dist/
-# Built React assets. `web/Dockerfile` produces these in the image (COPY
-# --from=client-build /build/dist ./public); a local copy is only ever a
-# hand-run build, and the server treats its absence as "dev mode".
-web/server/public/
 package-lock.json
 *.log
 

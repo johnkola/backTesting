@@ -1,4 +1,4 @@
-# The Node API service. It reads Postgres directly, proxies writes to the
+# The Node API service (web/api/). It reads Postgres directly, proxies writes to the
 # Python loader and engine calls to the Java engine, and renders the markdown
 # doc pages. It no longer serves the React client — that is its own image
 # (web/client/Dockerfile), so the client can be deployed independently.
@@ -9,10 +9,10 @@ WORKDIR /app
 
 # `npm install`, not `npm ci`: package-lock.json is gitignored (344b38d), so
 # there is no lockfile in the build context.
-COPY web/server/package.json ./
+COPY web/api/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-COPY web/server/ ./
+COPY web/api/ ./
 
 # Project docs go into /app/docs; DOCS_DIR tells the server to render markdown
 # from there.

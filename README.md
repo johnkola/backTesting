@@ -84,10 +84,10 @@ inside an error boundary so a bad row cannot blank the app.
 cd python && .venv/bin/python -m pytest    # Python tests (needs the dev extra installed)
 
 cd web/client && npm run lint    # client: correctness + formatting + imports
-cd web/server && npm run lint    # same, for the Node API
+cd web/api    && npm run lint    # same, for the Node API
 ```
 
-Both `web/client/` and `web/server/` have the same gate: `npm run lint` fails on
+Both `web/client/` and `web/api/` have the same gate: `npm run lint` fails on
 warnings too (`--max-warnings 0`), and `npm run lint:fix` applies what is fixable —
 which is nearly all of it. Beyond correctness rules each enforces the formatting its
 own code already used, rejects stray whitespace (double blank lines, trailing spaces,
@@ -111,7 +111,7 @@ cd python && pip install -e ".[dev]" && uvicorn loader.main:app --port 8001
 ./gradlew run --args="serve --port 8002"
 
 # API
-cd web/server && npm install && PORT=8001 LOADER_URL=http://localhost:8001 \
+cd web/api && npm install && PORT=8001 LOADER_URL=http://localhost:8001 \
   ENGINE_URL=http://localhost:8002 npm start
 
 # Client with hot reload
@@ -354,7 +354,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 maintenance page and a global maintenance switch, global themes, the docs moved out of
 their own server-rendered UI and into the client at `/docs`, an undo control on the
 imports table, and `npm run lint` extended to formatting, whitespace and imports in both
-`web/client/` and `web/server/`. Replace this line when you pick the next thing up.)*
+`web/client/` and `web/api/`. Replace this line when you pick the next thing up.)*
 
 ### Next
 
