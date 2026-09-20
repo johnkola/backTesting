@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  api, isAbortError, isTradeable,
+  api, beatBuyAndHold, isAbortError, isTradeable, vsBuyAndHold,
   type Instrument, type RunResult, type Strategy,
 } from '../lib/api'
-import FieldLabel from '../components/FieldLabel'
+import FieldLabel, { tipClass } from '../components/FieldLabel'
 import { metricHint } from '../lib/metricHints'
 
 /**
@@ -201,21 +201,16 @@ export default function RunPage() {
             </label>
           </div>
 
+          <DateRange
+            from={from} to={to} setFrom={setFrom} setTo={setTo}
+            available={seriesInfo ? { from: seriesInfo.fromDate, to: seriesInfo.toDate } : null}
+          />
+
           <details className="bg-base-200 rounded-box p-4">
             <summary className="cursor-pointer font-medium">
-              Optional: date range, capital{strategy && Object.keys(strategy.defaultParameters).length > 0 ? ', parameters' : ''}
+              Optional: capital{strategy && Object.keys(strategy.defaultParameters).length > 0 ? ', parameters' : ''}
             </summary>
             <div className="grid gap-4 md:grid-cols-3 mt-4">
-              <label className="form-control">
-                <FieldLabel text="From" hint="First candle to include. Empty runs from the start of the stored range." />
-                <input type="date" className="input input-bordered"
-                  value={from} onChange={(e) => setFrom(e.target.value)} />
-              </label>
-              <label className="form-control">
-                <FieldLabel text="To" hint="Last candle to include. Empty runs to the end of the stored range." />
-                <input type="date" className="input input-bordered"
-                  value={to} onChange={(e) => setTo(e.target.value)} />
-              </label>
               <label className="form-control">
                 <FieldLabel text="Initial capital" hint="Starting equity. Empty uses the engine's configured default." />
                 <input type="number" step="any" className="input input-bordered"
@@ -307,6 +302,7 @@ function RunSummary({ result }: { result: RunResult }) {
             {result.modelCacheHit ? 'cache hit' : 'fresh'}
           </span>
         )}
+        <Verdict metrics={m} />
         <span className="ml-auto text-sm text-base-content/50">
           {result.startDate.slice(0, 10)} → {result.endDate.slice(0, 10)}
         </span>
@@ -360,5 +356,146 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'su
         : <div className={STAT_LABEL}>{label}</div>}
       <div className={`text-lg font-semibold tabular-nums ${tone ? `text-${tone}` : ''}`}>{value}</div>
     </div>
+  )
+}
+
+/** A preset span, in years. `null` means the whole stored range. */
+const PRESETS: { label: string; years: number | null }[] = [
+  { label: '1Y', years: 1 },
+  { label: '3Y', years: 3 },
+  { label: '5Y', years: 5 },
+  { label: '10Y', years: 10 },
+  { label: 'All', years: null },
+]
+
+const iso = (d: Date) => d.toISOString().slice(0, 10)
+
+/**
+ * The date range for a run, promoted out of the "Optional" disclosure it used to
+ * hide in. It is the control people reach for most — a backtest over the wrong
+ * decade is the commonest way to get a meaningless number — and burying it made
+ * it look advanced.
+ *
+ * The inputs are bounded by what is actually stored, so a range with no data
+ * cannot be picked. Presets are anchored to the end of the stored data rather
+ * than to today, because the last bar is often months behind now and "5Y" ought
+ * to mean five years of data, not five years ending in a gap.
+ */
+function DateRange(
+  { from, to, setFrom, setTo, available }: {
+    from: string
+    to: string
+    setFrom: (v: string) => void
+    setTo: (v: string) => void
+    available: { from: string; to: string } | null
+  },
+) {
+  const lo = available ? available.from.slice(0, 10) : undefined
+  const hi = available ? available.to.slice(0, 10) : undefined
+
+  function applyPreset(years: number | null) {
+    if (!available) return
+    if (years === null) { setFrom(''); setTo(''); return }
+    const end = new Date(available.to)
+    const start = new Date(end)
+    start.setFullYear(start.getFullYear() - years)
+    const floor = new Date(available.from)
+    setFrom(iso(start < floor ? floor : start))
+    setTo(iso(end))
+  }
+
+  // Calendar span of what is selected, falling back to the stored range when a
+  // side is left empty — which is what the engine does with an empty bound.
+  const effFrom = from || lo
+  const effTo = to || hi
+  let span: string | null = null
+  if (effFrom && effTo) {
+    const days = (new Date(effTo).getTime() - new Date(effFrom).getTime()) / 86_400_000
+    span = days < 0 ? 'invalid' : days < 400
+      ? `${Math.round(days)} days`
+      : `${(days / 365.25).toFixed(1)} years`
+  }
+
+  return (
+    <div className="bg-base-200 rounded-box p-4">
+      <div className="flex flex-wrap items-baseline gap-3 mb-3">
+        <span className="font-medium">Date range</span>
+        <span className="text-sm text-base-content/60">
+          {available
+            ? <>stored: {lo} → {hi}</>
+            : 'pick an instrument and timeframe first'}
+        </span>
+        {span && (
+          <span className={`text-sm ${span === 'invalid' ? 'text-error' : 'text-base-content/60'}`}>
+            {span === 'invalid' ? 'From is after To' : `· covering ${span}`}
+          </span>
+        )}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <label className="form-control">
+          <FieldLabel
+            text="From"
+            hint="First candle to include. Empty starts at the beginning of the stored range. The strategy's warmup is taken from here, so a short range with a long indicator period can leave it with almost nothing to trade."
+          />
+          <input
+            type="date" className="input input-bordered" min={lo} max={hi}
+            value={from} onChange={(e) => setFrom(e.target.value)}
+          />
+        </label>
+        <label className="form-control">
+          <FieldLabel
+            text="To"
+            hint="Last candle to include. Empty runs to the end of the stored range. Import again to extend it — this does not advance on its own."
+          />
+          <input
+            type="date" className="input input-bordered" min={lo} max={hi}
+            value={to} onChange={(e) => setTo(e.target.value)}
+          />
+        </label>
+        <div className="form-control">
+          <FieldLabel
+            text="Quick spans"
+            hint="Counted back from the last stored bar, not from today — the data often ends months ago, and a span ending in a gap is not the span you asked for."
+          />
+          <div className="join">
+            {PRESETS.map((p) => (
+              <button
+                key={p.label} type="button" className="join-item btn btn-sm"
+                disabled={!available} onClick={() => applyPreset(p.years)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Did this run beat holding? Placed beside the headline rather than left to be
+ * inferred from two tiles, because it is the question the backtest exists to
+ * answer and the easiest one to skip past. A run can show a large positive
+ * return and still be the worse choice — that is the normal case, not the
+ * exception, for an indicator strategy in a rising market.
+ */
+function Verdict({ metrics }: { metrics: RunResult['metrics'] }) {
+  const r = { totalReturnPct: metrics.totalReturnPct, buyAndHoldReturnPct: metrics.buyAndHoldReturnPct }
+  const beat = beatBuyAndHold(r)
+  const diff = vsBuyAndHold(r)
+  if (beat === null || diff === null) return null
+  return (
+    <span
+      className={tipClass}
+      data-tip={beat
+        ? `Ahead of buy-and-hold by ${diff.toFixed(1)} points over the same bars.`
+        : `Holding the instrument over the same bars would have returned ${Math.abs(diff).toFixed(1)} points more, with no trading and no costs. The strategy has to beat that to be worth running.`}
+    >
+      <span className={`badge cursor-help ${beat ? 'badge-success' : 'badge-warning'}`}>
+        {beat ? 'beat' : 'lost to'} buy &amp; hold by {Math.abs(diff).toFixed(1)} pts
+      </span>
+    </span>
   )
 }

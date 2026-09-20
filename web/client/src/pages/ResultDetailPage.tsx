@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import TradeChart from '../components/TradeChart'
+import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
@@ -161,6 +162,11 @@ export default function ResultDetailPage() {
         </span>
       </div>
 
+      <VerdictBanner
+        totalReturnPct={detail.totalReturnPct}
+        buyAndHoldReturnPct={r?.metrics?.buyAndHoldReturnPct ?? null}
+      />
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {metrics.map(([label, value]) => {
           // Same bargain as the form labels: the hint hangs off the label text,
@@ -272,5 +278,44 @@ export default function ResultDetailPage() {
         </div>
       </div>
     </section>
+  )
+}
+
+/**
+ * The verdict, stated before the metrics rather than left to be worked out from
+ * two of them. A saved result that reads "+136%" is a success only until you
+ * notice holding returned +314% over the same bars, and by then the number has
+ * already made its impression.
+ *
+ * Silent when there is nothing to compare against — results saved before the
+ * benchmark was recorded should say nothing rather than imply a tie.
+ */
+function VerdictBanner(
+  { totalReturnPct, buyAndHoldReturnPct }:
+  { totalReturnPct: number | null; buyAndHoldReturnPct: number | null },
+) {
+  const r = { totalReturnPct, buyAndHoldReturnPct }
+  const beat = beatBuyAndHold(r)
+  const diff = vsBuyAndHold(r)
+  if (beat === null || diff === null) return null
+  return (
+    <div className={`alert ${beat ? 'alert-success' : 'alert-warning'} text-sm`}>
+      <span>
+        {beat ? (
+          <>
+            <strong>Beat buy-and-hold by {diff.toFixed(1)} points.</strong>{' '}
+            The strategy returned {totalReturnPct?.toFixed(1)}% where holding returned{' '}
+            {buyAndHoldReturnPct?.toFixed(1)}% over the same bars.
+          </>
+        ) : (
+          <>
+            <strong>Lost to buy-and-hold by {Math.abs(diff).toFixed(1)} points.</strong>{' '}
+            The strategy returned {totalReturnPct?.toFixed(1)}%; simply holding returned{' '}
+            {buyAndHoldReturnPct?.toFixed(1)}% over the same bars, with no trading and no
+            costs. Check the chart below for where it sat out.
+          </>
+        )}
+      </span>
+    </div>
   )
 }

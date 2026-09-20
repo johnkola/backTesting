@@ -36,6 +36,38 @@ export function isTradeable(instrument: { type: string }): boolean {
   return instrument.type !== 'INDEX'
 }
 
+/**
+ * Did the strategy beat simply holding the instrument?
+ *
+ * The one question a backtest exists to answer, and the easiest to skip past: a
+ * result showing +136% looks like a success until you see that holding returned
+ * +314% over the same bars. Returns `null` when there is nothing to compare
+ * against — an older result saved before the benchmark was recorded.
+ *
+ * Both figures are measured over the period the strategy could actually trade,
+ * so the comparison is like-for-like; the engine used to start the benchmark
+ * before the strategy's warmup, which flattered nothing and punished the longest
+ * indicator periods hardest.
+ */
+export function beatBuyAndHold(
+  r: { totalReturnPct?: number | null; buyAndHoldReturnPct?: number | null },
+): boolean | null {
+  const ret = r.totalReturnPct
+  const bh = r.buyAndHoldReturnPct
+  if (typeof ret !== 'number' || typeof bh !== 'number') return null
+  return ret > bh
+}
+
+/** How far short of (or ahead of) holding, in percentage points. */
+export function vsBuyAndHold(
+  r: { totalReturnPct?: number | null; buyAndHoldReturnPct?: number | null },
+): number | null {
+  const ret = r.totalReturnPct
+  const bh = r.buyAndHoldReturnPct
+  if (typeof ret !== 'number' || typeof bh !== 'number') return null
+  return ret - bh
+}
+
 export type Candle = {
   timestamp: string
   open: number
@@ -189,6 +221,8 @@ export type AggregateResponse = {
 }
 
 export type ResultSummary = {
+  /** Benchmark over the same bars. Null on results saved before it was recorded. */
+  buyAndHoldReturnPct?: number | null
   id: string
   instrumentSymbol: string
   strategyName: string

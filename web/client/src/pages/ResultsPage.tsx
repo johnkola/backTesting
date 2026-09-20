@@ -3,6 +3,7 @@ import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import Pagination from '../components/Pagination'
 import { tipClass } from '../components/FieldLabel'
+import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 
 const LIMIT = 25
 
@@ -106,6 +107,8 @@ export default function ResultsPage() {
                   <th>Timeframe</th>
                   <th>Source</th>
                   <th className="text-right">Return</th>
+                  <th className="text-right">Buy &amp; hold</th>
+                  <th className="text-right">vs hold</th>
                   <th className="text-right">Sharpe</th>
                   <th className="text-right">Max DD</th>
                   <th className="text-right">Trades</th>
@@ -126,6 +129,12 @@ export default function ResultsPage() {
                       <td>{r.timeframe}</td>
                       <td className="font-mono">{r.dataSource}</td>
                       <td className={`text-right tabular-nums ${retClass}`}>{pct(r.totalReturnPct)}</td>
+                      <td className="text-right tabular-nums text-base-content/70">
+                        {pct(r.buyAndHoldReturnPct)}
+                      </td>
+                      <td className="text-right tabular-nums">
+                        <VsHold result={r} />
+                      </td>
                       <td className="text-right tabular-nums">{r.sharpeRatio?.toFixed(2) ?? '—'}</td>
                       <td className="text-right tabular-nums">{pct(r.maxDrawdownPct)}</td>
                       <td className="text-right tabular-nums">{r.totalTrades}</td>
@@ -157,5 +166,34 @@ export default function ResultsPage() {
         </>
       )}
     </section>
+  )
+}
+
+/**
+ * Whether this run beat simply holding, as a badge.
+ *
+ * Shown as its own column rather than folded into the return figure, because
+ * the two answer different questions and the second is the one that matters: a
+ * +136% result reads as a success until you see that holding made +314% over
+ * the same bars. Results saved before the benchmark was recorded show nothing
+ * rather than a misleading zero.
+ */
+function VsHold({ result }: { result: ResultSummary }) {
+  const beat = beatBuyAndHold(result)
+  const diff = vsBuyAndHold(result)
+  if (beat === null || diff === null) {
+    return <span className="text-base-content/40">—</span>
+  }
+  return (
+    <span
+      className={tipClass}
+      data-tip={beat
+        ? `Beat buy-and-hold by ${diff.toFixed(1)} points over the same bars.`
+        : `Lost to buy-and-hold by ${Math.abs(diff).toFixed(1)} points. Holding the instrument over the same bars would have returned more, with no trading and no costs.`}
+    >
+      <span className={`badge badge-sm cursor-help ${beat ? 'badge-success' : 'badge-warning'}`}>
+        {diff >= 0 ? '+' : ''}{diff.toFixed(1)}
+      </span>
+    </span>
   )
 }

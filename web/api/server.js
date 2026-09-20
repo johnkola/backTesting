@@ -511,7 +511,14 @@ app.get('/api/results', async (req, res) => {
              start_date, end_date, initial_capital, final_equity,
              total_return_pct, sharpe_ratio, max_drawdown_pct,
              total_trades, win_rate, model_cache_key, model_cache_hit,
-             model_version_id, created_at
+             model_version_id, created_at,
+             -- Buy-and-hold is the only number that says whether a result was
+             -- worth producing, and the list is where you compare many at once.
+             -- It has no column of its own, so it is read out of result_json
+             -- rather than migrated: parsing 50 rows costs nothing next to a
+             -- schema change, and this works on every result already saved.
+             (result_json::json->'metrics'->>'buyAndHoldReturnPct')::double precision
+               AS buy_and_hold_return_pct
         FROM backtest_results
         ${whereSql}
         ORDER BY created_at DESC, id DESC
@@ -538,6 +545,8 @@ app.get('/api/results', async (req, res) => {
         maxDrawdownPct: r.max_drawdown_pct == null ? null : Number(r.max_drawdown_pct),
         totalTrades: r.total_trades,
         winRate: r.win_rate == null ? null : Number(r.win_rate),
+        buyAndHoldReturnPct: r.buy_and_hold_return_pct == null
+          ? null : Number(r.buy_and_hold_return_pct),
         modelCacheKey: r.model_cache_key,
         modelCacheHit: r.model_cache_hit,
         modelVersionId: r.model_version_id,
