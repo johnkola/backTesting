@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { api, type AggregateResponse, type AuditResponse, type Instrument } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { tipClass } from '../components/FieldLabel'
+import { categoryHint } from '../lib/cohesionHints'
 
 // Rollups we offer to build from a D1 series (matches the old
 // candles_weekly / candles_monthly continuous aggregates).
@@ -19,7 +20,16 @@ export default function InstrumentsPage() {
 
   return (
     <section>
-      <h1 className="text-2xl font-semibold mb-4">Instruments</h1>
+      <h1 className="text-2xl font-semibold mb-1">Instruments</h1>
+      <p className="text-base-content/70 mb-4 max-w-3xl">
+        Everything you have candles for, and the ground truth for what you can back a test
+        with. One card per symbol, one row per <strong>source</strong> and{' '}
+        <strong>timeframe</strong> — the same symbol can hold parallel histories from
+        different providers without them overwriting each other. If the Run page is not
+        offering a combination you expect, this page is where you find out why. From here
+        you can also build the weekly and monthly rollups a daily series can derive, and
+        re-check the stored candles for data problems.
+      </p>
       {error && <div className="alert alert-error">{error}</div>}
       {!instruments && !error && <span className="loading loading-spinner" />}
       {instruments && instruments.length === 0 && (
@@ -71,14 +81,33 @@ function AuditButton({ symbol }: { symbol: string }) {
           </button>
         </span>
         {report && (
-          <span className={`badge ${report.ok ? 'badge-success' : 'badge-warning'}`}>
-            {report.ok
-              ? `${report.seriesAudited} series clean`
-              : `${report.totalIssues} issue${report.totalIssues === 1 ? '' : 's'}`}
+          <span
+            className={tipClass}
+            data-tip={report.ok
+              ? `Nothing suspect across ${report.seriesAudited} series. That means no obvious data defect — not that nothing unusual happened in the market.`
+              : `${report.totalIssues} finding(s) across ${report.seriesAudited} series. Findings are advice, never a blocker: the candles are stored and backtests will run. Open a series below to see what was flagged.`}
+          >
+            <span className={`badge ${report.ok ? 'badge-success' : 'badge-warning'}`}>
+              {report.ok
+                ? `${report.seriesAudited} series clean`
+                : `${report.totalIssues} issue${report.totalIssues === 1 ? '' : 's'}`}
+            </span>
           </span>
         )}
         {error && <span className="text-error text-sm">{error}</span>}
       </div>
+
+      {report && !report.ok && (
+        <p className="mt-2 text-xs text-base-content/70 max-w-3xl">
+          These are advisory. Nothing was changed, and every candle is still there — the
+          checks look for broken <em>data</em>, not unusual <em>markets</em>, and two
+          categories have a known class of false positive. Hover any{' '}
+          <span className="badge badge-xs badge-outline align-middle">category</span> badge
+          below for what it flags and when it is wrong. A run of <code>gap</code> findings
+          on a long US history is usually days the exchange was closed for a reason no
+          calendar can compute.
+        </p>
+      )}
 
       {report && report.items.length > 0 && (
         <div className="mt-2 space-y-1">
@@ -91,7 +120,9 @@ function AuditButton({ symbol }: { symbol: string }) {
                 <ul className="ml-6 mt-1 text-xs text-base-content/70 space-y-0.5">
                   {s.examples.slice(0, 10).map((f, n) => (
                     <li key={n}>
-                      <span className="badge badge-xs badge-outline mr-2">{f.category}</span>
+                      <span className={tipClass} data-tip={categoryHint(f.category) ?? f.category}>
+                        <span className="badge badge-xs badge-outline mr-2 cursor-help">{f.category}</span>
+                      </span>
                       {f.timestamp?.slice(0, 19) ?? ''} — {f.detail}
                     </li>
                   ))}
@@ -102,6 +133,30 @@ function AuditButton({ symbol }: { symbol: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * A column header that explains itself. The tip sits on the header text rather
+ * than on the whole cell, so a wide right-aligned column does not open a bubble
+ * from the far edge of the table.
+ */
+function Th({ children, hint, align }: { children: React.ReactNode; hint: string; align?: 'right' }) {
+  return (
+    <th className={align === 'right' ? 'text-right' : undefined}>
+      <span className={tipClass} data-tip={hint}>
+        <span
+          tabIndex={0}
+          role="note"
+          aria-label={hint}
+          className="cursor-help underline decoration-dotted decoration-base-content/30
+                     underline-offset-4 transition-colors hover:decoration-base-content/70
+                     focus-visible:outline-none focus-visible:decoration-base-content/70"
+        >
+          {children}
+        </span>
+      </span>
+    </th>
   )
 }
 
@@ -133,12 +188,24 @@ function InstrumentCard({ instrument: i, onAggregated }: { instrument: Instrumen
           <table className="table table-sm">
             <thead>
               <tr>
-                <th>Source</th>
-                <th>Timeframe</th>
-                <th className="text-right">Candles</th>
-                <th>From</th>
-                <th>To</th>
-                <th className="text-right">Rollups</th>
+                <Th hint="Which import these candles came from — the label given at upload time, such as yahoo or a broker export. Pick the same name again when you run a backtest.">
+                  Source
+                </Th>
+                <Th hint="Candle size for this row. D1 is one bar per trading day; W1 and MN1 are usually derived from it rather than imported.">
+                  Timeframe
+                </Th>
+                <Th align="right" hint="How many bars are stored for this source and timeframe. Fewer than a few hundred makes most backtest metrics unreliable.">
+                  Candles
+                </Th>
+                <Th hint="Timestamp of the oldest stored bar. A backtest cannot start before this date.">
+                  From
+                </Th>
+                <Th hint="Timestamp of the newest stored bar. Import again to extend it — nothing here updates on its own.">
+                  To
+                </Th>
+                <Th align="right" hint="Builds the weekly and monthly series from this daily one. Only offered on a D1 row, because a rollup has to come from a finer timeframe.">
+                  Rollups
+                </Th>
               </tr>
             </thead>
             <tbody>
