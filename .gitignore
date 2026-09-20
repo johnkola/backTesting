@@ -39,6 +39,14 @@ bin/
 ### Mac OS ###
 .DS_Store
 
+### Python ###
+# `python/.gitignore` carries these too, but a nested ignore file only governs
+# its own directory, and Python lives outside `python/` as well — `tools/`, and
+# `fetch_historical_data.py` at the root. Anchoring the bytecode rules here
+# covers the whole tree, including wherever the next script lands.
+__pycache__/
+*.py[cod]
+
 ### Node / web layer ###
 node_modules/
 web/client/dist/
