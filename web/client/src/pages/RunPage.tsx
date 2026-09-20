@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  api, isAbortError,
+  api, isAbortError, isTradeable,
   type Instrument, type RunResult, type Strategy,
 } from '../lib/api'
 import FieldLabel from '../components/FieldLabel'
@@ -37,9 +37,12 @@ export default function RunPage() {
     Promise.all([api.strategies(ctrl.signal), api.instruments(ctrl.signal)])
       .then(([s, i]) => {
         setStrategies(s.items)
-        setInstruments(i.items)
+        // Indices are filtered out rather than shown and rejected: they are real
+        // data but not holdings, and the engine refuses them. Offering one in a
+        // picker labelled "what to trade" is the wrong promise to make.
+        setInstruments(i.items.filter(isTradeable))
         if (s.items.length > 0) selectStrategy(s.items[0])
-        const first = i.items.find((x) => x.sources.length > 0)
+        const first = i.items.filter(isTradeable).find((x) => x.sources.length > 0)
         if (first) {
           setSymbol(first.symbol)
           setSource(first.sources[0].sourceName)

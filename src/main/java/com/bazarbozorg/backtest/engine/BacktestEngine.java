@@ -323,6 +323,20 @@ public class BacktestEngine {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Instrument not found: " + instrumentSymbol));
 
+        // An index is real data but not a holding -- there are no VIX shares, so a
+        // position in one is a trade nobody could have placed and every metric
+        // computed from it is fiction. Refused here rather than in the UI because
+        // the CLI and the API reach this path too, and a rule enforced in one
+        // client is not a rule. Indices stay importable and readable on purpose:
+        // they are useful as inputs, just not as holdings.
+        if (!instrument.type().isTradeable()) {
+            throw new IllegalArgumentException(
+                    instrumentSymbol + " is an " + instrument.type()
+                    + " and cannot be traded -- it has no price you could have bought at. "
+                    + "Use a tradeable instrument that tracks it (SPY for the S&P 500, "
+                    + "QQQ for the Nasdaq 100), or read it as an indicator instead.");
+        }
+
         DataSource source = sourceRepo.findByName(sourceName)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Data source not found: " + sourceName));

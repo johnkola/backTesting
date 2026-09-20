@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { api, type AggregateResponse, type AuditResponse, type Instrument } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { tipClass } from '../components/FieldLabel'
+import { isTradeable } from '../lib/api'
 import { categoryHint } from '../lib/cohesionHints'
 
 // Rollups we offer to build from a D1 series (matches the old
@@ -28,7 +29,9 @@ export default function InstrumentsPage() {
         different providers without them overwriting each other. If the Run page is not
         offering a combination you expect, this page is where you find out why. From here
         you can also build the weekly and monthly rollups a daily series can derive, and
-        re-check the stored candles for data problems.
+        re-check the stored candles for data problems. Rows marked{' '}
+        <strong>indicator only</strong> are market indices — real data you can read, but
+        not hold, so they never appear on the Run page.
       </p>
       {error && <div className="alert alert-error">{error}</div>}
       {!instruments && !error && <span className="loading loading-spinner" />}
@@ -176,6 +179,14 @@ function InstrumentCard({ instrument: i, onAggregated }: { instrument: Instrumen
       <div className="flex flex-wrap items-baseline gap-3 mb-3">
         <h2 className="text-xl font-mono font-semibold">{i.symbol}</h2>
         <span className="badge badge-outline">{i.type}</span>
+        {!isTradeable(i) && (
+          <span
+            className={tipClass}
+            data-tip="An index is real data but not a holding — there are no shares to buy, so the engine will not backtest it. Keep it for reading the market's state; trade an instrument that tracks it, such as SPY or QQQ."
+          >
+            <span className="badge badge-warning badge-outline cursor-help">indicator only</span>
+          </span>
+        )}
         <span className="text-base-content/60">{i.name ?? ''}</span>
         <span className="ml-auto text-sm text-base-content/50">
           precision {i.pricePrecision} · pip {i.pipSize}

@@ -24,6 +24,18 @@ export type InstrumentSourceSlice = {
   toDate: string
 }
 
+/**
+ * Whether a position can be opened in this instrument.
+ *
+ * Mirrors `InstrumentType.isTradeable()` on the Java side, which is where the
+ * rule is actually enforced — an index is real data but not a holding, and the
+ * engine refuses a backtest on one. This exists so the UI can say so before the
+ * user submits, not instead of the engine check.
+ */
+export function isTradeable(instrument: { type: string }): boolean {
+  return instrument.type !== 'INDEX'
+}
+
 export type Instrument = {
   id: string
   symbol: string

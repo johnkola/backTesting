@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  api, engineWindow, isAbortError,
+  api, engineWindow, isAbortError, isTradeable,
   type AuditResponse, type Instrument, type Strategy, type TrainResponse,
 } from '../lib/api'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
@@ -62,12 +62,14 @@ export default function TrainPage() {
         // ones have nothing to learn and `train` would be a no-op on them.
         const trainable = s.items.filter((x) => x.requiresTrainedModel)
         setStrategies(trainable)
-        setInstruments(i.items)
+        // Same rule as the Run page: the NN trades the instrument it learns
+        // from, so a model trained on an index could never be run.
+        setInstruments(i.items.filter(isTradeable))
         if (trainable.length > 0) {
           setStrategyName(trainable[0].name)
           setParams({ ...trainable[0].defaultParameters })
         }
-        const withCandles = i.items.find((x) => x.sources.length > 0)
+        const withCandles = i.items.filter(isTradeable).find((x) => x.sources.length > 0)
         if (withCandles) {
           setSymbol(withCandles.symbol)
           setSource(withCandles.sources[0].sourceName)
