@@ -55,10 +55,15 @@ The app backtests against OHLCV candles stored in Postgres. You need some.
 bars, 2020–2023:
 
 ```bash
-./gradlew generateTestData        # writes test-data/AAPL_daily.csv
+./gradlew generateTestData        # writes test-data/SYNTH_daily.csv
 ```
 
-`test-data/` already ships with a few more (`SPY`, `QQQ`, `VIX`, `VXN`).
+It is called **SYNTH**, not AAPL, and imports under that symbol. The series is a
+seeded random walk: it looks like a stock and behaves like none. Naming it after a
+real ticker once had the app reporting that Apple lost money over 2020–2023, a
+period in which it gained 156%.
+
+`test-data/` also ships real daily history for `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN`.
 
 **Real data.** No API key needed; this pulls from Yahoo's chart API and writes the same
 CSV shape:
@@ -84,8 +89,8 @@ Then import it. In the browser, use the upload form on **Imports** — pick the 
 it a symbol, type, timeframe and source name. Or from a shell:
 
 ```bash
-curl -F file=@test-data/AAPL_daily.csv -F symbol=AAPL -F type=STOCK \
-     -F timeframe=D1 -F source=yahoo http://localhost:8001/api/imports
+curl -F file=@test-data/SYNTH_daily.csv -F symbol=SYNTH -F type=STOCK \
+     -F timeframe=D1 -F source=synthetic http://localhost:8001/api/imports
 ```
 
 `source` is a label for *where the data came from* (`yahoo`, `alpha-vantage`, a broker
@@ -213,7 +218,7 @@ writes — gitignored, and safe to delete if you accept losing what's in it.
 
 | Path | In git | Written by | Holds |
 |---|---|---|---|
-| `test-data/` | yes | `./gradlew generateTestData`, `fetch_historical_data.py` | Ready-to-import sample candles — `AAPL_daily.csv` plus `SPY`, `QQQ`, `VIX`, `VXN`. This is what step 2 imports |
+| `test-data/` | yes | `./gradlew generateTestData`, `fetch_historical_data.py` | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history |
 | `data/csv-inbox/` | no | you | Files waiting for the batch importer (`backtest-ingest`), named `SOURCE__SYMBOL__TYPE__TF.csv` |
 | `data/csv-archive/` | no | the loader | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
 | `data/models/` | no | the loader | Trained NN models, one directory per cache key. The **Models** page reads this |

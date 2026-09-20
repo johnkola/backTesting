@@ -12,8 +12,8 @@ something to run on. Do not read anything into a backtest run against them.
 ```bash
 cd tools/datagen
 
-python generate_intraday.py ../../test-data/AAPL_daily.csv -t M30
-python generate_intraday.py ../../test-data/AAPL_daily.csv -t H1 --session 24h
+python generate_intraday.py ../../test-data/SYNTH_daily.csv -t M30
+python generate_intraday.py ../../test-data/SYNTH_daily.csv -t H1 --session 24h
 python generate_intraday.py input/SPY_daily.csv -t M30 --since 2020-01-01
 ```
 

@@ -22,11 +22,11 @@ The client is deliberately independent: it has no server-side dependency and rea
 
 ```bash
 docker compose up -d                          # all five services
-./gradlew generateTestData                    # write test-data/AAPL_daily.csv
+./gradlew generateTestData                    # write test-data/SYNTH_daily.csv (fake, not AAPL)
 
 # Import a CSV (the API proxies this to the loader)
-curl -F file=@test-data/AAPL_daily.csv -F symbol=AAPL -F type=STOCK \
-     -F timeframe=D1 -F source=yahoo http://localhost:8001/api/imports
+curl -F file=@test-data/SYNTH_daily.csv -F symbol=SYNTH -F type=STOCK \
+     -F timeframe=D1 -F source=synthetic http://localhost:8001/api/imports
 
 # Run a backtest — from the API, or from the CLI
 curl -X POST http://localhost:8001/api/run -H 'content-type: application/json' \

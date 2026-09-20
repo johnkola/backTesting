@@ -167,7 +167,7 @@ The operating path — start the stack, get candles in, run a backtest, read the
 Two things are worth knowing before you follow it, because they surprise people who arrive at this doc first:
 
 - **The five services are not interchangeable.** Import and the NN belong to the Python loader, backtest execution to the Java engine, every read to the Node API. A command that fails usually fails at one of those boundaries, and knowing which one turns a stack trace into a one-line diagnosis. See [Services and ports](/docs/readme#services-and-ports).
-- **The default dataset is synthetic.** `./gradlew generateTestData` writes a deterministic random walk that merely *looks* like AAPL. Anything you measure on it tests the plumbing, not a strategy — see [Known limitations](#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
+- **The default dataset is synthetic.** `./gradlew generateTestData` writes a deterministic random walk under the symbol **SYNTH**, which merely *looks* like a stock. Anything you measure on it tests the plumbing, not a strategy — see [Known limitations](#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
 
 ### How to read a result
 
@@ -190,7 +190,7 @@ These are not bugs; they are deliberate simplifications. Be aware of them before
 - **Slippage is a fixed bump, not a model.** Real slippage scales with order size relative to market depth; this simulator doesn't know depth.
 - **No margin, no leverage, no shorting cost.** Cash mechanics only.
 - **NN training peeks at the future inside the training window.** The 80% training split is at the start of the date range, so the network sees label outcomes from bars that the backtest's *early* bars would not yet know about. Acceptable for "does this approach learn anything?" research; not a true walk-forward setup. Don't quote NN results as predictive of live performance.
-- **The training data is synthetic by default.** `./gradlew generateTestData` produces a deterministic random walk that *looks* like AAPL — not actual market data. Import a real CSV before treating any result as meaningful.
+- **The training data is synthetic by default.** `./gradlew generateTestData` produces a deterministic random walk under the symbol **SYNTH** — not actual market data. Import a real CSV before treating any result as meaningful.
 
 ### Where to start reading the code
 
@@ -221,7 +221,7 @@ docker compose up -d             # start TimescaleDB on localhost:5432 (db=backt
 ./gradlew test --tests 'com.bazarbozorg.backtest.strategy.SmaCrossoverStrategyTest'   # single test class
 ./gradlew test --tests '*SmaCrossover*.testCrossover'                                 # single test method
 ./gradlew run --args="..."       # run the CLI (see Subcommands below)
-./gradlew generateTestData       # writes test-data/AAPL_daily.csv (deterministic, seed=42)
+./gradlew generateTestData       # writes test-data/SYNTH_daily.csv (deterministic, seed=42)
 ```
 
 Storage is **PostgreSQL + TimescaleDB** (run via the bundled `docker-compose.yml`). Connection comes from `application.properties` (`db.url=jdbc:postgresql://localhost:5432/backtest`). Connections are pooled by HikariCP (`db.pool.maxSize`, `minIdle`, `connectionTimeoutMs`).

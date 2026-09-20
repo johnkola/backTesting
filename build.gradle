@@ -51,13 +51,17 @@ jar {
 }
 
 tasks.register('generateTestData') {
-    description = 'Generates sample AAPL daily OHLCV CSV test data'
+    description = 'Generates SYNTH, a deterministic fake daily series for smoke-testing'
     group = 'data'
 
     doLast {
         def outputDir = file("${projectDir}/test-data")
         outputDir.mkdirs()
-        def outputFile = new File(outputDir, "AAPL_daily.csv")
+        // SYNTH, not AAPL. This is a seeded random walk, and naming it after a
+        // real ticker let it be imported as that ticker -- at which point the app
+        // cheerfully reported that Apple LOST 17% over 2020-2023, when it in fact
+        // gained 156%. A symbol nobody trades cannot be mistaken for one.
+        def outputFile = new File(outputDir, "SYNTH_daily.csv")
         def rng = new Random(42)
         def prevClose = 75.00d
 
