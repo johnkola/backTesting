@@ -5,6 +5,7 @@ import {
   type Instrument, type RunResult, type Strategy,
 } from '../lib/api'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
+import TradeChart from '../components/TradeChart'
 import { metricHint } from '../lib/metricHints'
 
 /**
@@ -340,6 +341,23 @@ function RunSummary({ result }: { result: RunResult }) {
           </span>
         </div>
       )}
+
+      {/* Shown here rather than only on the saved result, because the question a
+          number provokes -- "why did it do that?" -- arrives immediately, and
+          making people navigate away to answer it means most never do. The
+          markers are what turn "lost to buy and hold" into something you can see:
+          stretches of rising price with no position open. */}
+      <div className="mt-6">
+        <h3 className="font-semibold mb-1">Price, and where it traded</h3>
+        <TradeChart
+          instrument={result.instrumentSymbol}
+          source={result.dataSource}
+          timeframe={result.timeframe}
+          from={result.startDate}
+          to={result.endDate}
+          trades={result.trades ?? []}
+        />
+      </div>
 
       <p className="mt-4 text-sm text-base-content/60">
         Saved. It is now in <Link className="link" to="/results">Results</Link>, with the full trade
