@@ -60,6 +60,33 @@ public class BacktestEngine {
     }
 
     /**
+     * The first bar the strategy is allowed to act on, which is also where the
+     * buy-and-hold benchmark must start.
+     *
+     * <p>Clamped to the last bar so a warmup longer than the series still yields
+     * a valid index: such a run trades nothing, and a benchmark of 0% over its
+     * final bar is the honest answer rather than an exception.
+     */
+    static int benchmarkStartIndex(int barCount, int warmupBars) {
+        if (barCount <= 0) {
+            return 0;
+        }
+        return Math.max(0, Math.min(warmupBars, barCount - 1));
+    }
+
+    /**
+     * Buy one unit at {@code firstClose}, sell at {@code lastClose}, as a percent.
+     *
+     * <p>Deliberately frictionless, unlike the strategy's fills: a single round
+     * trip of commission and slippage is immaterial next to a multi-year hold,
+     * and leaving it out keeps this the conventional "what the market did"
+     * number rather than a second strategy with its own cost assumptions.
+     */
+    static double buyAndHoldReturnPct(double firstClose, double lastClose) {
+        return firstClose > 0 ? ((lastClose - firstClose) / firstClose) * 100.0 : 0.0;
+    }
+
+    /**
      * Runs a backtest for the given strategy over the specified instrument and time range.
      * <p>
      * The run method:
@@ -173,20 +200,34 @@ public class BacktestEngine {
         logger.info("Backtest complete: {} trades executed", portfolioManager.getCompletedTrades().size());
 
         // Step 7: Build and return BacktestResult
-        Bar firstBar = series.getBar(0);
         Bar lastBar2 = series.getBar(series.getBarCount() - 1);
-
-        ZonedDateTime startDate = ZonedDateTime.ofInstant(firstBar.getEndTime(), ZoneOffset.UTC);
         ZonedDateTime endDate = ZonedDateTime.ofInstant(lastBar2.getEndTime(), ZoneOffset.UTC);
-
-        double firstClose = firstBar.getClosePrice().doubleValue();
         double lastClose = lastBar2.getClosePrice().doubleValue();
 
-        double buyAndHoldReturnPct = firstClose > 0
-                ? ((lastClose - firstClose) / firstClose) * 100.0
-                : 0.0;
+        // Buy-and-hold is the benchmark the strategy is judged against, so it has
+        // to be measured over the period the strategy could actually trade in.
+        // It used to start at bar 0 while the loop starts at `warmupBars`, which
+        // credited the benchmark with every point of a move the strategy was
+        // structurally unable to hold anything through -- it has no indicator
+        // values yet. The error scaled with the warmup, so it silently punished
+        // exactly the longer-period configurations: a 200-bar warmup over a
+        // one-year window handed buy-and-hold 9 of its 17 points.
+        int benchmarkStart = benchmarkStartIndex(series.getBarCount(), warmupBars);
+        Bar firstBar = series.getBar(benchmarkStart);
+        double firstClose = firstBar.getClosePrice().doubleValue();
 
-        long tradingDays = series.getBarCount();
+        // The reported range is the traded range, for the same reason: a result
+        // claiming to cover a period its own numbers exclude is a result nobody
+        // can check. A warmup-shortened range is also useful on its own -- it is
+        // how you notice that a 200-bar warmup ate most of a one-year window.
+        ZonedDateTime startDate = ZonedDateTime.ofInstant(firstBar.getEndTime(), ZoneOffset.UTC);
+
+        double buyAndHoldReturnPct = buyAndHoldReturnPct(firstClose, lastClose);
+
+        // Same reasoning for annualisation: the strategy's equity curve only
+        // spans the post-warmup bars, so dividing by the whole series understated
+        // its rate. Both sides now annualise over the bars actually traded.
+        long tradingDays = series.getBarCount() - benchmarkStart;
 
         double finalEquity = portfolioManager.getEquity(lastClose);
 
