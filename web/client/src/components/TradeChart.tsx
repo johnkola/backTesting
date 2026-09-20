@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  CartesianGrid, Line, ComposedChart, ResponsiveContainer,
-  Scatter, Tooltip, XAxis, YAxis,
-} from 'recharts'
+  CandlestickSeries, ColorType, LineStyle, createChart, createSeriesMarkers,
+  type IChartApi, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
+} from 'lightweight-charts'
 import { api, isAbortError, type CandleSeries, type Trade } from '../lib/api'
 import { tipClass } from './FieldLabel'
 
@@ -10,14 +10,18 @@ import { tipClass } from './FieldLabel'
  * Price, with the points where the strategy actually bought and sold.
  *
  * The equity curve answers "how did the account do"; this answers "why". A run
- * that lost to buy-and-hold looks like an equity line that flattens — but only
- * a price chart shows that it flattened because the strategy was *out* during a
- * rally, which is the thing worth knowing.
+ * that lost to buy-and-hold looks like an equity line that flattens — but only a
+ * price chart shows that it flattened because the strategy was *out* during a
+ * rally, and only a zoomable one lets you check a particular month.
+ *
+ * Drawn with lightweight-charts rather than the recharts used elsewhere, because
+ * this is the one chart people need to interrogate: it gives wheel-zoom,
+ * drag-pan and candlesticks for free, where recharts would need all three
+ * hand-built and would still plot close-only. The equity curve stays on recharts
+ * — a static line needs none of this.
  *
  * A saved result carries trades and equity but not prices, so the series comes
- * from GET /api/candles over exactly the result's own date range. Markers are
- * plotted at each trade's recorded fill price rather than at the bar's close, so
- * a marker sits where the money actually changed hands.
+ * from GET /api/candles over exactly the result's own date range.
  */
 type Props = {
   instrument: string
@@ -28,30 +32,60 @@ type Props = {
   trades: Trade[]
 }
 
+/** Seconds since epoch, which is what lightweight-charts wants for every scale. */
+const secs = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp
+
 /**
- * A sell marker: the same triangle as a buy, pointing down.
+ * Any CSS colour the browser understands, as plain `r, g, b` numbers.
  *
- * Recharts ships no down-triangle, and colour alone would not do here — red
- * against green is precisely the pair that deuteranopia collapses, so the two
- * kinds of marker would be indistinguishable to the most common form of colour
- * blindness. Direction carries the meaning; colour only reinforces it.
+ * Tailwind v4 resolves theme colours to `oklch(...)`, which lightweight-charts
+ * cannot parse — it throws, and because the throw happens inside chart
+ * construction it takes the whole page down rather than just the chart.
+ * Painting one pixel and reading it back delegates the conversion to the
+ * browser, so it works for oklch, colour-mix, named colours and anything CSS
+ * adds later.
  */
-function SellMarker({ cx, cy, fill }: { cx?: number; cy?: number; fill?: string }) {
-  if (cx === undefined || cy === undefined) return null
-  const r = 5
-  return <path d={`M ${cx - r} ${cy - r} L ${cx + r} ${cy - r} L ${cx} ${cy + r} Z`} fill={fill} />
+function toRgb(color: string): [number, number, number] | null {
+  try {
+    const c = document.createElement('canvas')
+    c.width = 1; c.height = 1
+    const ctx = c.getContext('2d', { willReadFrequently: true })
+    if (!ctx) return null
+    ctx.fillStyle = color
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+    return [r, g, b]
+  } catch {
+    return null
+  }
 }
 
-type Point = {
-  t: number
-  close: number
-  buy?: number
-  sell?: number
+/**
+ * Chart colours, read from the daisyUI theme rather than hard-coded.
+ *
+ * The app themes itself by setting `data-theme` on `<html>`, so a fixed palette
+ * would be unreadable on half the themes. Probing a real element gets whatever
+ * the active theme resolved to, including the user's own choice — then it is
+ * normalised, because what the theme resolved to is very likely oklch.
+ */
+function themeColors(el: HTMLElement) {
+  const rgb = toRgb(getComputedStyle(el).color) ?? [136, 136, 136]
+  const [r, g, b] = rgb
+  return {
+    text: `rgb(${r}, ${g}, ${b})`,
+    // A faded version of the text colour reads as a grid line on light and dark
+    // alike, without the component needing to know which is active.
+    grid: `rgba(${r}, ${g}, ${b}, 0.15)`,
+    up: '#22c55e',
+    down: '#ef4444',
+  }
 }
 
 export default function TradeChart({ instrument, source, timeframe, from, to, trades }: Props) {
   const [series, setSeries] = useState<CandleSeries | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  const chartRef = useRef<IChartApi | null>(null)
 
   useEffect(() => {
     const ac = new AbortController()
@@ -61,35 +95,67 @@ export default function TradeChart({ instrument, source, timeframe, from, to, tr
     return () => ac.abort()
   }, [instrument, source, timeframe, from, to])
 
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box || !series || series.items.length === 0) return
+
+    const colors = themeColors(box)
+    const chart = createChart(box, {
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: colors.text,
+        attributionLogo: false,
+      },
+      grid: {
+        vertLines: { color: colors.grid, style: LineStyle.Dotted },
+        horzLines: { color: colors.grid, style: LineStyle.Dotted },
+      },
+      rightPriceScale: { borderColor: colors.grid },
+      // Intraday needs the clock; a daily series only ever repeats the date.
+      timeScale: { borderColor: colors.grid, timeVisible: timeframe !== 'D1' },
+      crosshair: { mode: 0 },
+    })
+    chartRef.current = chart
+
+    const candles: ISeriesApi<'Candlestick'> = chart.addSeries(CandlestickSeries, {
+      upColor: colors.up, downColor: colors.down,
+      borderUpColor: colors.up, borderDownColor: colors.down,
+      wickUpColor: colors.up, wickDownColor: colors.down,
+    })
+    candles.setData(series.items.map((c) => ({
+      time: secs(c.timestamp), open: c.open, high: c.high, low: c.low, close: c.close,
+    })))
+
+    // Markers must be sorted by time — the library drops out-of-order ones
+    // silently, and entries and exits arrive interleaved per trade.
+    const marks: SeriesMarker<Time>[] = []
+    for (const t of trades) {
+      if (t.entryTime) {
+        marks.push({
+          time: secs(t.entryTime), position: 'belowBar',
+          color: colors.up, shape: 'arrowUp', text: 'buy',
+        })
+      }
+      if (t.exitTime) {
+        marks.push({
+          time: secs(t.exitTime), position: 'aboveBar',
+          color: colors.down, shape: 'arrowDown', text: 'sell',
+        })
+      }
+    }
+    marks.sort((a, b) => Number(a.time) - Number(b.time))
+    createSeriesMarkers(candles, marks)
+
+    chart.timeScale().fitContent()
+    return () => { chart.remove(); chartRef.current = null }
+  }, [series, trades, timeframe])
+
   if (error) return <div className="alert alert-error text-sm">{error}</div>
   if (!series) return <span className="loading loading-spinner" />
   if (series.items.length === 0) {
     return <div className="text-base-content/60 text-sm">No candles stored for this range.</div>
   }
-
-  const points: Point[] = series.items.map((c) => ({
-    t: new Date(c.timestamp).getTime(),
-    close: c.close,
-  }))
-
-  // Trades carry their own fill price and time, so markers land on the price the
-  // trade actually got rather than on the nearest plotted bar's close. Snapping
-  // to a bar would misplace them whenever the series has been strided.
-  const buys: Point[] = []
-  const sells: Point[] = []
-  for (const tr of trades) {
-    const entry = tr.entryPrice
-    const exit = tr.exitPrice
-    if (tr.entryTime && typeof entry === 'number' && Number.isFinite(entry)) {
-      buys.push({ t: new Date(tr.entryTime).getTime(), close: entry, buy: entry })
-    }
-    if (tr.exitTime && typeof exit === 'number' && Number.isFinite(exit)) {
-      sells.push({ t: new Date(tr.exitTime).getTime(), close: exit, sell: exit })
-    }
-  }
-
-  const money = (v: number) =>
-    `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
   return (
     <>
@@ -109,53 +175,31 @@ export default function TradeChart({ instrument, source, timeframe, from, to, tr
         <span className="text-base-content/60">
           {trades.length} trade{trades.length === 1 ? '' : 's'}
         </span>
+        <span
+          className={tipClass}
+          data-tip="Scroll to zoom, drag to pan, and drag the time axis to stretch it. The crosshair reads any point, not only a bar."
+        >
+          <span className="badge badge-ghost badge-sm cursor-help">scroll to zoom</span>
+        </span>
+        <button
+          type="button" className="btn btn-ghost btn-xs"
+          onClick={() => chartRef.current?.timeScale().fitContent()}
+        >
+          reset zoom
+        </button>
         {series.stride > 1 && (
-          <span className={tipClass} data-tip={`The range holds ${series.total.toLocaleString()} bars, more than a chart this wide can show. Every ${series.stride}th bar is drawn; the trade markers are all of them, at their real prices.`}>
+          <span
+            className={tipClass}
+            data-tip={`The range holds ${series.total.toLocaleString()} bars, more than is sent at once. Every ${series.stride}th bar is drawn; the trade markers are all of them.`}
+          >
             <span className="badge badge-ghost badge-sm cursor-help">
-              1 in {series.stride} bars shown
+              1 in {series.stride} bars
             </span>
           </span>
         )}
       </div>
 
-      <div className="h-96">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={points}>
-            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-            <XAxis
-              dataKey="t"
-              type="number"
-              domain={['dataMin', 'dataMax']}
-              scale="time"
-              tickFormatter={(t: number) => new Date(t).toLocaleDateString()}
-              minTickGap={40}
-            />
-            <YAxis
-              domain={['auto', 'auto']}
-              tickFormatter={(v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              width={70}
-            />
-            <Tooltip
-              labelFormatter={(t) => new Date(Number(t)).toLocaleDateString()}
-              formatter={(v) => [money(typeof v === 'number' ? v : Number(v)), 'price']}
-            />
-            <Line
-              type="monotone" dataKey="close" dot={false} isAnimationActive={false}
-              stroke="oklch(60% 0.2 250)" strokeWidth={1.5}
-            />
-            {/* Separate series so each marker keeps its own colour and its own
-                point in time, independent of where the price line's bars fall. */}
-            <Scatter
-              data={buys} dataKey="buy" fill="oklch(70% 0.19 150)"
-              shape="triangle" isAnimationActive={false}
-            />
-            <Scatter
-              data={sells} dataKey="sell" fill="oklch(65% 0.22 25)"
-              shape={<SellMarker />} isAnimationActive={false}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
+      <div ref={boxRef} className="h-96 w-full" />
     </>
   )
 }
