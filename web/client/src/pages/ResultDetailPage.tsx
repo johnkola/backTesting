@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
+import TradeChart from '../components/TradeChart'
 import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
@@ -175,6 +176,23 @@ export default function ResultDetailPage() {
             </div>
           )
         })}
+      </div>
+
+      <div className="bg-base-200 rounded-box p-4">
+        <h2 className="font-semibold mb-1">Price, and where it traded</h2>
+        <p className="text-sm text-base-content/70 mb-2">
+          The equity curve below says how the account did; this says why. A strategy that
+          lost to buy-and-hold usually did it by being out of the market during a rally —
+          which shows here as a stretch of rising price with no position open.
+        </p>
+        <TradeChart
+          instrument={detail.instrumentSymbol}
+          source={detail.dataSource ?? ''}
+          timeframe={detail.timeframe}
+          from={detail.startDate ?? ''}
+          to={detail.endDate ?? ''}
+          trades={r?.trades ?? []}
+        />
       </div>
 
       <div className="bg-base-200 rounded-box p-4">

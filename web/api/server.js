@@ -280,6 +280,71 @@ app.get('/api/sources', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/candles — the price series behind a result, so the client can draw
+ * where the strategy actually bought and sold.
+ *
+ * A saved BacktestResult carries its trades and its equity curve but not the
+ * prices those trades happened at, so a buy/sell chart had nothing to plot
+ * against. This is the one read that fills that gap.
+ *
+ * Capped at MAX_CANDLES and downsampled rather than paginated: a chart wants the
+ * whole shape of a range, and 8,000 daily bars is more points than a few hundred
+ * pixels can show. Downsampling strides the series instead of aggregating, which
+ * keeps every plotted point a real bar that happened at a real time -- an
+ * averaged pseudo-bar would put trade markers next to prices that never traded.
+ * The last bar is always kept so the series ends where the data does.
+ */
+const MAX_CANDLES = 4000;
+
+app.get('/api/candles', async (req, res) => {
+  const { instrument, source, timeframe } = req.query;
+  if (!instrument || !timeframe) {
+    return res.status(400).json({ error: 'instrument and timeframe are required' });
+  }
+  try {
+    const params = [instrument, timeframe];
+    let where = 'i.symbol = $1 AND c.timeframe = $2';
+    if (source) {
+      params.push(source);
+      where += ` AND ds.name = $${params.length}`;
+    }
+    if (req.query.from) {
+      params.push(req.query.from);
+      where += ` AND c.timestamp >= $${params.length}`;
+    }
+    if (req.query.to) {
+      params.push(req.query.to);
+      where += ` AND c.timestamp <= $${params.length}`;
+    }
+    const { rows } = await pool.query(
+      `SELECT c.timestamp, c.open, c.high, c.low, c.close, c.volume
+         FROM candles c
+         JOIN instruments i ON i.id = c.instrument_id
+         JOIN data_sources ds ON ds.id = c.source_id
+        WHERE ${where}
+        ORDER BY c.timestamp`,
+      params,
+    );
+
+    const stride = Math.ceil(rows.length / MAX_CANDLES) || 1;
+    const items = stride === 1
+      ? rows
+      : rows.filter((_, n) => n % stride === 0 || n === rows.length - 1);
+
+    res.json({
+      items,
+      total: rows.length,
+      returned: items.length,
+      // Told plainly so a caller can say "1 in 3 bars shown" rather than
+      // implying the chart is every bar.
+      stride,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function parsePagination(query) {
   const rawLimit = Number.parseInt(query.limit, 10);
   const rawOffset = Number.parseInt(query.offset, 10);

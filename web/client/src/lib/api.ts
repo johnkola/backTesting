@@ -36,6 +36,27 @@ export function isTradeable(instrument: { type: string }): boolean {
   return instrument.type !== 'INDEX'
 }
 
+export type Candle = {
+  timestamp: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+/**
+ * A price series for charting. `stride` is 1 when every bar is present and
+ * higher when the server strided a long range down — worth surfacing so a chart
+ * can say "1 in 3 bars" rather than implying it drew all of them.
+ */
+export type CandleSeries = {
+  items: Candle[]
+  total: number
+  returned: number
+  stride: number
+}
+
 export type Instrument = {
   id: string
   symbol: string
@@ -537,6 +558,10 @@ export const api = {
   ) => getJson<Paginated<ResultSummary>>(`/api/results?${qs(params)}`, signal),
   result: (id: string, signal?: AbortSignal) =>
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
+  candles: (
+    params: { instrument: string; source?: string; timeframe: string; from?: string; to?: string },
+    signal?: AbortSignal,
+  ) => getJson<CandleSeries>(`/api/candles?${qs(params)}`, signal),
   models: (signal?: AbortSignal) =>
     getJson<{ items: TrainedModel[]; modelsDir: string }>('/api/models', signal),
   strategies: (signal?: AbortSignal) =>
