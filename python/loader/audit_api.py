@@ -73,14 +73,7 @@ def post_audit(req: AuditRequest) -> JSONResponse:
             if req.examples:
                 # Already capped at EXAMPLE_CAP per category by the report
                 # itself, so a wholly-corrupt series can't blow up the response.
-                item["examples"] = [
-                    {
-                        "category": f.category,
-                        "timestamp": f.timestamp.isoformat() if f.timestamp else None,
-                        "detail": f.detail,
-                    }
-                    for f in report.examples
-                ]
+                item["examples"] = [f.to_dict() for f in report.examples]
             results.append(item)
 
     return JSONResponse(

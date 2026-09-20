@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from loader.cohesion import (
+    Finding,
     check_candles,
     check_gaps,
     check_import,
@@ -136,3 +137,38 @@ def test_check_import_flattens_year_buckets():
     report = check_import("Date,Open,High,Low,Close,Volume", rows_by_year, "D1")
     assert report.total_bars == 2
     assert report.ok
+
+
+def test_finding_timestamp_is_a_string_not_a_datetime():
+    """`Finding.timestamp` is already formatted, and callers must not re-convert.
+
+    `audit_api` used to call `.isoformat()` on it, which raised AttributeError
+    on every `POST /api/audit` that found something — the only case the endpoint
+    exists for, so the Instruments page's "Check data quality" button 500'd
+    whenever the data it checked was actually flawed. Pin the type here, where
+    it is cheap, rather than only in an integration test that needs Postgres.
+    """
+    candles = [("2024-01-02T00:00:00Z", 10.0, 9.0, 11.0, 10.0, 100.0)]  # high < low
+    findings = check_ohlc(candles)
+    assert findings, "expected the structural break to be flagged"
+    for f in findings:
+        assert isinstance(f.timestamp, str)
+        assert not hasattr(f.timestamp, "isoformat")
+
+
+def test_finding_to_dict_is_the_one_wire_shape():
+    """Both the import response and the audit response go through this."""
+    candles = [("2024-01-02T00:00:00Z", 10.0, 9.0, 11.0, 10.0, 100.0)]
+    f = check_ohlc(candles)[0]
+    d = f.to_dict()
+    assert set(d) == {"category", "timestamp", "detail"}
+    assert d["category"] == "ohlc"
+    assert isinstance(d["timestamp"], str)
+    # A report embeds exactly what the finding itself produces, so the two
+    # endpoints cannot drift into different shapes again.
+    report = check_candles(candles, "D1", checks={"ohlc"})
+    assert report.to_dict()["examples"][0] == d
+
+
+def test_finding_to_dict_maps_an_empty_timestamp_to_null():
+    assert Finding("ohlc", "", "detail").to_dict()["timestamp"] is None

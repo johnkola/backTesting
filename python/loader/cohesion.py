@@ -71,6 +71,22 @@ class Finding:
     timestamp: str
     detail: str
 
+    def to_dict(self) -> dict[str, object]:
+        """One finding in the shape every caller puts on the wire.
+
+        `timestamp` is **already** an ISO-8601 string: every construction site
+        passes it through `_ts_str`, which formats a datetime and falls back to
+        `str(value)`. Keeping the conversion here is what stops a caller
+        treating it as a datetime -- `audit_api` called `.isoformat()` on it and
+        so raised AttributeError on every audit that actually found something,
+        which is the only case the endpoint exists for.
+        """
+        return {
+            "category": self.category,
+            "timestamp": self.timestamp or None,
+            "detail": self.detail,
+        }
+
 
 @dataclass
 class CohesionReport:
@@ -98,10 +114,7 @@ class CohesionReport:
             "ok": self.ok,
             "totalIssues": self.total_issues,
             "counts": {cat: self.counts.get(cat, 0) for cat in CATEGORIES},
-            "examples": [
-                {"category": f.category, "timestamp": f.timestamp, "detail": f.detail}
-                for f in self.examples
-            ],
+            "examples": [f.to_dict() for f in self.examples],
         }
 
 
