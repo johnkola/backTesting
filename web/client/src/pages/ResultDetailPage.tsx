@@ -9,6 +9,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import FieldLabel, { tipClass } from '../components/FieldLabel'
+import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 
@@ -63,18 +65,22 @@ function DeleteResultButton({ id }: { id: string }) {
   return confirming ? (
     <div className="ml-auto flex items-center gap-2">
       <span className="text-sm text-base-content/70">Delete this result permanently?</span>
-      <button className="btn btn-sm btn-error" onClick={remove} disabled={deleting}>
-        {deleting && <span className="loading loading-spinner loading-xs" />}
-        Delete
-      </button>
+      <span className={tipClass} data-tip="Permanently removes this result — its metrics, trade table and equity curve. It cannot be undone, and the run would have to be repeated to get it back.">
+        <button className="btn btn-sm btn-error" onClick={remove} disabled={deleting}>
+          {deleting && <span className="loading loading-spinner loading-xs" />}
+          Delete
+        </button>
+      </span>
       <button className="btn btn-sm btn-ghost" onClick={() => setConfirming(false)} disabled={deleting}>
         Cancel
       </button>
     </div>
   ) : (
-    <button className="btn btn-sm btn-outline btn-error ml-auto" onClick={() => setConfirming(true)}>
-      Delete
-    </button>
+    <span className={tipClass} data-tip="Deletes this saved backtest. Asks for confirmation first; the candles it ran on are not touched.">
+      <button className="btn btn-sm btn-outline btn-error ml-auto" onClick={() => setConfirming(true)}>
+        Delete
+      </button>
+    </span>
   )
 }
 
@@ -97,6 +103,7 @@ export default function ResultDetailPage() {
     equity: p.equity,
   }))
 
+  const METRIC_LABEL = 'text-xs uppercase tracking-wide text-base-content/60'
   const metrics: Array<[string, string]> = [
     ['Total return', pct(detail.totalReturnPct)],
     ['Sharpe', num(detail.sharpeRatio)],
@@ -154,12 +161,20 @@ export default function ResultDetailPage() {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {metrics.map(([label, value]) => (
-          <div key={label} className="bg-base-200 rounded-box p-3">
-            <div className="text-xs uppercase tracking-wide text-base-content/60">{label}</div>
-            <div className="text-lg font-semibold tabular-nums">{value}</div>
-          </div>
-        ))}
+        {metrics.map(([label, value]) => {
+          // Same bargain as the form labels: the hint hangs off the label text,
+          // so a tile needs no separate marker. `bare` drops the wrapping label
+          // row, and the className overrides `label-text` with the tile's scale.
+          const hint = metricHint(label)
+          return (
+            <div key={label} className="bg-base-200 rounded-box p-3">
+              {hint
+                ? <FieldLabel bare text={label} hint={hint} className={METRIC_LABEL} />
+                : <div className={METRIC_LABEL}>{label}</div>}
+              <div className="text-lg font-semibold tabular-nums">{value}</div>
+            </div>
+          )
+        })}
       </div>
 
       <div className="bg-base-200 rounded-box p-4">

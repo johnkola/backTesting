@@ -81,12 +81,14 @@ export default function ResultsPage() {
           />
         </span>
         {(strategy || instrument || source) && (
-          <button
-            className="btn btn-sm btn-ghost"
-            onClick={() => setParams(new URLSearchParams(), { replace: true })}
-          >
-            clear
-          </button>
+          <span className={tipClass} data-tip="Clears every filter and returns to all saved runs.">
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => setParams(new URLSearchParams(), { replace: true })}
+            >
+              clear
+            </button>
+          </span>
         )}
       </div>
 

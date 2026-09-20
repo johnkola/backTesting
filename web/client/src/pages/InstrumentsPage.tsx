@@ -61,10 +61,15 @@ function AuditButton({ symbol }: { symbol: string }) {
   return (
     <div className="mt-3">
       <div className="flex items-center gap-3">
-        <button className="btn btn-sm btn-outline" onClick={run} disabled={running}>
-          {running && <span className="loading loading-spinner loading-xs" />}
-          Check data quality
-        </button>
+        <span
+          className={tipClass}
+          data-tip="Re-runs the cohesion checks over the candles already stored: gaps, duplicate or out-of-order timestamps, structural breaks, outliers. Read-only, and findings are advice rather than a blocker."
+        >
+          <button className="btn btn-sm btn-outline" onClick={run} disabled={running}>
+            {running && <span className="loading loading-spinner loading-xs" />}
+            Check data quality
+          </button>
+        </span>
         {report && (
           <span className={`badge ${report.ok ? 'badge-success' : 'badge-warning'}`}>
             {report.ok
@@ -219,13 +224,18 @@ function AggregateButton({
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        <button className="btn btn-xs btn-outline" onClick={run} disabled={busy}>
-          {busy && <span className="loading loading-spinner loading-xs" />}
-          Roll up → W1 · MN1
-        </button>
+        <span
+          className={tipClass}
+          data-tip="Builds weekly and monthly candles from this daily series. A timeframe that already has rows is skipped, not refreshed — tick force to rebuild one after importing more daily candles."
+        >
+          <button className="btn btn-xs btn-outline" onClick={run} disabled={busy}>
+            {busy && <span className="loading loading-spinner loading-xs" />}
+            Roll up → W1 · MN1
+          </button>
+        </span>
         <label
           className={`label cursor-pointer gap-1 p-0 ${tipClass}`}
-          data-tip="Rebuild even if the target rollup already exists"
+          data-tip="Rebuild a rollup that already has rows, instead of skipping it. Use this after importing more daily candles."
         >
           <input
             type="checkbox"

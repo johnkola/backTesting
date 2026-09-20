@@ -5,6 +5,7 @@ import {
   type Instrument, type RunResult, type Strategy,
 } from '../lib/api'
 import FieldLabel from '../components/FieldLabel'
+import { metricHint } from '../lib/metricHints'
 
 /**
  * Run a backtest. The instrument, source and timeframe options come from what
@@ -336,10 +337,24 @@ function RunSummary({ result }: { result: RunResult }) {
   )
 }
 
+/**
+ * One metric tile. The label carries its own explanation, the same bargain
+ * FieldLabel strikes on the form above — the hint hangs off the label text
+ * rather than a separate marker beside it. `bare` drops FieldLabel's wrapping
+ * label row, which belongs to a form control and not to a tile, and the
+ * className overrides `label-text` with the tile's own type scale. A metric
+ * with no hint renders as a plain label rather than an empty bubble.
+ */
+const STAT_LABEL = 'text-xs uppercase tracking-wide text-base-content/50'
+
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'error' }) {
+  const hint = metricHint(label)
+
   return (
     <div className="bg-base-100 rounded-box px-3 py-2">
-      <div className="text-xs uppercase tracking-wide text-base-content/50">{label}</div>
+      {hint
+        ? <FieldLabel bare text={label} hint={hint} className={STAT_LABEL} />
+        : <div className={STAT_LABEL}>{label}</div>}
       <div className={`text-lg font-semibold tabular-nums ${tone ? `text-${tone}` : ''}`}>{value}</div>
     </div>
   )

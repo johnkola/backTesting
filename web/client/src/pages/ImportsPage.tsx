@@ -36,6 +36,18 @@ const COLUMNS: { key: SortKey | null; label: string; align?: 'right' }[] = [
   { key: 'rows', label: 'Rows', align: 'right' },
   { key: null, label: '' },
 ]
+/**
+ * Hint for a sortable column header. The superseded-highlight caveat only makes
+ * sense on the other columns — on Imported itself it would read as a warning
+ * about the ordering you are already in, so it is left off there.
+ */
+function sortHint(label: string, key: SortKey): string {
+  const base = `Sort by ${label.toLowerCase()}. Click again to reverse.`
+  return key === 'imported'
+    ? `${base} This is the default ordering, and the only one under which the superseded highlight holds.`
+    : `${base} Sorting by this turns off the superseded highlight, which only holds under newest-first.`
+}
+
 const DEFAULT_DIR: Record<SortKey, SortDir> = {
   imported: 'desc', rows: 'desc',
   source: 'asc', instrument: 'asc', timeframe: 'asc', archive: 'asc', file: 'asc',
@@ -125,9 +137,11 @@ export default function ImportsPage() {
           />
         </span>
         {(source || instrument) && (
-          <button className="btn btn-sm btn-ghost" onClick={() => applyFilters('', '')}>
-            clear
-          </button>
+          <span className={tipClass} data-tip="Clears both filters and returns to the full import log.">
+            <button className="btn btn-sm btn-ghost" onClick={() => applyFilters('', '')}>
+              clear
+            </button>
+          </span>
         )}
       </div>
 
@@ -142,17 +156,22 @@ export default function ImportsPage() {
                   {COLUMNS.map((c) => (
                     <th key={c.label} className={c.align === 'right' ? 'text-right' : undefined}>
                       {c.key ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 hover:text-primary"
-                          onClick={() => toggleSort(c.key!)}
-                          aria-sort={sort === c.key ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        <span
+                          className={tipClass}
+                          data-tip={sortHint(c.label, c.key!)}
                         >
-                          {c.label}
-                          <span className="opacity-60 w-2 text-xs">
-                            {sort === c.key ? (dir === 'asc' ? '▲' : '▼') : ''}
-                          </span>
-                        </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 hover:text-primary"
+                            onClick={() => toggleSort(c.key!)}
+                            aria-sort={sort === c.key ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          >
+                            {c.label}
+                            <span className="opacity-60 w-2 text-xs">
+                              {sort === c.key ? (dir === 'asc' ? '▲' : '▼') : ''}
+                            </span>
+                          </button>
+                        </span>
                       ) : c.label}
                     </th>
                   ))}
@@ -256,10 +275,10 @@ function DeleteImportButton({
     <>
       <button
         type="button"
-        className="btn btn-ghost btn-xs text-error"
+        className={`btn btn-ghost btn-xs text-error ${tipClass}`}
         onClick={openPreview}
         disabled={busy}
-        title={`Undo import #${record.id}`}
+        data-tip="Deletes the candles this import wrote, within its slice year, and its audit row. The archived CSV is kept, so you can re-import it. You get a count to confirm first."
         aria-label={`Undo import ${record.id}`}
       >
         {busy && !preview ? <span className="loading loading-spinner loading-xs" /> : 'Undo'}

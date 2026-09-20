@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type TrainedModel } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import { tipClass } from '../components/FieldLabel'
 
 function pct(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -132,8 +133,8 @@ export default function ModelsPage() {
                         {m.backtestCount > 0 ? (
                           <Link
                             to={`/results?strategy=${encodeURIComponent(m.strategyName ?? '')}`}
-                            className="link link-hover"
-                            title="Filter results by this strategy"
+                            className={`link link-hover ${tipClass}`}
+                            data-tip="How many saved backtests reused this cached model. Opens the Results page filtered to this strategy."
                           >
                             {m.backtestCount}
                           </Link>
@@ -150,12 +151,17 @@ export default function ModelsPage() {
                         </span>
                       </td>
                       <td>
-                        <button
-                          className="btn btn-xs btn-ghost"
-                          onClick={() => setExpanded(isOpen ? null : key)}
+                        <span
+                          className={tipClass}
+                          data-tip="Show the hyperparameters this model was trained with. They are part of the cache key, so a different set trains a separate model."
                         >
-                          {isOpen ? 'hide' : 'params'}
-                        </button>
+                          <button
+                            className="btn btn-xs btn-ghost"
+                            onClick={() => setExpanded(isOpen ? null : key)}
+                          >
+                            {isOpen ? 'hide' : 'params'}
+                          </button>
+                        </span>
                       </td>
                     </tr>
                     {isOpen && (
