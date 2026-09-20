@@ -281,6 +281,75 @@ export type Strategy = {
   requiresTrainedModel: boolean
 }
 
+/**
+ * A training request, in the client's own vocabulary. `since`/`until` are
+ * deliberately absent: the caller must not choose them by hand, because the
+ * window decides the model's cache key. See `engineWindow` below.
+ */
+export type TrainRequest = {
+  symbol: string
+  source: string
+  timeframe: string
+  /** First stored candle for the series, ISO-8601 — from GET /api/instruments. */
+  firstCandle: string
+  /** Last stored candle for the series, ISO-8601. */
+  lastCandle: string
+  /** 'auto' reuses a model already cached under the same key; 'force' retrains. */
+  mode: 'auto' | 'force'
+  /** camelCase hyperparameter overrides, as the strategy form spells them. */
+  parameters: Record<string, string>
+}
+
+export type TrainResponse = {
+  status: string
+  strategy: string
+  cacheKey: string
+  versionId: string
+  symbol?: string
+  source?: string
+  timeframe?: string
+  trainSamples?: number
+  valSamples?: number
+  finalTrainAcc?: number
+  finalValAcc?: number
+  finalTrainLoss?: number
+  finalValLoss?: number
+}
+
+/** Milliseconds in one bar of each timeframe, for the window arithmetic below. */
+const BAR_MS: Record<string, number> = {
+  M1: 60_000, M5: 300_000, M15: 900_000, M30: 1_800_000,
+  H1: 3_600_000, H4: 14_400_000, D1: 86_400_000,
+  W1: 604_800_000, MN1: 2_592_000_000,
+}
+
+/**
+ * The candle window the ENGINE will ask the loader for, given a series' first
+ * and last stored candle.
+ *
+ * This is the whole reason training has a page rather than a curl. The model's
+ * cache key fingerprints the exact candle set it trained on, and the engine
+ * addresses candles by Ta4j **bar end** times — one bar later than the stored
+ * timestamps. Train on the nominal range and the key differs from the one a
+ * later run computes, so the run fails with 409 while a perfectly good model
+ * sits on disk. Pass these bounds instead and the two agree.
+ *
+ * MN1 is approximated as 30 days, which is enough to land inside the next bar.
+ */
+export function engineWindow(
+  timeframe: string, firstCandle: string, lastCandle: string,
+): { since: string; until: string } {
+  const step = BAR_MS[timeframe] ?? BAR_MS.D1
+  const since = new Date(new Date(firstCandle).getTime() + step)
+  const until = new Date(new Date(lastCandle).getTime() + step + 1)
+  return { since: since.toISOString(), until: until.toISOString() }
+}
+
+/** camelCase (the Java strategy's vocabulary) -> snake_case (the loader's). */
+function toSnake(key: string): string {
+  return key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+}
+
 export type RunRequest = {
   strategy: string
   instrument: string
@@ -473,6 +542,25 @@ export const api = {
     ),
   /** Runs a backtest and returns the saved result. Synchronous: expect ~a second. */
   run: (req: RunRequest) => sendJson<RunResult>('/api/run', 'POST', req),
+  /**
+   * Trains a model for a strategy that needs one. Synchronous and slow — tens
+   * of seconds for a long daily series — so callers should show progress.
+   * Numeric hyperparameters are sent as numbers, since the loader's schema
+   * types them and would reject strings.
+   */
+  train: (req: TrainRequest) => {
+    const { since, until } = engineWindow(req.timeframe, req.firstCandle, req.lastCandle)
+    const body: Record<string, unknown> = {
+      symbol: req.symbol, source: req.source, timeframe: req.timeframe,
+      since, until, mode: req.mode,
+    }
+    for (const [k, v] of Object.entries(req.parameters)) {
+      if (v === '' || v === undefined) continue
+      const n = Number(v)
+      body[toSnake(k)] = Number.isFinite(n) ? n : v
+    }
+    return sendJson<TrainResponse>('/api/nn/train', 'POST', body)
+  },
   deleteResult: (id: string | number) =>
     sendJson<{ status: string; id: number }>(`/api/results/${encodeURIComponent(String(id))}`, 'DELETE'),
   /** Preview an import undo: returns the candle count without deleting anything. */

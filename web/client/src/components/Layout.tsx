@@ -6,6 +6,7 @@ const links = [
   { to: '/sources', label: 'Sources' },
   { to: '/instruments', label: 'Instruments' },
   { to: '/imports', label: 'Imports' },
+  { to: '/train', label: 'Train' },
   { to: '/run', label: 'Run' },
   { to: '/results', label: 'Results' },
   { to: '/models', label: 'Models' },

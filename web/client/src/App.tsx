@@ -7,6 +7,7 @@ import InstrumentsPage from './pages/InstrumentsPage'
 import ImportsPage from './pages/ImportsPage'
 import ResultsPage from './pages/ResultsPage'
 import RunPage from './pages/RunPage'
+import TrainPage from './pages/TrainPage'
 import ResultDetailPage from './pages/ResultDetailPage'
 import ModelsPage from './pages/ModelsPage'
 import DocsPage from './pages/DocsPage'
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="/instruments" element={<InstrumentsPage />} />
             <Route path="/imports" element={<ImportsPage />} />
             <Route path="/run" element={<RunPage />} />
+            <Route path="/train" element={<TrainPage />} />
             <Route path="/results" element={<ResultsPage />} />
             <Route path="/results/:id" element={<ResultDetailPage />} />
             <Route path="/models" element={<ModelsPage />} />
