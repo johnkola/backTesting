@@ -61,6 +61,26 @@ line rather than told twice.
 - Code fences balance in all three (README 34, ARCHITECTURE 8, GETTING-STARTED 20).
 - **Not run:** the Java and Python suites — this pass changed documentation only; no file under `src/`, `python/` or `web/` was touched.
 
+### Follow-up, same day — found by a user question, not by reading
+
+A user asked what `gap` and `outlier` mean on the Instruments page. Answering it
+against the code turned up two behaviours that are load-bearing for how you read a
+finding and were documented nowhere — including in `check_gaps`'s own docstring,
+which claims to be the authority on the heuristic's caveats.
+
+| # | Gap | Fix | Status |
+|---|-----|-----|--------|
+| 19 | **Unscheduled market closures always read as gaps.** `market_calendar.py` computes the NYSE schedule by rule, so it knows every *scheduled* closure and no *unscheduled* one. A daily QQQ history reports exactly six: 9/11, Hurricane Sandy, and the Ford and Reagan days of mourning. The docs listed the calendar's US-equity scope and its unmodelled half-days, but never this — so the six findings read as missing data when the series is complete. | New README section, *Reading a gap or outlier finding*, naming all four closures against the finding text they produce. ARCHITECTURE gets why a rules-computed calendar cannot express them and why the trade is deliberate; `check_gaps`'s docstring gets the same list at source. | fixed |
+| 20 | **The outlier volume median spans the whole series, not a window.** A symbol whose liquidity grew by orders of magnitude anchors its median in its thin early years, so genuinely busy recent sessions clear `20×` legitimately. Nothing said which median, so the fix (narrow the range) was not discoverable — raising `volume_factor`, the obvious move, is the wrong one. | Stated in the README table row, the new section, ARCHITECTURE's `check_candles` paragraph, and `check_outliers`'s docstring. | fixed |
+
+Both were split along the pass-4 ownership rule rather than written twice: README says
+what you will see and how to judge it, ARCHITECTURE says why the checker cannot know
+better. The code docstrings carry the same facts because they are what a reader of
+`cohesion.py` will reach for first.
+
+Verification: 80 links across the three docs (up from 78) all resolve against the ids
+the API emits; `loader.cohesion` still imports and `Finding.to_dict()` is unchanged.
+
 ### Checked and left alone — deliberate, not overlap
 
 - **`ARCHITECTURE.md` states the CSV import outcomes twice**, once in the Beginner's Guide (a four-row *outcome* table: created / skipped / overwritten / conflict) and once in § CSV archive (a four-row *decision* table keyed by existing-row / hash-match / force). They answer different questions — "what did I just see?" versus "what will the loader do?" — and the two sections already cross-link.

@@ -194,6 +194,13 @@ def check_gaps(candles: Sequence[Candle], timeframe: str) -> list[Finding]:
         US-equity scope and its caveats for non-US / 24-7 instruments).
       * W1       — missing = round(delta / 7d) - 1.
       * MN1      — missing = whole months between bars - 1.
+
+    Known false positives, all of them the calendar's ceiling rather than this
+    function's: the schedule is computed by rule, so it covers every SCHEDULED
+    closure and no UNSCHEDULED one. 9/11 (2001-09-11..14), Hurricane Sandy
+    (2012-10-29..30) and the days of mourning for Ford (2007-01-02) and Reagan
+    (2004-06-11) are reported as gaps in any long US equity history and are not
+    missing data. Intraday half-days are not modelled either.
     """
     times = sorted({_coerce_ts(row[0]) for row in candles})
     out: list[Finding] = []
@@ -241,7 +248,16 @@ def check_outliers(
     volume_factor: float = DEFAULT_VOLUME_FACTOR,
 ) -> list[Finding]:
     """Bar-to-bar close moves beyond ±return_threshold and volumes beyond
-    volume_factor × the series median. Evaluated in input order."""
+    volume_factor × the series median. Evaluated in input order.
+
+    The median is over EVERY bar passed in, not a trailing window — cheap and
+    stable, but it anchors in the thin early years of a series whose liquidity
+    grew, so busy recent sessions can clear the threshold legitimately. Narrow
+    the range rather than raising the factor when that happens.
+
+    Both thresholds are deliberately loose: they look for broken data (a
+    decimal slip, a split applied to price but not volume, a corrupt row), not
+    for unusual trading days."""
     out: list[Finding] = []
     rows = list(candles)
 

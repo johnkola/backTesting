@@ -223,7 +223,7 @@ A **read-only advisory layer** (`python/loader/cohesion.py`) validates OHLCV can
 | `duplicate` | The same timestamp appearing more than once (visible pre-dedup; the DB upsert collapses these) |
 | `order` | Timestamps not strictly increasing in the input |
 | `gap` | Missing bars for the timeframe — trading-day-aware for `D1` (neither weekends nor NYSE holidays count, via `loader.market_calendar`), same-day-only for intraday (overnight/weekend boundaries aren't gaps), whole-weeks for `W1`, month-based for `MN1` |
-| `outlier` | Bar-to-bar close moves beyond ±50% or volume beyond 20× the series median — the shape of a bad data blob |
+| `outlier` | Bar-to-bar close moves beyond ±50%, or volume beyond 20× the median of the **whole series** — the shape of a bad data blob, not of an unusual trading day |
 
 It runs at three call sites, all report-only:
 
@@ -237,7 +237,45 @@ It runs at three call sites, all report-only:
   python -m loader.audit --checks ohlc,gap -v          # subset of checks + example findings
   ```
 
-  `audit` is read-only: exit `0` when clean, `1` when any series has findings (handy for CI), and it never writes or deletes. Outlier thresholds are overridable in the API (`return_threshold`, `volume_factor`); the remaining gap-heuristic caveats are documented in `check_gaps` — the holiday calendar is NYSE-only, so non-US and 24-7 (crypto) instruments can still show holiday false positives, and intraday half-days aren't modelled.
+  `audit` is read-only: exit `0` when clean, `1` when any series has findings (handy for CI), and it never writes or deletes. Outlier thresholds are overridable in the API (`return_threshold`, `volume_factor`); the remaining gap-heuristic caveats are documented in `check_gaps`. See [Reading a gap or outlier finding](#reading-a-gap-or-outlier-finding) below before acting on either.
+
+### Reading a gap or outlier finding
+
+Both checks are heuristics tuned to catch broken *data*, not unusual *markets*.
+Each has a known class of false positive, and knowing them saves you chasing a
+finding that is correct about the bars and wrong about the world.
+
+**A `gap` can be a day the exchange was shut for a reason no calendar knows.**
+`loader/market_calendar.py` computes the NYSE schedule by rule — floating
+holidays by nth or last weekday, fixed dates with the observance shift, Good
+Friday off Easter — so it knows every **scheduled** closure and no
+**unscheduled** one. Those show up as gaps in any long US equity history:
+
+| Finding you will see | What actually happened |
+|---|---|
+| `~4 missing bar(s) since 2001-09-10` | The exchange was closed 11–14 September 2001 |
+| `~2 missing bar(s) since 2012-10-26` | Hurricane Sandy, 29–30 October 2012 |
+| `~1 missing bar since 2006-12-29` | National day of mourning for Gerald Ford, 2 January 2007 |
+| `~1 missing bar since 2004-06-10` | National day of mourning for Ronald Reagan, 11 June 2004 |
+
+A daily QQQ history back to 1999 reports exactly these six bars and is complete.
+Two further sources of false gaps: the calendar is **US-equity only**, so non-US
+symbols and 24-7 crypto flag every US holiday, and intraday **half-days** (the
+1pm closes around Thanksgiving and Christmas) are not modelled.
+
+**An `outlier` is measured against the whole series, not a recent window.** The
+volume test compares each bar to `20 × the median volume of every bar in the
+series`. For a symbol whose liquidity grew by orders of magnitude over decades,
+the median sits in its thin early years, so genuinely busy recent sessions can
+clear the threshold. Narrow the range, or raise `volume_factor`, before reading
+those as corrupt.
+
+The ±50% close-move threshold is deliberately loose for the same reason: at that
+size the cause is almost always a decimal slip, a split applied to price but not
+to volume, or a bad row — not a real session. Neither test is trying to find
+interesting days, and a clean run means "nothing is obviously broken", not
+"nothing unusual happened".
+
 
 ## Architecture
 
