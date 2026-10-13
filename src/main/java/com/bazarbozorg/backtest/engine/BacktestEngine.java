@@ -87,6 +87,20 @@ public class BacktestEngine {
     }
 
     /**
+     * A bar's own date -- the timestamp it was stored under, not the instant it
+     * ends.
+     *
+     * <p>Ta4j bars carry an end instant, and {@code BarSeriesConverter} builds it
+     * as {@code timestamp + timeframe}, so a daily bar for the 15th reports the
+     * 16th. Everything that reads candles back ({@code /api/candles}, the
+     * feature pipeline) keys on the stored timestamp, so a date derived from the
+     * end instant cannot be used to look the bar up again.
+     */
+    static ZonedDateTime barDate(Bar bar) {
+        return ZonedDateTime.ofInstant(bar.getEndTime().minus(bar.getTimePeriod()), ZoneOffset.UTC);
+    }
+
+    /**
      * Runs a backtest for the given strategy over the specified instrument and time range.
      * <p>
      * The run method:
@@ -201,7 +215,7 @@ public class BacktestEngine {
 
         // Step 7: Build and return BacktestResult
         Bar lastBar2 = series.getBar(series.getBarCount() - 1);
-        ZonedDateTime endDate = ZonedDateTime.ofInstant(lastBar2.getEndTime(), ZoneOffset.UTC);
+        ZonedDateTime endDate = barDate(lastBar2);
         double lastClose = lastBar2.getClosePrice().doubleValue();
 
         // Buy-and-hold is the benchmark the strategy is judged against, so it has
@@ -220,7 +234,16 @@ public class BacktestEngine {
         // claiming to cover a period its own numbers exclude is a result nobody
         // can check. A warmup-shortened range is also useful on its own -- it is
         // how you notice that a 200-bar warmup ate most of a one-year window.
-        ZonedDateTime startDate = ZonedDateTime.ofInstant(firstBar.getEndTime(), ZoneOffset.UTC);
+        //
+        // Reported as each bar's OWN date, via barDate(), not its end instant.
+        // BarSeriesConverter sets endTime = timestamp + one period, so a daily
+        // bar dated the 15th ends on the 16th. Reporting the end instant made
+        // the range unreproducible: /api/candles filters on a bar's timestamp,
+        // so re-deriving buy-and-hold from the reported start silently dropped
+        // the first bar and came out low -- on one stored run, 40.42% against a
+        // correct 41.57%. The benchmark arithmetic was right all along; only
+        // the label disagreed with it.
+        ZonedDateTime startDate = barDate(firstBar);
 
         double buyAndHoldReturnPct = buyAndHoldReturnPct(firstClose, lastClose);
 
