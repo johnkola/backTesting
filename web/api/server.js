@@ -31,6 +31,14 @@ const MAINTENANCE_MESSAGE =
 // client blocks its first paint on /api/health, so a hung service must fail
 // fast enough to show the maintenance page rather than an indefinite spinner.
 const HEALTH_TIMEOUT_MS = Number(process.env.HEALTH_TIMEOUT_MS) || 3000;
+// Longer than a health probe: this one parses a config rather than answering
+// a ping.
+const FEATURES_TIMEOUT_MS = Number(process.env.FEATURES_TIMEOUT_MS) || 8000;
+// Chronological split boundaries, from the design: training runs from 2003,
+// validation folds land on 2016-2021, and 2022 onward is the untouched test
+// block. Env-overridable because the design says the boundaries can slide.
+const SPLIT_FIRST_VAL = process.env.SPLIT_FIRST_VAL || '2016-01-01';
+const SPLIT_FIRST_TEST = process.env.SPLIT_FIRST_TEST || '2022-01-01';
 
 const app = express();
 // This process is the API, and only the API — the React client is served
@@ -366,6 +374,10 @@ app.get('/api/imports', async (req, res) => {
       params.push(req.query.instrument);
       where.push(`i.symbol = $${params.length}`);
     }
+    if (req.query.timeframe) {
+      params.push(req.query.timeframe);
+      where.push(`di.timeframe = $${params.length}`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // Whitelist sort columns (never interpolate raw query input into SQL). The
@@ -502,7 +514,37 @@ app.get('/api/results', async (req, res) => {
       params.push(req.query.source);
       where.push(`data_source = $${params.length}`);
     }
+    if (req.query.timeframe) {
+      params.push(req.query.timeframe);
+      where.push(`timeframe = $${params.length}`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Same whitelist discipline as /api/imports: the client sends a logical
+    // key, never a column. `id DESC` is appended as a stable tiebreak so
+    // pagination cannot repeat or skip a row.
+    //
+    // NULLS LAST on every direction is deliberate. A result with no return
+    // figures sorts to the bottom either way rather than topping a descending
+    // sort, because "unknown" is not "best".
+    const RESULT_SORT_COLUMNS = {
+      created: 'created_at',
+      instrument: 'instrument_symbol',
+      strategy: 'strategy_name',
+      timeframe: 'timeframe',
+      source: 'data_source',
+      return: 'total_return_pct',
+      hold: "(result_json::json->'metrics'->>'buyAndHoldReturnPct')::double precision",
+      excess: "total_return_pct - (result_json::json->'metrics'->>'buyAndHoldReturnPct')::double precision",
+      sharpe: 'sharpe_ratio',
+      drawdown: 'max_drawdown_pct',
+      trades: 'total_trades',
+      winrate: 'win_rate',
+    };
+    const resultSortCol = RESULT_SORT_COLUMNS[req.query.sort] ?? RESULT_SORT_COLUMNS.created;
+    const resultSortDir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
+    const resultOrderSql =
+      `ORDER BY ${resultSortCol} ${resultSortDir} NULLS LAST, id DESC`;
 
     const countSql = `SELECT COUNT(*) AS total FROM backtest_results ${whereSql}`;
 
@@ -521,7 +563,7 @@ app.get('/api/results', async (req, res) => {
                AS buy_and_hold_return_pct
         FROM backtest_results
         ${whereSql}
-        ORDER BY created_at DESC, id DESC
+        ${resultOrderSql}
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
 
     const [{ rows: countRows }, { rows: items }] = await Promise.all([
@@ -710,7 +752,15 @@ function readModelsFromDisk() {
 
 app.get('/api/models', async (req, res) => {
   try {
-    const entries = readModelsFromDisk();
+    const wantTimeframe = typeof req.query.timeframe === 'string' && req.query.timeframe
+      ? req.query.timeframe
+      : null;
+    // A null timeframe is kept, not filtered out: the loader does not record
+    // what it trained on, so excluding nulls would hide every loader-trained
+    // model the moment a timeframe is chosen. The client marks them instead.
+    const entries = wantTimeframe
+      ? readModelsFromDisk().filter((e) => e.timeframe == null || e.timeframe === wantTimeframe)
+      : readModelsFromDisk();
     if (entries.length === 0) {
       return res.json({ items: [], modelsDir });
     }
@@ -778,6 +828,13 @@ app.get('/api/models', async (req, res) => {
 
 app.get('/api/instruments', async (req, res) => {
   try {
+    // With a timeframe set, an instrument is only shown when it actually holds
+    // bars of that size — an instrument listing every symbol with an empty
+    // slice table would defeat the point of the filter.
+    const timeframe = typeof req.query.timeframe === 'string' && req.query.timeframe
+      ? req.query.timeframe
+      : null;
+
     const instrumentsQ = pool.query(
       `SELECT id, symbol, name, type, price_precision, pip_size
          FROM instruments
@@ -793,8 +850,10 @@ app.get('/api/instruments', async (req, res) => {
               MAX(c.timestamp) AS to_date
          FROM candles c
          JOIN data_sources ds ON ds.id = c.source_id
+        WHERE ($1::text IS NULL OR c.timeframe = $1)
         GROUP BY c.instrument_id, c.source_id, ds.name, c.timeframe
         ORDER BY ds.name, c.timeframe`,
+      [timeframe],
     );
     const [{ rows: instruments }, { rows: breakdown }] = await Promise.all([instrumentsQ, breakdownQ]);
 
@@ -822,11 +881,234 @@ app.get('/api/instruments', async (req, res) => {
         toDate: b.to_date,
       });
     }
-    res.json({ items: Array.from(bySymbol.values()) });
+    const items = Array.from(bySymbol.values());
+    res.json({
+      items: timeframe ? items.filter((i) => i.sources.length > 0) : items,
+      timeframe,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// The feature table: what the model eats, and which sets have been built from
+// it. Two halves from two places — the config is the Python side's to parse
+// (see the loader endpoint), the built sets are rows in Postgres.
+app.get('/api/features', async (req, res) => {
+  try {
+    // Which bar size to report. The config is timeframe-independent — it
+    // describes the columns, not the bars — so only the built sets filter.
+    const timeframe = typeof req.query.timeframe === 'string' && req.query.timeframe
+      ? req.query.timeframe
+      : null;
+
+    const setsQ = pool.query(
+      `SELECT fs.id,
+              i.symbol,
+              ds.name AS source_name,
+              fs.timeframe,
+              fs.schema_version,
+              fs.config_hash,
+              fs.fill_mode,
+              fs.max_fill_days,
+              fs.first_complete_date,
+              fs.row_count,
+              fs.built_at
+         FROM feature_sets fs
+         JOIN instruments i ON i.id = fs.instrument_id
+         JOIN data_sources ds ON ds.id = fs.source_id
+        WHERE ($1::text IS NULL OR fs.timeframe = $1)
+        ORDER BY fs.id DESC`,
+      [timeframe],
+    );
+    const specQ = pool.query(
+      `SELECT s.feature_set_id, s.feature_name, s.method, s.params_json, s.column_index
+         FROM feature_spec s
+         JOIN feature_sets fs ON fs.id = s.feature_set_id
+        WHERE ($1::text IS NULL OR fs.timeframe = $1)
+        ORDER BY s.feature_set_id, s.column_index`,
+      [timeframe],
+    );
+    // NULLs are counted, not filtered: a rolling window is genuinely unknown
+    // until it fills, and that count is how you tell a warm-up edge from a
+    // broken column.
+    const statsQ = pool.query(
+      `SELECT v.feature_set_id,
+              COUNT(*) AS value_count,
+              COUNT(*) FILTER (WHERE v.value IS NULL) AS null_count,
+              MIN(v.timestamp) AS from_date,
+              MAX(v.timestamp) AS to_date
+         FROM feature_values v
+         JOIN feature_sets fs ON fs.id = v.feature_set_id
+        WHERE ($1::text IS NULL OR fs.timeframe = $1)
+        GROUP BY v.feature_set_id`,
+      [timeframe],
+    );
+
+    // The config is fetched alongside but must not be able to fail the page:
+    // a broken features.toml is exactly when you want to read this tab.
+    const configP = getUpstreamJson(`${LOADER_URL}/api/nn/features/config`, FEATURES_TIMEOUT_MS)
+      .then((config) => ({ config, configError: null }))
+      .catch((err) => ({ config: null, configError: err.message }));
+
+    const [{ rows: sets }, { rows: spec }, { rows: stats }, { config, configError }] =
+      await Promise.all([setsQ, specQ, statsQ, configP]);
+
+    // Per-column distribution of the newest set only. Scoped to one set on
+    // purpose: this is a scan of feature_values, and every set would multiply
+    // it for data the page does not show.
+    const newestId = sets.length ? sets[0].id : null;
+    let columnStats = [];
+    if (newestId !== null) {
+      const { rows } = await pool.query(
+        `SELECT feature_name,
+                COUNT(value) AS n,
+                COUNT(*) FILTER (WHERE value IS NULL) AS nulls,
+                MIN(value) AS min,
+                MAX(value) AS max,
+                AVG(value) AS mean,
+                STDDEV_POP(value) AS stdev
+           FROM feature_values
+          WHERE feature_set_id = $1
+          GROUP BY feature_name`,
+        [newestId],
+      );
+      columnStats = rows.map((r) => ({
+        name: r.feature_name,
+        n: Number(r.n),
+        nulls: Number(r.nulls),
+        min: r.min === null ? null : Number(r.min),
+        max: r.max === null ? null : Number(r.max),
+        mean: r.mean === null ? null : Number(r.mean),
+        stdev: r.stdev === null ? null : Number(r.stdev),
+      }));
+    }
+
+    // Row counts per chronological block, from the set's own dates. The
+    // boundaries are the design's: train from 2003, walk-forward validation
+    // folds 2016-2021, and the 2022-onward block held back as the final exam.
+    let split = null;
+    if (newestId !== null) {
+      const { rows } = await pool.query(
+        `SELECT CASE
+                  WHEN timestamp < $2 THEN 'train'
+                  WHEN timestamp < $3 THEN 'validation'
+                  ELSE 'test'
+                END AS block,
+                COUNT(DISTINCT timestamp) AS rows,
+                MIN(timestamp) AS from_date,
+                MAX(timestamp) AS to_date
+           FROM feature_values
+          WHERE feature_set_id = $1
+          GROUP BY 1`,
+        [newestId, SPLIT_FIRST_VAL, SPLIT_FIRST_TEST],
+      );
+      const byBlock = new Map(rows.map((r) => [r.block, r]));
+      split = {
+        firstValidationYear: new Date(SPLIT_FIRST_VAL).getUTCFullYear(),
+        firstTestYear: new Date(SPLIT_FIRST_TEST).getUTCFullYear(),
+        blocks: ['train', 'validation', 'test'].map((block) => {
+          const r = byBlock.get(block);
+          return {
+            block,
+            rows: r ? Number(r.rows) : 0,
+            fromDate: r ? r.from_date : null,
+            toDate: r ? r.to_date : null,
+          };
+        }),
+      };
+    }
+
+    const specBySet = new Map();
+    for (const s of spec) {
+      if (!specBySet.has(s.feature_set_id)) specBySet.set(s.feature_set_id, []);
+      specBySet.get(s.feature_set_id).push({
+        name: s.feature_name,
+        method: s.method,
+        params: parseJsonOr(s.params_json, {}),
+        columnIndex: s.column_index,
+      });
+    }
+    const statsBySet = new Map(stats.map((s) => [s.feature_set_id, s]));
+
+    res.json({
+      config,
+      configError,
+      timeframe,
+      newestSetId: newestId === null ? null : String(newestId),
+      columnStats,
+      split,
+      sets: sets.map((s) => {
+        const st = statsBySet.get(s.id);
+        return {
+          id: String(s.id),
+          symbol: s.symbol,
+          sourceName: s.source_name,
+          timeframe: s.timeframe,
+          schemaVersion: s.schema_version,
+          configHash: s.config_hash,
+          fillMode: s.fill_mode,
+          maxFillDays: s.max_fill_days,
+          firstCompleteDate: s.first_complete_date,
+          rowCount: s.row_count,
+          builtAt: s.built_at,
+          columnCount: (specBySet.get(s.id) || []).length,
+          valueCount: st ? Number(st.value_count) : 0,
+          nullCount: st ? Number(st.null_count) : 0,
+          fromDate: st ? st.from_date : null,
+          toDate: st ? st.to_date : null,
+          columns: specBySet.get(s.id) || [],
+        };
+      }),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** params_json and series_json are TEXT holding JSON; a malformed one should
+ *  not take the whole response down. */
+function parseJsonOr(raw, fallback) {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+/** GETs JSON from an upstream service. getUpstream only reports reachability;
+ *  this one needs the body. */
+function getUpstreamJson(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const r = http.get(url, { timeout: timeoutMs }, (resp) => {
+      let body = '';
+      resp.setEncoding('utf8');
+      resp.on('data', (chunk) => { body += chunk; });
+      resp.on('end', () => {
+        const code = resp.statusCode || 0;
+        if (code < 200 || code >= 300) {
+          // The loader returns 422 with {error} for a bad features.toml, which
+          // is worth surfacing verbatim rather than as "HTTP 422".
+          let detail = `HTTP ${code}`;
+          try {
+            const parsed = JSON.parse(body);
+            if (parsed && parsed.error) detail = parsed.error;
+          } catch { /* keep the status line */ }
+          reject(new Error(detail));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch (e) {
+          reject(new Error(`bad JSON from ${url}: ${e.message}`));
+        }
+      });
+    });
+    r.on('timeout', () => r.destroy(new Error(`no reply within ${timeoutMs}ms`)));
+    r.on('error', reject);
+  });
+}
 
 // The docs, as data for the client to render.
 app.get('/api/docs', (req, res) => {

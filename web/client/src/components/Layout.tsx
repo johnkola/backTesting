@@ -1,8 +1,10 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import ErrorBoundary from './ErrorBoundary'
 import ThemePicker from './ThemePicker'
+import TimeframePicker from './TimeframePicker'
 
 const links = [
+  { to: '/pipeline', label: 'Pipeline' },
   { to: '/sources', label: 'Sources' },
   { to: '/instruments', label: 'Instruments' },
   { to: '/imports', label: 'Imports' },
@@ -35,6 +37,7 @@ export default function Layout() {
               </li>
             ))}
           </ul>
+          <TimeframePicker />
           <ThemePicker />
         </div>
       </div>

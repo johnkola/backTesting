@@ -33,6 +33,7 @@ from nn.features import (
     build_feature_matrix,
     min_bar_index,
 )
+from nn import feature_config
 from nn.infer import load_for_inference, predict_batch
 from nn.store import ModelRegistry
 from nn.train import TrainConfig, train_model
@@ -428,6 +429,28 @@ def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
             },
         )
 
+    # A model trained from the feature store eats a different vector entirely:
+    # its columns come from features.toml, not from build_feature_matrix. The
+    # reconstruction below would happily divide its input_size by
+    # FEATURES_PER_BAR and produce a matrix of the RIGHT SHAPE built from the
+    # WRONG COLUMNS — 480 // 12 = 40 bars of the 12 price features, where the
+    # model expects 20 bars of 24. Every downstream shape check passes and the
+    # predictions are noise. Refuse instead.
+    if loaded.metadata.extra.get("feature_set_id") is not None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": (
+                    f"model {loaded.metadata.version_id} was trained on feature set "
+                    f"{loaded.metadata.extra.get('feature_set_id')} "
+                    f"(schema v{loaded.metadata.extra.get('feature_schema_version')}), "
+                    f"which this endpoint cannot rebuild. Serving it here would feed it "
+                    f"the wrong columns at the right shape. A feature-store-backed "
+                    f"predict path is required before this model can be backtested."
+                ),
+            },
+        )
+
     # Reconstruct the lookback from the model's input size — we don't
     # trust the caller to pass it, since a mismatch would silently
     # produce garbage predictions.
@@ -472,6 +495,120 @@ def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
 # ----------------------------------------------------------------------------
 
 
+class PredictFeaturesRequest(BaseModel):
+    cache_key: str = Field(..., description="Cache key of a feature-store-backed model")
+    version_id: str | None = Field(None, description="Pin a version; latest if omitted")
+    strategy: str = Field("nn-feedforward-v2", description="Cache namespace to load from")
+    since: str | None = None
+    until: str | None = None
+
+
+@router.post("/api/nn/predict_features")
+def post_predict_features(req: PredictFeaturesRequest) -> JSONResponse:
+    """Predict from the stored feature table instead of rebuilding features.
+
+    The sibling endpoint `/api/nn/predict_range` reads candles and recomputes
+    the 12 price-derived features on the fly. A model trained from
+    `feature_values` eats a different vector entirely — its columns are whatever
+    `features.toml` defined — so it needs a path that reads the same rows it was
+    trained on rather than reconstructing something of the same width.
+
+    The response shape is identical to predict_range's, so the Java client
+    parses it with the code it already has.
+    """
+    from nn import feature_store
+
+    try:
+        loaded = load_for_inference(
+            _registry(), strategy=req.strategy,
+            cache_key=req.cache_key, version_id=req.version_id,
+        )
+    except FileNotFoundError:
+        loaded = None
+    if loaded is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"no model found for cacheKey={req.cache_key} "
+                              f"strategy={req.strategy} versionId={req.version_id or '<latest>'}"},
+        )
+
+    extra = loaded.metadata.extra
+    set_id = extra.get("feature_set_id")
+    if set_id is None:
+        return JSONResponse(
+            status_code=409,
+            content={"error": f"model {loaded.metadata.version_id} was not trained from a "
+                              f"feature set; use /api/nn/predict_range instead"},
+        )
+    lookback = int(extra.get("lookback_window") or 0)
+    if lookback < 1:
+        return JSONResponse(
+            status_code=409,
+            content={"error": f"model {loaded.metadata.version_id} records no "
+                              f"lookback_window; cannot rebuild its windows"},
+        )
+
+    with pool().connection() as conn, conn.cursor() as cur:
+        try:
+            fm = feature_store.read_matrix(cur, int(set_id),
+                                           since=req.since, until=req.until)
+        except LookupError as e:
+            return JSONResponse(status_code=404, content={"error": str(e)})
+
+    # The columns must be the ones the weights were fitted to, in the same
+    # order. A feature set rebuilt with a reordered or renamed config would
+    # still produce a matrix of the right width, and the model would score it
+    # happily against the wrong meanings — the exact failure the cache key is
+    # meant to prevent, checked again here because the key only covers the
+    # config that BUILT the set, not what the set holds now.
+    trained_names = list(extra.get("feature_names") or [])
+    if trained_names and trained_names != fm.names:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "feature set columns no longer match the model",
+                     "expected": trained_names, "found": fm.names},
+        )
+
+    if len(fm.dates) < lookback:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"not enough feature rows: need {lookback}, "
+                              f"got {len(fm.dates)}"},
+        )
+
+    matrix = feature_store.stack_lookback(fm.values, lookback)
+    if matrix.shape[1] != loaded.metadata.input_size:
+        return JSONResponse(
+            status_code=409,
+            content={"error": f"built {matrix.shape[1]} inputs but the model expects "
+                              f"{loaded.metadata.input_size}"},
+        )
+
+    results = predict_batch(loaded, matrix)
+    # Window i ends on dates[lookback-1+i] — the day it describes and the day
+    # the prediction is for.
+    stamps = fm.dates[lookback - 1 :]
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "completed",
+            "versionId": loaded.metadata.version_id,
+            "featureSetId": int(set_id),
+            "firstPredictedBarIndex": lookback - 1,
+            "predictions": [
+                {
+                    "timestamp": f"{stamps[i].isoformat()}T00:00:00Z",
+                    "classIndex": r.class_index,
+                    "className": r.class_name,
+                    "probabilities": r.probabilities,
+                }
+                for i, r in enumerate(results)
+            ],
+        },
+    )
+
+
 @router.get("/api/nn/models")
 def get_models(strategy: str | None = None) -> JSONResponse:
     items: list[dict[str, Any]] = []
@@ -489,4 +626,60 @@ def get_models(strategy: str | None = None) -> JSONResponse:
     return JSONResponse(
         status_code=200,
         content={"items": items, "modelsDir": str(_models_dir())},
+    )
+
+
+@router.get("/api/nn/features/config")
+def get_features_config() -> JSONResponse:
+    """The feature table as the pipeline reads it.
+
+    Served from here rather than from the Node API because `features.toml` is
+    the Python side's source of truth and tomllib parses it for free — the API
+    carries no TOML parser, and teaching it one would mean two parsers that can
+    disagree about what the model eats.
+
+    Every column is reported, disabled ones included. A column that is off is a
+    recorded decision, not an absence, so the UI has to be able to show *why*
+    rsi_14 and credit_spread_ig are out.
+    """
+    try:
+        cfg = feature_config.load()
+    except feature_config.FeatureConfigError as e:
+        # A bad edit to features.toml should surface as a readable message on
+        # the Features tab, not a 500 with a stack trace.
+        return JSONResponse(status_code=422, content={"error": str(e)})
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "schemaVersion": cfg.schema_version,
+            "defaults": cfg.defaults,
+            "alignment": {
+                "calendarSymbol": cfg.alignment.calendar_symbol,
+                "calendarSource": cfg.alignment.calendar_source,
+                "calendarTimeframe": cfg.alignment.calendar_timeframe,
+                "fill": cfg.alignment.fill,
+                "maxFillDays": cfg.alignment.max_fill_days,
+            },
+            "inputWidth": cfg.input_width,
+            "lookbackWindow": cfg.defaults.get("lookback_window"),
+            "columns": [
+                {
+                    "name": f.name,
+                    "method": f.method,
+                    "params": f.params,
+                    "enabled": f.enabled,
+                    "status": f.status,
+                    "note": f.note,
+                    "width": f.width,
+                    "isDerived": f.is_derived,
+                    "series": f.series,
+                }
+                for f in cfg.features
+            ],
+            "requiredSeries": [
+                {"symbol": s, "source": src}
+                for s, src in sorted(cfg.required_series())
+            ],
+        },
     )

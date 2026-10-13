@@ -7,6 +7,7 @@ import {
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import UploadCard from '../components/UploadCard'
 import { categoryHint } from '../lib/cohesionHints'
+import { useTimeframe } from '../lib/useTimeframe'
 
 /**
  * Train a model for a strategy that needs one before it can be backtested.
@@ -26,6 +27,9 @@ export default function TrainPage() {
   const [strategies, setStrategies] = useState<Strategy[] | null>(null)
   const [instruments, setInstruments] = useState<Instrument[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // The app-wide bar size. The instrument fetch is filtered by it, so the
+  // form's own timeframe field lands on it via the auto-select below.
+  const [tf] = useTimeframe()
 
   const [strategyName, setStrategyName] = useState('')
   const [symbol, setSymbol] = useState('')
@@ -56,7 +60,7 @@ export default function TrainPage() {
 
   useEffect(() => {
     const ac = new AbortController()
-    Promise.all([api.strategies(ac.signal), api.instruments(ac.signal)])
+    Promise.all([api.strategies(ac.signal), api.instruments(tf, ac.signal)])
       .then(([s, i]) => {
         // Only strategies that actually cache a model are trainable; the Ta4j
         // ones have nothing to learn and `train` would be a no-op on them.
@@ -78,7 +82,7 @@ export default function TrainPage() {
       })
       .catch((e) => { if (!isAbortError(e)) setLoadError((e as Error).message) })
     return () => ac.abort()
-  }, [reloadKey])
+  }, [reloadKey, tf])
 
   const strategy = strategies?.find((s) => s.name === strategyName)
   const instrument = instruments?.find((i) => i.symbol === symbol)

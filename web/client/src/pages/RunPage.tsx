@@ -7,6 +7,7 @@ import {
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import TradeChart from '../components/TradeChart'
 import { metricHint } from '../lib/metricHints'
+import { useTimeframe } from '../lib/useTimeframe'
 
 /**
  * Run a backtest. The instrument, source and timeframe options come from what
@@ -18,6 +19,9 @@ export default function RunPage() {
   const [strategies, setStrategies] = useState<Strategy[] | null>(null)
   const [instruments, setInstruments] = useState<Instrument[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // The app-wide bar size. The instrument fetch is filtered by it, so the
+  // form's own timeframe field lands on it via the auto-select below.
+  const [tf] = useTimeframe()
 
   const [strategyName, setStrategyName] = useState('')
   const [symbol, setSymbol] = useState('')
@@ -35,7 +39,7 @@ export default function RunPage() {
 
   useEffect(() => {
     const ctrl = new AbortController()
-    Promise.all([api.strategies(ctrl.signal), api.instruments(ctrl.signal)])
+    Promise.all([api.strategies(ctrl.signal), api.instruments(tf, ctrl.signal)])
       .then(([s, i]) => {
         setStrategies(s.items)
         // Indices are filtered out rather than shown and rejected: they are real
@@ -52,7 +56,9 @@ export default function RunPage() {
       })
       .catch((e: Error) => { if (!isAbortError(e)) setLoadError(e.message) })
     return () => ctrl.abort()
-  }, [])
+    // Refetch when the app-wide timeframe changes: the instrument list is
+    // scoped to it, so the previous list may no longer be valid.
+  }, [tf])
 
   const strategy = strategies?.find((s) => s.name === strategyName) ?? null
 

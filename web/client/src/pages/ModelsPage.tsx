@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api, type TrainedModel } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { tipClass } from '../components/FieldLabel'
+import { useTimeframe } from '../lib/useTimeframe'
 
 function pct(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -52,10 +53,11 @@ function shortKey(cacheKey: string | null): string {
 
 export default function ModelsPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [tf] = useTimeframe()
 
   const { data, error } = useApiData<{ items: TrainedModel[]; modelsDir: string }>(
-    (signal) => api.models(signal),
-    [],
+    (signal) => api.models(tf, signal),
+    [tf],
   )
 
   return (

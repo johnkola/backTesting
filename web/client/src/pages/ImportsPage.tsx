@@ -9,6 +9,7 @@ import { useApiData } from '../lib/useApiData'
 import Pagination from '../components/Pagination'
 import { tipClass } from '../components/FieldLabel'
 import UploadCard from '../components/UploadCard'
+import { useTimeframe } from '../lib/useTimeframe'
 
 const LIMIT = 25
 
@@ -53,10 +54,13 @@ export default function ImportsPage() {
   const [sort, setSort] = useState<SortKey>('imported')
   const [dir, setDir] = useState<SortDir>('desc')
   const [reloadKey, setReloadKey] = useState(0)
+  const [tf] = useTimeframe()
 
   const { data, error } = useApiData<Paginated<ImportRecord>>(
-    (signal) => api.imports({ limit: LIMIT, offset, source, instrument, sort, dir }, signal),
-    [offset, source, instrument, sort, dir, reloadKey],
+    (signal) => api.imports(
+      { limit: LIMIT, offset, source, instrument, sort, dir, timeframe: tf }, signal,
+    ),
+    [offset, source, instrument, sort, dir, reloadKey, tf],
   )
 
   function applyFilters(s: string, i: string) {

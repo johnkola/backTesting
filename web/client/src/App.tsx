@@ -1,4 +1,11 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import PipelinePage from './pages/PipelinePage'
+import BacktestStage from './pages/pipeline/BacktestStage'
+import DataStage from './pages/pipeline/DataStage'
+import FeaturesStage from './pages/pipeline/FeaturesStage'
+import NormalizationStage from './pages/pipeline/NormalizationStage'
+import SplitStage from './pages/pipeline/SplitStage'
+import TrainingStage from './pages/pipeline/TrainingStage'
 import Layout from './components/Layout'
 import ServiceGate from './components/ServiceGate'
 import HomePage from './pages/HomePage'
@@ -22,6 +29,19 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/sources" element={<SourcesPage />} />
+            {/* One tab per pipeline stage, in the order they run. Explicit
+                children rather than a :stage param, so an unknown slug is a
+                routing concern here instead of a lookup inside the page. */}
+            <Route path="/pipeline" element={<PipelinePage />}>
+              <Route index element={<Navigate to="/pipeline/data" replace />} />
+              <Route path="data" element={<DataStage />} />
+              <Route path="features" element={<FeaturesStage />} />
+              <Route path="normalization" element={<NormalizationStage />} />
+              <Route path="split" element={<SplitStage />} />
+              <Route path="training" element={<TrainingStage />} />
+              <Route path="backtest" element={<BacktestStage />} />
+              <Route path="*" element={<Navigate to="/pipeline/data" replace />} />
+            </Route>
             <Route path="/instruments" element={<InstrumentsPage />} />
             <Route path="/imports" element={<ImportsPage />} />
             <Route path="/run" element={<RunPage />} />

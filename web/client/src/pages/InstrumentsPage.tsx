@@ -4,6 +4,7 @@ import { useApiData } from '../lib/useApiData'
 import { tipClass } from '../components/FieldLabel'
 import { isTradeable } from '../lib/api'
 import { categoryHint } from '../lib/cohesionHints'
+import { useTimeframe } from '../lib/useTimeframe'
 
 // Rollups we offer to build from a D1 series (matches the old
 // candles_weekly / candles_monthly continuous aggregates).
@@ -11,10 +12,11 @@ const ROLLUP_TARGETS = ['W1', 'MN1'] as const
 
 export default function InstrumentsPage() {
   const [reloadKey, setReloadKey] = useState(0)
+  const [tf] = useTimeframe()
 
   const { data: instruments, error } = useApiData<Instrument[]>(
-    (signal) => api.instruments(signal).then((r) => r.items),
-    [reloadKey],
+    (signal) => api.instruments(tf, signal).then((r) => r.items),
+    [reloadKey, tf],
   )
 
   const refresh = () => setReloadKey((k) => k + 1)

@@ -80,6 +80,11 @@ export function vsBuyAndHold(
   return ret - bh
 }
 
+/** Sort keys /api/results accepts. Anything else falls back to `created`. */
+export type ResultSortKey =
+  | 'created' | 'instrument' | 'strategy' | 'timeframe' | 'source'
+  | 'return' | 'hold' | 'excess' | 'sharpe' | 'drawdown' | 'trades' | 'winrate'
+
 export type Candle = {
   timestamp: string
   open: number
@@ -584,22 +589,126 @@ async function sendJson<T>(url: string, method: 'POST' | 'DELETE', body?: unknow
   return parsed as T
 }
 
+// ---------------------------------------------------------------------------
+// Feature table
+// ---------------------------------------------------------------------------
+
+export type FeatureColumn = {
+  name: string
+  method: string
+  params: Record<string, number | string>
+  enabled: boolean
+  /** Why a disabled column is disabled: blocked, later-paid, undecided, … */
+  status: string | null
+  note: string | null
+  /** Values contributed per bar. A cyclical column emits sin and cos, so 2. */
+  width: number
+  isDerived: boolean
+  series: Record<string, unknown>
+}
+
+export type FeatureConfig = {
+  schemaVersion: number
+  defaults: Record<string, number>
+  alignment: {
+    calendarSymbol: string
+    calendarSource: string
+    calendarTimeframe: string
+    fill: string
+    maxFillDays: number
+  }
+  inputWidth: number
+  lookbackWindow: number | null
+  columns: FeatureColumn[]
+  requiredSeries: { symbol: string, source: string }[]
+}
+
+export type FeatureSetColumn = {
+  name: string
+  method: string
+  params: Record<string, number | string>
+  columnIndex: number
+}
+
+export type FeatureSet = {
+  id: string
+  symbol: string
+  sourceName: string
+  timeframe: string
+  schemaVersion: number
+  configHash: string
+  fillMode: string
+  maxFillDays: number
+  firstCompleteDate: string | null
+  rowCount: number
+  builtAt: string
+  columnCount: number
+  valueCount: number
+  /** Expected at the warm-up edge of a rolling window, not a fault by itself. */
+  nullCount: number
+  fromDate: string | null
+  toDate: string | null
+  columns: FeatureSetColumn[]
+}
+
+export type FeatureColumnStats = {
+  name: string
+  n: number
+  nulls: number
+  min: number | null
+  max: number | null
+  mean: number | null
+  stdev: number | null
+}
+
+export type SplitBlock = {
+  block: 'train' | 'validation' | 'test'
+  rows: number
+  fromDate: string | null
+  toDate: string | null
+}
+
+export type SplitReport = {
+  firstValidationYear: number
+  firstTestYear: number
+  blocks: SplitBlock[]
+}
+
+export type FeaturesReport = {
+  config: FeatureConfig | null
+  /** Set when features.toml could not be read — the sets still render. */
+  configError: string | null
+  /** Echoed back so a stale response is recognisable. */
+  timeframe: string | null
+  newestSetId: string | null
+  /** Per-column distribution of the newest set — the normalization gate. */
+  columnStats: FeatureColumnStats[]
+  split: SplitReport | null
+  sets: FeatureSet[]
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthReport>('/api/health', signal),
   sources: (signal?: AbortSignal) =>
     getJson<{ items: Source[] }>('/api/sources', signal),
-  instruments: (signal?: AbortSignal) =>
-    getJson<{ items: Instrument[] }>('/api/instruments', signal),
+  instruments: (timeframe?: string, signal?: AbortSignal) =>
+    getJson<{ items: Instrument[], timeframe: string | null }>(
+      `/api/instruments${timeframe ? `?${qs({ timeframe })}` : ''}`, signal,
+    ),
   imports: (
     params: {
-      limit?: number; offset?: number; source?: string; instrument?: string;
+      limit?: number; offset?: number; source?: string; instrument?: string; timeframe?: string;
       sort?: 'imported' | 'source' | 'instrument' | 'timeframe' | 'archive' | 'file' | 'rows';
       dir?: 'asc' | 'desc';
     } = {},
     signal?: AbortSignal,
   ) => getJson<Paginated<ImportRecord>>(`/api/imports?${qs(params)}`, signal),
   results: (
-    params: { limit?: number; offset?: number; strategy?: string; instrument?: string; source?: string } = {},
+    params: {
+      limit?: number; offset?: number; strategy?: string; instrument?: string;
+      source?: string; timeframe?: string;
+      sort?: ResultSortKey; dir?: 'asc' | 'desc';
+    } = {},
     signal?: AbortSignal,
   ) => getJson<Paginated<ResultSummary>>(`/api/results?${qs(params)}`, signal),
   result: (id: string, signal?: AbortSignal) =>
@@ -608,10 +717,14 @@ export const api = {
     params: { instrument: string; source?: string; timeframe: string; from?: string; to?: string },
     signal?: AbortSignal,
   ) => getJson<CandleSeries>(`/api/candles?${qs(params)}`, signal),
-  models: (signal?: AbortSignal) =>
-    getJson<{ items: TrainedModel[]; modelsDir: string }>('/api/models', signal),
+  models: (timeframe?: string, signal?: AbortSignal) =>
+    getJson<{ items: TrainedModel[], modelsDir: string }>(
+      `/api/models${timeframe ? `?${qs({ timeframe })}` : ''}`, signal,
+    ),
   strategies: (signal?: AbortSignal) =>
     getJson<{ items: Strategy[] }>('/api/strategies', signal),
+  features: (timeframe?: string, signal?: AbortSignal) =>
+    getJson<FeaturesReport>(`/api/features${timeframe ? `?${qs({ timeframe })}` : ''}`, signal),
   docs: (signal?: AbortSignal) => getJson<{ items: DocSummary[] }>('/api/docs', signal),
   doc: (slug: string, rev?: string | null, signal?: AbortSignal) =>
     getJson<DocContent>(

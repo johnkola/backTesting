@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import DeleteResultRowButton from '../components/DeleteResultRowButton'
 import Pagination from '../components/Pagination'
 import { tipClass } from '../components/FieldLabel'
 import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
+import { useTimeframe } from '../lib/useTimeframe'
 
 const LIMIT = 25
 
@@ -28,10 +31,16 @@ export default function ResultsPage() {
   const instrument = params.get('instrument') ?? ''
   const source = params.get('source') ?? ''
   const offset = Math.max(0, Number(params.get('offset')) || 0)
+  const [tf] = useTimeframe()
+  // Bumped after a delete so the list refetches: the row is gone server-side,
+  // and the rows after it have shifted up a page.
+  const [reloadKey, setReloadKey] = useState(0)
 
   const { data, error } = useApiData<Paginated<ResultSummary>>(
-    (signal) => api.results({ limit: LIMIT, offset, strategy, instrument, source }, signal),
-    [offset, strategy, instrument, source],
+    (signal) => api.results(
+      { limit: LIMIT, offset, strategy, instrument, source, timeframe: tf }, signal,
+    ),
+    [offset, strategy, instrument, source, tf, reloadKey],
   )
 
   /** Writes one filter and returns to page 1; an empty value drops the key entirely. */
@@ -151,7 +160,13 @@ export default function ResultsPage() {
                         )}
                       </td>
                       <td>
-                        <Link to={`/results/${r.id}`} className="btn btn-xs btn-outline">open</Link>
+                        <div className="flex items-center gap-1">
+                          <Link to={`/results/${r.id}`} className="btn btn-xs btn-outline">open</Link>
+                          <DeleteResultRowButton
+                            id={String(r.id)}
+                            onDeleted={() => setReloadKey((k) => k + 1)}
+                          />
+                        </div>
                       </td>
                     </tr>
                   )
