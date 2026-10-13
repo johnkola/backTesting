@@ -72,6 +72,23 @@ CSV shape:
 python fetch_historical_data.py QQQ --from 2015-01-01    # `py` instead of `python` on Windows
 ```
 
+**Macro series.** Rates, inflation expectations and commodity prices come from FRED, also
+without a key. A FRED series is one number per day, so it lands as a degenerate bar
+(`open = high = low = close`, volume 0) and imports as `INDEX` — real data, but not a
+thing the engine will let you hold a position in:
+
+```bash
+python fetch_fred_series.py DGS10        # 10-year Treasury yield
+python fetch_fred_series.py T10YIE       # 10-year breakeven inflation
+python fetch_fred_series.py DCOILWTICO   # WTI crude spot
+```
+
+**Nasdaq-100 breadth.** `build_ndx_breadth.py` downloads the current constituents and
+computes the percent trading above their own 200-day moving average, as one `INDEX`
+series. It caches each name's closes under `data/ndx-constituents/`, so `--offline`
+recomputes at a different window without re-downloading. Read the survivorship-bias
+warning in its docstring before a backtest leans on the output.
+
 **Intraday bars.** Every source above gives you daily candles. If you need `M30` or
 `H1` and have no intraday feed, `tools/datagen/` invents them from a daily file — the
 generated bars aggregate back to exactly the daily ones, so a D1 and an M30 backtest see
@@ -218,11 +235,12 @@ writes — gitignored, and safe to delete if you accept losing what's in it.
 
 | Path | In git | Written by | Holds |
 |---|---|---|---|
-| `test-data/` | yes | `./gradlew generateTestData`, `fetch_historical_data.py` | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history |
+| `test-data/` | yes | `./gradlew generateTestData`, the three fetch scripts | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history; `DGS10`, `T10YIE` and `DCOILWTICO` are FRED macro series; `NDXBREADTH` is computed, and ships with the `.members.txt` naming the constituents it used |
 | `data/csv-inbox/` | no | you | Files waiting for the batch importer (`backtest-ingest`), named `SOURCE__SYMBOL__TYPE__TF.csv` |
 | `data/csv-archive/` | no | the loader | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
 | `data/models/` | no | the loader | Trained NN models, one directory per cache key. The **Models** page reads this |
 | `data/features/` | no | nobody | Vestigial — the Java feature store it belonged to was removed in the Python port |
+| `data/ndx-constituents/` | no | `build_ndx_breadth.py` | One JSON of daily closes per Nasdaq-100 member, so breadth recomputes at another window without re-downloading 101 symbols |
 
 Every CSV in either tree has the same header, whichever path it came in by:
 

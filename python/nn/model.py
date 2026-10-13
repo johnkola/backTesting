@@ -34,6 +34,10 @@ class ArchSpec:
     num_hidden: int = 2
     dropout_rate: float = 0.5
     seed: int = 42
+    #: Width of the output layer. Defaults to the 3-class head the classifier
+    #: uses; a money-objective model sets it to 1 and reads the single logit as
+    #: a position through a sigmoid.
+    output_size: int = NUM_CLASSES
 
 
 def build(spec: ArchSpec) -> nn.Module:
@@ -55,7 +59,7 @@ def build(spec: ArchSpec) -> nn.Module:
         layers.append(nn.Dropout(p=spec.dropout_rate))
         prev = spec.hidden_size
 
-    head = nn.Linear(prev, NUM_CLASSES)
+    head = nn.Linear(prev, spec.output_size)
     nn.init.xavier_uniform_(head.weight)
     nn.init.zeros_(head.bias)
     layers.append(head)

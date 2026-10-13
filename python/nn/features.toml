@@ -1,0 +1,431 @@
+# Feature table for the QQQ model — the single place where normalization is chosen.
+#
+# Each [[feature]] block is one column the pipeline can produce. The knob you
+# most likely came here to turn is `method`: it selects how that column is made
+# scale-free and stationary. Change it, bump `schema_version` below, retrain.
+#
+# `enabled = false` keeps a column defined and documented without feeding it to
+# the network. That is how the price-derived indicators (RSI, MACD, realized
+# volatility) stay available to the Ta4j strategies and the charts while staying
+# out of the model, and how a blocked or undecided column keeps its place in the
+# table rather than vanishing from the design.
+#
+# METHODS
+#   ratio_to_prev_close   (x / previous close) - 1.      Params: none.
+#                         On the close column this is exactly the daily return.
+#   daily_return          (x / previous x) - 1.          Params: none.
+#                         Undefined across zero — never use it on a series that
+#                         can go negative (oil did, on 2020-04-20; the yield
+#                         curve does on 2,079 days of its history).
+#   daily_change          x - previous x, in the series' own units.
+#                         The right choice for a yield already quoted in percent.
+#   rolling_zscore        (x - mean(window)) / stdev(window). Params: window.
+#                         Causal: uses only trailing data, so it is safe to
+#                         precompute and store.
+#   ratio_to_rolling_mean x / mean(window).              Params: window.
+#   rescale               (x - min) / (max - min).       Params: min, max.
+#                         Only for a genuinely fixed, known range. Not a
+#                         data-driven min/max — that would leak.
+#   cyclical              sin and cos of the position in the cycle. Params:
+#                         period. Emits TWO values, not one.
+#   flag                  0 or 1. Params: none.
+#   passthrough           No transform. Use only on something already bounded
+#                         and stationary.
+#
+# LEAKAGE RULE — every method above is causal: a row's value depends only on
+# that column's own past. That is what makes the output safe to precompute into
+# the database. The train-slice-fitted scaler (min-max today) is NOT causal and
+# deliberately does not live here; it is fitted per walk-forward fold at
+# training time and must stay there.
+
+schema_version = 4
+
+# Bumping schema_version changes the model cache key, so an old model is never
+# silently reused against a feature vector built by different rules.
+
+
+[defaults]
+# Used by any feature that does not override them.
+zscore_window = 60
+rolling_mean_window = 20
+lookback_window = 20      # how many bars of history each training sample sees
+
+
+[alignment]
+# The instrument whose trading days define the rows of the feature table.
+# Every other series is aligned onto this calendar.
+calendar_symbol = "QQQ"
+calendar_source = "yahoo-adj"
+calendar_timeframe = "D1"
+
+# What to do when an aligned series has no observation on a calendar day.
+# "forward"  carry the last known value (the right call for a level: a yield
+#            that did not print on Columbus Day has not changed)
+# "drop"     drop the whole row
+# "error"    refuse to build
+fill = "forward"
+
+# Refuse to carry a value further than this. A longer hole means the series is
+# genuinely broken, not merely closed for a holiday, and should fail loudly.
+max_fill_days = 5
+
+# Measured gaps against QQQ's 5,971 trading days since 2003, for reference:
+#   NDXBREADTH, VIX, VXN, SPY   0      exact match
+#   DXY                         2
+#   COPPER / GOLD              13 / 14 futures holidays
+#   T10Y2Y, T10YIE             43      bond holidays when equities trade
+#   DGS10                      44
+#   DCOILWTICO                330      the worst case, 5.5%
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Price — the raw bar. Four columns, one common base (yesterday's close) so they
+# stay comparable and together reconstruct the whole bar's geometry.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "price_open"
+series = { symbol = "QQQ", source = "yahoo-adj", field = "open" }
+method = "ratio_to_prev_close"
+enabled = true
+note = "The overnight gap — information the close alone throws away."
+
+[[feature]]
+name = "price_high"
+series = { symbol = "QQQ", source = "yahoo-adj", field = "high" }
+method = "ratio_to_prev_close"
+enabled = true
+
+[[feature]]
+name = "price_low"
+series = { symbol = "QQQ", source = "yahoo-adj", field = "low" }
+method = "ratio_to_prev_close"
+enabled = true
+
+[[feature]]
+name = "price_close"
+series = { symbol = "QQQ", source = "yahoo-adj", field = "close" }
+method = "ratio_to_prev_close"
+enabled = true
+note = "On the close, this is the daily return."
+
+[[feature]]
+name = "volume"
+series = { symbol = "QQQ", source = "yahoo-adj", field = "volume" }
+method = "ratio_to_rolling_mean"
+window = 20
+enabled = true
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Volatility. VXN's LEVEL is the signal — 15 versus 45 is the whole point — so
+# these are z-scored rather than turned into returns, which would discard it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "vxn_open"
+series = { symbol = "VXN", source = "yahoo", field = "open" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+
+[[feature]]
+name = "vxn_high"
+series = { symbol = "VXN", source = "yahoo", field = "high" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+
+[[feature]]
+name = "vxn_low"
+series = { symbol = "VXN", source = "yahoo", field = "low" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+
+[[feature]]
+name = "vxn_close"
+series = { symbol = "VXN", source = "yahoo", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = "How stretched fear is versus its own recent history."
+
+[[feature]]
+name = "vxn_vix_spread"
+series = { op = "subtract", a = { symbol = "VXN", source = "yahoo", field = "close" }, b = { symbol = "VIX", source = "yahoo", field = "close" } }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = "Tech-specific fear above broad-market fear."
+
+[[feature]]
+name = "vix"
+series = { symbol = "VIX", source = "yahoo", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = """Broad-market fear in its own right, not just the subtrahend in
+vxn_vix_spread. The spread says how much EXTRA fear is aimed at tech; it is
+blind to whether the whole market is calm or terrified, which this restores."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Price-derived indicators — DATA ONLY.
+#
+# These stay out of the network on purpose. The model already sees the full raw
+# bar, so it can learn whatever a windowed transform of that bar encodes;
+# feeding it in again adds dimensions and overfitting room without adding
+# information. The dividing line is the lookback window: a raw bar is an
+# observation and goes in, anything averaged over trailing days is a derivation
+# and stays out. Flip `enabled` to true to test that belief.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "rsi_14"
+series = { computed = "rsi", symbol = "QQQ", source = "yahoo-adj", period = 14 }
+method = "rescale"
+min = 0.0
+max = 100.0
+enabled = false
+
+[[feature]]
+name = "macd"
+series = { computed = "macd", symbol = "QQQ", source = "yahoo-adj", short = 12, long = 26 }
+method = "rolling_zscore"
+window = 60
+enabled = false
+
+[[feature]]
+name = "realized_vol"
+series = { computed = "realized_vol", symbol = "QQQ", source = "yahoo-adj", period = 20 }
+method = "rolling_zscore"
+window = 60
+enabled = false
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rates, inflation and commodities.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "treasury_10y"
+series = { symbol = "DGS10", source = "fred", field = "close" }
+method = "daily_change"
+enabled = true
+note = "Already quoted in percent, so a change in points is the natural unit."
+
+[[feature]]
+name = "treasury_2y"
+series = { symbol = "DGS2", source = "fred", field = "close" }
+method = "daily_change"
+enabled = true
+note = """Short-rate expectations — what the market thinks the Fed will do —
+which drive tech valuations directly. Same units as treasury_10y, so the same
+daily_change. Note this is DGS2, not the DTB3 3-month bill also on disk:
+3-month and 2-year are different instruments and DTB3 is not referenced here."""
+
+[[feature]]
+name = "breakeven_inflation"
+series = { symbol = "T10YIE", source = "fred", field = "close" }
+method = "daily_change"
+enabled = true
+note = "Starts 2003-01-02 — the series that sets the training start."
+
+[[feature]]
+name = "yield_curve_10y2y"
+series = { symbol = "T10Y2Y", source = "fred", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = "Negative on 2,079 days (inversion). Never daily_return on this."
+
+[[feature]]
+name = "oil_wti"
+series = { symbol = "DCOILWTICO", source = "fred", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = "Printed -36.98 on 2020-04-20. Never daily_return on this."
+
+[[feature]]
+name = "dollar_index"
+series = { symbol = "DXY", source = "yahoo", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+
+[[feature]]
+name = "copper_gold_ratio"
+series = { op = "divide", a = { symbol = "COPPER", source = "yahoo", field = "close" }, b = { symbol = "GOLD", source = "yahoo", field = "close" } }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = """Closes only. Yahoo's continuous futures are internally inconsistent —
+7.4% of GOLD bars and 5.0% of COPPER bars since 2003 have a close outside the
+day's own high/low range — so no candle-shaped feature may be built on them."""
+
+[[feature]]
+name = "gold"
+series = { symbol = "GOLD", source = "yahoo", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = """Safe-haven demand on its own, separate from copper_gold_ratio: the
+ratio moves on either leg, so a copper collapse and a gold spike look alike in
+it. Close only, for the futures-consistency reason noted above. z-score rather
+than daily_return follows the dollar_index precedent for the same wording."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Breadth. Price-derived, but from the other hundred names — information QQQ's
+# own series does not contain, which is why these are in the model and RSI is not.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "breadth_200dma"
+series = { symbol = "NDXBREADTH", source = "computed", field = "close" }
+method = "rescale"
+min = 0.0
+max = 100.0
+enabled = true
+note = """Survivorship-biased: today's members applied to all history, so past
+drawdowns read less broad-based than they were."""
+
+[[feature]]
+name = "ndx_dispersion"
+series = { symbol = "NDXDISP", source = "computed", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = "Macro-driven versus stock-picking regime. From the cached constituent closes."
+
+[[feature]]
+name = "ndx_advance_decline"
+series = { symbol = "NDXAD", source = "computed", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = "Fast breadth, complementing the slow 200-day measure."
+
+[[feature]]
+name = "ndx_new_highs_lows"
+series = { symbol = "NDXNHNL", source = "computed", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = true
+note = """Net percent of members at a 252-day (one-year) high minus those at a
+low. Another angle on whether strength is spreading, from the same cached
+closes. Survivorship-biased like the rest of this family."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Calendar. No data source — generated from the date itself.
+# The cyclical columns emit TWO values each (sin and cos).
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "day_of_week"
+series = { computed = "day_of_week" }
+method = "cyclical"
+period = 7
+enabled = true
+note = "Period 7 so Sunday wraps to Monday, even though only Mon-Fri appear."
+
+[[feature]]
+name = "day_of_year"
+series = { computed = "day_of_year" }
+method = "cyclical"
+period = 365.25
+enabled = true
+note = "So Dec 31 sits next to Jan 1."
+
+[[feature]]
+name = "day_of_month"
+series = { computed = "day_of_month" }
+method = "cyclical"
+period = 30.44
+enabled = true
+note = """Month-turn effects: fund flows and rebalancing cluster at the edges.
+Period is the mean month length, so the wrap is approximate — the 31st of a
+long month and the 1st of the next are close but not adjacent. Exact would need
+the position scaled by each month's own length; this is the day_of_year
+treatment applied consistently."""
+
+[[feature]]
+name = "holiday_proximity"
+series = { computed = "holiday_proximity", calendar = "NYSE", lookahead_days = 1 }
+method = "flag"
+enabled = true
+note = """Should interact with day_of_week: a holiday making a three-day weekend
+drives more position-squaring than a midweek one."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Credit. The calmer cousin of the high-yield spread, which is blocked below:
+# it moves less, but FRED serves its full history instead of three years.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "credit_spread_ig"
+series = { symbol = "BAMLC0A0CM", source = "fred", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = false
+status = "blocked"
+note = """Extra yield demanded on high-rated corporates over Treasuries.
+
+BLOCKED, and not for want of an API key — the restriction is on the series.
+The design expected full history from 1996-12-31, with only the high-yield
+sibling truncated. That is no longer true. Checked 2026-10-12 against the REST
+API with a key: FRED reports observation_start 2023-10-10 and carries the note
+"Starting in April 2026, this series will only include 3 years of
+observations. For more data, go to the source." 785 bars, all 2023-10 on.
+
+Three years cannot cover a training window that starts in 2003, so this sits
+with credit_spread_hy rather than in the model. Reviving it needs the data from
+ICE directly, or another vendor — not a different FRED endpoint."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Not in the model. Kept here so the decision is recorded rather than forgotten.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "put_call_ndx"
+series = { computed = "put_call_ndx" }
+method = "rolling_zscore"
+window = 60
+enabled = false
+status = "later-paid"
+note = """Per-name options history is paid-only and CBOE's free daily file is
+gated behind a 403. Deliberately last: everything free is built and validated
+before any money is spent here."""
+
+[[feature]]
+name = "vix_term_structure"
+series = { op = "divide", a = { symbol = "VIX3M", source = "yahoo", field = "close" }, b = { symbol = "VIX", source = "yahoo", field = "close" } }
+method = "rolling_zscore"
+window = 60
+enabled = false
+status = "undecided"
+note = "Yahoo VIX3M starts 2006-07-17, blanking the first three training years."
+
+[[feature]]
+name = "credit_spread_hy"
+series = { symbol = "BAMLH0A0HYM2", source = "fred", field = "close" }
+method = "rolling_zscore"
+window = 60
+enabled = false
+status = "blocked"
+note = """FRED's free graph endpoint truncates the ICE BofA series to 2023-09
+onward. Needs an API key or another source."""
+
+[[feature]]
+name = "qqq_spy_relative"
+series = { op = "divide", a = { symbol = "QQQ", source = "yahoo-adj", field = "close" }, b = { symbol = "SPY", source = "yahoo-adj", field = "close" } }
+method = "rolling_zscore"
+window = 60
+enabled = false
+status = "undecided"
+note = "Tech leadership versus the broad market. Price-derived, but from a second index."

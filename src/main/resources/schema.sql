@@ -75,7 +75,18 @@ BEGIN
 END
 $migrate_candles$;
 
-CREATE INDEX IF NOT EXISTS idx_candles_lookup ON candles(instrument_id, timeframe, source_id, timestamp);
+-- No idx_candles_lookup. It used to be created here on
+-- (instrument_id, timeframe, source_id, timestamp) — byte-for-byte the same
+-- columns in the same order as the primary key above, so it was a second copy
+-- of candles_pkey: 7.9 MB across 68 chunk-level indexes, plus a write cost on
+-- every COPY-based import, serving no read the PK could not already answer.
+--
+-- The multi-source migration above had already spotted this and dropped it as
+-- "redundant with the new PK"; this line then recreated it on the very next
+-- statement. The unconditional drop below closes that loop for databases
+-- bootstrapped before it was noticed. TimescaleDB's candles_timestamp_idx
+-- stays and does the chunk exclusion.
+DROP INDEX IF EXISTS idx_candles_lookup;
 
 -- Enable native compression on the candles hypertable. The ALTER itself is
 -- idempotent in TimescaleDB 2.x (re-applying with the same options is a no-op),
@@ -188,3 +199,117 @@ CREATE INDEX IF NOT EXISTS idx_backtest_results_created_at_desc
 CREATE INDEX IF NOT EXISTS idx_backtest_results_model_cache_key
     ON backtest_results (model_cache_key)
     WHERE model_cache_key IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Normalized feature store
+--
+-- The model does not eat candles; it eats a table of normalized columns, one
+-- row per trading day. Those columns are expensive to recompute (a z-score over
+-- a 60-day window across a dozen aligned series, every training run and every
+-- backtest) and impossible to inspect once they only exist inside a numpy array
+-- halfway through a Python process. So they are materialised here.
+--
+-- Only CAUSAL normalization lands in this table: every value depends solely on
+-- its own column's past. That is what makes precomputing safe. The scaler
+-- fitted across a training slice is deliberately absent — it depends on which
+-- rows are in the walk-forward fold, so storing it would leak each fold's own
+-- future into its training data. That step stays in the training process.
+--
+-- This replaces the on-disk data/features/ cache that the Python port dropped.
+-- ---------------------------------------------------------------------------
+
+-- One row per built feature table. The identity is the *calendar* instrument —
+-- the one whose trading days are the rows — not the instruments the individual
+-- columns are read from: a VXN-derived column lands on QQQ's dates, so it
+-- belongs to QQQ's feature set.
+--
+-- config_hash is the sha256 of features.toml. Together with schema_version it
+-- means an edited config builds a NEW set rather than silently overwriting the
+-- one a trained model was fitted on, so an old model can always be traced back
+-- to the exact column definitions it saw.
+CREATE TABLE IF NOT EXISTS feature_sets (
+    id BIGSERIAL PRIMARY KEY,
+    instrument_id BIGINT NOT NULL REFERENCES instruments(id),
+    source_id BIGINT NOT NULL REFERENCES data_sources(id),
+    timeframe VARCHAR(10) NOT NULL,
+    schema_version INT NOT NULL,
+    config_hash VARCHAR(64) NOT NULL,
+    fill_mode VARCHAR(16) NOT NULL DEFAULT 'forward',
+    max_fill_days INT NOT NULL DEFAULT 5,
+    first_complete_date TIMESTAMPTZ,
+    row_count INT NOT NULL DEFAULT 0,
+    built_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (instrument_id, source_id, timeframe, schema_version, config_hash)
+);
+
+-- What each column in a built set actually is. Copied out of features.toml at
+-- build time so a set stays self-describing after the config moves on: reading
+-- a two-month-old set tells you the window it used without a git archaeology
+-- session.
+CREATE TABLE IF NOT EXISTS feature_spec (
+    feature_set_id BIGINT NOT NULL REFERENCES feature_sets(id) ON DELETE CASCADE,
+    feature_name VARCHAR(64) NOT NULL,
+    method VARCHAR(32) NOT NULL,
+    params_json TEXT,
+    series_json TEXT,
+    column_index INT NOT NULL,
+    PRIMARY KEY (feature_set_id, feature_name)
+);
+
+-- Long format, not one column per feature: adding a feature is an INSERT rather
+-- than a migration, which is the whole point of the config-driven table. A
+-- cyclical column stores as two names (_sin and _cos), which a wide table could
+-- not express without schema churn either.
+--
+-- value is NULLABLE on purpose. A rolling window has no value until it is full,
+-- so the first `window - 1` rows of a z-scored column are genuinely unknown
+-- rather than zero. Storing the NULL keeps "not yet computable" distinct from
+-- "computed, happened to be 0.0", and makes first_complete_date a query instead
+-- of a guess.
+CREATE TABLE IF NOT EXISTS feature_values (
+    feature_set_id BIGINT NOT NULL REFERENCES feature_sets(id) ON DELETE CASCADE,
+    feature_name VARCHAR(64) NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    value DOUBLE PRECISION,
+    PRIMARY KEY (feature_set_id, feature_name, timestamp)
+);
+
+-- Same reasoning as candles: daily rows spanning decades, so TimescaleDB's
+-- 7-day default would make thousands of near-empty chunks and exhaust
+-- max_locks_per_transaction on a full scan.
+SELECT create_hypertable('feature_values', 'timestamp',
+                         chunk_time_interval => INTERVAL '1 year',
+                         if_not_exists => TRUE);
+
+SELECT set_chunk_time_interval('feature_values', INTERVAL '1 year');
+
+-- Reads are "give me every feature for this set over this date range", which
+-- the PRIMARY KEY's btree on (feature_set_id, feature_name, timestamp) already
+-- serves exactly. No secondary index here on purpose: a separate index on those
+-- same three columns would be an identical copy of the PK, doubling the index
+-- footprint and the write cost for nothing. TimescaleDB's own
+-- feature_values_timestamp_idx handles chunk exclusion.
+--
+-- Drops the redundant copy from databases bootstrapped before this was noticed.
+DROP INDEX IF EXISTS idx_feature_values_lookup;
+
+DO $compress_feature_values$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+         WHERE hypertable_name = 'feature_values' AND compression_enabled = true
+    ) THEN
+        ALTER TABLE feature_values SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = 'feature_set_id, feature_name',
+            timescaledb.compress_orderby = 'timestamp DESC'
+        );
+    END IF;
+END
+$compress_feature_values$;
+
+-- Longer than candles' 7 days: a feature set is rebuilt wholesale when the
+-- config changes, and rebuilding into compressed chunks means decompressing
+-- first. 90 days leaves the recent tail — the part a fresh import extends —
+-- cheap to rewrite, while the decades behind it compress.
+SELECT add_compression_policy('feature_values', INTERVAL '90 days', if_not_exists => TRUE);
