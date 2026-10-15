@@ -64,3 +64,13 @@ package-lock.json
 
 # Local DB dumps taken before migrations — never commit data.
 backups/
+
+### Local environment overrides ###
+# Compose reads `.env` from the repo root automatically, which makes it the
+# natural home for per-machine values — pgAdmin credentials, a CLIENT_URL that
+# is not localhost. Those are personal rather than project settings and this
+# repo is public, so the file itself never lands here. `.env.example` is the
+# committed shape: variable names, no values.
+.env
+.env.*
+!.env.example
