@@ -149,7 +149,8 @@ services:
   #
   #   docker compose --profile tools up -d pgadmin
   #
-  # Then http://localhost:5050, log in as admin@backtest.local / admin. The backtest
+  # Then http://localhost:5050, log in as admin@backtest.local / backtest. pgAdmin
+  # rejects a password under 6 characters, so this default is not `admin`. The
   # server is pre-registered from docker/pgadmin/servers.json, which pgAdmin
   # reads only when its volume is empty — on first start, or after a
   # `docker compose down -v`. Editing that file later has no effect; change
@@ -166,7 +167,7 @@ services:
       - "5050:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@backtest.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-backtest}
       # The login above is a local credential, not a mailbox, but pgAdmin
       # validates it as a real address and refuses to start on a reserved
       # domain — `.local` is on that list, and turning off the deliverability

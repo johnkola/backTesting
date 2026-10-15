@@ -53,7 +53,10 @@ docker compose --profile tools stop pgadmin    # stop it; the stack keeps runnin
 ```
 
 Then **http://localhost:5050**, logging in with `admin@backtest.local` /
-`admin` — override with `PGADMIN_EMAIL` and `PGADMIN_PASSWORD`. The `backtest`
+`backtest` — override with `PGADMIN_EMAIL` and `PGADMIN_PASSWORD`. pgAdmin
+rejects a password under six characters, so `admin` is not a usable default
+here. Both are read only when the account is first created; changing them
+later needs `setup.py update-user` inside the container, or a fresh volume. The `backtest`
 server is already in the sidebar; expand it and it asks once for the database
 password (`backtest`, from `POSTGRES_PASSWORD`), which it remembers if you let
 it. The hypertables are under **backtest → Schemas → public → Tables**.
