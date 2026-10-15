@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "backtest (TimescaleDB)",
+      "Group": "Servers",
+      "Host": "timescaledb",
+      "Port": 5432,
+      "MaintenanceDB": "backtest",
+      "Username": "backtest",
+      "SSLMode": "prefer",
+      "Comment": "The compose stack's database. Password is `backtest` — tick 'Save password' on the first connect."
+    }
+  }
+}

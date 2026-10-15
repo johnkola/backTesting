@@ -7,6 +7,7 @@ A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a
 ## Services and ports
 
 Four processes, each doing one job. The browser only ever talks to two of them.
+A fifth, `pgadmin`, is an optional tool rather than part of the system.
 
 | Port | Service | What it is |
 |------|---------|------------|
@@ -15,6 +16,7 @@ Four processes, each doing one job. The browser only ever talks to two of them.
 | *internal* | `engine` | Java. The strategy registry and the backtest engine — the only component that can run a backtest. Reached through the API, not published. |
 | **8003** | `loader` | Python/FastAPI. CSV import, aggregation, cohesion checks, NN train/predict. Published only so the host-run CLI can reach it; in-network callers use `http://loader:8001`. |
 | **5432** | `timescaledb` | PostgreSQL + TimescaleDB. |
+| **5050** | `pgadmin` | pgAdmin 4, a browser UI on the database. Not in the default stack — see [Database UI](#database-ui). |
 
 The client is deliberately independent: it has no server-side dependency and reaches the API through `VITE_API_URL`, baked in at build time. Point it at a different API and rebuild, and it works unchanged.
 
@@ -37,6 +39,36 @@ curl -X POST http://localhost:8001/api/run -H 'content-type: application/json' \
 Open **http://localhost:3000/** for the UI, and **`/docs`** inside it for these docs rendered live — [Getting Started](/docs/getting-started) if this is your first run.
 
 `--source` is optional and defaults to `default`. One instrument can hold parallel candle histories from different providers (`yahoo`, `alpha-vantage`, broker exports) without overwriting.
+
+## Database UI
+
+`pgadmin` is a browser UI on the database — a query tool, a schema browser,
+`EXPLAIN` plans and table stats, for the times when `psql` is the wrong shape
+of thing. It is not part of the system and nothing depends on it, so it sits
+behind the `tools` compose profile and `docker compose up -d` leaves it alone:
+
+```bash
+docker compose --profile tools up -d pgadmin   # start it
+docker compose --profile tools stop pgadmin    # stop it; the stack keeps running
+```
+
+Then **http://localhost:5050**, logging in with `admin@backtest.local` /
+`admin` — override with `PGADMIN_EMAIL` and `PGADMIN_PASSWORD`. The `backtest`
+server is already in the sidebar; expand it and it asks once for the database
+password (`backtest`, from `POSTGRES_PASSWORD`), which it remembers if you let
+it. The hypertables are under **backtest → Schemas → public → Tables**.
+
+The server entry comes from `docker/pgadmin/servers.json`, which pgAdmin reads
+only while its volume is empty — on the very first start, or after a
+`docker compose down -v`. Editing that file later changes nothing; edit the
+connection in the UI instead. Everything pgAdmin itself stores — the server
+list, saved passwords, your layout — lives in the `pgadmin-data` volume and
+survives restarts and rebuilds.
+
+Two things it is not. It is not reachable from anywhere but this machine, and
+its credentials are defaults in a checked-in file, so do not publish `:5050`
+beyond localhost. And it connects as `backtest`, the same superuser the
+services use: it can drop a hypertable as easily as read one.
 
 ## The happy path, end to end
 

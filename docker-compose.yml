@@ -143,5 +143,45 @@ services:
       # web service mounts the same host dir read-only above.
       - ./data/models:/data/models
 
+  # Database UI. Not part of the default stack — it sits behind the `tools`
+  # profile, so `docker compose up -d` is unchanged and you ask for this one
+  # explicitly:
+  #
+  #   docker compose --profile tools up -d pgadmin
+  #
+  # Then http://localhost:5050, log in as admin@backtest.local / admin. The backtest
+  # server is pre-registered from docker/pgadmin/servers.json, which pgAdmin
+  # reads only when its volume is empty — on first start, or after a
+  # `docker compose down -v`. Editing that file later has no effect; change
+  # the connection in the UI instead.
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: backtest-pgadmin
+    profiles: ["tools"]
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@backtest.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      # The login above is a local credential, not a mailbox, but pgAdmin
+      # validates it as a real address and refuses to start on a reserved
+      # domain — `.local` is on that list, and turning off the deliverability
+      # checks does not exempt it. Naming the domain here does. Nothing is
+      # ever sent to the address.
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: '["local"]'
+      # A local tool on a local port — the master password adds a second
+      # prompt and protects nothing here.
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      # pgAdmin's own settings and saved connections. Named, so the server
+      # list and any saved passwords survive a restart.
+      - pgadmin-data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+
 volumes:
   timescaledb-data:
+  pgadmin-data:
