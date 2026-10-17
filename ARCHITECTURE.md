@@ -455,6 +455,43 @@ PostgreSQL + TimescaleDB with five tables (see `schema.sql`):
 - `backtest_results` — full `BacktestResult` as JSON in `result_json` plus denormalized summary columns (including `data_source`, `model_cache_key`, `model_cache_hit`, `model_version_id`) for `report --list` and the web list views. Indexed by `(created_at DESC)` to serve the most-recent-first reads from `BacktestResultRepository.findAll`/`findLatest` and the web `/api/results` endpoint without a sort step; a partial index on `(model_cache_key) WHERE model_cache_key IS NOT NULL` serves the `/api/models` group-by-cache-key aggregate. `model_version_id` is not indexed today — its read use cases are point lookups on already-fetched rows (the React result detail page) rather than scans.
 - *(no rollup tables)* — weekly/monthly rollups used to live here as the `candles_weekly` / `candles_monthly` continuous aggregates, but those were removed. `schema.sql` now `DROP MATERIALIZED VIEW IF EXISTS`-es them on bootstrap (harmless on a fresh DB, cleans up a previously-bootstrapped one). Rollups are produced on demand by the Python loader's [aggregator](#multi-timeframe-aggregation) and written back into `candles` at the target timeframe, so there is one read path for every timeframe.
 
+#### Audit columns (`created_at` / `updated_at`)
+
+The six metadata tables — `instruments`, `data_sources`, `data_imports`,
+`backtest_results`, `feature_sets`, `feature_spec` — each carry
+`created_at TIMESTAMPTZ NOT NULL DEFAULT now()` and `updated_at` likewise, with
+a `BEFORE UPDATE` trigger per table calling the shared `set_updated_at()`.
+
+The trigger is in the database rather than in a repository because three
+processes write here — the Java engine and CLI, the Python loader, and whatever
+is typed into psql or pgAdmin. Anything enforced in `data/entity/` would be
+enforced for one of those and silently skipped by the other two. The same
+function also pins `created_at` to `OLD.created_at`, so the column is immutable
+without an `UPDATE` that touches it having to fail — a row edited in pgAdmin's
+grid writes every column, and rejecting that would make an ordinary edit error
+out.
+
+**Not on `candles` or `feature_values`, on purpose.** Both are compressed
+hypertables in the hundreds of thousands of rows, so two extra timestamptz
+columns is real space on data that is append-only — `updated_at` would be
+written once and never move. More decisively, rows inside a compressed chunk
+cannot be updated the ordinary way, so the trigger could not maintain the
+column even if the space were free. A bar's own `timestamp` says when it
+happened and `data_imports` says when it arrived; between them the audit
+question is already answered for time-series rows.
+
+The columns are added by `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in a `DO`
+block at the end of `schema.sql`, not by editing the `CREATE TABLE` statements
+above it. Every one of those is `CREATE TABLE IF NOT EXISTS`, so on a database
+that already exists the `CREATE` is a no-op and an edit there would reach
+nothing. The backfill runs before `SET NOT NULL` and prefers a truthful
+timestamp where one exists — `feature_sets.created_at` comes from `built_at`
+rather than from the time the migration happened to run.
+
+Dollar-quote tags in those blocks must match `\$[A-Za-z_]*\$`: `DatabaseManager`
+splits `schema.sql` on `;` with a hand-written scanner whose tag regex rejects
+digits, so a tag like `$audit1$` would split mid-block and fail at runtime.
+
 `DatabaseManager` is a singleton; `initialize()` must be called before `getConnection()`, and `shutdown()` nulls the config. CLI commands are responsible for the init/shutdown pairing (see the `try/finally` blocks in `BacktestCommand`, `TrainCommand`, `ReportCommand`).
 
 #### Row entities vs domain records (`data/entity/`)

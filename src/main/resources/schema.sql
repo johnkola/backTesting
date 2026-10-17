@@ -313,3 +313,98 @@ $compress_feature_values$;
 -- first. 90 days leaves the recent tail — the part a fresh import extends —
 -- cheap to rewrite, while the decades behind it compress.
 SELECT add_compression_policy('feature_values', INTERVAL '90 days', if_not_exists => TRUE);
+
+-- ---------------------------------------------------------------------------
+-- Audit columns
+-- ---------------------------------------------------------------------------
+-- created_at/updated_at on the metadata tables — the small, mutable ones where
+-- "when did this row last change" is a question anyone actually asks.
+--
+-- Deliberately NOT on candles or feature_values. Both are compressed
+-- hypertables in the hundreds of thousands of rows, so two timestamptz columns
+-- is real space on data that is append-only: updated_at would be written once
+-- and never move. Worse, rows inside a compressed chunk cannot be updated in
+-- the ordinary way, so the trigger below could not maintain the column even if
+-- the space were free. A bar's own `timestamp` already says when it happened,
+-- and data_imports records when it arrived.
+--
+-- ADD COLUMN IF NOT EXISTS rather than editing the CREATE TABLE statements
+-- above, because those are all CREATE TABLE IF NOT EXISTS: on every database
+-- that already exists the CREATE is a no-op and an edit there would reach
+-- nothing. These ALTERs are how a running database gets the columns.
+DO $audit_columns$
+DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'instruments', 'data_sources', 'data_imports',
+        'backtest_results', 'feature_sets', 'feature_spec'
+    ] LOOP
+        EXECUTE format(
+            'ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ', t);
+        EXECUTE format(
+            'ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ', t);
+
+        -- Backfill before NOT NULL, or existing rows fail the constraint.
+        -- feature_sets already carried built_at and backtest_results its own
+        -- created_at; where a truthful timestamp exists it is used rather than
+        -- stamping every historical row with the time of this migration.
+        IF t = 'feature_sets' THEN
+            EXECUTE 'UPDATE feature_sets
+                        SET created_at = COALESCE(created_at, built_at),
+                            updated_at = COALESCE(updated_at, built_at)
+                      WHERE created_at IS NULL OR updated_at IS NULL';
+        END IF;
+
+        EXECUTE format(
+            'UPDATE %I SET created_at = COALESCE(created_at, now()),
+                           updated_at = COALESCE(updated_at, created_at, now())
+              WHERE created_at IS NULL OR updated_at IS NULL', t);
+
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN created_at SET DEFAULT now()', t);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN updated_at SET DEFAULT now()', t);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN created_at SET NOT NULL', t);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN updated_at SET NOT NULL', t);
+    END LOOP;
+END
+$audit_columns$;
+
+-- One function, attached per table. In the database rather than in the
+-- application because three different processes write here — the Java CLI and
+-- engine, the Python loader, and whatever is typed into psql or pgAdmin — so
+-- anything enforced application-side would be enforced in one of them and
+-- quietly skipped by the other two.
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $set_updated_at$
+BEGIN
+    NEW.updated_at = now();
+    -- created_at is immutable: an UPDATE that tries to move it is ignored
+    -- rather than rejected, so an ordinary `UPDATE ... SET *` from a tool like
+    -- pgAdmin's row editor does not start failing.
+    NEW.created_at = OLD.created_at;
+    RETURN NEW;
+END
+$set_updated_at$ LANGUAGE plpgsql;
+
+DO $audit_triggers$
+DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'instruments', 'data_sources', 'data_imports',
+        'backtest_results', 'feature_sets', 'feature_spec'
+    ] LOOP
+        -- DROP then CREATE: CREATE TRIGGER has no IF NOT EXISTS before PG 14,
+        -- and this keeps the definition authoritative if it ever changes.
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I', t, t);
+        EXECUTE format(
+            'CREATE TRIGGER trg_%s_updated_at
+               BEFORE UPDATE ON %I
+               FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
+    END LOOP;
+END
+$audit_triggers$;
