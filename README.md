@@ -73,6 +73,39 @@ its credentials are defaults in a checked-in file, so do not publish `:5050`
 beyond localhost. And it connects as `backtest`, the same superuser the
 services use: it can drop a hypertable as easily as read one.
 
+## Feature table and training window
+
+The feature table is built over **every** day the calendar instrument has, and
+the window a model trains on is chosen per run. Two commands, two decisions:
+
+```bash
+# Build. No --since: writes every calendar day (QQQ: 1999-03-10 on, 6,930 rows
+# per column). The head where the macro series do not exist yet is stored as
+# NULL rather than skipped.
+docker compose exec loader python -m nn.feature_build
+docker compose exec loader python -m nn.feature_build --dry-run   # resolve, write nothing
+
+# Train on a slice of it. --from and --to are both INCLUSIVE.
+docker compose exec loader python -m nn.train_features --from 2003-01-01 --to 2017-12-31
+docker compose exec loader python -m nn.train_features            # whole set
+```
+
+`--since` on the builder still exists, but it is an output filter for trimming
+what gets written, not the way to choose a training range. Prefer `--from` /
+`--to` on the trainer: it leaves the stored set intact, so two models over
+different windows read the same table.
+
+Restricting the window does not change any feature value. Every column is
+normalized causally at build time, so a z-score on a given date is the same
+number whatever range the set was written over — see
+[Build wide, train narrow](/docs/architecture#build-wide-train-narrow).
+
+Rows where any column is NULL are dropped when the matrix is read, so leaving
+the pre-2003 head in the window costs disk and nothing else — training with no
+window still yields 5,970 complete days. The limit is the shortest series
+(today `breakeven_inflation`, which starts in 2003); reaching further back
+means disabling that column in `features.toml`, not rebuilding differently.
+
 ## The happy path, end to end
 
 That whole journey — candles in, check what you have, build rollups, train if the

@@ -457,40 +457,70 @@ PostgreSQL + TimescaleDB with five tables (see `schema.sql`):
 
 #### Audit columns (`created_at` / `updated_at`)
 
-The six metadata tables — `instruments`, `data_sources`, `data_imports`,
-`backtest_results`, `feature_sets`, `feature_spec` — each carry
-`created_at TIMESTAMPTZ NOT NULL DEFAULT now()` and `updated_at` likewise, with
-a `BEFORE UPDATE` trigger per table calling the shared `set_updated_at()`.
+Every table except `candles` carries `created_at TIMESTAMPTZ NOT NULL DEFAULT
+now()` and `updated_at` likewise, with a `BEFORE UPDATE` trigger per table
+calling the shared `set_updated_at()`.
 
 The trigger is in the database rather than in a repository because three
 processes write here — the Java engine and CLI, the Python loader, and whatever
 is typed into psql or pgAdmin. Anything enforced in `data/entity/` would be
 enforced for one of those and silently skipped by the other two. The same
-function also pins `created_at` to `OLD.created_at`, so the column is immutable
+function pins `created_at` to `OLD.created_at`, so the column is immutable
 without an `UPDATE` that touches it having to fail — a row edited in pgAdmin's
 grid writes every column, and rejecting that would make an ordinary edit error
 out.
 
-**Not on `candles` or `feature_values`, on purpose.** Both are compressed
-hypertables in the hundreds of thousands of rows, so two extra timestamptz
-columns is real space on data that is append-only — `updated_at` would be
-written once and never move. More decisively, rows inside a compressed chunk
-cannot be updated the ordinary way, so the trigger could not maintain the
-column even if the space were free. A bar's own `timestamp` says when it
-happened and `data_imports` says when it arrived; between them the audit
-question is already answered for time-series rows.
+`feature_values` is included despite being a compressed hypertable of ~200k
+rows. `ADD COLUMN`, `SET DEFAULT` and a row-level `BEFORE UPDATE` trigger all
+work on a compressed hypertable on TimescaleDB 2.x. Two costs are real, and
+both are one-offs on an existing database: the backfill has to decompress the
+rows it touches, which exceeds
+`max_tuples_decompressed_per_dml_transaction` (100k) — hence the `SET LOCAL`
+lifting it inside the `DO` block — and those rows stay in uncompressed storage
+until the 90-day compression policy catches up. A freshly built set takes
+`created_at` from the `DEFAULT` during `COPY` and is never updated at all.
+
+`candles` stays out. It is the one table nothing derives from and nothing
+rewrites: a bar's own `timestamp` says when it happened and `data_imports` says
+when it arrived, so two more columns on 200k+ compressed rows would record a
+fact already stored twice.
 
 The columns are added by `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in a `DO`
 block at the end of `schema.sql`, not by editing the `CREATE TABLE` statements
 above it. Every one of those is `CREATE TABLE IF NOT EXISTS`, so on a database
 that already exists the `CREATE` is a no-op and an edit there would reach
 nothing. The backfill runs before `SET NOT NULL` and prefers a truthful
-timestamp where one exists — `feature_sets.created_at` comes from `built_at`
-rather than from the time the migration happened to run.
+timestamp where one exists — `feature_sets.created_at` comes from `built_at`,
+and `feature_spec`/`feature_values` inherit the `built_at` of the set they
+belong to, rather than every row being stamped with the time the migration ran.
 
 Dollar-quote tags in those blocks must match `\$[A-Za-z_]*\$`: `DatabaseManager`
 splits `schema.sql` on `;` with a hand-written scanner whose tag regex rejects
 digits, so a tag like `$audit1$` would split mid-block and fail at runtime.
+
+#### Build wide, train narrow
+
+`nn.feature_build` writes **every** day the calendar instrument has — for QQQ
+that is 1999-03-10 onward, 6,930 rows per column, including the long head where
+the macro and breadth series do not exist yet and the value is NULL. Which of
+those days a model learns from is a per-run decision on the trainer
+(`--from` / `--to`), not a property of the stored set.
+
+This split is only safe because of where normalization happens. `--since` on
+the builder is an **output filter applied after normalizing**, so every column
+is already computed causally over the whole calendar: a rolling z-score on
+2010-06-01 is the same number whether the set was written from 1999 or from
+2003. Rebuilding set 4 from the full range produced a byte-identical checksum
+over its previous 2003+ slice while adding 959 days in front of it. Had
+trimming happened before normalizing, each window choice would have silently
+produced different values for the same date.
+
+`feature_store.read_matrix` drops any date where a column is NULL
+(`drop_incomplete`, on by default), so the pre-2003 head costs disk and nothing
+else: training with no window still yields 5,970 complete days. The binding
+constraint is the shortest series — today `breakeven_inflation`, which starts
+in 2003. Reaching further back is a matter of disabling that column in
+`features.toml`, not of rebuilding with a different range.
 
 `DatabaseManager` is a singleton; `initialize()` must be called before `getConnection()`, and `shutdown()` nulls the config. CLI commands are responsible for the init/shutdown pairing (see the `try/finally` blocks in `BacktestCommand`, `TrainCommand`, `ReportCommand`).
 

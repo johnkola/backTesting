@@ -317,16 +317,23 @@ SELECT add_compression_policy('feature_values', INTERVAL '90 days', if_not_exist
 -- ---------------------------------------------------------------------------
 -- Audit columns
 -- ---------------------------------------------------------------------------
--- created_at/updated_at on the metadata tables — the small, mutable ones where
--- "when did this row last change" is a question anyone actually asks.
+-- created_at/updated_at on every table except candles, maintained by the
+-- set_updated_at() trigger below.
 --
--- Deliberately NOT on candles or feature_values. Both are compressed
--- hypertables in the hundreds of thousands of rows, so two timestamptz columns
--- is real space on data that is append-only: updated_at would be written once
--- and never move. Worse, rows inside a compressed chunk cannot be updated in
--- the ordinary way, so the trigger below could not maintain the column even if
--- the space were free. A bar's own `timestamp` already says when it happened,
--- and data_imports records when it arrived.
+-- feature_values is included despite being a compressed hypertable of ~300k
+-- rows. ADD COLUMN, SET DEFAULT and a row-level BEFORE UPDATE trigger all work
+-- on a compressed hypertable on TimescaleDB 2.x, and the backfill measured
+-- ~160ms per 6k rows, so the whole table is a few seconds. The cost that is
+-- NOT free: an UPDATE touching compressed rows moves them back out to
+-- uncompressed storage, so the first run of this inflates the table until the
+-- 90-day compression policy catches up. That is a one-off on an existing
+-- database; a freshly built set gets created_at from the DEFAULT and is never
+-- updated at all.
+--
+-- candles stays out. It is the one table nothing derives from and nothing
+-- rewrites — a bar's own `timestamp` says when it happened and data_imports
+-- says when it arrived, so two more columns on 200k+ compressed rows would buy
+-- a fact already recorded twice.
 --
 -- ADD COLUMN IF NOT EXISTS rather than editing the CREATE TABLE statements
 -- above, because those are all CREATE TABLE IF NOT EXISTS: on every database
@@ -336,9 +343,18 @@ DO $audit_columns$
 DECLARE
     t TEXT;
 BEGIN
+    -- The feature_values backfill updates ~300k rows inside compressed chunks,
+    -- and TimescaleDB caps that at 100k per transaction
+    -- (max_tuples_decompressed_per_dml_transaction) to stop an accidental
+    -- whole-table decompression. Here it is not accidental and it is a one-off,
+    -- so lift the cap for this block only. SET LOCAL reverts when the block's
+    -- transaction ends, including when DatabaseManager runs each statement with
+    -- autocommit on.
+    SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0;
+
     FOREACH t IN ARRAY ARRAY[
         'instruments', 'data_sources', 'data_imports',
-        'backtest_results', 'feature_sets', 'feature_spec'
+        'backtest_results', 'feature_sets', 'feature_spec', 'feature_values'
     ] LOOP
         EXECUTE format(
             'ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ', t);
@@ -346,14 +362,23 @@ BEGIN
             'ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ', t);
 
         -- Backfill before NOT NULL, or existing rows fail the constraint.
-        -- feature_sets already carried built_at and backtest_results its own
-        -- created_at; where a truthful timestamp exists it is used rather than
-        -- stamping every historical row with the time of this migration.
+        -- Where a truthful timestamp already exists it is used, rather than
+        -- stamping every historical row with the time this migration ran:
+        -- feature_sets has built_at, and feature_values inherits the built_at
+        -- of the set it belongs to, which is exactly when those rows were
+        -- written.
         IF t = 'feature_sets' THEN
             EXECUTE 'UPDATE feature_sets
                         SET created_at = COALESCE(created_at, built_at),
                             updated_at = COALESCE(updated_at, built_at)
                       WHERE created_at IS NULL OR updated_at IS NULL';
+        ELSIF t IN ('feature_values', 'feature_spec') THEN
+            EXECUTE format(
+                'UPDATE %I x SET created_at = COALESCE(x.created_at, fs.built_at),
+                                 updated_at = COALESCE(x.updated_at, fs.built_at)
+                   FROM feature_sets fs
+                  WHERE fs.id = x.feature_set_id
+                    AND (x.created_at IS NULL OR x.updated_at IS NULL)', t);
         END IF;
 
         EXECUTE format(
@@ -396,7 +421,7 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY[
         'instruments', 'data_sources', 'data_imports',
-        'backtest_results', 'feature_sets', 'feature_spec'
+        'backtest_results', 'feature_sets', 'feature_spec', 'feature_values'
     ] LOOP
         -- DROP then CREATE: CREATE TRIGGER has no IF NOT EXISTS before PG 14,
         -- and this keeps the definition authoritative if it ever changes.

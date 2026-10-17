@@ -18,8 +18,25 @@ respectable the headline looks.
 None of this is the real scoreboard, which is money against buy-and-hold over
 walk-forward folds. This is the honest minimum until that exists.
 
+THE TRAINING WINDOW IS CHOSEN HERE, NOT AT BUILD TIME. `nn.feature_build`
+writes every day the calendar instrument has — for QQQ that is 1999 onward,
+including the long head where the macro and breadth series do not exist yet and
+the columns are NULL. Which of those days a model learns from is a per-run
+decision, so it is a flag:
+
+    python -m nn.train_features --from 2003-01-01 --to 2017-12-31
+
+Restricting the window does not change a single feature value. Every column is
+normalized causally at build time over a rolling window, so a z-score on
+2010-06-01 is the same number whether the set was read from 2003 or from 1999 —
+which is the point of normalizing before storing rather than after.
+
+Rows where any column is NULL are dropped by `read_matrix` regardless, so the
+pre-2003 head costs nothing but disk if you leave it in the window.
+
     python -m nn.train_features
     python -m nn.train_features --epochs 100 --lookback 20
+    python -m nn.train_features --from 2003-01-01 --to 2017-12-31 --save
 """
 
 from __future__ import annotations
@@ -28,7 +45,7 @@ import argparse
 import os
 import sys
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import psycopg
@@ -115,6 +132,16 @@ def main() -> int:
     p.add_argument("--source", default="yahoo-adj")
     p.add_argument("--timeframe", default="D1")
     p.add_argument("--set-id", type=int, help="Feature set id (default: newest)")
+    # The training window, as dates rather than as a slice of whatever happens
+    # to be stored. The feature set is built over every day the calendar
+    # instrument has, so choosing what to learn from is a decision made here,
+    # per run, not baked into the table at build time.
+    p.add_argument("--from", dest="start", metavar="YYYY-MM-DD",
+                   help="First date to train on, inclusive (default: the "
+                        "start of the feature set)")
+    p.add_argument("--to", dest="end", metavar="YYYY-MM-DD",
+                   help="Last date to train on, INCLUSIVE (default: the end "
+                        "of the feature set)")
     p.add_argument("--lookback", type=int, default=20)
     p.add_argument("--forward", type=int, default=5)
     p.add_argument("--buy-threshold", type=float, default=0.02)
@@ -146,8 +173,17 @@ def main() -> int:
     set_id = args.set_id or feature_store.latest_set_id(
         cur, args.symbol, args.source, args.timeframe
     )
-    fm = feature_store.read_matrix(cur, set_id)
+    # --to is inclusive to match how a person says "2003 to 2017", while
+    # read_matrix's `until` is a half-open upper bound. Convert here, once,
+    # rather than making every caller remember which end is open.
+    until = None
+    if args.end:
+        until = (date.fromisoformat(args.end) + timedelta(days=1)).isoformat()
+    fm = feature_store.read_matrix(cur, set_id, since=args.start, until=until)
     print(f"features  {fm}")
+    if args.start or args.end:
+        print(f"window    {args.start or 'set start'} .. "
+              f"{args.end or 'set end'} (requested)")
 
     closes = load_closes(cur, args.symbol, args.source, args.timeframe)
 
