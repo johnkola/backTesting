@@ -229,8 +229,17 @@ daily_change. Note this is DGS2, not the DTB3 3-month bill also on disk:
 name = "breakeven_inflation"
 series = { symbol = "T10YIE", source = "fred", field = "close" }
 method = "daily_change"
-enabled = true
-note = "Starts 2003-01-02 — the series that sets the training start."
+enabled = false
+status = "short-history"
+note = """T10YIE starts 2003-01-02, and read_matrix drops any date where a
+column is NULL, so this one column decided the training start for the whole
+table: the set holds 6,930 days and only 5,970 survived the drop. Disabled to
+get the 1999-2003 head back — every other series reaches further (VIX to 2000,
+VXN 6,398 days, gold and copper 6,497, price 6,929).
+
+Re-enable it and the floor returns to 2003. The honest trade is between four
+more years of history and one inflation-expectation signal; with it off, the
+next-shortest series sets the new floor."""
 
 [[feature]]
 name = "yield_curve_10y2y"
