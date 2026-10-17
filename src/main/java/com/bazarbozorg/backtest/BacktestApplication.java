@@ -9,6 +9,7 @@ import com.bazarbozorg.backtest.cli.ListSourcesCommand;
 import com.bazarbozorg.backtest.cli.ListStrategiesCommand;
 import com.bazarbozorg.backtest.cli.ReportCommand;
 import com.bazarbozorg.backtest.cli.ServeCommand;
+import com.bazarbozorg.backtest.cli.SignalsCommand;
 import com.bazarbozorg.backtest.cli.TrainCommand;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -28,6 +29,7 @@ import picocli.CommandLine.Command;
              AggregateCommand.class,
              TrainCommand.class,
              BacktestCommand.class,
+             SignalsCommand.class,
              ReportCommand.class,
              ServeCommand.class,
          })

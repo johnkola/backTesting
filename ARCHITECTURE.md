@@ -444,6 +444,43 @@ There is no authentication. The engine isn't published, and the API binds inside
 
 Ownership in one line: Java owns strategies and backtest execution, the Python loader owns every candle write plus the NN, Node owns reads and routing, and the client owns none of it.
 
+### Strategy 1 — signals only (`engine/SignalEvaluator`)
+
+`DESIGN.md` treats a trading strategy as a layer over the model's calls, not a
+different model: "the same model can be scored under any one of them." Strategy
+1 is the thinnest layer — emit a call each bar, act on none, measure the calls.
+`SignalEvaluator` is the engine's execution half simply not being invoked.
+
+It calls `BacktestEngine.prepare` (package-private for exactly this) and sets
+the same `ModelContext` rather than loading candles itself. That is load-bearing
+rather than tidy: Strategy 2 will be measured against this number, and if the
+two paths could disagree about which candles exist or which model version ran,
+the comparison would be between two different experiments.
+
+**`SignalStance` collapses six instructions onto three opinions.**
+`StrategySignal` distinguishes entering a long from exiting a short because a
+portfolio must; signal quality must not. `EXIT_LONG` reads BEARISH — an exit is
+a statement that the move is over. `EXIT_ALL` reads BEARISH on the assumption
+that every strategy here is long-biased; revisit if a short-biased one lands.
+
+**The baseline is the whole point.** Each stance is scored against the mean
+forward return over *every* scored bar — buy-and-hold expressed per-call. In a
+market that drifts up, any bullish call averages a positive return, so
+`mean > 0` is worthless as evidence and only `mean > baseline` means anything.
+`SignalEvaluatorTest.baselineBeatsNaiveZeroComparison` pins this down with a
+series where every forward return is positive and the edge is still negative.
+
+**NEUTRAL has no hit rate.** An abstention cannot be right or wrong without a
+flatness band nobody has defined, and counting it as a miss would make a model
+that abstains honestly score worse than one that guesses.
+
+Nothing is persisted. `backtest_results` is shaped around an equity curve, and
+a Strategy 1 score has none — a half-filled row would corrupt the results list.
+The report carries the full per-bar call list instead, including the trailing
+`horizonBars` whose forward return has not happened yet (`barsEmitted` vs
+`barsScored`): those are the most recent calls, the ones a listener would
+actually act on, so they are shown but excluded from every statistic.
+
 ### Data layer
 
 PostgreSQL + TimescaleDB with five tables (see `schema.sql`):

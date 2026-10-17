@@ -336,7 +336,11 @@ public class BacktestEngine {
                 hit);
     }
 
-    private Prepared prepare(String instrumentSymbol, Timeframe timeframe,
+    // Package-private, not private: SignalEvaluator scores the same strategy
+    // over the same bars without the execution half, and it has to load them
+    // exactly the way run() does. A second copy of this would be a second set
+    // of rules about which candles a run sees.
+    Prepared prepare(String instrumentSymbol, Timeframe timeframe,
                               ZonedDateTime from, ZonedDateTime to, String sourceName) {
         InstrumentRepository instrumentRepo = new InstrumentRepository(databaseManager);
         CandleRepository candleRepo = new CandleRepository(databaseManager);
@@ -380,7 +384,7 @@ public class BacktestEngine {
         return new Prepared(instrument, source, series);
     }
 
-    private record Prepared(Instrument instrument, DataSource source, BarSeries series) {}
+    record Prepared(Instrument instrument, DataSource source, BarSeries series) {}
 
     /**
      * Outcome of a {@link #train} call: enough for the CLI to print a one-line status,

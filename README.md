@@ -106,6 +106,35 @@ window still yields 5,970 complete days. The limit is the shortest series
 (today `breakeven_inflation`, which starts in 2003); reaching further back
 means disabling that column in `features.toml`, not rebuilding differently.
 
+## Strategy 1 — signals only
+
+`DESIGN.md` treats a trading strategy as a layer over the model's calls rather
+than a different model. **Strategy 1** is the thinnest such layer: emit a
+buy/sell/hold call each bar, act on none of them, and measure whether the calls
+were worth listening to. Nothing is bought, so there is no cost, no tax and no
+equity curve — just signal quality against buy-and-hold.
+
+```bash
+./gradlew run --args="signals -s nn-feature-store -i QQQ -t D1 --source yahoo-adj"
+./gradlew run --args="signals -s rsi -i QQQ --horizon 5 --from 2015-01-01"
+```
+
+| Flag | Meaning |
+|------|---------|
+| `-s` `-i` `-t` `--source` `--from` `--to` `-p` `--model-version` | As `run` |
+| `--horizon` | Bars ahead each call is scored against (default 5). **Match the model's training `--forward`** — score a 5-bar model at 1 bar and it will look wrong; at 60 it will look like noise |
+
+**Read the `vs BASE` column, not `MEAN`.** The baseline is the mean forward
+return over every scored bar — what you would earn holding through all of them
+indiscriminately, which is buy-and-hold expressed at the signal horizon. In a
+market that drifts up, every bullish call averages a positive return, so a
+positive `MEAN` is not evidence of anything. Bullish calls have to beat the
+baseline and bearish calls have to trail it; the verdict line says whether they
+did.
+
+Nothing is persisted: `backtest_results` is shaped around an equity curve, and
+a half-filled row there would corrupt the results list. Re-run to re-score.
+
 ## The happy path, end to end
 
 That whole journey — candles in, check what you have, build rollups, train if the
