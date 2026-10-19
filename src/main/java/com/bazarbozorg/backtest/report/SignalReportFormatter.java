@@ -90,11 +90,27 @@ public class SignalReportFormatter {
             return;
         }
         if (r.directionallyCorrect()) {
-            sb.append("VERDICT: directionally correct -- bullish calls beat the baseline "
-                    + "and bearish calls trail it.\n");
+            // Name only the side that actually made calls. A model that emits
+            // nothing but bearish calls passes directionallyCorrect() by
+            // vacuous truth on the bullish side, and claiming "bullish calls
+            // beat the baseline" when there were none is the exact kind of
+            // unearned statement this line exists to avoid.
+            boolean hasBull = bull != null && bull.count() > 0;
+            boolean hasBear = bear != null && bear.count() > 0;
+            String what;
+            if (hasBull && hasBear) {
+                what = "bullish calls beat the baseline and bearish calls trail it";
+            } else if (hasBull) {
+                what = "bullish calls beat the baseline; it made no bearish calls";
+            } else {
+                what = "bearish calls trail the baseline; it made no bullish calls";
+            }
+            sb.append("VERDICT: directionally correct -- ").append(what).append(".\n");
             sb.append("         This is the minimum bar, not an edge. No cost has been "
                     + "charged, and a\n");
-            sb.append("         thin margin over few calls is noise. Read the counts.\n");
+            sb.append("         thin margin over few calls is noise. Read the counts, and "
+                    + "check the\n");
+            sb.append("         range is out-of-sample before believing any of it.\n");
         } else {
             sb.append("VERDICT: NO EDGE -- the calls do not land on the correct side of "
                     + "the baseline.\n");

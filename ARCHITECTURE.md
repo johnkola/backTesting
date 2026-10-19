@@ -444,6 +444,38 @@ There is no authentication. The engine isn't published, and the API binds inside
 
 Ownership in one line: Java owns strategies and backtest execution, the Python loader owns every candle write plus the NN, Node owns reads and routing, and the client owns none of it.
 
+#### The scaler output range is [-1, 1], and must stay centred
+
+`nn/standardise.py` originally matched DL4J's `NormalizerMinMaxScaler(0, 1)`.
+That was right for the old pipeline, which fed raw indicator values — prices in
+the hundreds, RSI in 0..100 — where squashing each column into [0, 1] is the
+job. The feature-store pipeline feeds columns that are **already** normalized
+causally at build time; on QQQ set 6 the training matrix arrives at mean 0.056,
+std 0.974. Mapping that to [0, 1] does not scale it, it *shifts* it: every one
+of the 580 inputs becomes non-negative with mean ≈ 0.46.
+
+That shift killed the network. Xavier init assumes zero-centred inputs; with
+all-positive inputs the first layer's pre-activations drift together, Adam
+drives the biases negative in the first epoch, and the ReLUs die. Measured:
+layer 1 at **1% of units alive after epoch 1 and 0% by epoch 3**, training loss
+pinned at exactly `ln(3) = 1.0986` — a network emitting identical logits for
+every input. For weeks this presented as a majority-class collapse ("the model
+always predicts HOLD") and was reported as one. It was a dead network.
+Centring the range restores layer 1 to ~44% alive.
+
+Min-max was kept rather than switching to z-score: it measured a markedly
+stronger directional edge on the same data, and it bounds outliers.
+
+**`out_min`/`out_max` are persisted in `scaler.json`, and `from_dict` defaults
+them to (0.0, 1.0) when absent.** A file written before this change was fitted
+under the old range and must keep being served under it. Mixing the two is
+silent — the model loads, predicts, and is wrong. That exact failure happened
+once during development: a model trained on [-1, 1] was served by a loader
+container built before the change, and the strategy went from 26% BUY calls in
+training to zero in production with no error anywhere. **Rebuild the loader
+image whenever `python/nn/` changes**, or the running service serves stale
+transform code against fresh models.
+
 ### Strategy 1 — signals only (`engine/SignalEvaluator`)
 
 `DESIGN.md` treats a trading strategy as a layer over the model's calls, not a
