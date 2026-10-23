@@ -5,15 +5,25 @@ import { useTimeframe } from '../../lib/useTimeframe'
 import StageShell, { type StageState } from './StageShell'
 
 /** A disabled column is a recorded decision, not an absence — the badge says
- *  which decision, straight from features.toml. */
+ *  which decision, straight from features.toml.
+ *
+ *  `status: null` is its own decision and the only one that means "data only":
+ *  the design keeps RSI, MACD and realized volatility computed but out of the
+ *  network, because the model already sees the bar they are derived from. An
+ *  unrecognised status is NOT that, so it shows itself rather than borrowing
+ *  that label — `short-history` spent a release reading "data only", which
+ *  stated the opposite of the truth about a column the design commits to and
+ *  that was dropped only because its series starts too late. */
 function stateBadge(col: FeatureColumn) {
   if (col.enabled) return { label: 'in the model', cls: 'badge-success' }
+  if (!col.status) return { label: 'data only', cls: 'badge-ghost' }
   switch (col.status) {
     case 'blocked': return { label: 'blocked', cls: 'badge-error' }
     case 'needs-import': return { label: 'needs import', cls: 'badge-warning' }
     case 'later-paid': return { label: 'later — paid', cls: 'badge-info' }
+    case 'short-history': return { label: 'short history', cls: 'badge-warning' }
     case 'undecided': return { label: 'undecided', cls: 'badge-ghost' }
-    default: return { label: 'data only', cls: 'badge-ghost' }
+    default: return { label: col.status, cls: 'badge-warning' }
   }
 }
 
