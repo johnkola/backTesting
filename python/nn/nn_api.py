@@ -29,7 +29,10 @@ from nn.data import (
 )
 from nn.features import (
     FEATURE_SCHEMA_VERSION,
+    FEATURE_SPEC,
     FEATURES_PER_BAR,
+    INDICATOR_PERIODS,
+    MIN_BARS,
     build_feature_matrix,
     min_bar_index,
 )
@@ -626,6 +629,44 @@ def get_models(strategy: str | None = None) -> JSONResponse:
     return JSONResponse(
         status_code=200,
         content={"items": items, "modelsDir": str(_models_dir())},
+    )
+
+
+@router.get("/api/nn/features/schema")
+def get_features_schema() -> JSONResponse:
+    """What `nn-feedforward` feeds the network, per bar.
+
+    The sibling of `/features/config`, for the other NN strategy. That one
+    describes the stored feature table (`features.toml`, many instruments, one
+    row per date); this one describes the 12 values computed on the fly from a
+    single instrument's candles. The two strategies are told apart by nothing
+    else in the API, which is how the Train page came to offer a choice that
+    changed nothing, so each now has an endpoint that says what it eats.
+
+    Read from `features.FEATURE_SPEC`, which sits beside the extractor, so the
+    web UI never restates a formula the Python owns.
+    """
+    return JSONResponse(
+        status_code=200,
+        content={
+            "strategy": "nn-feedforward",
+            "featuresPerBar": FEATURES_PER_BAR,
+            "schemaVersion": FEATURE_SCHEMA_VERSION,
+            # Bars consumed before the first complete vector exists: the longest
+            # indicator window plus the lookback. A series shorter than this
+            # trains on nothing, which is worth showing before the button is hit.
+            "minBars": MIN_BARS,
+            "indicatorPeriods": INDICATOR_PERIODS,
+            "columns": [
+                {
+                    "index": i,
+                    "name": f.name,
+                    "formula": f.formula,
+                    "note": f.note,
+                }
+                for i, f in enumerate(FEATURE_SPEC)
+            ],
+        },
     )
 
 

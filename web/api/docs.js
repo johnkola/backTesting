@@ -1,7 +1,13 @@
 const crypto = require('crypto');
 const { pool } = require('./db');
 
-const KNOWN_DOCS = new Set(['GETTING_STARTED', 'README', 'ARCHITECTURE']);
+const KNOWN_DOCS = new Set([
+  'GETTING_STARTED', 'README', 'ARCHITECTURE',
+  // The QQQ model's own design docs, under reference/. They get revision
+  // history like the rest: the design is edited upstream and re-synced, so
+  // being able to read what it said last week is the point.
+  'QQQ_DESIGN', 'QQQ_ARCHITECTURE',
+]);
 
 async function ensureSchema() {
   // Owned by the web layer, not the Java backtester. Idempotent.

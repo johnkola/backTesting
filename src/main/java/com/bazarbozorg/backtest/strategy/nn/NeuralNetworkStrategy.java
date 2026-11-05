@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.strategy.nn;
 
+import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
@@ -146,11 +147,13 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
             warmupBars = 0;
             return;
         }
-        // BarSeries.getBar(i).getEndTime() returns an Instant. We use ISO-8601
-        // with `since` inclusive and `until` exclusive set to last+1ms so the
-        // loader's `<` semantics include the final bar.
-        Instant firstTs = series.getBar(0).getEndTime();
-        Instant lastTs = series.getBar(barCount - 1).getEndTime();
+        // A bar's OWN date, via barDate(), not its end instant: the loader
+        // keys candles by their stored timestamp and BarSeriesConverter sets
+        // endTime to timestamp + one period. ISO-8601, `since` inclusive and
+        // `until` exclusive at last+1ms so the loader's `<` includes the
+        // final bar.
+        Instant firstTs = BacktestEngine.barDate(series.getBar(0)).toInstant();
+        Instant lastTs = BacktestEngine.barDate(series.getBar(barCount - 1)).toInstant();
         String since = firstTs.toString();
         String until = lastTs.plusMillis(1).toString();
 
@@ -221,8 +224,10 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         if (i < warmupBars) {
             return StrategySignal.HOLD;
         }
-        Instant ts = series.getBar(i).getEndTime();
-        Integer cls = predictionsByEpochSecond.get(ts.getEpochSecond());
+        // Bar's own date -- see the note in buildIndicators(). Keying by the
+        // end instant here fetched the next bar's prediction.
+        long sec = BacktestEngine.barDate(series.getBar(i)).toEpochSecond();
+        Integer cls = predictionsByEpochSecond.get(sec);
         if (cls == null) {
             // Bar didn't get a prediction — happens for bars beyond what the
             // loader returned (e.g. a partial range). Fail safe to HOLD.

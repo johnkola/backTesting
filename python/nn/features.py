@@ -32,6 +32,21 @@ _BB_PERIOD = 20
 
 MIN_BARS = _SMA_LONG  # the longest indicator window — features earlier than this are partial.
 
+# The periods above, for callers outside this module (the API serves them so the
+# web UI can state what the network actually looks back over). Public because
+# reaching in for the underscore names from another module is how a rename
+# becomes someone else's AttributeError.
+INDICATOR_PERIODS: dict[str, int] = {
+    "smaShort": _SMA_SHORT,
+    "smaLong": _SMA_LONG,
+    "volumeSma": _VOL_SMA,
+    "rsi": _RSI,
+    "macdShort": _MACD_SHORT,
+    "macdLong": _MACD_LONG,
+    "macdSignal": _MACD_SIGNAL,
+    "bollinger": _BB_PERIOD,
+}
+
 
 @dataclass(frozen=True)
 class Candle:
@@ -52,9 +67,59 @@ def min_bar_index(lookback: int) -> int:
     return MIN_BARS + lookback
 
 
+@dataclass(frozen=True)
+class FeatureSpec:
+    """What one slot of the per-bar vector holds."""
+
+    name: str
+    formula: str
+    note: str
+
+
+# The vector, described. Index here IS the index in `extract_bar_features`
+# below, and `test_features_schema.py` asserts the two stay in lockstep — this
+# exists so the web UI can say which 12 inputs the network sees without
+# restating the formulas in TypeScript, where they would drift the first time
+# anyone edits the extractor.
+#
+# Every entry is scale-free on purpose: a ratio, a fraction of close, or a
+# bounded oscillator. The network is trained across instruments whose prices
+# differ by orders of magnitude, so a raw price in here would make the weights
+# meaningless the moment the symbol changed.
+FEATURE_SPEC: tuple[FeatureSpec, ...] = (
+    FeatureSpec("close_to_sma50", "close / SMA(50)",
+                "Where price sits against its long mean. Above 1 is extended."),
+    FeatureSpec("body", "(close - open) / close",
+                "The bar's body, signed. Direction and conviction in one number."),
+    FeatureSpec("range", "(high - low) / close",
+                "How far the bar travelled — the session's volatility."),
+    FeatureSpec("upper_wick", "(high - max(open, close)) / close",
+                "Rejection from above: how much of the high was given back."),
+    FeatureSpec("lower_wick", "(min(open, close) - low) / close",
+                "Rejection from below — buyers defending the low."),
+    FeatureSpec("volume_to_sma20", "volume / SMA(volume, 20)",
+                "Participation against normal. 1 is an average day."),
+    FeatureSpec("rsi14", "RSI(14) / 100",
+                "Momentum, scaled to 0–1 rather than 0–100."),
+    FeatureSpec("sma10_vs_sma50", "(SMA(10) - SMA(50)) / SMA(50)",
+                "Trend agreement between the fast and slow mean."),
+    FeatureSpec("macd", "MACD(12, 26) / close",
+                "Momentum divergence, made scale-free by dividing by price."),
+    FeatureSpec("macd_signal", "MACD signal(9) / close",
+                "The signal line. Its gap to `macd` is the crossover."),
+    FeatureSpec("bollinger_pct_b", "(close - BB_lower) / (BB_upper - BB_lower)",
+                "Position inside the 20-bar bands. 0.5 is the middle."),
+    FeatureSpec("return_1bar", "close / prev_close - 1",
+                "The one thing a price series cannot do without: last bar's return."),
+)
+
+
 def extract_bar_features(candles: Sequence[Candle], i: int, ctx: "_IndicatorCache") -> list[float]:
     """Per-bar 12-feature vector at index i. `ctx` carries the pre-computed
-    indicator series so we don't recompute them per call."""
+    indicator series so we don't recompute them per call.
+
+    The slots are described, in order, by `FEATURE_SPEC` above. Add or reorder
+    one here and that tuple must move with it."""
 
     close = candles[i].close
     open_ = candles[i].open

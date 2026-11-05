@@ -38,6 +38,15 @@ public class BacktestResult {
     private final String modelCacheKey;
     private final Boolean modelCacheHit;
     private final String modelVersionId;
+    /**
+     * Which stored benchmark this run was measured against.
+     *
+     * <p>Null only for a run whose window predates the benchmarks table.
+     * Recording the id rather than copying the figure is the point: the
+     * comparison is to a shared row, so two runs over one window cannot drift
+     * apart, and a reader can follow the id to the closes it came from.
+     */
+    private final Long benchmarkId;
 
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
                           String dataSource,
@@ -46,7 +55,8 @@ public class BacktestResult {
                           List<EquityPoint> equityHistory,
                           double initialCapital, double finalEquity,
                           String modelCacheKey, Boolean modelCacheHit,
-                          String modelVersionId) {
+                          String modelVersionId,
+                          Long benchmarkId) {
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
@@ -61,6 +71,7 @@ public class BacktestResult {
         this.modelCacheKey = modelCacheKey;
         this.modelCacheHit = modelCacheHit;
         this.modelVersionId = modelVersionId;
+        this.benchmarkId = benchmarkId;
     }
 
     public String getDataSource() {
@@ -124,5 +135,10 @@ public class BacktestResult {
      */
     public String getModelVersionId() {
         return modelVersionId;
+    }
+
+    /** The stored benchmark row this run is judged against, or null for legacy runs. */
+    public Long getBenchmarkId() {
+        return benchmarkId;
     }
 }

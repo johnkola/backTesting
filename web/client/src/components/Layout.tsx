@@ -8,6 +8,8 @@ const links = [
   { to: '/sources', label: 'Sources' },
   { to: '/instruments', label: 'Instruments' },
   { to: '/imports', label: 'Imports' },
+  { to: '/features', label: 'Features' },
+  { to: '/strategy', label: 'Strategy' },
   { to: '/train', label: 'Train' },
   { to: '/run', label: 'Run' },
   { to: '/results', label: 'Results' },

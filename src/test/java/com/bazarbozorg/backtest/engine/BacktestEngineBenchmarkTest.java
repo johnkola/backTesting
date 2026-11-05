@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.engine;
 
+import com.bazarbozorg.backtest.model.Benchmark;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * 200-bar warmup handed buy-and-hold 9 of its 17 points.
  *
  * <p>These are pure arithmetic, so they need no database and no bar series.
+ * The formula moved to {@link Benchmark#returnPct} when the benchmark became a
+ * stored row shared by every run over a window; these tests follow it there,
+ * because what they pin is the arithmetic, not where it lives.
  */
 class BacktestEngineBenchmarkTest {
 
@@ -53,8 +57,8 @@ class BacktestEngineBenchmarkTest {
     void returnIsPercentChange() {
         // The regression case, with the real SPY closes that exposed it: the
         // window opened at 295.39 but the strategy could not trade until 320.31.
-        assertEquals(17.2352, BacktestEngine.buyAndHoldReturnPct(295.391846, 346.303253), 1e-4);
-        assertEquals(8.1144, BacktestEngine.buyAndHoldReturnPct(320.312, 346.303253), 1e-4);
+        assertEquals(17.2352, Benchmark.returnPct(295.391846, 346.303253), 1e-4);
+        assertEquals(8.1144, Benchmark.returnPct(320.312, 346.303253), 1e-4);
     }
 
     @Test
@@ -64,8 +68,8 @@ class BacktestEngineBenchmarkTest {
         double firstTradable = 320.312;   // bar 200, where the loop starts
         double windowClose = 346.303253;  // last bar
 
-        double wrong = BacktestEngine.buyAndHoldReturnPct(windowOpen, windowClose);
-        double right = BacktestEngine.buyAndHoldReturnPct(firstTradable, windowClose);
+        double wrong = Benchmark.returnPct(windowOpen, windowClose);
+        double right = Benchmark.returnPct(firstTradable, windowClose);
 
         assertEquals(9.1208, wrong - right, 1e-3,
                 "the old calculation credited buy-and-hold with the warmup's gain");
@@ -74,19 +78,19 @@ class BacktestEngineBenchmarkTest {
     @Test
     @DisplayName("a non-positive first close yields 0 rather than infinity")
     void guardsAgainstDivisionByZero() {
-        assertEquals(0.0, BacktestEngine.buyAndHoldReturnPct(0.0, 100.0));
-        assertEquals(0.0, BacktestEngine.buyAndHoldReturnPct(-5.0, 100.0));
+        assertEquals(0.0, Benchmark.returnPct(0.0, 100.0));
+        assertEquals(0.0, Benchmark.returnPct(-5.0, 100.0));
     }
 
     @Test
     @DisplayName("a flat market benchmarks at zero")
     void flatMarketIsZero() {
-        assertEquals(0.0, BacktestEngine.buyAndHoldReturnPct(100.0, 100.0), 1e-9);
+        assertEquals(0.0, Benchmark.returnPct(100.0, 100.0), 1e-9);
     }
 
     @Test
     @DisplayName("a falling market benchmarks negative")
     void fallingMarketIsNegative() {
-        assertEquals(-50.0, BacktestEngine.buyAndHoldReturnPct(100.0, 50.0), 1e-9);
+        assertEquals(-50.0, Benchmark.returnPct(100.0, 50.0), 1e-9);
     }
 }

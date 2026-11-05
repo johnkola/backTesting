@@ -34,6 +34,10 @@ max_fill_days = 5
 name = "price_close"
 series = { symbol = "QQQ", source = "yahoo-adj", field = "close" }
 method = "ratio_to_prev_close"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 """
 
 
@@ -171,6 +175,10 @@ def test_degenerate_window_is_rejected(tmp_path):
     name = "vol"
     series = { symbol = "QQQ", source = "yahoo-adj", field = "volume" }
     method = "rolling_zscore"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     window = 1
     """)
     with pytest.raises(fc.FeatureConfigError, match="vol: window must be an integer >= 2"):
@@ -183,6 +191,10 @@ def test_duplicate_names_are_rejected(tmp_path):
     name = "price_close"
     series = { symbol = "QQQ", source = "yahoo-adj", field = "open" }
     method = "daily_return"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     """)
     with pytest.raises(fc.FeatureConfigError, match="duplicate feature name"):
         fc.load(p)
@@ -208,6 +220,10 @@ def test_unknown_op_is_rejected(tmp_path):
     name = "spread"
     series = { op = "ratio", a = { symbol = "A", source = "s", field = "close" }, b = { symbol = "B", source = "s", field = "close" } }
     method = "rolling_zscore"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     """)
     with pytest.raises(fc.FeatureConfigError, match="spread: unknown op 'ratio'"):
         fc.load(p)
@@ -219,6 +235,10 @@ def test_an_op_missing_a_side_is_rejected(tmp_path):
     name = "half"
     series = { op = "subtract", a = { symbol = "A", source = "s", field = "close" } }
     method = "rolling_zscore"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     """)
     with pytest.raises(fc.FeatureConfigError, match="half: op needs both"):
         fc.load(p)
@@ -230,6 +250,10 @@ def test_rescale_with_an_empty_range_is_rejected(tmp_path):
     name = "flat"
     series = { symbol = "QQQ", source = "yahoo-adj", field = "close" }
     method = "rescale"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     min = 5.0
     max = 5.0
     """)
@@ -266,6 +290,10 @@ def test_window_falls_back_to_the_defaults_block(tmp_path):
     name = "vxn"
     series = { symbol = "VXN", source = "yahoo", field = "close" }
     method = "rolling_zscore"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     """)
     assert fc.load(p).by_name("vxn").params["window"] == 60
 
@@ -276,6 +304,10 @@ def test_an_explicit_window_overrides_the_default(tmp_path):
     name = "vxn"
     series = { symbol = "VXN", source = "yahoo", field = "close" }
     method = "rolling_zscore"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     window = 90
     """)
     assert fc.load(p).by_name("vxn").params["window"] == 90
@@ -287,6 +319,10 @@ def test_a_method_with_no_default_and_no_value_is_rejected(tmp_path):
     name = "cyc"
     series = { computed = "day_of_week" }
     method = "cyclical"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "level"
     """)
     with pytest.raises(fc.FeatureConfigError, match="cyc: method 'cyclical' needs `period`"):
         fc.load(p)

@@ -180,8 +180,14 @@ inside an error boundary so a bad row cannot blank the app.
 ./gradlew run --args="--help"    # CLI help
 cd python && .venv/bin/python -m pytest    # Python tests (needs the dev extra installed)
 
+cd web/client && npm test        # client unit tests (vitest)
+cd web/api    && npm test        # API unit tests (node:test)
 cd web/client && npm run lint    # client: correctness + formatting + imports
 cd web/api    && npm run lint    # same, for the Node API
+
+# Every endpoint, asserted against the running stack. See postman/README.md.
+postman collection run postman/backtest.postman_collection.json \
+  -e postman/local.postman_environment.json
 ```
 
 Both `web/client/` and `web/api/` have the same gate: `npm run lint` fails on

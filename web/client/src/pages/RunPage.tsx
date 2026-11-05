@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   api, beatBuyAndHold, isAbortError, isTradeable, strategyDocHref, vsBuyAndHold,
-  type Instrument, type RunResult, type Strategy,
+  type Instrument, type RunResult, type SavedStrategy, type Strategy,
 } from '../lib/api'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
+import { hintFor } from '../lib/fieldHints'
 import TradeChart from '../components/TradeChart'
 import { metricHint } from '../lib/metricHints'
 import { useTimeframe } from '../lib/useTimeframe'
@@ -17,6 +18,18 @@ import { useTimeframe } from '../lib/useTimeframe'
  */
 export default function RunPage() {
   const [strategies, setStrategies] = useState<Strategy[] | null>(null)
+  /**
+   * Saved strategies from the builder.
+   *
+   * §8.2a: "a saved strategy is what Train and Run consume." Run was offering
+   * only the registry entries, so a strategy composed on the Strategy tab --
+   * with its series, its windows and its model -- could be trained and then
+   * never backtested as itself. Picking one here fills the series, the
+   * parameters and the window from the record, so the backtest is over the
+   * bars the strategy actually reserved for scoring.
+   */
+  const [saved, setSaved] = useState<SavedStrategy[]>([])
+  const [savedId, setSavedId] = useState('')
   const [instruments, setInstruments] = useState<Instrument[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   // The app-wide bar size. The instrument fetch is filtered by it, so the
@@ -39,9 +52,16 @@ export default function RunPage() {
 
   useEffect(() => {
     const ctrl = new AbortController()
-    Promise.all([api.strategies(ctrl.signal), api.instruments(tf, ctrl.signal)])
-      .then(([s, i]) => {
+    Promise.all([
+      api.strategies(ctrl.signal),
+      api.instruments(tf, ctrl.signal),
+      // Not fatal if it fails: the registry path must keep working even when
+      // there are no saved strategies, or the API for them is unavailable.
+      api.savedStrategies({}, ctrl.signal).catch(() => null),
+    ])
+      .then(([s, i, savedResp]) => {
         setStrategies(s.items)
+        setSaved(savedResp?.items ?? [])
         // Indices are filtered out rather than shown and rejected: they are real
         // data but not holdings, and the engine refuses them. Offering one in a
         // picker labelled "what to trade" is the wrong promise to make.
@@ -93,6 +113,39 @@ export default function RunPage() {
     (s) => s.sourceName === source && s.timeframe === timeframe,
   )
 
+  /**
+   * Fill the form from a saved strategy.
+   *
+   * The window defaults to the strategy's **test** block, not its train block.
+   * Design.md is explicit about why: the test bars are "held out and scored
+   * once, after training", so they are the only honest out-of-sample read.
+   * Backtesting over the train window would score the model on the bars it was
+   * fitted on and report a flattering number that means nothing.
+   *
+   * Falls back to the prediction window, then to no range at all (the whole
+   * series), so a strategy saved without a test block still works.
+   */
+  function applySaved(id: string) {
+    setSavedId(id)
+    const chosen = saved.find((x) => x.id === id)
+    if (!chosen) return
+    const registry = strategies?.find((x) => x.name === 'nn-feedforward')
+    if (registry) selectStrategy(registry)
+    setSymbol(chosen.instrument)
+    setSource(chosen.source)
+    setTimeframe(chosen.timeframe)
+    const scoring = chosen.windows.test ?? chosen.windows.prediction
+    setFrom(scoring?.from ?? '')
+    setTo(scoring?.to ?? '')
+    setParams((prev) => ({
+      ...prev,
+      ...Object.fromEntries(Object.entries(chosen.hyperparams).map(([k, v]) => [k, String(v)])),
+    }))
+    setResult(null); setRunError(null)
+  }
+
+  const chosenSaved = saved.find((x) => x.id === savedId) ?? null
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setRunning(true)
@@ -132,6 +185,41 @@ export default function RunPage() {
 
       {strategies && instruments && (
         <form onSubmit={submit} className="space-y-4">
+          {saved.length > 0 && (
+            <div className="bg-base-200 rounded-box p-4">
+              <label className="form-control">
+                <FieldLabel text="Saved strategy" hint={hintFor('run.savedStrategy')} />
+                <select
+                  className="select select-bordered" value={savedId}
+                  onChange={(e) => applySaved(e.target.value)}
+                >
+                  <option value="">— none: choose everything by hand below —</option>
+                  {saved.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name} v{x.version} — {x.instrument} {x.timeframe},{' '}
+                      {x.features.length} features
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {chosenSaved && (
+                <p className="text-xs text-base-content/70 mt-2">
+                  Scoring over the{' '}
+                  <span className="font-medium">
+                    {chosenSaved.windows.test ? 'test' : 'prediction'}
+                  </span>{' '}
+                  window the strategy reserved
+                  {chosenSaved.windows.test && (
+                    <> (<span className="font-mono">
+                      {chosenSaved.windows.test.from} → {chosenSaved.windows.test.to}
+                    </span>)</>
+                  )}
+                  . Those bars were held out of training, so this is an out-of-sample read
+                  rather than a score on the bars the model was fitted on.
+                </p>
+              )}
+            </div>
+          )}
           <div className="bg-base-200 rounded-box p-4 grid gap-4 md:grid-cols-2">
             <label className="form-control">
               <FieldLabel text="Strategy" hint="What decides entries and exits. Switching resets the parameters below to that strategy's defaults." />

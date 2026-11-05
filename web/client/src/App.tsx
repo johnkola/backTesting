@@ -14,6 +14,8 @@ import InstrumentsPage from './pages/InstrumentsPage'
 import ImportsPage from './pages/ImportsPage'
 import ResultsPage from './pages/ResultsPage'
 import RunPage from './pages/RunPage'
+import FeaturesPage from './pages/FeaturesPage'
+import StrategyPage from './pages/StrategyPage'
 import TrainPage from './pages/TrainPage'
 import ResultDetailPage from './pages/ResultDetailPage'
 import ModelsPage from './pages/ModelsPage'
@@ -45,6 +47,8 @@ export default function App() {
             <Route path="/instruments" element={<InstrumentsPage />} />
             <Route path="/imports" element={<ImportsPage />} />
             <Route path="/run" element={<RunPage />} />
+            <Route path="/features" element={<FeaturesPage />} />
+            <Route path="/strategy" element={<StrategyPage />} />
             <Route path="/train" element={<TrainPage />} />
             <Route path="/results" element={<ResultsPage />} />
             <Route path="/results/:id" element={<ResultDetailPage />} />

@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.engine;
 
+import com.bazarbozorg.backtest.model.Benchmark;
 import com.bazarbozorg.backtest.model.DataSource;
 import com.bazarbozorg.backtest.model.Instrument;
 import com.bazarbozorg.backtest.model.Portfolio;
@@ -192,7 +193,7 @@ public class SignalEvaluator {
         if (series.getBarCount() > 0 && firstBar < series.getBarCount()) {
             Bar first = series.getBar(firstBar);
             Bar last = series.getBar(series.getBarCount() - 1);
-            buyAndHold = BacktestEngine.buyAndHoldReturnPct(
+            buyAndHold = Benchmark.returnPct(
                     first.getClosePrice().doubleValue(), last.getClosePrice().doubleValue());
             start = BacktestEngine.barDate(first);
             end = BacktestEngine.barDate(last);

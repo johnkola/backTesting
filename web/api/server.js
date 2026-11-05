@@ -4,7 +4,11 @@ const http = require('node:http');
 const path = require('path');
 const { marked } = require('marked');
 const { pool } = require('./db');
+const { normaliseMetadata } = require('./modelMetadata');
+const featureCatalogue = require('./featureCatalogue');
 const docs = require('./docs');
+const strategies = require('./strategies');
+const { DOCS, DOC_BY_SLUG } = require('./docsRegistry');
 
 // CSV upload is owned by the Python loader. In docker-compose this is the
 // loader service on :8001; locally it's whatever LOADER_URL points at.
@@ -114,17 +118,6 @@ function slugify(text) {
     .replace(/[^\w\s-]/g, '')
     .replace(/\s/g, '-');
 }
-
-// Rendered-doc registry. `slug` is what the client's /docs/:slug route uses;
-// adding a doc means a row here and nothing else — /api/docs enumerates it.
-const DOCS = {
-  GETTING_STARTED: { file: 'GETTING-STARTED.md', label: 'Getting Started', slug: 'getting-started' },
-  README: { file: 'README.md', label: 'README', slug: 'readme' },
-  ARCHITECTURE: { file: 'ARCHITECTURE.md', label: 'Architecture', slug: 'architecture' },
-};
-
-/** slug → registry key, so the client can address docs by the name in its URL. */
-const DOC_BY_SLUG = new Map(Object.entries(DOCS).map(([name, c]) => [c.slug, name]));
 
 /**
  * GET /api/docs/:name — one rendered doc.
@@ -677,49 +670,6 @@ function pushEntryIfMetadata(out, dir, versionId) {
   }
 }
 
-/**
- * Brings both metadata dialects to one camelCase shape.
- *
- * Two writers have produced `metadata.json` over this project's life. Java's
- * `ModelMetadata` record wrote camelCase with the training range and instrument
- * ids inline. The Python loader that replaced it (`python/nn/store.py`) writes
- * snake_case with a nested `extra` block instead, so reading it as camelCase
- * yields a row where every field but the version id is `undefined` — which is
- * exactly what reached the Models page and crashed it on `cacheKey.slice()`.
- *
- * Fields the loader simply does not record (instrument, source, timeframe, the
- * training date range) stay null: they are genuinely absent from disk, not
- * mis-read, and the page already renders "—" for them.
- */
-function normaliseMetadata(raw) {
-  if (raw.cache_key === undefined) return raw; // already camelCase (Java-era)
-
-  const extra = raw.extra ?? {};
-  const config = extra.config ?? {};
-  const samples = [extra.train_samples, extra.val_samples].filter((n) => typeof n === 'number');
-
-  return {
-    cacheKey: raw.cache_key,
-    strategyName: raw.strategy,
-    createdAt: raw.created_at,
-    instrumentId: null,
-    sourceId: null,
-    timeframe: null,
-    trainingFromEpochSec: null,
-    trainingToEpochSec: null,
-    // The loader counts training rows, not candles, so this is the sample count
-    // the split was taken from — the nearest honest equivalent of "bars".
-    trainingBarCount: samples.length ? samples.reduce((a, b) => a + b, 0) : null,
-    // Stored as a 0–1 fraction; the column is a percentage.
-    validationAccuracyPct:
-      typeof extra.final_val_acc === 'number' ? extra.final_val_acc * 100 : null,
-    // The page renders hyperparams as strings, which is what Java wrote.
-    hyperparams: Object.fromEntries(Object.entries(config).map(([k, v]) => [k, String(v)])),
-    dl4jVersion: null, // there is no DL4J any more
-    trainingDurationMs: null, // the loader does not time the train
-  };
-}
-
 function readModelsFromDisk() {
   if (!fs.existsSync(modelsDir)) return [];
   const out = [];
@@ -750,14 +700,101 @@ function readModelsFromDisk() {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Saved strategies — ARCHITECTURE.md 8.1a/8.2a
+// ---------------------------------------------------------------------------
+// The builder's store. A strategy carries the feature subset, the four windows,
+// the validation scheme, the model type, the label definition and the
+// hyperparameters; Train executes one and makes no choices of its own.
+//
+// There is no PUT or PATCH here on purpose: the design requires that editing a
+// saved strategy create a new version rather than overwrite, so every run keeps
+// pointing at exactly what it was trained from.
+
+app.get('/api/strategies/saved', async (req, res) => {
+  try {
+    const name = typeof req.query.name === 'string' && req.query.name ? req.query.name : null;
+    const latestOnly = /^(1|true|yes)$/i.test(String(req.query.latest || ''));
+    res.json({
+      items: await strategies.list({ name, latestOnly }),
+      // The form is generated from the same spec the validator enforces.
+      paramSpec: strategies.PARAM_SPEC,
+      modelTypes: [...strategies.MODEL_TYPES],
+      validationSchemes: [...strategies.VALIDATION_SCHEMES],
+      windows: strategies.WINDOWS,
+      requiredWindows: strategies.REQUIRED_WINDOWS,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/strategies/saved/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) {
+    return res.status(400).json({ error: 'id must be numeric' });
+  }
+  try {
+    const found = await strategies.getById(req.params.id);
+    if (!found) return res.status(404).json({ error: `no strategy with id ${req.params.id}` });
+    res.json(found);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// `express.json()` is mounted on this route alone, never globally. Every other
+// POST here is a raw stream piped to the loader or the engine, and a global body
+// parser would consume that stream before the proxy could forward it -- the
+// upstream would then see an empty body and answer 422.
+app.post('/api/strategies/saved', express.json({ limit: '256kb' }), async (req, res) => {
+  const checked = strategies.validateStrategy(req.body);
+  if (!checked.ok) {
+    // 422, not 400: the body parsed fine, the values are what is wrong.
+    return res.status(422).json({ error: checked.errors.join('; '), errors: checked.errors });
+  }
+  try {
+    res.status(201).json(await strategies.save(checked.value));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Removing a saved strategy. Not in tension with "editing creates a new
+// version, never overwrites" (§8.2a): that rule protects a run's provenance,
+// and a version nothing was trained from has none to protect. `?all=1` removes
+// every version of the name, which is what the UI's remove button sends.
+app.delete('/api/strategies/saved/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) {
+    return res.status(400).json({ error: 'id must be numeric' });
+  }
+  try {
+    const wantAll = /^(1|true|yes)$/i.test(String(req.query.all || ''));
+    if (!wantAll) {
+      const gone = await strategies.remove(req.params.id);
+      if (!gone) return res.status(404).json({ error: `no strategy with id ${req.params.id}` });
+      return res.json({ status: 'deleted', id: req.params.id, versionsDeleted: 1 });
+    }
+    // Resolve the name first: the client knows an id, and deleting "every
+    // version of whatever that id belongs to" has to be one decision rather
+    // than a guess made from a name the client typed.
+    const found = await strategies.getById(req.params.id);
+    if (!found) return res.status(404).json({ error: `no strategy with id ${req.params.id}` });
+    const n = await strategies.removeByName(found.name);
+    res.json({ status: 'deleted', name: found.name, versionsDeleted: n });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/models', async (req, res) => {
   try {
     const wantTimeframe = typeof req.query.timeframe === 'string' && req.query.timeframe
       ? req.query.timeframe
       : null;
-    // A null timeframe is kept, not filtered out: the loader does not record
-    // what it trained on, so excluding nulls would hide every loader-trained
-    // model the moment a timeframe is chosen. The client marks them instead.
+    // A null timeframe is kept, not filtered out. Models trained since the
+    // loader began recording `extra.training_window` carry a real timeframe and
+    // filter properly; the ones that stay null predate that and would otherwise
+    // vanish the moment a timeframe is chosen. The client marks them instead.
     const entries = wantTimeframe
       ? readModelsFromDisk().filter((e) => e.timeframe == null || e.timeframe === wantTimeframe)
       : readModelsFromDisk();
@@ -802,9 +839,13 @@ app.get('/api/models', async (req, res) => {
       versionId: e.versionId,
       strategyName: e.strategyName,
       instrumentId: e.instrumentId,
-      instrumentSymbol: instrumentMap.get(String(e.instrumentId)) ?? null,
+      // The DB join wins where there is an id to join on (Java-era rows), and
+      // the name the loader recorded in `extra.training_window` is the fallback.
+      // Neither writer produces both, so this is a union of two sources rather
+      // than a precedence call.
+      instrumentSymbol: instrumentMap.get(String(e.instrumentId)) ?? e.instrumentSymbol ?? null,
       sourceId: e.sourceId,
-      sourceName: sourceMap.get(String(e.sourceId)) ?? null,
+      sourceName: sourceMap.get(String(e.sourceId)) ?? e.sourceName ?? null,
       timeframe: e.timeframe,
       trainingFromEpochSec: e.trainingFromEpochSec,
       trainingToEpochSec: e.trainingToEpochSec,
@@ -894,6 +935,60 @@ app.get('/api/instruments', async (req, res) => {
 // The feature table: what the model eats, and which sets have been built from
 // it. Two halves from two places — the config is the Python side's to parse
 // (see the loader endpoint), the built sets are rows in Postgres.
+// ---------------------------------------------------------------------------
+// The Features tab -- the catalogue and the coverage view (8.1a)
+// ---------------------------------------------------------------------------
+// Distinct from /api/features, which reports the pipeline STAGE's health (the
+// TOML config, the newest set's column statistics, the chronological split).
+// These answer what features exist and where they actually have values.
+
+app.get('/api/features/catalogue', async (req, res) => {
+  try {
+    res.json({
+      items: await featureCatalogue.catalogue(),
+      sets: await featureCatalogue.sets(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/features/coverage', async (req, res) => {
+  const { set, from, to } = req.query;
+  if (!/^\d+$/.test(String(set || ''))) {
+    return res.status(400).json({ error: 'set is required and must be numeric' });
+  }
+  try {
+    res.json(await featureCatalogue.coverage({
+      setId: Number(set),
+      from: typeof from === 'string' && from ? from : null,
+      to: typeof to === 'string' && to ? to : null,
+    }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/features/gaps', async (req, res) => {
+  const { set, feature, from, to } = req.query;
+  if (!/^\d+$/.test(String(set || ''))) {
+    return res.status(400).json({ error: 'set is required and must be numeric' });
+  }
+  if (typeof feature !== 'string' || !feature) {
+    return res.status(400).json({ error: 'feature is required' });
+  }
+  try {
+    res.json(await featureCatalogue.gaps({
+      setId: Number(set),
+      featureName: feature,
+      from: typeof from === 'string' && from ? from : null,
+      to: typeof to === 'string' && to ? to : null,
+    }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/features', async (req, res) => {
   try {
     // Which bar size to report. The config is timeframe-independent — it
@@ -1154,6 +1249,11 @@ async function start() {
     await docs.ensureSchema();
   } catch (err) {
     console.error('Failed to ensure docs schema (continuing anyway):', err);
+  }
+  try {
+    await strategies.ensureSchema();
+  } catch (err) {
+    console.error('Failed to ensure strategies schema (continuing anyway):', err);
   }
   app.listen(port, () => {
     console.log(`backtest API listening on http://localhost:${port}`);

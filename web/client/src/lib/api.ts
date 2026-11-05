@@ -367,8 +367,9 @@ export type Strategy = {
 
 /**
  * A training request, in the client's own vocabulary. `since`/`until` are
- * deliberately absent: the caller must not choose them by hand, because the
- * window decides the model's cache key. See `engineWindow` below.
+ * deliberately absent: the caller names the series and gets its whole stored
+ * history, so a model's recorded training window always matches what the
+ * Instruments page says is there. See `engineWindow` below.
  */
 export type TrainRequest = {
   symbol: string
@@ -400,32 +401,33 @@ export type TrainResponse = {
   finalValLoss?: number
 }
 
-/** Milliseconds in one bar of each timeframe, for the window arithmetic below. */
-const BAR_MS: Record<string, number> = {
-  M1: 60_000, M5: 300_000, M15: 900_000, M30: 1_800_000,
-  H1: 3_600_000, H4: 14_400_000, D1: 86_400_000,
-  W1: 604_800_000, MN1: 2_592_000_000,
-}
-
 /**
- * The candle window the ENGINE will ask the loader for, given a series' first
- * and last stored candle.
+ * The candle window to train on, given a series' first and last stored candle.
  *
- * This is the whole reason training has a page rather than a curl. The model's
- * cache key fingerprints the exact candle set it trained on, and the engine
- * addresses candles by Ta4j **bar end** times — one bar later than the stored
- * timestamps. Train on the nominal range and the key differs from the one a
- * later run computes, so the run fails with 409 while a perfectly good model
- * sits on disk. Pass these bounds instead and the two agree.
+ * Only `until` is adjusted, and only by a millisecond. The loader selects
+ * `timestamp >= since AND timestamp < until` (`python/nn/data.py`), so an
+ * `until` equal to the last candle's timestamp would exclude that candle; a
+ * nudge past it includes the whole series and nothing more. `since` is the
+ * first stored timestamp unchanged.
  *
- * MN1 is approximated as 30 days, which is enough to land inside the next bar.
+ * It used to shift both bounds forward by one whole bar, to match the Ta4j
+ * **bar-end** times the engine addressed candles by. Two changes removed the
+ * reason and left the shift behind: the loader took the data window out of the
+ * model cache key (`python/nn/nn_api.py`), so a window mismatch no longer
+ * makes a model unfindable; and the engine's NN strategies now key by a bar's
+ * own date rather than its end instant (`BacktestEngine.barDate`). What the
+ * shift did by then was drop the series' first candle from every training run
+ * — `since` landed one bar past it — while the page claimed to be learning
+ * from all of them.
+ *
+ * Keep this in step with the Java side: both must describe the same window, or
+ * a model's recorded provenance stops matching the bars it saw.
  */
 export function engineWindow(
-  timeframe: string, firstCandle: string, lastCandle: string,
+  firstCandle: string, lastCandle: string,
 ): { since: string; until: string } {
-  const step = BAR_MS[timeframe] ?? BAR_MS.D1
-  const since = new Date(new Date(firstCandle).getTime() + step)
-  const until = new Date(new Date(lastCandle).getTime() + step + 1)
+  const since = new Date(firstCandle)
+  const until = new Date(new Date(lastCandle).getTime() + 1)
   return { since: since.toISOString(), until: until.toISOString() }
 }
 
@@ -687,6 +689,191 @@ export type FeaturesReport = {
   sets: FeatureSet[]
 }
 
+/**
+ * One slot of nn-feedforward's per-bar vector, from GET /api/nn/features/schema.
+ *
+ * The other NN strategy reads the stored feature table and is described by
+ * `FeatureConfig` above. These 12 are computed from a single instrument's
+ * candles at train time and exist nowhere in the database, which is why they
+ * need an endpoint of their own — and why the formulas live in Python
+ * (`nn/features.py`) rather than being restated here.
+ */
+export type BarFeature = {
+  index: number
+  name: string
+  formula: string
+  note: string
+}
+
+export type FeaturesSchema = {
+  strategy: string
+  featuresPerBar: number
+  schemaVersion: number
+  /** Bars consumed before the first complete vector: longest indicator + lookback. */
+  minBars: number
+  indicatorPeriods: Record<string, number>
+  columns: BarFeature[]
+}
+
+/** A bound the preset form renders and the API enforces. */
+export type ParamSpec = {
+  kind: 'int' | 'float'
+  min: number
+  max: number
+  label: string
+}
+
+/** An inclusive date range, YYYY-MM-DD at both ends. */
+export type DateWindow = { from: string, to: string }
+
+/**
+ * A saved strategy: every choice a training run makes, named and versioned
+ * (Architecture.md §8.2a).
+ *
+ * `version` matters. Saving never overwrites — an edit stores a new version —
+ * so a run can keep pointing at exactly the configuration it was trained from.
+ * Absent hyperparameter keys mean "use the model default", which is why the
+ * record is a set of deliberate choices rather than a full parameter dump.
+ */
+export type SavedStrategy = {
+  id: string
+  name: string
+  version: number
+  instrument: string
+  source: string
+  timeframe: string
+  modelType: string
+  validationScheme: 'single' | 'kfold_time' | 'walkforward'
+  /** Ordered feature names, as picked from the catalogue. */
+  features: string[]
+  windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
+  label: { kind: string, horizonBars: number } | null
+  hyperparams: Record<string, number>
+  notes: string | null
+  createdAt: string
+  createdBy: string
+  updatedAt: string
+  updatedBy: string
+}
+
+/** What the builder needs to render itself, alongside the saved strategies. */
+export type SavedStrategiesResponse = {
+  items: SavedStrategy[]
+  /** The editable fields and bounds, so the form matches what the API enforces. */
+  paramSpec: Record<string, ParamSpec>
+  /** §8.2a: populated from what the model layer registers, not hard-coded. */
+  modelTypes: string[]
+  validationSchemes: string[]
+  windows: string[]
+  requiredWindows: string[]
+}
+
+/** The body POST /api/strategies/saved accepts. */
+export type SaveStrategyRequest = {
+  name: string
+  instrument: string
+  source: string
+  timeframe: string
+  modelType: string
+  validationScheme: string
+  features: string[]
+  windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
+  label: { kind: string, horizonBars: number }
+  hyperparams: Record<string, string | number>
+  notes?: string | null
+}
+
+/**
+ * One row of the feature catalogue (Architecture.md §8.1a/§8.2a).
+ *
+ * A projection of `features.toml` into `feature_definitions`, plus the two
+ * fields that are facts about stored data rather than config: `rangeStart` and
+ * `rangeEnd`, which are null until the column has been built once.
+ */
+export type CatalogueFeature = {
+  name: string
+  /** Provider name for a stored series, or 'computed' for a derived one. */
+  source: string
+  cadence: 'daily' | 'weekly' | 'monthly' | 'quarterly'
+  rangeStart: string | null
+  rangeEnd: string | null
+  /** `instrument` columns follow the chosen instrument; `market` ones are shared. */
+  scope: 'instrument' | 'market'
+  /** Only `active` columns are offered in the strategy builder. */
+  status: 'active' | 'undecided' | 'blocked'
+  cost: 'free' | 'paid'
+  /** Of the RAW series. Drives normalization and the chart axis. */
+  units: 'percent' | 'level' | 'count' | 'ratio'
+  /** Fingerprint of how it is computed: method, params and series. */
+  codeVersion: string
+  method: string
+  enabled: boolean
+  note: string | null
+  /** Values per bar. A cyclical column emits sin and cos, so 2. */
+  width: number
+  createdAt: string
+  createdBy: string
+  updatedAt: string
+  updatedBy: string
+}
+
+/** A built feature set, which is what coverage is measured against. */
+export type CatalogueSet = {
+  id: string
+  symbol: string
+  sourceName: string
+  timeframe: string
+  rowCount: number
+  builtAt: string
+  firstCompleteDate: string | null
+}
+
+export type FeatureCatalogue = {
+  items: CatalogueFeature[]
+  sets: CatalogueSet[]
+}
+
+/**
+ * How much of a window one feature actually covers.
+ *
+ * The three counts are deliberately separate. `withValue` has a number;
+ * `storedNull` has a row that says "not computable yet" (a rolling window not
+ * full); `absent` has no row at all. Collapsing them would hide the difference
+ * between a short history and a feature that was never built.
+ */
+export type FeatureCoverage = {
+  name: string
+  status: string
+  scope: string
+  units: string
+  bars: number
+  withValue: number
+  storedNull: number
+  absent: number
+  /** withValue / bars, or null when the window holds no bars. */
+  share: number | null
+  firstValue: string | null
+  lastValue: string | null
+}
+
+export type CoverageReport = {
+  setId: string
+  /** Bars the SET has in the window — trading days, not calendar days. */
+  bars: number
+  windowFrom: string | null
+  windowTo: string | null
+  items: FeatureCoverage[]
+}
+
+export type FeatureGaps = {
+  featureName: string
+  totalGaps: number
+  missingBars: number
+  /** The longest gaps, capped server-side. */
+  items: { from: string, to: string, bars: number }[]
+  truncated: boolean
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthReport>('/api/health', signal),
   sources: (signal?: AbortSignal) =>
@@ -725,6 +912,58 @@ export const api = {
     getJson<{ items: Strategy[] }>('/api/strategies', signal),
   features: (timeframe?: string, signal?: AbortSignal) =>
     getJson<FeaturesReport>(`/api/features${timeframe ? `?${qs({ timeframe })}` : ''}`, signal),
+  /** The feature catalogue and the sets coverage can be measured against. */
+  featureCatalogue: (signal?: AbortSignal) =>
+    getJson<FeatureCatalogue>('/api/features/catalogue', signal),
+  /** Per-feature coverage of one set over a date window. */
+  featureCoverage: (
+    params: { set: string, from?: string, to?: string }, signal?: AbortSignal,
+  ) => getJson<CoverageReport>(`/api/features/coverage?${qs(params)}`, signal),
+  /** Where one feature has no value, as date ranges. */
+  featureGaps: (
+    params: { set: string, feature: string, from?: string, to?: string },
+    signal?: AbortSignal,
+  ) => getJson<FeatureGaps>(`/api/features/gaps?${qs(params)}`, signal),
+  /** The 12 per-bar features nn-feedforward computes. Proxied to the loader. */
+  featuresSchema: (signal?: AbortSignal) =>
+    getJson<FeaturesSchema>('/api/nn/features/schema', signal),
+  /**
+   * Saved strategies. `latest` collapses to the newest version per name, which
+   * is what the builder's list shows; without it every version comes back,
+   * newest first, for the history of one name.
+   */
+  savedStrategies: (
+    opts: { name?: string, latest?: boolean } = {},
+    signal?: AbortSignal,
+  ) => {
+    const q = qs({
+      ...(opts.name ? { name: opts.name } : {}),
+      ...(opts.latest ? { latest: '1' } : {}),
+    })
+    return getJson<SavedStrategiesResponse>(
+      `/api/strategies/saved${q ? `?${q}` : ''}`, signal,
+    )
+  },
+  savedStrategy: (id: string, signal?: AbortSignal) =>
+    getJson<SavedStrategy>(`/api/strategies/saved/${id}`, signal),
+  /**
+   * Saves a new version. Never replaces one: §8.2a requires that editing a
+   * saved strategy create a new version so every run still points at exactly
+   * what it was trained from. There is deliberately no update or delete here.
+   */
+  saveStrategy: (s: SaveStrategyRequest) =>
+    sendJson<SavedStrategy>('/api/strategies/saved', 'POST', s),
+  /**
+   * Removes a saved strategy. `all` removes every version of its name.
+   *
+   * Not in tension with "editing creates a new version, never overwrites": that
+   * rule protects a run's provenance, and a version nothing was trained from
+   * has none to protect.
+   */
+  deleteStrategy: (id: string, all = false) =>
+    sendJson<{ status: string, name?: string, versionsDeleted: number }>(
+      `/api/strategies/saved/${id}${all ? '?all=1' : ''}`, 'DELETE',
+    ),
   docs: (signal?: AbortSignal) => getJson<{ items: DocSummary[] }>('/api/docs', signal),
   doc: (slug: string, rev?: string | null, signal?: AbortSignal) =>
     getJson<DocContent>(
@@ -745,7 +984,7 @@ export const api = {
    * types them and would reject strings.
    */
   train: (req: TrainRequest) => {
-    const { since, until } = engineWindow(req.timeframe, req.firstCandle, req.lastCandle)
+    const { since, until } = engineWindow(req.firstCandle, req.lastCandle)
     const body: Record<string, unknown> = {
       symbol: req.symbol, source: req.source, timeframe: req.timeframe,
       since, until, mode: req.mode,

@@ -52,8 +52,28 @@ const config = {
 
 const pool = new Pool(config);
 
+// Who this process is, for the audit columns. schema.sql's `audit_actor()`
+// reads `app.actor` and falls back to the database role, which would make
+// every row written by any service read "backtest" -- true but useless, since
+// the design wants the job that computed a value, not the login it used.
+//
+// Set per connection rather than per query: the pool hands the same backend
+// out repeatedly, and `SET` (not `SET LOCAL`) persists for the session, so one
+// statement on checkout covers every later query on that connection.
+const DB_ACTOR = process.env.DB_ACTOR || 'api';
+
+pool.on('connect', (client) => {
+  // Parameterised so an env-supplied actor cannot inject SQL.
+  client.query('SELECT set_config($1, $2, false)', ['app.actor', DB_ACTOR])
+    .catch((err) => {
+      // A database predating audit_actor() still works; it just attributes to
+      // the role. Never fail a connection over attribution.
+      console.error('Could not set app.actor:', err.message);
+    });
+});
+
 pool.on('error', (err) => {
   console.error('Unexpected pg pool error', err);
 });
 
-module.exports = { pool, config };
+module.exports = { pool, config, DB_ACTOR };

@@ -69,8 +69,8 @@ public class BacktestResultRepository {
                 "(instrument_symbol, strategy_name, timeframe, data_source, start_date, end_date, " +
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, " +
-                "model_version_id, result_json) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "model_version_id, benchmark_id, result_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -116,7 +116,16 @@ public class BacktestResultRepository {
                 ps.setNull(16, Types.VARCHAR);
             }
 
-            ps.setString(17, row.resultJson());
+            // Nullable: a run whose window predates the benchmarks table has
+            // no row to point at, and inventing one would give it a provenance
+            // it never had.
+            if (row.benchmarkId() != null) {
+                ps.setLong(17, row.benchmarkId());
+            } else {
+                ps.setNull(17, Types.BIGINT);
+            }
+
+            ps.setString(18, row.resultJson());
 
             ps.executeUpdate();
             logger.info("Saved backtest result: {} on {} ({})",
@@ -132,7 +141,7 @@ public class BacktestResultRepository {
             "SELECT id, instrument_symbol, strategy_name, timeframe, data_source, " +
             "start_date, end_date, total_return_pct, sharpe_ratio, " +
             "max_drawdown_pct, total_trades, win_rate, " +
-            "model_cache_key, model_cache_hit, model_version_id, created_at " +
+            "model_cache_key, model_cache_hit, model_version_id, benchmark_id, created_at " +
             "FROM backtest_results";
 
     /** Returns lightweight summaries (no result_json), ordered most-recent first. */
@@ -295,6 +304,7 @@ public class BacktestResultRepository {
                 .modelCacheKey(result.getModelCacheKey())
                 .modelCacheHit(result.getModelCacheHit())
                 .modelVersionId(result.getModelVersionId())
+                .benchmarkId(result.getBenchmarkId())
                 .resultJson(gson.toJson(result))
                 .build();
     }
@@ -326,6 +336,7 @@ public class BacktestResultRepository {
                 .modelCacheKey(rs.getString("model_cache_key"))
                 .modelCacheHit(cacheHit)
                 .modelVersionId(rs.getString("model_version_id"))
+                .benchmarkId(rs.getObject("benchmark_id", Long.class))
                 .createdAt(createdAt)
                 .build();
     }

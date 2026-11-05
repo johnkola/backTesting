@@ -19,6 +19,9 @@ they slip through:
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
@@ -61,6 +64,16 @@ class Alignment:
     max_fill_days: int
 
 
+# The catalogue fields, from ARCHITECTURE.md 8.2a. Closed sets rather than free
+# text: the Features tab groups and filters on them, and the strategy builder
+# decides what to offer from `status`, so a typo would silently hide a column
+# instead of failing loudly here.
+_SCOPES = {"instrument", "market"}
+_CADENCES = {"daily", "weekly", "monthly", "quarterly"}
+_COSTS = {"free", "paid"}
+_UNITS = {"percent", "level", "count", "ratio"}
+
+
 @dataclass(frozen=True)
 class Feature:
     name: str
@@ -70,11 +83,37 @@ class Feature:
     enabled: bool = True
     status: str | None = None
     note: str | None = None
+    # Catalogue fields. Required on every feature -- there is no sensible
+    # default for any of them, and guessing would put a wrong answer on screen.
+    scope: str = "market"
+    cadence: str = "daily"
+    cost: str = "free"
+    units: str = "level"
 
     @property
     def width(self) -> int:
         """How many values this column contributes to a bar's vector."""
         return _WIDTHS.get(self.method, 1)
+
+    @property
+    def code_version(self) -> str:
+        """Fingerprint of HOW this column is computed.
+
+        6.1 wants a run to record "the ordered set of feature ids and the code
+        version of each feature's computation". Per feature rather than one
+        number for the whole file, so changing one column's method marks only
+        that column as newly computed instead of invalidating the catalogue.
+
+        Covers the method, its parameters and the series it reads -- the three
+        things that change the output. Deliberately NOT `enabled` or `note`:
+        turning a column off or rewording its description does not change the
+        number it would produce.
+        """
+        payload = json.dumps(
+            {"method": self.method, "params": self.params, "series": self.series},
+            sort_keys=True, separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
     @property
     def is_derived(self) -> bool:
@@ -175,6 +214,18 @@ def _build_feature(raw: dict[str, Any], defaults: dict[str, Any]) -> Feature:
     if method == "rescale" and params["max"] == params["min"]:
         raise FeatureConfigError(f"{name}: rescale needs max != min")
 
+    for key, allowed in (("scope", _SCOPES), ("cadence", _CADENCES),
+                         ("cost", _COSTS), ("units", _UNITS)):
+        value = raw.get(key)
+        if value is None:
+            raise FeatureConfigError(
+                f"{name}: `{key}` is required; expected one of {sorted(allowed)}"
+            )
+        if value not in allowed:
+            raise FeatureConfigError(
+                f"{name}: unknown {key} {value!r}; expected one of {sorted(allowed)}"
+            )
+
     return Feature(
         name=name,
         series=raw["series"],
@@ -183,6 +234,10 @@ def _build_feature(raw: dict[str, Any], defaults: dict[str, Any]) -> Feature:
         enabled=bool(raw.get("enabled", True)),
         status=raw.get("status"),
         note=raw.get("note"),
+        scope=raw["scope"],
+        cadence=raw["cadence"],
+        cost=raw["cost"],
+        units=raw["units"],
     )
 
 

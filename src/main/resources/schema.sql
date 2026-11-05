@@ -315,6 +315,215 @@ $compress_feature_values$;
 SELECT add_compression_policy('feature_values', INTERVAL '90 days', if_not_exists => TRUE);
 
 -- ---------------------------------------------------------------------------
+-- Walk-forward validation results
+-- ---------------------------------------------------------------------------
+-- DESIGN.md wants the Training tab followed as it runs: "current fold and
+-- epoch, the loss curve updating, and validation-fold results against
+-- buy-and-hold as they come in". The runner printed all of that to a terminal
+-- and persisted none of it, so the tab could only list the models on disk and
+-- say the live view was missing.
+--
+-- These two tables are the stored artifact the design's staged architecture
+-- asks for -- stages communicate through storage, never by reaching into each
+-- other, and a fold result nobody can read afterwards is not an artifact.
+--
+-- Summary figures (folds won, mean excess, worst drawdown) are deliberately
+-- NOT stored. Every one is derivable from the folds, and a stored copy is a
+-- second source of truth that goes stale the moment a fold is corrected. The
+-- API aggregates them on read; there are at most a few dozen rows per run.
+CREATE TABLE IF NOT EXISTS walkforward_runs (
+    id BIGSERIAL PRIMARY KEY,
+    label VARCHAR(80) NOT NULL DEFAULT '',
+    instrument_id BIGINT NOT NULL REFERENCES instruments(id),
+    source_id BIGINT NOT NULL REFERENCES data_sources(id),
+    timeframe VARCHAR(10) NOT NULL,
+    -- SET NULL rather than CASCADE: a run is evidence about a model, and
+    -- deleting the feature set it read should not erase the record that the
+    -- experiment happened or what it concluded.
+    feature_set_id BIGINT REFERENCES feature_sets(id) ON DELETE SET NULL,
+    input_width INT NOT NULL DEFAULT 0,
+    -- Which metric decided the headline verdict, and what the network was
+    -- actually trained on. They differ on purpose: the runner reports all
+    -- three objectives every time, so changing the verdict metric never means
+    -- re-running.
+    objective VARCHAR(16) NOT NULL,
+    loss VARCHAR(16) NOT NULL,
+    cost_bps DOUBLE PRECISION NOT NULL DEFAULT 0,
+    park VARCHAR(8) NOT NULL DEFAULT 'cash',
+    threshold DOUBLE PRECISION,
+    train_start INT NOT NULL,
+    first_val INT NOT NULL,
+    last_val INT NOT NULL,
+    -- True when the run spent the holdout. Flagged so the UI can mark it:
+    -- the design allows the test block to be touched once, to confirm a
+    -- variant already chosen, and a holdout run sitting unlabelled among
+    -- validation runs is how it quietly becomes training data.
+    is_test BOOLEAN NOT NULL DEFAULT FALSE,
+    hyperparams_json TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_walkforward_runs_recent
+    ON walkforward_runs (timeframe, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS walkforward_folds (
+    run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
+    fold INT NOT NULL,
+    val_year INT NOT NULL,
+    train_from DATE NOT NULL,
+    train_to DATE NOT NULL,
+    n_train INT NOT NULL,
+    n_val INT NOT NULL,
+    strat_return DOUBLE PRECISION NOT NULL,
+    hold_return DOUBLE PRECISION NOT NULL,
+    strat_sharpe DOUBLE PRECISION NOT NULL,
+    hold_sharpe DOUBLE PRECISION NOT NULL,
+    strat_maxdd DOUBLE PRECISION NOT NULL,
+    hold_maxdd DOUBLE PRECISION NOT NULL,
+    trades INT NOT NULL,
+    accuracy DOUBLE PRECISION,
+    baseline_acc DOUBLE PRECISION,
+    -- The cost attribution. Only `timing` is the model: drift_tax is the price
+    -- of being out of the market at all and commissions are mechanical, so a
+    -- fold can lose heavily while the model's own contribution is ~0. Storing
+    -- the split is the difference between "the model lost 23 points" and "the
+    -- model is absent and the structure lost 23 points".
+    days_out INT NOT NULL DEFAULT 0,
+    drift_tax DOUBLE PRECISION NOT NULL DEFAULT 0,
+    commissions DOUBLE PRECISION NOT NULL DEFAULT 0,
+    timing DOUBLE PRECISION NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, fold)
+);
+
+-- ---------------------------------------------------------------------------
+-- The buy-and-hold benchmark, computed once per window
+-- ---------------------------------------------------------------------------
+-- DESIGN.md ("Buy-and-hold is one fixed benchmark"): "It is computed once for a
+-- given start date, end date and starting capital, stored, and reused by every
+-- model run and every strategy evaluated over that window. It is never
+-- recomputed per run, per feature set, or per strategy. If two runs report
+-- different buy-and-hold figures for the same window, that is a defect, not a
+-- result." ARCHITECTURE.md 6.3 says the same, and 3.5 lists the old behaviour
+-- -- recomputed per run inside backtest_results -- as a gap.
+--
+-- The key carries source_id and timeframe, which the design's "(instrument,
+-- start, end, capital)" does not mention. It has to: this store holds parallel
+-- histories for one symbol (yahoo and yahoo-adj differ by every dividend, and
+-- a D1 and a W1 series have different closes), so a 4-column key would make
+-- two genuinely different benchmarks collide on one row and hand whichever run
+-- asked second a number computed from somebody else's prices.
+--
+-- Stored figures are only what is actually computed: the frictionless return
+-- and the three inputs it came from. Sharpe and drawdown are deliberately
+-- absent -- nothing computes them for the benchmark today, and a column no
+-- writer fills is the padding the design forbids. first_close, last_close and
+-- bar_count are here so the headline number is checkable by hand, which is the
+-- governing principle: every number is verifiable.
+CREATE TABLE IF NOT EXISTS benchmarks (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    instrument_id BIGINT NOT NULL REFERENCES instruments(id),
+    source_id BIGINT NOT NULL REFERENCES data_sources(id),
+    timeframe VARCHAR(10) NOT NULL,
+    -- The traded window, as bar dates. A strategy's warmup decides where this
+    -- starts, so two strategies with different warmups legitimately measure
+    -- different windows and get different rows; two runs over the SAME window
+    -- always share one.
+    start_date TIMESTAMPTZ NOT NULL,
+    end_date TIMESTAMPTZ NOT NULL,
+    initial_capital DOUBLE PRECISION NOT NULL,
+    -- Buy one unit at the first close, sell at the last. Frictionless on
+    -- purpose: a single round trip of commission is immaterial next to a
+    -- multi-year hold, and leaving it out keeps this "what the market did"
+    -- rather than a second strategy with its own cost assumptions.
+    return_pct DOUBLE PRECISION NOT NULL,
+    final_equity DOUBLE PRECISION NOT NULL,
+    first_close DOUBLE PRECISION NOT NULL,
+    last_close DOUBLE PRECISION NOT NULL,
+    bar_count INT NOT NULL,
+    UNIQUE (instrument_id, source_id, timeframe, start_date, end_date, initial_capital)
+);
+
+-- The lookup every run does before it computes anything.
+CREATE INDEX IF NOT EXISTS idx_benchmarks_window
+    ON benchmarks (instrument_id, source_id, timeframe, start_date, end_date);
+
+-- Which stored benchmark a result was measured against. Nullable: rows written
+-- before this table existed have their own buy_and_hold figure inline and no
+-- row to point at, and backfilling one would invent a provenance they never
+-- had. ON DELETE RESTRICT is implied by leaving it out -- a benchmark with
+-- results pointing at it must not vanish underneath them.
+ALTER TABLE backtest_results
+    ADD COLUMN IF NOT EXISTS benchmark_id BIGINT REFERENCES benchmarks(id);
+
+-- ---------------------------------------------------------------------------
+-- The feature catalogue
+-- ---------------------------------------------------------------------------
+-- ARCHITECTURE.md 8.1a: the Features tab reads "the feature catalogue from
+-- `feature_definitions`: every feature with its range, cadence, scope, status,
+-- cost, units and lineage". 8.2a gives the column list, which is what this is.
+--
+-- This table is a PROJECTION of features.toml, not a second source of truth.
+-- The TOML stays authoritative because the Python pipeline reads it to decide
+-- what to compute, and two editable copies of the same decision is how a
+-- feature ends up enabled in one place and disabled in the other. The loader
+-- syncs this table from the file; nothing else writes it.
+--
+-- Why project it at all, rather than have the UI read the TOML through the
+-- loader as the Features *stage* already does: `range_start`/`range_end` and
+-- the row counts are facts about stored data, not about config, so the
+-- catalogue is the one place both halves meet. It also means the Java backend
+-- can answer feature questions without learning to parse TOML, which 2's
+-- separation of concerns asks for.
+CREATE TABLE IF NOT EXISTS feature_definitions (
+    name VARCHAR(64) PRIMARY KEY,
+    -- Where the values come from: a provider name for a stored series, or
+    -- 'computed' for one derived from others.
+    source VARCHAR(64) NOT NULL,
+    -- Native publication rate: daily | weekly | monthly | quarterly. A run at a
+    -- finer timeframe carries a coarser feature forward from its publication
+    -- timestamp, and cannot without this.
+    cadence VARCHAR(16) NOT NULL,
+    -- The feature's OWN available range, from the stored values -- not the
+    -- table's overlap. Design.md: "The feature table is never trimmed to the
+    -- overlap, and it is never padded either." NULL until the feature has been
+    -- built once, which is honest: its range is not yet known.
+    range_start TIMESTAMPTZ,
+    range_end TIMESTAMPTZ,
+    -- instrument | market. Instrument-scoped columns follow the chosen
+    -- instrument; market-scoped ones are shared and stay selected.
+    scope VARCHAR(16) NOT NULL,
+    -- active | undecided | blocked. Only active ones are offered in the
+    -- strategy builder. A disabled column is a recorded decision, not an
+    -- absence, which is why the status travels with it.
+    status VARCHAR(16) NOT NULL,
+    cost VARCHAR(8) NOT NULL,
+    -- percent | level | count | ratio, of the RAW series. Drives normalization
+    -- and the chart axis.
+    units VARCHAR(16) NOT NULL,
+    -- Fingerprint of how the column is computed: method, params and series.
+    -- 6.1 wants a run to record this per feature, so two runs can be compared
+    -- by which of their features were computed differently.
+    code_version VARCHAR(32) NOT NULL,
+    -- Kept for the tab, which shows the method beside the units.
+    method VARCHAR(32) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    note TEXT,
+    -- Values contributed per bar: a cyclical column emits sin and cos, so 2.
+    width INT NOT NULL DEFAULT 1,
+    CONSTRAINT feature_definitions_scope_ck CHECK (scope IN ('instrument', 'market')),
+    CONSTRAINT feature_definitions_cadence_ck
+        CHECK (cadence IN ('daily', 'weekly', 'monthly', 'quarterly')),
+    CONSTRAINT feature_definitions_cost_ck CHECK (cost IN ('free', 'paid')),
+    CONSTRAINT feature_definitions_units_ck
+        CHECK (units IN ('percent', 'level', 'count', 'ratio'))
+);
+
+-- The tab's default ordering: what is usable first, then the rest.
+CREATE INDEX IF NOT EXISTS idx_feature_definitions_status
+    ON feature_definitions (status, name);
+
+-- ---------------------------------------------------------------------------
 -- Audit columns
 -- ---------------------------------------------------------------------------
 -- created_at/updated_at on every table except candles, maintained by the
@@ -339,6 +548,25 @@ SELECT add_compression_policy('feature_values', INTERVAL '90 days', if_not_exist
 -- above, because those are all CREATE TABLE IF NOT EXISTS: on every database
 -- that already exists the CREATE is a no-op and an edit there would reach
 -- nothing. These ALTERs are how a running database gets the columns.
+-- Who is writing. DESIGN.md ("Audit fields on every feature row") and
+-- ARCHITECTURE.md §1 both require `created_by`/`updated_by` next to the
+-- timestamps, so that "any number in the table can be traced to who computed
+-- it and when".
+--
+-- The value comes from a session setting rather than a column default each
+-- caller has to remember: a writer does `SET app.actor = 'loader:feature_build'`
+-- once per connection and every insert and update on that connection is
+-- attributed. A caller that sets nothing falls back to the database role,
+-- which is still a truthful answer -- it says which service connected -- just a
+-- coarser one than the job name.
+--
+-- STABLE, not IMMUTABLE: the answer is fixed within a statement but changes
+-- when the setting does, and marking it IMMUTABLE would let the planner fold
+-- one caller's actor into a cached plan used by another.
+CREATE OR REPLACE FUNCTION audit_actor() RETURNS TEXT AS $audit_actor$
+    SELECT COALESCE(NULLIF(current_setting('app.actor', true), ''), session_user);
+$audit_actor$ LANGUAGE sql STABLE;
+
 DO $audit_columns$
 DECLARE
     t TEXT;
@@ -354,12 +582,18 @@ BEGIN
 
     FOREACH t IN ARRAY ARRAY[
         'instruments', 'data_sources', 'data_imports',
-        'backtest_results', 'feature_sets', 'feature_spec', 'feature_values'
+        'backtest_results', 'feature_sets', 'feature_spec', 'feature_values',
+        'walkforward_runs', 'walkforward_folds', 'benchmarks',
+        'feature_definitions'
     ] LOOP
         EXECUTE format(
             'ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ', t);
         EXECUTE format(
             'ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ', t);
+        EXECUTE format(
+            'ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_by VARCHAR(64)', t);
+        EXECUTE format(
+            'ALTER TABLE %I ADD COLUMN IF NOT EXISTS updated_by VARCHAR(64)', t);
 
         -- Backfill before NOT NULL, or existing rows fail the constraint.
         -- Where a truthful timestamp already exists it is used, rather than
@@ -386,14 +620,31 @@ BEGIN
                            updated_at = COALESCE(updated_at, created_at, now())
               WHERE created_at IS NULL OR updated_at IS NULL', t);
 
+        -- Rows that predate these columns get 'pre-audit', not a guessed
+        -- name. There is no record of who wrote them, and inventing one would
+        -- be exactly the padding the design forbids; the sentinel states the
+        -- absence instead, and is distinguishable from every real actor.
+        EXECUTE format(
+            'UPDATE %I SET created_by = COALESCE(created_by, ''pre-audit''),
+                           updated_by = COALESCE(updated_by, created_by, ''pre-audit'')
+              WHERE created_by IS NULL OR updated_by IS NULL', t);
+
         EXECUTE format(
             'ALTER TABLE %I ALTER COLUMN created_at SET DEFAULT now()', t);
         EXECUTE format(
             'ALTER TABLE %I ALTER COLUMN updated_at SET DEFAULT now()', t);
         EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN created_by SET DEFAULT audit_actor()', t);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN updated_by SET DEFAULT audit_actor()', t);
+        EXECUTE format(
             'ALTER TABLE %I ALTER COLUMN created_at SET NOT NULL', t);
         EXECUTE format(
             'ALTER TABLE %I ALTER COLUMN updated_at SET NOT NULL', t);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN created_by SET NOT NULL', t);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN updated_by SET NOT NULL', t);
     END LOOP;
 END
 $audit_columns$;
@@ -407,10 +658,14 @@ CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $set_updated_at$
 BEGIN
     NEW.updated_at = now();
-    -- created_at is immutable: an UPDATE that tries to move it is ignored
-    -- rather than rejected, so an ordinary `UPDATE ... SET *` from a tool like
-    -- pgAdmin's row editor does not start failing.
+    NEW.updated_by = audit_actor();
+    -- created_at and created_by are immutable: an UPDATE that tries to move
+    -- either is ignored rather than rejected, so an ordinary `UPDATE ... SET *`
+    -- from a tool like pgAdmin's row editor does not start failing. This is
+    -- also what makes created_by trustworthy -- a later writer cannot take
+    -- credit for a row it only edited.
     NEW.created_at = OLD.created_at;
+    NEW.created_by = OLD.created_by;
     RETURN NEW;
 END
 $set_updated_at$ LANGUAGE plpgsql;
@@ -421,7 +676,9 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY[
         'instruments', 'data_sources', 'data_imports',
-        'backtest_results', 'feature_sets', 'feature_spec', 'feature_values'
+        'backtest_results', 'feature_sets', 'feature_spec', 'feature_values',
+        'walkforward_runs', 'walkforward_folds', 'benchmarks',
+        'feature_definitions'
     ] LOOP
         -- DROP then CREATE: CREATE TRIGGER has no IF NOT EXISTS before PG 14,
         -- and this keeps the definition authoritative if it ever changes.

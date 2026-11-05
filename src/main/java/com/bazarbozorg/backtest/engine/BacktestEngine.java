@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.data.BarSeriesConverter;
+import com.bazarbozorg.backtest.data.BenchmarkRepository;
 import com.bazarbozorg.backtest.data.CandleRepository;
 import com.bazarbozorg.backtest.data.DataSourceRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
@@ -39,6 +40,7 @@ public class BacktestEngine {
     private static final Logger logger = LoggerFactory.getLogger(BacktestEngine.class);
 
     private final DatabaseManager databaseManager;
+    private final BenchmarkRepository benchmarkRepo;
     private final CommissionModel commissionModel;
     private final SlippageModel slippageModel;
     private final double initialCapital;
@@ -54,6 +56,7 @@ public class BacktestEngine {
     public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
                           SlippageModel slippageModel, double initialCapital) {
         this.databaseManager = databaseManager;
+        this.benchmarkRepo = new BenchmarkRepository(databaseManager);
         this.commissionModel = commissionModel;
         this.slippageModel = slippageModel;
         this.initialCapital = initialCapital;
@@ -75,18 +78,6 @@ public class BacktestEngine {
     }
 
     /**
-     * Buy one unit at {@code firstClose}, sell at {@code lastClose}, as a percent.
-     *
-     * <p>Deliberately frictionless, unlike the strategy's fills: a single round
-     * trip of commission and slippage is immaterial next to a multi-year hold,
-     * and leaving it out keeps this the conventional "what the market did"
-     * number rather than a second strategy with its own cost assumptions.
-     */
-    static double buyAndHoldReturnPct(double firstClose, double lastClose) {
-        return firstClose > 0 ? ((lastClose - firstClose) / firstClose) * 100.0 : 0.0;
-    }
-
-    /**
      * A bar's own date -- the timestamp it was stored under, not the instant it
      * ends.
      *
@@ -96,7 +87,15 @@ public class BacktestEngine {
      * feature pipeline) keys on the stored timestamp, so a date derived from the
      * end instant cannot be used to look the bar up again.
      */
-    static ZonedDateTime barDate(Bar bar) {
+    /**
+     * Public because the NN strategies must key predictions by this and not by
+     * the raw end instant. The loader returns a prediction per candle keyed by
+     * the candle's own stored timestamp; a strategy that looks one up by
+     * {@code getEndTime()} asks for the NEXT bar's prediction, which is a
+     * look-ahead the output cannot show. Anything matching a bar against
+     * something stored in the database goes through here.
+     */
+    public static ZonedDateTime barDate(Bar bar) {
         return ZonedDateTime.ofInstant(bar.getEndTime().minus(bar.getTimePeriod()), ZoneOffset.UTC);
     }
 
@@ -245,7 +244,27 @@ public class BacktestEngine {
         // the label disagreed with it.
         ZonedDateTime startDate = barDate(firstBar);
 
-        double buyAndHoldReturnPct = buyAndHoldReturnPct(firstClose, lastClose);
+        // The benchmark is LOOKED UP, not computed. DESIGN.md: "buy-and-hold must
+        // be the same number for every comparison ... It is never recomputed per
+        // run, per feature set, or per strategy. If two runs report different
+        // buy-and-hold figures for the same window, that is a defect, not a
+        // result." So the first run over a window stores the figure and every
+        // later run reads that same row.
+        //
+        // Note what the window depends on: the warmup decides where it starts,
+        // so an SMA(200) strategy and an RSI(14) one over the same candles
+        // measure different windows and get different rows. That is correct --
+        // each is judged against holding over the period it could actually
+        // trade -- but it means "one fixed benchmark" makes two runs comparable
+        // only when their windows match, which is why the window is part of the
+        // key rather than just the instrument.
+        Benchmark benchmark = benchmarkRepo.findOrCreate(
+                // name(), not toString(): enum names are what candles.timeframe
+                // holds, so the benchmark keys on the same spelling the bars do.
+                instrument.id(), source.id(), timeframe.name(), startDate, endDate,
+                initialCapital, firstClose, lastClose,
+                series.getBarCount() - benchmarkStart);
+        double buyAndHoldReturnPct = benchmark.returnPct();
 
         // Same reasoning for annualisation: the strategy's equity curve only
         // spans the post-warmup bars, so dividing by the whole series understated
@@ -288,7 +307,8 @@ public class BacktestEngine {
                 finalEquity,
                 modelCacheKey,
                 modelCacheHit,
-                modelVersionId);
+                modelVersionId,
+                benchmark.id());
     }
 
     /**

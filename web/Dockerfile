@@ -18,6 +18,9 @@ COPY web/api/ ./
 # from there.
 RUN mkdir -p /app/docs
 COPY GETTING-STARTED.md README.md ARCHITECTURE.md /app/docs/
+# The QQQ design docs keep their reference/ path, because that is the path the
+# DOCS registry addresses them by.
+COPY reference/qqq-backtesting-model/Design.md reference/qqq-backtesting-model/Architecture.md /app/docs/reference/qqq-backtesting-model/
 
 ENV NODE_ENV=production
 ENV DOCS_DIR=/app/docs

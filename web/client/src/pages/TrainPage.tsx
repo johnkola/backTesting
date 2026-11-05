@@ -2,29 +2,47 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   api, engineWindow, isAbortError, isTradeable, strategyDocHref,
-  type AuditResponse, type Instrument, type Strategy, type TrainResponse,
+  type AuditResponse, type FeatureCoverage, type Instrument, type SavedStrategy,
+  type Strategy, type TrainResponse,
 } from '../lib/api'
+import CoverageWarning, { FeatureListNotUsedNote } from '../components/CoverageWarning'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
+import ResolvedStrategy from '../components/ResolvedStrategy'
+import { hintFor } from '../lib/fieldHints'
 import UploadCard from '../components/UploadCard'
 import { categoryHint } from '../lib/cohesionHints'
+import { useApiData } from '../lib/useApiData'
+import { resolveFeatures } from '../lib/strategyForm'
 import { useTimeframe } from '../lib/useTimeframe'
 
 /**
  * Train a model for a strategy that needs one before it can be backtested.
  *
  * Training was CLI-only until this page existed, and the reason it is not
- * simply a button is the cache key: a model is addressed by a fingerprint of
- * the exact candle window it trained on, and the engine addresses candles by
- * Ta4j bar-END times rather than the stored timestamps. Choose the window by
- * hand and you get a model no run will ever find — 409, with the model sitting
- * on disk. This page computes the window from the series the user picks (see
- * `engineWindow`), so what it trains is always what the Run page can use.
+ * simply a button is provenance: a model records the window it learned from,
+ * and that record is the only way a reader can tell it is being backtested
+ * over bars it never saw. So the page offers no date fields. It derives the
+ * window from the series the user picks (see `engineWindow`) and trains on the
+ * whole stored history, which is what the "all N stored candles" line below
+ * promises.
  *
  * Training is synchronous and slow — tens of seconds on a long daily series —
  * so the button stays busy rather than pretending to be instant.
  */
 export default function TrainPage() {
   const [strategies, setStrategies] = useState<Strategy[] | null>(null)
+  /**
+   * The saved strategies from the builder.
+   *
+   * The Train page used to offer only the two registry entries that cache a
+   * model, which is not what §8.1a asks of it: "Runs a saved strategy and
+   * records the run. No choices are made here." Picking one here fills the
+   * series and the hyperparameters from it, so what gets trained is the
+   * configuration that was saved rather than whatever the form happened to
+   * hold.
+   */
+  const [saved, setSaved] = useState<SavedStrategy[]>([])
+  const [savedId, setSavedId] = useState('')
   const [instruments, setInstruments] = useState<Instrument[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   // The app-wide bar size. The instrument fetch is filtered by it, so the
@@ -60,8 +78,17 @@ export default function TrainPage() {
 
   useEffect(() => {
     const ac = new AbortController()
-    Promise.all([api.strategies(ac.signal), api.instruments(tf, ac.signal)])
-      .then(([s, i]) => {
+    Promise.all([
+      api.strategies(ac.signal),
+      api.instruments(tf, ac.signal),
+      // Every saved strategy, not just the newest of each name: §8.1a says
+      // Train "runs a saved strategy", and a specific version is the thing a
+      // run points at. Failing to load them must not break the page, so this
+      // falls back to an empty list rather than rejecting the Promise.all.
+      api.savedStrategies({}, ac.signal).catch(() => null),
+    ])
+      .then(([s, i, savedResp]) => {
+        setSaved(savedResp?.items ?? [])
         // Only strategies that actually cache a model are trainable; the Ta4j
         // ones have nothing to learn and `train` would be a no-op on them.
         const trainable = s.items.filter((x) => x.requiresTrainedModel)
@@ -98,7 +125,7 @@ export default function TrainPage() {
   const slice = instrument?.sources.find(
     (s) => s.sourceName === source && s.timeframe === timeframe,
   )
-  const window = slice ? engineWindow(timeframe, slice.fromDate, slice.toDate) : null
+  const window = slice ? engineWindow(slice.fromDate, slice.toDate) : null
 
   /** Identity of the series on screen. Anything stamped with a different one is stale. */
   const seriesKey = `${symbol}|${source}|${timeframe}`
@@ -108,6 +135,108 @@ export default function TrainPage() {
   const verified = report !== null
   const clean = report?.ok === true
   const ready = !!(strategy && slice) && !busy && verified && (clean || acknowledged)
+
+  /**
+   * Fill the form from a saved strategy.
+   *
+   * §8.1a wants Train to make no choices of its own, so everything the saved
+   * record decided is applied here: the series, and the hyperparameters under
+   * the names the loader expects. Its windows are shown but not yet enforced --
+   * the loader trains on a candle range, and teaching it to honour a
+   * train/validation/test split is the next step, so the page says which
+   * windows were saved rather than pretending to have used them.
+   */
+  function applySaved(id: string) {
+    setSavedId(id)
+    const chosen = saved.find((x) => x.id === id)
+    if (!chosen) return
+    setSymbol(chosen.instrument)
+    setSource(chosen.source)
+    setTimeframe(chosen.timeframe)
+    setParams((prev) => ({
+      ...prev,
+      ...Object.fromEntries(Object.entries(chosen.hyperparams).map(([k, v]) => [k, String(v)])),
+    }))
+    setResult(null); setError(null)
+  }
+
+  const chosenSaved = saved.find((x) => x.id === savedId) ?? null
+
+  /**
+   * Feature readiness for the chosen strategy.
+   *
+   * A feature-driven model does not care whether the candles are tidy so much
+   * as whether the COLUMNS it was told to use actually have values over the
+   * bars it will learn from. A gap there is invisible once it has been folded
+   * into weights, and the result is a model quietly trained on fewer features
+   * than its own record claims.
+   *
+   * Measured over the strategy's train window, against the feature set built
+   * for the exact series it names.
+   */
+  const { data: catalogue } = useApiData((signal) => api.featureCatalogue(signal), [])
+  const featureSet = useMemo(
+    () => (catalogue?.sets ?? []).find(
+      (st) => chosenSaved
+        && st.symbol === chosenSaved.instrument
+        && st.sourceName === chosenSaved.source
+        && st.timeframe === chosenSaved.timeframe,
+    ),
+    [catalogue, chosenSaved],
+  )
+  const trainWin = chosenSaved?.windows?.train
+  const { data: featureCoverage } = useApiData(
+    (signal) => (featureSet && trainWin
+      ? api.featureCoverage({ set: featureSet.id, from: trainWin.from, to: trainWin.to }, signal)
+      : Promise.resolve(null)),
+    [featureSet?.id, trainWin?.from, trainWin?.to],
+  )
+  const coverageByName = useMemo(() => {
+    const m: Record<string, FeatureCoverage> = {}
+    for (const c of featureCoverage?.items ?? []) m[c.name] = c
+    return m
+  }, [featureCoverage])
+  /**
+   * Stored bars inside each window the strategy defines.
+   *
+   * A window can be perfectly well-formed and still contain nothing: a
+   * strategy written for QQQ's 2003 history, pointed at a series that only
+   * starts in 2019, has a train window of zero bars. Training it produces a
+   * model fitted on no samples, and nothing downstream says so.
+   *
+   * Read from `total` on the candles endpoint, which is the row count BEFORE
+   * the response is strided down -- counting returned items would undercount
+   * by the stride and could turn a real emptiness into a plausible number.
+   */
+  const { data: windowBars } = useApiData<Record<string, number>>(
+    async (signal) => {
+      if (!chosenSaved) return {}
+      const out: Record<string, number> = {}
+      for (const [key, w] of Object.entries(chosenSaved.windows)) {
+        const r = await api.candles({
+          instrument: chosenSaved.instrument,
+          source: chosenSaved.source,
+          timeframe: chosenSaved.timeframe,
+          from: w.from,
+          to: w.to,
+        }, signal)
+        out[key] = r.total
+      }
+      return out
+    },
+    [savedId],
+  )
+
+  /** Windows the strategy names that hold no stored bars at all. */
+  const emptyWindows = useMemo(
+    () => Object.entries(windowBars ?? {}).filter(([, n]) => n === 0).map(([k]) => k),
+    [windowBars],
+  )
+
+  const featureReadiness = useMemo(
+    () => resolveFeatures(chosenSaved?.features ?? [], coverageByName),
+    [chosenSaved, coverageByName],
+  )
 
   async function verify() {
     if (!slice) return
@@ -127,9 +256,23 @@ export default function TrainPage() {
     if (!slice || !strategy) return
     setBusy(true); setError(null); setResult(null)
     try {
+      // Honour the strategy's train window when there is one.
+      //
+      // Until now the loader was always handed the whole stored series, so a
+      // strategy that said "train 2003-2015" trained on everything up to
+      // today -- including the validation folds and the holdout. That makes
+      // every later figure meaningless: the model has already seen the bars it
+      // is about to be scored on.
+      //
+      // Without a saved strategy the behaviour is unchanged: the whole series,
+      // which is all an ad-hoc run can mean.
+      const trainWindow = chosenSaved?.windows?.train
+      const first = trainWindow ? trainWindow.from : slice.fromDate
+      const last = trainWindow ? trainWindow.to : slice.toDate
+
       setResult(await api.train({
         symbol, source, timeframe,
-        firstCandle: slice.fromDate, lastCandle: slice.toDate,
+        firstCandle: first, lastCandle: last,
         mode, parameters: params,
       }))
       setResultKey(seriesKey)
@@ -166,101 +309,175 @@ export default function TrainPage() {
 
           <form onSubmit={submit} className="space-y-4">
             <Step n={2} title="Pick what to learn from">
-              <div className="bg-base-200 rounded-box p-4 grid gap-4 md:grid-cols-2">
-                <label className="form-control">
-                  <FieldLabel
-                    text="Strategy"
-                    hint="Only strategies that cache a trained model are listed. The indicator strategies have nothing to learn, so they never need this page."
-                  />
-                  <select
-                    className="select select-bordered" value={strategyName}
-                    onChange={(e) => {
-                      const s = strategies.find((x) => x.name === e.target.value)
-                      if (s) { setStrategyName(s.name); setParams({ ...s.defaultParameters }) }
-                    }}
-                  >
-                    {strategies.map((s) => (
-                      <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
-                    ))}
-                  </select>
-                  <div className="label">
-                    <span className="label-text-alt">
-                      <a
-                        className="link link-hover text-base-content/60"
-                        href={strategyDocHref(strategyName)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        What {strategyName} learns, and how to read its accuracy →
-                      </a>
-                    </span>
-                  </div>
-                </label>
+              {saved.length > 0 && (
+                <div className="bg-base-200 rounded-box p-4 mb-4">
+                  <label className="form-control">
+                    <FieldLabel text="Saved strategy" hint={hintFor('train.savedStrategy')} />
+                    <select
+                      className="select select-bordered" value={savedId}
+                      onChange={(e) => applySaved(e.target.value)}
+                    >
+                      <option value="">— none: choose the series by hand below —</option>
+                      {saved.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name} v{x.version} — {x.instrument} {x.timeframe},{' '}
+                          {x.features.length} features
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {chosenSaved && (
+                    <div className="text-sm text-base-content/70 mt-3 space-y-1">
+                      <p>
+                        <span className="font-mono">{chosenSaved.features.length}</span> features,{' '}
+                        {chosenSaved.modelType.toUpperCase()},{' '}
+                        {chosenSaved.validationScheme.replace('_', ' ')}, label horizon{' '}
+                        <span className="font-mono">{chosenSaved.label?.horizonBars ?? '—'}</span>
+                        {' '}bars. Saved by {chosenSaved.createdBy}.
+                      </p>
+                      <p className="text-xs font-mono break-all">
+                        {Object.entries(chosenSaved.windows)
+                          .map(([k, w]) => `${k} ${w.from}..${w.to}`).join('  ·  ')}
+                      </p>
+                      <p className="text-xs text-warning">
+                        The saved windows are not yet enforced by training — it fits the whole
+                        stored series. Shown here so the difference is visible rather than
+                        assumed.
+                      </p>
+                      {chosenSaved.notes && (
+                        <p className="text-xs italic">{chosenSaved.notes}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* 8.1a: "No choices are made here." When a saved strategy is
+                  chosen it has already decided the instrument, the source, the
+                  timeframe and the hyperparameters, so asking again is both
+                  noise and a chance to contradict the record a run will point
+                  at. The form below is the ad-hoc path, for training without a
+                  saved strategy at all. */}
+              {!chosenSaved && (
+                <div className="bg-base-200 rounded-box p-4 grid gap-4 md:grid-cols-2">
+                  <label className="form-control">
+                    <FieldLabel
+                      text="Strategy"
+                      hint="Only strategies that cache a trained model are listed. The indicator strategies have nothing to learn, so they never need this page."
+                    />
+                    <select
+                      className="select select-bordered" value={strategyName}
+                      onChange={(e) => {
+                        const s = strategies.find((x) => x.name === e.target.value)
+                        if (s) { setStrategyName(s.name); setParams({ ...s.defaultParameters }) }
+                      }}
+                    >
+                      {strategies.map((s) => (
+                        <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
+                      ))}
+                    </select>
+                    <div className="label">
+                      <span className="label-text-alt">
+                        <a
+                          className="link link-hover text-base-content/60"
+                          href={strategyDocHref(strategyName)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          What {strategyName} learns, and how to read its accuracy →
+                        </a>
+                      </span>
+                    </div>
+                  </label>
 
-                <label className="form-control">
-                  <FieldLabel
-                    text="Instrument"
-                    hint="The symbol to learn from. Only imported symbols appear; the model is tied to this one and cannot be reused on another."
-                  />
-                  <select
-                    className="select select-bordered" value={symbol}
-                    onChange={(e) => {
-                      const next = instruments.find((i) => i.symbol === e.target.value)
-                      setSymbol(e.target.value)
-                      if (next && next.sources.length > 0) {
-                        setSource(next.sources[0].sourceName)
-                        setTimeframe(next.sources[0].timeframe)
-                      }
-                    }}
-                  >
-                    {instruments.map((i) => (
-                      <option key={i.id} value={i.symbol}>
-                        {i.symbol}{i.sources.length === 0 ? ' (no candles)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <label className="form-control">
+                    <FieldLabel
+                      text="Instrument"
+                      hint="The symbol to learn from. Only imported symbols appear; the model is tied to this one and cannot be reused on another."
+                    />
+                    <select
+                      className="select select-bordered" value={symbol}
+                      onChange={(e) => {
+                        const next = instruments.find((i) => i.symbol === e.target.value)
+                        setSymbol(e.target.value)
+                        if (next && next.sources.length > 0) {
+                          setSource(next.sources[0].sourceName)
+                          setTimeframe(next.sources[0].timeframe)
+                        }
+                      }}
+                    >
+                      {instruments.map((i) => (
+                        <option key={i.id} value={i.symbol}>
+                          {i.symbol}{i.sources.length === 0 ? ' (no candles)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                <label className="form-control">
-                  <FieldLabel
-                    text="Source"
-                    hint="Which import to learn from. A model trained on one source will not be found by a run against another, because the source is part of its identity."
-                  />
-                  <select
-                    className="select select-bordered" value={source}
-                    onChange={(e) => setSource(e.target.value)}
-                  >
-                    {sourcesForSymbol.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </label>
+                  <label className="form-control">
+                    <FieldLabel
+                      text="Source"
+                      hint="Which import to learn from. A model trained on one source will not be found by a run against another, because the source is part of its identity."
+                    />
+                    <select
+                      className="select select-bordered" value={source}
+                      onChange={(e) => setSource(e.target.value)}
+                    >
+                      {sourcesForSymbol.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </label>
 
-                <label className="form-control">
-                  <FieldLabel
-                    text="Timeframe"
-                    hint="Candle size to learn from. Only timeframes actually stored for this source are offered — training never derives a rollup the way a backtest can."
-                  />
-                  <select
-                    className="select select-bordered" value={timeframe}
-                    onChange={(e) => setTimeframe(e.target.value)}
-                  >
-                    {timeframesForSource.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
-                  </select>
-                </label>
-              </div>
+                  <label className="form-control">
+                    <FieldLabel
+                      text="Timeframe"
+                      hint="Candle size to learn from. Only timeframes actually stored for this source are offered — training never derives a rollup the way a backtest can."
+                    />
+                    <select
+                      className="select select-bordered" value={timeframe}
+                      onChange={(e) => setTimeframe(e.target.value)}
+                    >
+                      {timeframesForSource.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
+                    </select>
+                  </label>
+                </div>
+              )}
 
-              {slice && window && (
+              {slice && window && !chosenSaved && (
                 <div className="bg-base-200 rounded-box p-4 text-sm mt-4">
                   <div className="font-medium mb-1">What it will learn from</div>
                   <p className="text-base-content/70">
                     All <span className="font-mono">{slice.candleCount.toLocaleString()}</span> stored
                     candles, {new Date(slice.fromDate).toLocaleDateString()} to{' '}
                     {new Date(slice.toDate).toLocaleDateString()}. The whole series is used — there is
-                    deliberately no date range here, because the window a model trains on becomes part
-                    of its identity, and a hand-picked range produces a model the Run page cannot find.
+                    deliberately no date range here, because the window a model learned from is
+                    recorded with it, and a hand-picked range is how a model ends up judged on bars
+                    it never saw.
                   </p>
                   <p className="text-base-content/50 text-xs mt-2 font-mono break-all">
-                    engine window: {window.since} → {window.until}
+                    training window: {window.since} → {window.until}
                   </p>
+                </div>
+              )}
+
+              {chosenSaved && slice && (
+                <ResolvedStrategy
+                  strategy={chosenSaved}
+                  candleCount={slice.candleCount}
+                  from={slice.fromDate}
+                  to={slice.toDate}
+                  windowBars={windowBars ?? {}}
+                  emptyWindows={emptyWindows}
+                />
+              )}
+              {chosenSaved && !slice && (
+                <div className="alert alert-error mt-4">
+                  <span className="text-sm">
+                    This strategy names{' '}
+                    <span className="font-mono">
+                      {chosenSaved.instrument}/{chosenSaved.source}/{chosenSaved.timeframe}
+                    </span>
+                    , which has no stored candles. Import that series, or pick a strategy whose
+                    series exists.
+                  </span>
                 </div>
               )}
 
@@ -268,6 +485,23 @@ export default function TrainPage() {
 
             <Step n={3} title="Check the data"
               note="Training folds whatever is in the candles into the model's weights, where a gap or a broken bar becomes invisible. Check first, so a surprising result later is about the strategy rather than the data.">
+              {chosenSaved && (
+                <div className="mb-4">
+                  <div className="font-medium text-sm mb-1">
+                    Feature data for {chosenSaved.features.length} selected column(s)
+                  </div>
+                  <CoverageWarning
+                    resolved={featureReadiness}
+                    haveCoverage={!!featureCoverage}
+                    hasSet={!!featureSet}
+                    bars={featureCoverage?.bars ?? 0}
+                    coverage={coverageByName}
+                  />
+                  <FeatureListNotUsedNote />
+                </div>
+              )}
+
+              <div className="font-medium text-sm mb-1">Candles behind the features</div>
               <VerifyPanel
                 slice={!!slice} checking={checking} audit={report} error={reportError}
                 acknowledged={acknowledged} onVerify={verify}

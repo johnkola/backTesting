@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.strategy.nn;
 
+import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
@@ -129,8 +130,12 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
             warmupBars = 0;
             return;
         }
-        Instant firstTs = series.getBar(0).getEndTime();
-        Instant lastTs = series.getBar(barCount - 1).getEndTime();
+        // A bar's OWN date, not its end instant. BarSeriesConverter builds
+        // endTime as timestamp + one period, while the loader keys every
+        // prediction by the candle's stored timestamp, so asking by end
+        // instant requests the range shifted one bar forward.
+        Instant firstTs = BacktestEngine.barDate(series.getBar(0)).toInstant();
+        Instant lastTs = BacktestEngine.barDate(series.getBar(barCount - 1)).toInstant();
         String since = firstTs.toString();
         // `until` is exclusive on the loader side, so nudge past the last bar
         // to keep it in range.
@@ -192,7 +197,7 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
     /** Index of the first bar the loader gave a prediction for, or barCount. */
     private int firstBarWithPrediction(int barCount) {
         for (int i = 0; i < barCount; i++) {
-            long sec = series.getBar(i).getEndTime().getEpochSecond();
+            long sec = BacktestEngine.barDate(series.getBar(i)).toEpochSecond();
             if (predictionsByEpochSecond.containsKey(sec)) {
                 return i;
             }
@@ -248,8 +253,14 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
         if (i < warmupBars) {
             return StrategySignal.HOLD;
         }
-        Instant ts = series.getBar(i).getEndTime();
-        Integer cls = predictionsByEpochSecond.get(ts.getEpochSecond());
+        // Keyed by the bar's own date. Using getEndTime() here asked for the
+        // NEXT trading day's prediction on every Monday-to-Thursday bar and
+        // found nothing at all on Fridays, whose end instant is a Saturday --
+        // measured: 1,389 of 6,930 QQQ bars silently forced to HOLD, and the
+        // rest acting on a call computed from a window that had already seen
+        // the day being traded.
+        long sec = BacktestEngine.barDate(series.getBar(i)).toEpochSecond();
+        Integer cls = predictionsByEpochSecond.get(sec);
         if (cls == null) {
             // A bar the feature set has no row for — a holiday the calendar
             // instrument traded through, or a range edge. HOLD is the safe

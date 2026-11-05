@@ -38,6 +38,23 @@
 # deliberately does not live here; it is fitted per walk-forward fold at
 # training time and must stay there.
 
+#
+# CATALOGUE FIELDS — what the Features tab shows about each column, required on
+# every feature (Architecture.md §8.2a, "Feature definition columns").
+#   scope    instrument | market. `instrument` means the column is computed
+#            from the chosen instrument's own bars and follows it when the
+#            instrument changes; `market` means it is shared and stays selected.
+#            Running AAPL instead of QQQ therefore needs no manual exclusion.
+#   cadence  daily | weekly | monthly | quarterly — the series' NATIVE
+#            publication rate. Everything here is daily today. A run at a finer
+#            timeframe carries a coarser feature forward from its publication
+#            timestamp, which is impossible without knowing this.
+#   cost     free | paid. Sequencing, not accounting: every free column is built
+#            before any paid one, so the table works before money is spent.
+#   units    percent | level | count | ratio — of the RAW series, not of the
+#            normalized output. It is what makes the right `method` obvious (a
+#            yield already in percent wants daily_change, not daily_return) and
+#            what a chart axis is labelled from.
 schema_version = 4
 
 # Bumping schema_version changes the model cache key, so an old model is never
@@ -85,6 +102,10 @@ max_fill_days = 5
 
 [[feature]]
 name = "price_open"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "QQQ", source = "yahoo-adj", field = "open" }
 method = "ratio_to_prev_close"
 enabled = true
@@ -92,18 +113,30 @@ note = "The overnight gap — information the close alone throws away."
 
 [[feature]]
 name = "price_high"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "QQQ", source = "yahoo-adj", field = "high" }
 method = "ratio_to_prev_close"
 enabled = true
 
 [[feature]]
 name = "price_low"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "QQQ", source = "yahoo-adj", field = "low" }
 method = "ratio_to_prev_close"
 enabled = true
 
 [[feature]]
 name = "price_close"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "QQQ", source = "yahoo-adj", field = "close" }
 method = "ratio_to_prev_close"
 enabled = true
@@ -111,6 +144,10 @@ note = "On the close, this is the daily return."
 
 [[feature]]
 name = "volume"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { symbol = "QQQ", source = "yahoo-adj", field = "volume" }
 method = "ratio_to_rolling_mean"
 window = 20
@@ -124,6 +161,10 @@ enabled = true
 
 [[feature]]
 name = "vxn_open"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "VXN", source = "yahoo", field = "open" }
 method = "rolling_zscore"
 window = 60
@@ -131,6 +172,10 @@ enabled = true
 
 [[feature]]
 name = "vxn_high"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "VXN", source = "yahoo", field = "high" }
 method = "rolling_zscore"
 window = 60
@@ -138,6 +183,10 @@ enabled = true
 
 [[feature]]
 name = "vxn_low"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "VXN", source = "yahoo", field = "low" }
 method = "rolling_zscore"
 window = 60
@@ -145,6 +194,10 @@ enabled = true
 
 [[feature]]
 name = "vxn_close"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "VXN", source = "yahoo", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -153,6 +206,10 @@ note = "How stretched fear is versus its own recent history."
 
 [[feature]]
 name = "vxn_vix_spread"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { op = "subtract", a = { symbol = "VXN", source = "yahoo", field = "close" }, b = { symbol = "VIX", source = "yahoo", field = "close" } }
 method = "rolling_zscore"
 window = 60
@@ -161,6 +218,10 @@ note = "Tech-specific fear above broad-market fear."
 
 [[feature]]
 name = "vix"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "VIX", source = "yahoo", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -183,6 +244,10 @@ blind to whether the whole market is calm or terrified, which this restores."""
 
 [[feature]]
 name = "rsi_14"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { computed = "rsi", symbol = "QQQ", source = "yahoo-adj", period = 14 }
 method = "rescale"
 min = 0.0
@@ -191,6 +256,10 @@ enabled = false
 
 [[feature]]
 name = "macd"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { computed = "macd", symbol = "QQQ", source = "yahoo-adj", short = 12, long = 26 }
 method = "rolling_zscore"
 window = 60
@@ -198,6 +267,10 @@ enabled = false
 
 [[feature]]
 name = "realized_vol"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { computed = "realized_vol", symbol = "QQQ", source = "yahoo-adj", period = 20 }
 method = "rolling_zscore"
 window = 60
@@ -210,6 +283,10 @@ enabled = false
 
 [[feature]]
 name = "treasury_10y"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "DGS10", source = "fred", field = "close" }
 method = "daily_change"
 enabled = true
@@ -217,6 +294,10 @@ note = "Already quoted in percent, so a change in points is the natural unit."
 
 [[feature]]
 name = "treasury_2y"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "DGS2", source = "fred", field = "close" }
 method = "daily_change"
 enabled = true
@@ -227,6 +308,10 @@ daily_change. Note this is DGS2, not the DTB3 3-month bill also on disk:
 
 [[feature]]
 name = "breakeven_inflation"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "T10YIE", source = "fred", field = "close" }
 method = "daily_change"
 enabled = false
@@ -243,6 +328,10 @@ next-shortest series sets the new floor."""
 
 [[feature]]
 name = "yield_curve_10y2y"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "T10Y2Y", source = "fred", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -251,6 +340,10 @@ note = "Negative on 2,079 days (inversion). Never daily_return on this."
 
 [[feature]]
 name = "oil_wti"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "DCOILWTICO", source = "fred", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -259,6 +352,10 @@ note = "Printed -36.98 on 2020-04-20. Never daily_return on this."
 
 [[feature]]
 name = "dollar_index"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "DXY", source = "yahoo", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -266,6 +363,10 @@ enabled = true
 
 [[feature]]
 name = "copper_gold_ratio"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "ratio"
 series = { op = "divide", a = { symbol = "COPPER", source = "yahoo", field = "close" }, b = { symbol = "GOLD", source = "yahoo", field = "close" } }
 method = "rolling_zscore"
 window = 60
@@ -276,6 +377,10 @@ day's own high/low range — so no candle-shaped feature may be built on them.""
 
 [[feature]]
 name = "gold"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "level"
 series = { symbol = "GOLD", source = "yahoo", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -293,6 +398,10 @@ than daily_return follows the dollar_index precedent for the same wording."""
 
 [[feature]]
 name = "breadth_200dma"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "NDXBREADTH", source = "computed", field = "close" }
 method = "rescale"
 min = 0.0
@@ -303,6 +412,10 @@ drawdowns read less broad-based than they were."""
 
 [[feature]]
 name = "ndx_dispersion"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "NDXDISP", source = "computed", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -311,6 +424,10 @@ note = "Macro-driven versus stock-picking regime. From the cached constituent cl
 
 [[feature]]
 name = "ndx_advance_decline"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { symbol = "NDXAD", source = "computed", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -319,6 +436,10 @@ note = "Fast breadth, complementing the slow 200-day measure."
 
 [[feature]]
 name = "ndx_new_highs_lows"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { symbol = "NDXNHNL", source = "computed", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -335,6 +456,10 @@ closes. Survivorship-biased like the rest of this family."""
 
 [[feature]]
 name = "day_of_week"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { computed = "day_of_week" }
 method = "cyclical"
 period = 7
@@ -343,6 +468,10 @@ note = "Period 7 so Sunday wraps to Monday, even though only Mon-Fri appear."
 
 [[feature]]
 name = "day_of_year"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { computed = "day_of_year" }
 method = "cyclical"
 period = 365.25
@@ -351,6 +480,10 @@ note = "So Dec 31 sits next to Jan 1."
 
 [[feature]]
 name = "day_of_month"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { computed = "day_of_month" }
 method = "cyclical"
 period = 30.44
@@ -363,6 +496,10 @@ treatment applied consistently."""
 
 [[feature]]
 name = "holiday_proximity"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
 series = { computed = "holiday_proximity", calendar = "NYSE", lookahead_days = 1 }
 method = "flag"
 enabled = true
@@ -377,6 +514,10 @@ drives more position-squaring than a midweek one."""
 
 [[feature]]
 name = "credit_spread_ig"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
 series = { symbol = "BAMLC0A0CM", source = "fred", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -402,6 +543,10 @@ ICE directly, or another vendor — not a different FRED endpoint."""
 
 [[feature]]
 name = "put_call_ndx"
+scope = "market"
+cadence = "daily"
+cost = "paid"
+units = "ratio"
 series = { computed = "put_call_ndx" }
 method = "rolling_zscore"
 window = 60
@@ -413,6 +558,10 @@ before any money is spent here."""
 
 [[feature]]
 name = "vix_term_structure"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "ratio"
 series = { op = "divide", a = { symbol = "VIX3M", source = "yahoo", field = "close" }, b = { symbol = "VIX", source = "yahoo", field = "close" } }
 method = "rolling_zscore"
 window = 60
@@ -422,6 +571,10 @@ note = "Yahoo VIX3M starts 2006-07-17, blanking the first three training years."
 
 [[feature]]
 name = "credit_spread_hy"
+scope = "market"
+cadence = "daily"
+cost = "paid"
+units = "percent"
 series = { symbol = "BAMLH0A0HYM2", source = "fred", field = "close" }
 method = "rolling_zscore"
 window = 60
@@ -432,6 +585,10 @@ onward. Needs an API key or another source."""
 
 [[feature]]
 name = "qqq_spy_relative"
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "ratio"
 series = { op = "divide", a = { symbol = "QQQ", source = "yahoo-adj", field = "close" }, b = { symbol = "SPY", source = "yahoo-adj", field = "close" } }
 method = "rolling_zscore"
 window = 60
