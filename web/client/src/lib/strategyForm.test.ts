@@ -1,0 +1,218 @@
+import { describe, expect, it } from 'vitest'
+import type { SavedStrategy } from './api'
+import {
+  classifyCoverage,
+  designDefaultWindows,
+  isRealDate,
+  newestVersions,
+  resolveFeatures,
+  windowDays,
+  windowErrors,
+  type Windows,
+} from './strategyForm'
+
+/** The design's own split, which every window test starts from. */
+function windows(over: Partial<Windows> = {}): Windows {
+  return {
+    train: { from: '2003-01-01', to: '2015-12-31' },
+    validation: { from: '2016-01-01', to: '2021-12-31' },
+    test: { from: '2022-01-01', to: '2026-06-30' },
+    prediction: { from: '2026-07-01', to: '2026-09-25' },
+    ...over,
+  }
+}
+
+describe('isRealDate', () => {
+  it('accepts an ISO date that exists', () => {
+    expect(isRealDate('2003-01-01')).toBe(true)
+    expect(isRealDate('2024-02-29')).toBe(true) // a real leap day
+  })
+
+  it('rejects a day that does not exist, rather than rolling it over', () => {
+    // Date.parse('2003-02-30') succeeds and becomes March 2. A form that
+    // accepted it would silently train on a window nobody typed.
+    expect(isRealDate('2003-02-30')).toBe(false)
+    expect(isRealDate('2023-02-29')).toBe(false) // 2023 is not a leap year
+    expect(isRealDate('2003-13-01')).toBe(false)
+    expect(isRealDate('2003-00-10')).toBe(false)
+  })
+
+  it('rejects anything that is not YYYY-MM-DD', () => {
+    for (const bad of ['01/01/2003', '2003-1-1', '2003-01-01T00:00:00Z', '', 'today']) {
+      expect(isRealDate(bad), bad).toBe(false)
+    }
+  })
+})
+
+describe('windowErrors — the §8.1a refusal rules', () => {
+  it('accepts the design split', () => {
+    expect(windowErrors(windows())).toEqual([])
+  })
+
+  it('accepts a strategy with no prediction window', () => {
+    const w = windows()
+    delete w.prediction
+    expect(windowErrors(w)).toEqual([])
+  })
+
+  it('refuses overlapping windows and names the pair', () => {
+    const errs = windowErrors(windows({ validation: { from: '2015-06-01', to: '2021-12-31' } }))
+    expect(errs.join(' ')).toMatch(/validation must start after train ends/)
+    // The message carries both dates, so the fix is obvious without squinting
+    // at two fields.
+    expect(errs.join(' ')).toMatch(/2015-12-31/)
+    expect(errs.join(' ')).toMatch(/2015-06-01/)
+  })
+
+  it('refuses windows that merely touch on the same day', () => {
+    // That day would be both fitted on and scored.
+    const errs = windowErrors(windows({ validation: { from: '2015-12-31', to: '2021-12-31' } }))
+    expect(errs.join(' ')).toMatch(/must start after train ends/)
+  })
+
+  it('refuses windows out of time order', () => {
+    const errs = windowErrors(windows({
+      train: { from: '2022-01-01', to: '2026-06-30' },
+      test: { from: '2003-01-01', to: '2015-12-31' },
+    }))
+    expect(errs.length).toBeGreaterThan(0)
+  })
+
+  it('refuses a window that ends before it starts', () => {
+    const errs = windowErrors(windows({ train: { from: '2015-12-31', to: '2003-01-01' } }))
+    expect(errs.join(' ')).toMatch(/train window ends before it starts/)
+  })
+
+  it('requires train, validation and test', () => {
+    for (const key of ['train', 'validation', 'test'] as const) {
+      const w = windows()
+      delete w[key]
+      expect(windowErrors(w).join(' '), key).toMatch(new RegExp(`${key} window is required`))
+    }
+  })
+
+  it('reports a bad date as a bad date, not as an overlap', () => {
+    // Order checking skips windows that did not parse, so the message points
+    // at the typo instead of blaming the neighbouring window.
+    const errs = windowErrors(windows({ validation: { from: '2016-02-30', to: '2021-12-31' } }))
+    expect(errs.join(' ')).toMatch(/validation window needs two real dates/)
+    expect(errs.join(' ')).not.toMatch(/must start after/)
+  })
+
+  it('still orders train before test when prediction is absent', () => {
+    const w = windows({ test: { from: '2010-01-01', to: '2012-12-31' } })
+    delete w.prediction
+    expect(windowErrors(w).join(' ')).toMatch(/test must start after validation ends/)
+  })
+})
+
+describe('window sizes', () => {
+  it('counts calendar days inclusively', () => {
+    expect(windowDays({ from: '2024-01-01', to: '2024-01-01' })).toBe(1)
+    expect(windowDays({ from: '2024-01-01', to: '2024-01-31' })).toBe(31)
+    expect(windowDays({ from: '2024-01-01', to: '2024-12-31' })).toBe(366) // leap year
+  })
+
+  it('returns null rather than 0 for a window it cannot parse', () => {
+    // 0 would read as "this window is empty", which is a different and much
+    // more alarming fact than "you have not finished typing the date".
+    expect(windowDays({ from: '2024-01-01', to: 'nope' })).toBeNull()
+    expect(windowDays({ from: '', to: '' })).toBeNull()
+  })
+})
+
+describe('designDefaultWindows', () => {
+  it('offers the split the design argues for', () => {
+    const w = designDefaultWindows()
+    expect(w.train?.from).toBe('2003-01-01')
+    expect(w.validation?.from).toBe('2016-01-01')
+    expect(w.test?.from).toBe('2022-01-01')
+    expect(windowErrors(w)).toEqual([])
+  })
+
+  it('derives a prediction window from the newest stored bar', () => {
+    const w = designDefaultWindows('2026-09-25T00:00:00.000Z')
+    expect(w.prediction).toEqual({ from: '2026-07-01', to: '2026-09-25' })
+    expect(windowErrors(w)).toEqual([])
+  })
+
+  it('offers no prediction window when the series ends inside the test block', () => {
+    // Inventing one would overlap the test window and be refused anyway.
+    const w = designDefaultWindows('2024-01-01T00:00:00.000Z')
+    expect(w.prediction).toBeUndefined()
+    expect(windowErrors(w)).toEqual([])
+  })
+})
+
+describe('coverage and the resolved feature list (§6.2)', () => {
+  const full = { share: 1, bars: 100, withValue: 100 }
+  const partial = { share: 0.4, bars: 100, withValue: 40 }
+  const empty = { share: 0, bars: 100, withValue: 0 }
+
+  it('classifies coverage', () => {
+    expect(classifyCoverage(full)).toBe('full')
+    expect(classifyCoverage(partial)).toBe('partial')
+    expect(classifyCoverage(empty)).toBe('empty')
+    expect(classifyCoverage({ share: null, bars: 0, withValue: 0 })).toBe('unknown')
+  })
+
+  it('drops a feature with nothing in the train window, and says so', () => {
+    const r = resolveFeatures(['price_close', 'credit_spread_hy'], {
+      price_close: full,
+      credit_spread_hy: empty,
+    })
+    expect(r.resolved).toEqual(['price_close'])
+    expect(r.dropped).toEqual(['credit_spread_hy'])
+  })
+
+  it('keeps a partial feature but flags it', () => {
+    // Design.md is explicit that a short history is not a disqualification,
+    // and padding it would be worse than its absence.
+    const r = resolveFeatures(['price_close', 'breakeven_inflation'], {
+      price_close: full,
+      breakeven_inflation: partial,
+    })
+    expect(r.resolved).toEqual(['price_close', 'breakeven_inflation'])
+    expect(r.partial).toEqual(['breakeven_inflation'])
+    expect(r.dropped).toEqual([])
+  })
+
+  it('keeps a feature whose coverage is unknown rather than silently dropping it', () => {
+    const r = resolveFeatures(['vxn_close'], {})
+    expect(r.resolved).toEqual(['vxn_close'])
+    expect(r.dropped).toEqual([])
+  })
+
+  it('preserves the order features were picked in', () => {
+    // §6.1 records "the ordered set of feature ids", so the order is part of
+    // the run's identity, not a display detail.
+    const names = ['vxn_close', 'price_close', 'treasury_10y']
+    const r = resolveFeatures(names, Object.fromEntries(names.map((n) => [n, full])))
+    expect(r.resolved).toEqual(names)
+  })
+})
+
+describe('newestVersions', () => {
+  const at = (name: string, version: number): SavedStrategy => ({
+    id: `${name}-${version}`, name, version,
+    instrument: 'QQQ', source: 'yahoo-adj', timeframe: 'D1',
+    modelType: 'mlp', validationScheme: 'walkforward',
+    features: ['price_close'], windows: {}, label: null, hyperparams: {},
+    notes: null, createdAt: '', createdBy: 'web', updatedAt: '', updatedBy: 'web',
+  })
+
+  it('keeps one row per name, at its highest version', () => {
+    const got = newestVersions([at('baseline', 1), at('baseline', 3), at('baseline', 2)])
+    expect(got).toHaveLength(1)
+    expect(got[0].version).toBe(3)
+  })
+
+  it('sorts by name', () => {
+    const got = newestVersions([at('zeta', 1), at('alpha', 2)])
+    expect(got.map((s) => s.name)).toEqual(['alpha', 'zeta'])
+  })
+
+  it('handles an empty list', () => {
+    expect(newestVersions([])).toEqual([])
+  })
+})

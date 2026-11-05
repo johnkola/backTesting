@@ -1,0 +1,2023 @@
+{
+  "info": {
+    "name": "backTesting API",
+    "description": "Every endpoint the API origin serves, with assertions on status, shape and key values.\n\nARCHITECTURE.md §10 requires this: \"Postman collection for every service endpoint, checked in at postman/ with an environment file per target (local, docker)... Every new endpoint ships with its Postman request and its unit test in the same change.\"\n\n**Safe to run end to end.** Destructive endpoints (DELETE an import, DELETE a result, POST an aggregate, POST a CSV import, POST a training run) are exercised through their *rejection* paths -- a bad id, an unknown instrument, an invalid target -- so the collection proves the endpoint is wired and validating without deleting anything or starting a long job. The two endpoints that do write (POST /api/run and POST /api/strategies/saved) create a backtest result and a strategy version respectively; both are additive and named so they are easy to spot.\n\nOrder matters inside folders: a POST captures the id that the GET after it uses.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8001",
+      "description": "Overridden by the environment file."
+    },
+    {
+      "key": "instrument",
+      "value": "AAPL"
+    },
+    {
+      "key": "source",
+      "value": "yahoo"
+    },
+    {
+      "key": "timeframe",
+      "value": "D1"
+    },
+    {
+      "key": "savedStrategyId",
+      "value": "",
+      "description": "Captured by 'Save a strategy'."
+    },
+    {
+      "key": "resultId",
+      "value": "",
+      "description": "Captured by 'List results'."
+    },
+    {
+      "key": "featureSetId",
+      "value": "6",
+      "description": "Captured by 'Feature catalogue'; the default is a set that exists in the dev database."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "What the client blocks its first paint on.",
+      "item": [
+        {
+          "name": "Health of all three services",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            },
+            "description": "Probes the database, loader and engine in parallel and always answers 200."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('reports every service', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('status');",
+                  "    pm.expect(d.services).to.be.an('array').with.lengthOf(3);",
+                  "    const names = d.services.map(s => s.name).sort();",
+                  "    pm.expect(names).to.eql(['database', 'engine', 'loader']);",
+                  "});",
+                  "",
+                  "pm.test('always 200, with the verdict in the body', function () {",
+                  "    // A status code would collapse 'the API is down' and 'the API is up",
+                  "    // but the engine is not', which are different problems.",
+                  "    pm.expect(pm.response.code).to.eql(200);",
+                  "    pm.expect(d_ok()).to.be.oneOf([true, false]);",
+                  "    function d_ok() { return pm.response.json().ok; }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Root redirects to the client",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            },
+            "description": "This process is the API only; the SPA is served separately on :3000."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('redirects rather than serving an app', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([301, 302]);",
+                  "    pm.expect(pm.response.headers.get('location')).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reference data",
+      "description": "What is in the store: sources, instruments and candles.",
+      "item": [
+        {
+          "name": "List sources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sources"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List instruments at a timeframe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/instruments?timeframe={{timeframe}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "instruments?timeframe={{timeframe}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "    if (d.items.length) {",
+                  "        const i = d.items[0];",
+                  "        pm.expect(i).to.include.keys('symbol', 'type', 'sources');",
+                  "        pm.expect(i.sources).to.be.an('array');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('each source slice carries its range and count', function () {",
+                  "    const d = pm.response.json();",
+                  "    for (const i of d.items) for (const s of i.sources) {",
+                  "        pm.expect(s).to.include.keys(",
+                  "            'sourceName', 'timeframe', 'candleCount', 'fromDate', 'toDate');",
+                  "        pm.expect(s.candleCount).to.be.at.least(0);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Candles for a window",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/candles?instrument={{instrument}}&source={{source}}&timeframe={{timeframe}}&from=2024-01-01&to=2024-01-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "candles?instrument={{instrument}}&source={{source}}&timeframe={{timeframe}}&from=2024-01-01&to=2024-01-31"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('total is the pre-stride row count', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('items', 'total', 'returned', 'stride');",
+                  "    // total counts matching rows; items may be downsampled. Anything",
+                  "    // measuring a window must read total, not items.length.",
+                  "    pm.expect(d.total).to.be.at.least(d.returned);",
+                  "    pm.expect(d.stride).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test('every bar is inside the requested window', function () {",
+                  "    const d = pm.response.json();",
+                  "    for (const c of d.items) {",
+                  "        pm.expect(c.timestamp >= '2024-01-01').to.be.true;",
+                  "        pm.expect(c.timestamp <= '2024-01-31T23:59:59.999Z').to.be.true;",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Candles without an instrument are rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/candles?timeframe={{timeframe}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "candles?timeframe={{timeframe}}"
+              ]
+            },
+            "description": "instrument and timeframe are both required."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Imports",
+      "description": "The year-sliced archive. The destructive paths are exercised through their rejections so running this folder removes nothing.",
+      "item": [
+        {
+          "name": "List imports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports?limit=5"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('is paginated', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('total', 'limit', 'offset');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cohesion audit over stored candles",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit"
+              ]
+            },
+            "description": "Read-only: gaps, duplicates, out-of-order bars, non-positive prices.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"{{instrument}}\",\n  \"source\": \"{{source}}\",\n  \"timeframe\": \"{{timeframe}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('reports findings without blocking anything', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An import with no file is rejected",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            },
+            "description": "A real upload writes candles and archives a CSV, so the rejection path is what is asserted. To import for real, send multipart form-data with file, symbol, type, timeframe and source.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "symbol",
+                  "value": "{{instrument}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('names every missing field', function () {",
+                  "    // The loader's own schema validation, reached through the proxy,",
+                  "    // which is what this request really proves is wired.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('detail');",
+                  "    const missing = d.detail.map(e => e.loc[e.loc.length - 1]);",
+                  "    pm.expect(missing).to.include.members(['file', 'type', 'timeframe']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Undo with a non-numeric id is rejected",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports/not-a-number",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports",
+                "not-a-number"
+              ]
+            },
+            "description": "The real undo deletes candles, so only its rejection path is asserted here. To exercise the real thing use ?dry_run=true against a known import id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refuses rather than guessing an id', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 422]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aggregate to an invalid target is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/aggregate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "aggregate"
+              ]
+            },
+            "description": "A valid call rebuilds rollups, so the rejection path is what is asserted.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"{{instrument}}\",\n  \"source\": \"{{source}}\",\n  \"sourceTf\": \"{{timeframe}}\",\n  \"targetTfs\": [\n    \"NOT_A_TIMEFRAME\"\n  ],\n  \"skipExisting\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refuses an unknown timeframe', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Engine (Java)",
+      "description": "What only the Java engine can answer: the strategy registry and running a backtest.",
+      "item": [
+        {
+          "name": "List registered strategies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('every strategy declares its parameters and model need', function () {",
+                  "    const d = pm.response.json();",
+                  "    const items = Array.isArray(d) ? d : d.items;",
+                  "    pm.expect(items).to.be.an('array').that.is.not.empty;",
+                  "    for (const s of items) {",
+                  "        pm.expect(s).to.include.keys(",
+                  "            'name', 'description', 'defaultParameters', 'requiresTrainedModel');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('the UI cannot offer what the engine cannot run', function () {",
+                  "    // The client populates its pickers from this, so an empty or",
+                  "    // malformed registry is a broken Run page.",
+                  "    const d = pm.response.json();",
+                  "    const items = Array.isArray(d) ? d : d.items;",
+                  "    pm.expect(items.map(s => s.name)).to.include('sma-crossover');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run a backtest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "run"
+              ]
+            },
+            "description": "Writes a backtest_results row. Additive, and the only write in this folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy\": \"sma-crossover\",\n  \"instrument\": \"{{instrument}}\",\n  \"timeframe\": \"{{timeframe}}\",\n  \"source\": \"{{source}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns a saved result with its metrics', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys(",
+                  "        'strategyName', 'instrumentSymbol', 'timeframe', 'startDate', 'endDate',",
+                  "        'initialCapital', 'finalEquity', 'metrics', 'trades', 'equityHistory');",
+                  "});",
+                  "",
+                  "pm.test('the benchmark is reported alongside the return', function () {",
+                  "    // DESIGN.md: a result without its buy-and-hold figure cannot be",
+                  "    // judged, because beating the market is the only question.",
+                  "    const m = pm.response.json().metrics;",
+                  "    pm.expect(m).to.include.keys('totalReturnPct', 'buyAndHoldReturnPct');",
+                  "    pm.expect(m.buyAndHoldReturnPct).to.be.a('number');",
+                  "});",
+                  "",
+                  "pm.test('the reported range is the traded range', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.startDate < d.endDate).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run an unknown strategy is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "run"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy\": \"no-such-strategy\",\n  \"instrument\": \"{{instrument}}\",\n  \"timeframe\": \"{{timeframe}}\",\n  \"source\": \"{{source}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refuses a strategy the registry does not have', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 422, 500]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a result that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/results/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "results",
+                "999999999"
+              ]
+            },
+            "description": "The real delete removes a stored run, so only the miss is asserted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404s rather than reporting a phantom delete', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([404, 400]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Results",
+      "description": "Stored runs. The list captures an id for the detail request after it.",
+      "item": [
+        {
+          "name": "List results",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/results?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "results?limit=5"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('captures an id for the detail request', function () {",
+                  "    const d = pm.response.json();",
+                  "    if (d.items.length) {",
+                  "        pm.collectionVariables.set('resultId', String(d.items[0].id));",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('each row carries what the table shows', function () {",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(r).to.include.keys(",
+                  "            'id', 'strategyName', 'instrumentSymbol', 'timeframe', 'dataSource',",
+                  "            'totalReturnPct', 'createdAt');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One result in full",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/results/{{resultId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "results",
+                "{{resultId}}"
+              ]
+            },
+            "description": "Uses the id captured by 'List results'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('summary at the top, full payload under result', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys(",
+                  "        'id', 'strategyName', 'totalReturnPct', 'sharpeRatio', 'result');",
+                  "    pm.expect(d.result).to.include.keys('metrics', 'trades', 'equityHistory');",
+                  "    pm.expect(d.result.trades).to.be.an('array');",
+                  "    pm.expect(d.result.equityHistory).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('records which stored benchmark it was judged against', function () {",
+                  "    // ARCHITECTURE.md 6.1: a run record stores the fixed buy-and-hold",
+                  "    // benchmark row it is measured against. Null only for a run whose",
+                  "    // window predates the benchmarks table.",
+                  "    const r = pm.response.json().result;",
+                  "    pm.expect(r).to.have.property('benchmarkId');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A result that does not exist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/results/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "results",
+                "999999999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Strategy builder",
+      "description": "Saved strategies (§8.2a). Saving never overwrites, so running this folder twice leaves two versions rather than replacing one.",
+      "item": [
+        {
+          "name": "Save a strategy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved"
+              ]
+            },
+            "description": "Additive: a second run of this request creates version N+1.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-smoke\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [\n    \"price_close\",\n    \"vxn_close\"\n  ],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2016-01-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('stores a version and reports who saved it', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys(",
+                  "        'id', 'name', 'version', 'instrument', 'features', 'windows',",
+                  "        'label', 'hyperparams', 'createdBy');",
+                  "    pm.expect(d.version).to.be.at.least(1);",
+                  "    pm.expect(d.features).to.eql(['price_close', 'vxn_close']);",
+                  "    pm.collectionVariables.set('savedStrategyId', String(d.id));",
+                  "});",
+                  "",
+                  "pm.test('numbers come back as numbers', function () {",
+                  "    // The form sends strings; the loader's schema types these, so the",
+                  "    // API coerces once on the way in.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.hyperparams.numEpochs).to.eql(50);",
+                  "    pm.expect(d.label.horizonBars).to.eql(5);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Overlapping windows are refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved"
+              ]
+            },
+            "description": "§8.1a: the builder refuses windows that overlap or run out of order.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-smoke\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [\n    \"price_close\",\n    \"vxn_close\"\n  ],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2015-06-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('names the offending pair', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('errors');",
+                  "    pm.expect(d.error).to.include('validation');",
+                  "    pm.expect(d.error).to.include('must start after');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A strategy with no features is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved"
+              ]
+            },
+            "description": "§6.1 wants the feature list to be an explicit, recorded choice, so it is never defaulted to 'all'.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-smoke\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2016-01-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('at least one feature');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List saved strategies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved?latest=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved?latest=1"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('serves the form its own spec', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys(",
+                  "        'paramSpec', 'modelTypes', 'validationSchemes', 'windows',",
+                  "        'requiredWindows');",
+                  "    pm.expect(Object.keys(d.paramSpec)).to.have.lengthOf(12);",
+                  "    pm.expect(d.requiredWindows).to.eql(['train', 'validation', 'test']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One saved strategy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved/{{savedStrategyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved",
+                "{{savedStrategyId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('is the version that was just saved', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(String(d.id)).to.eql(",
+                  "        pm.collectionVariables.get('savedStrategyId'));",
+                  "    pm.expect(d.name).to.eql('postman-smoke');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A non-numeric strategy id is rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved/abc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved",
+                "abc"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('numeric');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Removing a strategy that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved",
+                "999999999"
+              ]
+            },
+            "description": "Removing a real strategy deletes every version of its name, so the miss is what is asserted. The UI sends `?all=1` to remove for real. This is not in tension with §8.2a's \"never overwrites\": that rule protects a run's provenance, and a strategy nothing was trained from has none to protect."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('no strategy with id');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Models and features",
+      "description": "Trained artifacts on disk and the two feature surfaces -- the stored table and the per-bar vector.",
+      "item": [
+        {
+          "name": "List trained models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "models"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('each model says what it trained on', function () {",
+                  "    // These were all null until the API learned to read the loader's",
+                  "    // extra.training_window block.",
+                  "    for (const m of pm.response.json().items) {",
+                  "        pm.expect(m).to.include.keys(",
+                  "            'cacheKey', 'strategyName', 'instrumentSymbol', 'sourceName',",
+                  "            'timeframe', 'trainingBarCount', 'createdAt');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Feature table and split",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features?timeframe={{timeframe}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features?timeframe={{timeframe}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('describes the stored feature table', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('config', 'columnStats', 'split', 'sets');",
+                  "});",
+                  "",
+                  "pm.test('a disabled column is a recorded decision, not an absence', function () {",
+                  "    const cols = (pm.response.json().config || {}).columns || [];",
+                  "    pm.expect(cols).to.be.an('array').that.is.not.empty;",
+                  "    for (const c of cols) pm.expect(c).to.include.keys('name', 'enabled', 'method');",
+                  "});",
+                  "",
+                  "pm.test('the split is the design\\'s own boundaries', function () {",
+                  "    const s = pm.response.json().split;",
+                  "    if (s) {",
+                  "        pm.expect(s.firstValidationYear).to.eql(2016);",
+                  "        pm.expect(s.firstTestYear).to.eql(2022);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Feature catalogue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/catalogue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "catalogue"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('every row carries the catalogue columns', function () {",
+                  "    // ARCHITECTURE.md 8.2a fixes this list; the Features tab is",
+                  "    // built from it, so a missing field is a blank column on screen.",
+                  "    const d = pm.response.json();",
+                  "    for (const f of d.items) {",
+                  "        pm.expect(f).to.include.keys(",
+                  "            'name', 'source', 'cadence', 'scope', 'status', 'cost', 'units',",
+                  "            'codeVersion', 'method', 'width', 'rangeStart', 'rangeEnd');",
+                  "        pm.expect(f.scope).to.be.oneOf(['instrument', 'market']);",
+                  "        pm.expect(f.status).to.be.oneOf(['active', 'undecided', 'blocked']);",
+                  "        pm.expect(f.cost).to.be.oneOf(['free', 'paid']);",
+                  "        pm.expect(f.units).to.be.oneOf(['percent', 'level', 'count', 'ratio']);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('keeps disabled columns listed', function () {",
+                  "    // A blocked column is a recorded decision, not an absence, so the",
+                  "    // catalogue must still show it with its reason.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.items.some(f => f.status !== 'active')).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('offers the sets coverage can be measured against', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.sets).to.be.an('array');",
+                  "    for (const s of d.sets) {",
+                  "        pm.expect(s).to.include.keys('id', 'symbol', 'timeframe', 'rowCount');",
+                  "    }",
+                  "    if (d.sets.length) pm.collectionVariables.set('featureSetId', d.sets[0].id);",
+                  "});",
+                  "",
+                  "pm.test('a cyclical column is two values wide', function () {",
+                  "    const byName = {};",
+                  "    for (const f of pm.response.json().items) byName[f.name] = f;",
+                  "    if (byName.day_of_week) pm.expect(byName.day_of_week.width).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Feature coverage over a window",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/coverage?set={{featureSetId}}&from=2003-01-01&to=2015-12-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "coverage?set={{featureSetId}}&from=2003-01-01&to=2015-12-31"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('counts BARS, not calendar days', function () {",
+                  "    // The feature table has one row per trading day, so a 13-year",
+                  "    // window holds ~3,270 bars, not ~4,750 days. Dividing by days",
+                  "    // would report every healthy feature as 70% covered.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.bars).to.be.a('number').above(0);",
+                  "    const days = (Date.parse('2015-12-31') - Date.parse('2003-01-01'))",
+                  "        / 86400000;",
+                  "    pm.expect(d.bars).to.be.below(days);",
+                  "});",
+                  "",
+                  "pm.test('keeps the three kinds of missing apart', function () {",
+                  "    // withValue has a number; storedNull has a row but nothing",
+                  "    // computable yet; absent has no row at all. Collapsing them hides",
+                  "    // the difference between a short history and a broken pipeline.",
+                  "    const d = pm.response.json();",
+                  "    for (const f of d.items) {",
+                  "        pm.expect(f).to.include.keys(",
+                  "            'withValue', 'storedNull', 'absent', 'share', 'bars');",
+                  "        pm.expect(f.withValue + f.storedNull + f.absent).to.eql(d.bars);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('covers every catalogue feature, even absent ones', function () {",
+                  "    // A LEFT JOIN on purpose: 'this feature is absent here' is the",
+                  "    // answer the tab most needs, and an inner join would omit it.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.items.length).to.be.at.least(30);",
+                  "    pm.expect(d.items.some(f => f.withValue === 0)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Coverage without a set is rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/coverage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "coverage"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('set is required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Gaps for one feature",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/gaps?set={{featureSetId}}&feature=breakeven_inflation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "gaps?set={{featureSetId}}&feature=breakeven_inflation"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('collapses consecutive missing bars into ranges', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys(",
+                  "        'featureName', 'totalGaps', 'missingBars', 'items', 'truncated');",
+                  "    for (const g of d.items) {",
+                  "        pm.expect(g).to.include.keys('from', 'to', 'bars');",
+                  "        pm.expect(g.bars).to.be.at.least(1);",
+                  "        pm.expect(g.from <= g.to).to.be.true;",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('caps the list rather than printing every holiday', function () {",
+                  "    pm.expect(pm.response.json().items.length).to.be.at.most(5);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Gaps without a feature is rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/gaps?set={{featureSetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "gaps?set={{featureSetId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('feature is required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Per-bar feature schema (nn-feedforward)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/features/schema",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "features",
+                "schema"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('names all twelve inputs with their formulas', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.strategy).to.eql('nn-feedforward');",
+                  "    pm.expect(d.featuresPerBar).to.eql(12);",
+                  "    pm.expect(d.columns).to.have.lengthOf(12);",
+                  "    d.columns.forEach((c, i) => {",
+                  "        pm.expect(c.index).to.eql(i);",
+                  "        pm.expect(c.name).to.be.a('string').that.is.not.empty;",
+                  "        pm.expect(c.formula).to.be.a('string').that.is.not.empty;",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('reports the warmup a short series would fail on', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.minBars).to.be.at.least(",
+                  "        Math.max(...Object.values(d.indicatorPeriods)));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stored feature config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/features/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "features",
+                "config"
+              ]
+            },
+            "description": "Served by the loader because features.toml is the Python side's source of truth and teaching the API a TOML parser would make two that can disagree."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('reports every column, disabled ones included', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('schemaVersion', 'columns', 'inputWidth');",
+                  "    pm.expect(d.columns.some(c => !c.enabled)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Loader's model registry",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "models"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Training an unknown instrument is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/train",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "train"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"NO_SUCH_SYMBOL\",\n  \"source\": \"{{source}}\",\n  \"timeframe\": \"{{timeframe}}\",\n  \"mode\": \"force\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('explains what is wrong', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('error');",
+                  "    pm.expect(d.error.toLowerCase()).to.include('unknown instrument');",
+                  "});",
+                  "",
+                  "pm.test('rejects before doing any work', function () {",
+                  "    // Asserted instead of a real train: training is synchronous and",
+                  "    // writes a model to disk, which a smoke run should not do.",
+                  "    pm.expect(pm.response.responseTime).to.be.below(10000);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Docs",
+      "description": "Markdown rendered to HTML on demand, with revision history.",
+      "item": [
+        {
+          "name": "List docs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "docs"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('includes the QQQ design and architecture docs', function () {",
+                  "    const slugs = pm.response.json().items.map(d => d.slug);",
+                  "    pm.expect(slugs).to.include.members(",
+                  "        ['readme', 'architecture', 'qqq-design', 'qqq-architecture']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Render one doc",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/docs/qqq-architecture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "docs",
+                "qqq-architecture"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns HTML with GitHub-style heading anchors', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('name', 'label', 'slug', 'html');",
+                  "    pm.expect(d.html).to.be.a('string').with.length.above(1000);",
+                  "    // marked stopped emitting heading ids in v5, so every in-page doc",
+                  "    // link depended on restoring them.",
+                  "    pm.expect(d.html).to.match(/<h2 id=\"[^\"]+\"/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Doc revision history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/docs/qqq-architecture/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "docs",
+                "qqq-architecture",
+                "history"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('returns an items array', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('items');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An unknown doc slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/docs/no-such-doc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "docs",
+                "no-such-doc"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404s on a slug that is not registered', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([404, 400]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
