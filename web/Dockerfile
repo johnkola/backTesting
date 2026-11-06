@@ -17,10 +17,14 @@ COPY web/api/ ./
 # Project docs go into /app/docs; DOCS_DIR tells the server to render markdown
 # from there.
 RUN mkdir -p /app/docs
-COPY GETTING-STARTED.md README.md ARCHITECTURE.md /app/docs/
-# The QQQ design docs keep their reference/ path, because that is the path the
-# DOCS registry addresses them by.
-COPY reference/qqq-backtesting-model/Design.md reference/qqq-backtesting-model/Architecture.md /app/docs/reference/qqq-backtesting-model/
+COPY GETTING-STARTED.md README.md /app/docs/
+# The QQQ design set keeps its read-only-doc/ path, because that is the path the
+# DOCS registry addresses it by. JSON form because `Design Notes.md` contains a
+# space, which the shell form would split into two arguments.
+#
+# Not reference/qqq-backtesting-model/: that is an earlier revision of these
+# same three documents and the registry deliberately no longer serves it.
+COPY ["read-only-doc/Architecture.md", "read-only-doc/Design Notes.md", "read-only-doc/Features.md", "/app/docs/read-only-doc/"]
 
 ENV NODE_ENV=production
 ENV DOCS_DIR=/app/docs

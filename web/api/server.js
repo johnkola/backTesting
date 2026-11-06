@@ -1227,11 +1227,17 @@ app.get('/api/docs/:slug/history', (req, res) => {
 // The old server-rendered doc URLs, and the older /claude one before them, are
 // bookmarked and linked from commit messages. They now live in the client, so
 // redirect rather than 404 — query strings included, so ?rev=N survives.
+//
+// `architecture` and `claude` land on `qqq-architecture`: the repo-root
+// ARCHITECTURE.md they used to serve was deleted when read-only-doc/ became the
+// design set, and the QQQ architecture is the only Architecture document left.
+// A redirect to a slug the registry does not know is a 301 into a 404, so the
+// targets below are checked against the registry in docsRegistry.test.js.
 for (const [slug, target] of [
   ['getting-started', 'getting-started'],
   ['readme', 'readme'],
-  ['architecture', 'architecture'],
-  ['claude', 'architecture'], // legacy CLAUDE.md path
+  ['architecture', 'qqq-architecture'],
+  ['claude', 'qqq-architecture'], // legacy CLAUDE.md path
 ]) {
   app.get(`/${slug}`, (req, res) => res.redirect(301, `${CLIENT_URL}/docs/${target}${queryOf(req)}`));
   app.get(`/${slug}/history`, (req, res) =>

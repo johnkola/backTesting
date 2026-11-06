@@ -1,13 +1,17 @@
 const crypto = require('crypto');
 const { pool } = require('./db');
+const { DOCS } = require('./docsRegistry');
 
-const KNOWN_DOCS = new Set([
-  'GETTING_STARTED', 'README', 'ARCHITECTURE',
-  // The QQQ model's own design docs, under reference/. They get revision
-  // history like the rest: the design is edited upstream and re-synced, so
-  // being able to read what it said last week is the point.
-  'QQQ_DESIGN', 'QQQ_ARCHITECTURE',
-]);
+// Derived from the registry rather than listed again. A key in one list and not
+// the other gives a doc that renders but never records a revision, which is a
+// silent failure -- the tab looks fine and the history page is empty forever.
+// Deriving makes that impossible instead of asking the next person to remember.
+//
+// The design docs under read-only-doc/ get revision history like the rest, and
+// it matters most for them: the author edits those files by hand, outside this
+// repo's tooling, so a snapshot on every read is the only record of what the
+// design said last week.
+const KNOWN_DOCS = new Set(Object.keys(DOCS));
 
 async function ensureSchema() {
   // Owned by the web layer, not the Java backtester. Idempotent.
@@ -102,6 +106,7 @@ async function listHistory(name, limit = 100) {
 }
 
 module.exports = {
+  KNOWN_DOCS,
   ensureSchema,
   captureIfChanged,
   getRevision,

@@ -84,9 +84,9 @@ export default function DocsPage() {
       )}
 
       {doc && (
-        // The markdown is this repo's own README/ARCHITECTURE, read from a
-        // read-only mount by the API — the same trust boundary as when the API
-        // rendered these pages itself.
+        // The markdown is the repo's own docs and the design set under
+        // read-only-doc/, read from a read-only mount by the API — the same
+        // trust boundary as when the API rendered these pages itself.
         <article
           className="prose lg:prose-lg max-w-none"
           onClick={onDocClick}

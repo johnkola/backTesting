@@ -64,9 +64,12 @@ services:
       - ./data/models:/data/models:ro
       - ./GETTING-STARTED.md:/app/docs/GETTING-STARTED.md:ro
       - ./README.md:/app/docs/README.md:ro
-      - ./ARCHITECTURE.md:/app/docs/ARCHITECTURE.md:ro
-      - ./reference/qqq-backtesting-model/Design.md:/app/docs/reference/qqq-backtesting-model/Design.md:ro
-      - ./reference/qqq-backtesting-model/Architecture.md:/app/docs/reference/qqq-backtesting-model/Architecture.md:ro
+      # The design set, at the path the DOCS registry addresses it by. Quoted
+      # because `Design Notes.md` contains a space, and :ro because nothing in
+      # this repo may write to read-only-doc/.
+      - "./read-only-doc/Architecture.md:/app/docs/read-only-doc/Architecture.md:ro"
+      - "./read-only-doc/Design Notes.md:/app/docs/read-only-doc/Design Notes.md:ro"
+      - "./read-only-doc/Features.md:/app/docs/read-only-doc/Features.md:ro"
 
   # The React SPA, static files behind nginx. No backend of its own: it calls
   # the API by the URL baked in at build time.
