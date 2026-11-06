@@ -36,6 +36,11 @@
       "key": "featureSetId",
       "value": "6",
       "description": "Captured by 'Feature catalogue'; the default is a set that exists in the dev database."
+    },
+    {
+      "key": "wfRunId",
+      "value": "1",
+      "type": "string"
     }
   ],
   "item": [
@@ -751,6 +756,263 @@
                 "exec": [
                   "pm.test('404s rather than reporting a phantom delete', function () {",
                   "    pm.expect(pm.response.code).to.be.oneOf([404, 400]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List walk-forward runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/walkforward/runs?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "walkforward",
+                "runs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "Every walk-forward run, newest first, with its folds summarised on read. Holdout runs are excluded unless includeTest=true."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('body is JSON', function () {",
+                  "    pm.response.to.be.json;",
+                  "});",
+                  "",
+                  "pm.test('echoes the filters back', function () {",
+                  "    // An empty list means something different filtered than unfiltered.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('items', 'timeframe', 'includeTest', 'limit');",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "    pm.expect(d.limit).to.eql(5);",
+                  "});",
+                  "",
+                  "pm.test('every run carries its configuration and its derived summary', function () {",
+                  "    // Mirrors WalkforwardRepositoryTest. The summary half is aggregated on",
+                  "    // read from walkforward_folds, never stored: a stored copy would go",
+                  "    // stale the moment a fold was corrected.",
+                  "    const d = pm.response.json();",
+                  "    if (d.items.length === 0) {",
+                  "        pm.expect.fail('no runs stored; run python -m nn.walkforward first');",
+                  "    }",
+                  "    for (const r of d.items) {",
+                  "        pm.expect(r).to.include.keys(",
+                  "            'id', 'label', 'symbol', 'sourceName', 'timeframe', 'objective', 'loss',",
+                  "            'trainStart', 'firstVal', 'lastVal', 'isTest', 'inProgress',",
+                  "            'folds', 'foldsWon', 'totalTrades',",
+                  "            'meanExcess', 'meanDriftTax', 'meanCommissions', 'meanTiming');",
+                  "        pm.expect(r.foldsWon).to.be.at.most(r.folds);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('holdout runs are hidden unless asked for', function () {",
+                  "    // The design allows the test block to be spent once. Listing those runs",
+                  "    // beside the validation ones is how it quietly becomes training data.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.includeTest).to.be.false;",
+                  "    d.items.forEach(r => pm.expect(r.isTest, 'run ' + r.id).to.be.false);",
+                  "});",
+                  "",
+                  "pm.test('a run with no folds reports null, not a zero that reads as a result', function () {",
+                  "    const d = pm.response.json();",
+                  "    d.items.filter(r => r.folds === 0).forEach(r => {",
+                  "        pm.expect(r.meanExcess, 'run ' + r.id).to.be.null;",
+                  "        pm.expect(r.beatsHoldOnReturn, 'run ' + r.id).to.be.null;",
+                  "    });",
+                  "});",
+                  "",
+                  "// Hand the detail request a run that actually has folds.",
+                  "const withFolds = pm.response.json().items.find(r => r.folds > 0);",
+                  "if (withFolds) { pm.collectionVariables.set('wfRunId', withFolds.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One walk-forward run with its folds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/walkforward/runs/{{wfRunId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "walkforward",
+                "runs",
+                "{{wfRunId}}"
+              ]
+            },
+            "description": "The run plus every fold, including the cost attribution that says whether a loss was the model's own timing or the structural cost of being out."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('returns the run and its folds', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('run', 'folds');",
+                  "    pm.expect(d.folds).to.be.an('array').that.is.not.empty;",
+                  "    pm.expect(d.run.folds).to.eql(d.folds.length,",
+                  "        'the aggregated count must match the folds returned');",
+                  "});",
+                  "",
+                  "pm.test('folds come back in sequence', function () {",
+                  "    const numbers = pm.response.json().folds.map(f => f.fold);",
+                  "    pm.expect(numbers).to.eql([...numbers].sort((a, b) => a - b));",
+                  "});",
+                  "",
+                  "pm.test('each fold carries both sides of the comparison', function () {",
+                  "    // The difference alone cannot be audited: +5 hides whether the model",
+                  "    // made 12 against a 7 or 2 against a -3.",
+                  "    pm.response.json().folds.forEach(f => {",
+                  "        pm.expect(f).to.include.keys(",
+                  "            'stratReturn', 'holdReturn', 'stratSharpe', 'holdSharpe',",
+                  "            'stratMaxdd', 'holdMaxdd', 'trades');",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('each fold carries the cost attribution', function () {",
+                  "    // The reason the table exists. Only timing is the model: a fold can",
+                  "    // lose heavily while the model's own term is about zero.",
+                  "    pm.response.json().folds.forEach(f => {",
+                  "        pm.expect(f).to.include.keys('daysOut', 'driftTax', 'commissions', 'timing');",
+                  "        pm.expect(f.driftTax).to.be.a('number');",
+                  "        pm.expect(f.timing).to.be.a('number');",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('dates are ISO strings, not reflected objects', function () {",
+                  "    // Gson reflects over LocalDate without an adapter and emits",
+                  "    // {year: 2003, month: 1, day: 2}, which is unusable from a client.",
+                  "    pm.response.json().folds.forEach(f => {",
+                  "        pm.expect(f.trainFrom).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+                  "        pm.expect(f.trainTo).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('the summary recomputes from the folds returned', function () {",
+                  "    // The claim the whole design rests on: nothing derivable is stored.",
+                  "    const d = pm.response.json();",
+                  "    const folds = d.folds;",
+                  "    const mean = folds.reduce((a, f) => a + (f.stratReturn - f.holdReturn), 0)",
+                  "        / folds.length;",
+                  "    pm.expect(d.run.meanExcess).to.be.closeTo(mean, 1e-6);",
+                  "    pm.expect(d.run.foldsWon).to.eql(",
+                  "        folds.filter(f => f.stratReturn > f.holdReturn).length);",
+                  "    pm.expect(d.run.totalTrades).to.eql(folds.reduce((a, f) => a + f.trades, 0));",
+                  "});",
+                  "",
+                  "pm.test('hyperparams arrive parsed, with the seed a run needs to be reproducible',",
+                  "function () {",
+                  "    const run = pm.response.json().run;",
+                  "    pm.expect(run.hyperparams).to.be.an('object');",
+                  "    pm.expect(run.hyperparams).to.include.keys('seed', 'epochs', 'lookback');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A walk-forward run that does not exist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/walkforward/runs/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "walkforward",
+                "runs",
+                "999999999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which id it could not find', function () {",
+                  "    pm.expect(pm.response.json().error).to.be.a('string').that.includes('999999999');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A non-numeric walk-forward run id is rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/walkforward/runs/not-a-number",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "walkforward",
+                "runs",
+                "not-a-number"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    // A non-numeric id is the caller's mistake, not a missing run.",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('names the offending segment', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('not-a-number');",
                   "});"
                 ]
               }
@@ -1738,6 +2000,42 @@
                   "    const d = pm.response.json();",
                   "    pm.expect(d).to.include.keys('schemaVersion', 'columns', 'inputWidth');",
                   "    pm.expect(d.columns.some(c => !c.enabled)).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('reports the data checks', function () {",
+                  "    // Mirrors TestConfigEndpointChecks in python/tests/test_data_checks.py.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.key('checks');",
+                  "    const c = d.checks.find(x => x.name === 'yield_curve_vs_published');",
+                  "    pm.expect(c, 'yield_curve_vs_published is registered').to.exist;",
+                  "    pm.expect(c.feature).to.eql('yield_curve_10y2y');",
+                  "    pm.expect(c.published.symbol).to.eql('T10Y2Y');",
+                  "    pm.expect(c.tolerance).to.be.above(0);",
+                  "    pm.expect(c.live, 'the check runs, so the UI may claim it').to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('every check names a column that is also reported', function () {",
+                  "    const d = pm.response.json();",
+                  "    const names = d.columns.map(c => c.name);",
+                  "    d.checks.forEach(c => pm.expect(names, c.name).to.include(c.feature));",
+                  "});",
+                  "",
+                  "pm.test('the yield curve is computed from its legs, not read published', function () {",
+                  "    // Features.md 23. Reading T10Y2Y directly gave one unverifiable number.",
+                  "    const d = pm.response.json();",
+                  "    const yc = d.columns.find(c => c.name === 'yield_curve_10y2y');",
+                  "    pm.expect(yc, 'yield_curve_10y2y exists').to.exist;",
+                  "    pm.expect(yc.isDerived).to.be.true;",
+                  "    pm.expect(yc.series.op).to.eql('subtract');",
+                  "    pm.expect(yc.series.a.symbol).to.eql('DGS10');",
+                  "    pm.expect(yc.series.b.symbol).to.eql('DGS2');",
+                  "});",
+                  "",
+                  "pm.test('the published spread is still required to load', function () {",
+                  "    // No feature reads it any more; only the check keeps it in the list.",
+                  "    const d = pm.response.json();",
+                  "    const req = d.requiredSeries.map(s => s.symbol + '/' + s.source);",
+                  "    pm.expect(req).to.include('T10Y2Y/fred');",
                   "});"
                 ]
               }
@@ -1887,10 +2185,15 @@
                   "    pm.expect(d.items).to.be.an('array');",
                   "});",
                   "",
-                  "pm.test('includes the QQQ design and architecture docs', function () {",
+                  "pm.test('includes the design set, and not the deleted root doc', function () {",
+                  "    // The repo-root ARCHITECTURE.md was deleted when read-only-doc/ became",
+                  "    // the design set, so the 'architecture' slug went with it. The three",
+                  "    // QQQ docs are what the Docs tab serves now; /architecture and /claude",
+                  "    // 301 to qqq-architecture for back-compat.",
                   "    const slugs = pm.response.json().items.map(d => d.slug);",
                   "    pm.expect(slugs).to.include.members(",
-                  "        ['readme', 'architecture', 'qqq-design', 'qqq-architecture']);",
+                  "        ['getting-started', 'readme', 'qqq-design', 'qqq-architecture', 'qqq-features']);",
+                  "    pm.expect(slugs).to.not.include('architecture');",
                   "});"
                 ]
               }

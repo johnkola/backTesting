@@ -1,51 +1,327 @@
-import { api, type TrainedModel } from '../../lib/api'
+import { useState } from 'react'
+import {
+  api,
+  type TrainedModel,
+  type WalkforwardFold,
+} from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
-import StageShell, { NotWired, type StageState } from './StageShell'
+import { newestFinished, num, pp, stageSummary } from '../../lib/walkforwardView'
+import StageShell, { NotWired } from './StageShell'
 
 type Loaded = { items: TrainedModel[], modelsDir: string }
 
 /**
  * Stage 5 — training.
  *
- * The design wants this tab followed in real time: current fold, epoch, the
- * loss curve updating, validation-fold results against buy-and-hold as they
- * land. None of that is recorded anywhere yet — the walk-forward runner prints
- * to a terminal and nothing persists per-epoch progress — so this shows the
- * models that exist and says plainly that the live view is missing, rather
- * than implying a run is being watched when it is not.
+ * The design wants this tab followed as a run happens: current fold, epoch, the
+ * loss curve updating, and validation-fold results against buy-and-hold as they
+ * land. The last of those is now real — the runner writes each fold to
+ * `walkforward_folds` as it finishes, Java serves them, and the tables below are
+ * that record. Per-epoch progress and the loss curve are still not persisted
+ * anywhere, so the live view is still called out as missing rather than implied.
+ *
+ * The cost attribution is the reason this is worth a table rather than a
+ * sentence. A fold's gap to buy-and-hold splits into the price of being out of
+ * the market, the mechanical cost of trading, and the model's own timing — and
+ * only the last of those is the model. Without the split, "the model lost 20
+ * points" and "the model is absent and the structure lost 20 points" look the
+ * same.
  */
 export default function TrainingStage() {
   const [tf] = useTimeframe()
+  const [includeTest, setIncludeTest] = useState(false)
+  const [openRun, setOpenRun] = useState<number | null>(null)
+
+  const { data: runsData, error: runsError, loading: runsLoading } = useApiData(
+    (signal) => api.walkforwardRuns({ timeframe: tf, includeTest, limit: 50 }, signal),
+    [tf, includeTest],
+  )
+
+  const { data: detail, loading: detailLoading } = useApiData(
+    (signal) => (openRun === null
+      ? Promise.resolve(null)
+      : api.walkforwardRun(openRun, signal)),
+    [openRun],
+  )
+
   const { data, error } = useApiData<Loaded>((signal) => api.models(tf, signal), [tf])
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!data) return <span className="loading loading-spinner" />
 
   const models = data.items
-  const state: StageState = models.length === 0 ? 'empty' : 'unknown'
+  const runs = runsData?.items ?? []
+
+  const newest = newestFinished(runs)
+  const header = stageSummary(runs, models.length, tf)
 
   return (
     <StageShell
-      state={state}
-      summary={
-        models.length === 0
-          ? `No trained models for ${tf}`
-          : `${models.length} trained model${models.length === 1 ? '' : 's'} on disk`
-      }
+      state={header.state}
+      summary={header.summary}
       detail={
-        models.length === 0
-          ? 'Nothing has been trained at this timeframe yet.'
-          : 'Whether a model beat buy-and-hold on its validation folds is not recorded with the model, so this stage cannot report a pass or fail. Models with no recorded timeframe are listed at every timeframe.'
+        <>
+          {header.detail}
+          {newest && (
+            <>
+              {' '}
+              The verdict covers one of this stage&apos;s gates — beating buy-and-hold on the
+              validation folds. The others the design asks for (loss actually decreasing, no
+              NaN loss) are not recorded per epoch, so they are not claimed here.
+            </>
+          )}
+        </>
       }
     >
       <NotWired
-        what="Live training progress"
-        how={'The runner prints fold, epoch and loss to its terminal and persists none of it. '
-          + 'A progress table written during the run would be what this tab reads.'}
+        what="The live view — current epoch and the loss curve"
+        how={'Fold results are recorded as they land and are listed below, but the runner '
+          + 'still prints per-epoch loss to its terminal and persists none of it. A '
+          + 'progress row written per epoch would be what this tab reads to draw a curve.'}
       />
 
-      <div className="overflow-x-auto bg-base-200 rounded-box mt-6">
+      <div className="flex items-center justify-between flex-wrap gap-3 mt-6 mb-2">
+        <h2 className="text-lg font-semibold">Walk-forward runs</h2>
+        <label className="label cursor-pointer gap-2">
+          <input
+            type="checkbox"
+            className="checkbox checkbox-sm"
+            checked={includeTest}
+            onChange={(e) => setIncludeTest(e.target.checked)}
+          />
+          <span
+            className="label-text text-sm tooltip tooltip-left"
+            data-tip={'The holdout may be spent once, to confirm a variant already chosen on '
+              + 'the validation folds. Comparing variants on it turns it into training data.'}
+          >
+            include holdout runs
+          </span>
+        </label>
+      </div>
+
+      {runsError && <div className="alert alert-error mb-4">{runsError}</div>}
+      {runsLoading && <span className="loading loading-spinner loading-sm" />}
+
+      <div className="overflow-x-auto bg-base-200 rounded-box mb-2">
+        <table className="table table-sm">
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Instrument</th>
+              <th>Objective</th>
+              <th>Windows</th>
+              <th className="text-right">Folds won</th>
+              <th className="text-right">Mean excess</th>
+              <th className="text-right">Worst DD</th>
+              <th className="text-right">Trades</th>
+              {/* Only `timing` is the model; the other two are the cost of the
+                  structure around it. */}
+              <th className="text-right">Drift</th>
+              <th className="text-right">Comm</th>
+              <th className="text-right">Timing</th>
+              <th>State</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((r) => (
+              <tr key={r.id} className={r.inProgress ? 'opacity-70' : ''}>
+                <td className="text-xs">
+                  <span className="font-mono">#{r.id}</span>
+                  {r.label && <span className="ml-2">{r.label}</span>}
+                  {r.isTest && (
+                    <span
+                      className="badge badge-xs badge-warning ml-2 tooltip"
+                      data-tip="This run spent the holdout"
+                    >
+                      holdout
+                    </span>
+                  )}
+                </td>
+                <td className="font-mono text-xs">{r.symbol}</td>
+                <td className="text-xs">
+                  {r.objective}
+                  {r.loss !== r.objective && (
+                    <span className="opacity-60" title="What the network trained on">
+                      {` / ${r.loss}`}
+                    </span>
+                  )}
+                </td>
+                <td className="font-mono text-xs whitespace-nowrap">
+                  {r.trainStart}→{r.firstVal}..{r.lastVal}
+                </td>
+                <td className="text-right">
+                  {r.folds === 0 ? '—' : `${r.foldsWon}/${r.folds}`}
+                </td>
+                <td className={`text-right font-mono ${
+                  r.meanExcess == null ? '' : r.meanExcess > 0 ? 'text-success' : 'text-error'}`}
+                >
+                  {pp(r.meanExcess)}
+                </td>
+                <td className="text-right font-mono">{num(r.worstStratDrawdown, 1)}</td>
+                <td className="text-right">{r.folds === 0 ? '—' : r.totalTrades}</td>
+                <td className="text-right font-mono text-xs">{pp(r.meanDriftTax)}</td>
+                <td className="text-right font-mono text-xs">{pp(r.meanCommissions)}</td>
+                <td className={`text-right font-mono text-xs ${
+                  r.meanTiming == null ? '' : r.meanTiming > 0 ? 'text-success' : 'text-error'}`}
+                >
+                  {pp(r.meanTiming)}
+                </td>
+                <td>
+                  {r.inProgress
+                    ? <span className="badge badge-sm badge-info">running</span>
+                    : r.beatsHoldOnReturn === true
+                      ? <span className="badge badge-sm badge-success">beat hold</span>
+                      : r.beatsHoldOnReturn === false
+                        ? <span className="badge badge-sm badge-error">lost to hold</span>
+                        : <span className="badge badge-sm badge-ghost">not decided</span>}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-xs"
+                    disabled={r.folds === 0}
+                    onClick={() => setOpenRun(openRun === r.id ? null : r.id)}
+                  >
+                    {openRun === r.id ? 'hide' : 'folds'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {runs.length === 0 && !runsLoading && (
+              <tr>
+                <td colSpan={13} className="text-center text-base-content/60">
+                  No walk-forward runs recorded at {tf}
+                  {!includeTest && ' (holdout runs are hidden)'}.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-sm text-base-content/60 mb-6">
+        Folds won, mean excess, worst drawdown and the attribution are computed from the
+        stored folds on every read, never saved beside the run — so they cannot disagree
+        with the folds they came from. <strong>Only <span className="font-mono">Timing</span> is
+          the model:</strong> drift is the price of being out of the market at all and
+        commissions are mechanical, so a run can lose heavily with its timing term near zero.
+      </p>
+
+      {openRun !== null && (
+        <div className="mb-6">
+          <h3 className="text-base font-semibold mb-2">
+            Folds of run #{openRun}
+            {detailLoading && <span className="loading loading-spinner loading-xs ml-2" />}
+          </h3>
+          {detail && (
+            <>
+              <div className="overflow-x-auto bg-base-200 rounded-box">
+                <table className="table table-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-right">Fold</th>
+                      <th className="text-right">Val year</th>
+                      <th>Trained on</th>
+                      <th className="text-right">Rows</th>
+                      <th className="text-right">Strategy</th>
+                      <th className="text-right">Buy &amp; hold</th>
+                      <th className="text-right">Excess</th>
+                      <th className="text-right">Sharpe</th>
+                      <th className="text-right">Max DD</th>
+                      <th className="text-right">Trades</th>
+                      <th className="text-right">Days out</th>
+                      <th className="text-right">Drift</th>
+                      <th className="text-right">Comm</th>
+                      <th className="text-right">Timing</th>
+                      <th className="text-right">Accuracy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.folds.map((f: WalkforwardFold) => {
+                      const excess = f.stratReturn - f.holdReturn
+                      return (
+                        <tr key={f.fold}>
+                          <td className="text-right">{f.fold}</td>
+                          <td className="text-right font-mono">{f.valYear}</td>
+                          <td className="font-mono text-xs whitespace-nowrap">
+                            {f.trainFrom} .. {f.trainTo}
+                          </td>
+                          <td className="text-right text-xs">
+                            {f.nTrain.toLocaleString()} / {f.nVal.toLocaleString()}
+                          </td>
+                          <td className="text-right font-mono">{num(f.stratReturn)}</td>
+                          <td className="text-right font-mono">{num(f.holdReturn)}</td>
+                          <td className={`text-right font-mono ${
+                            excess > 0 ? 'text-success' : 'text-error'}`}
+                          >
+                            {pp(excess)}
+                          </td>
+                          <td className="text-right font-mono text-xs">
+                            {num(f.stratSharpe)}
+                            <span className="opacity-60">{` / ${num(f.holdSharpe)}`}</span>
+                          </td>
+                          <td className="text-right font-mono text-xs">
+                            {num(f.stratMaxdd, 1)}
+                            <span className="opacity-60">{` / ${num(f.holdMaxdd, 1)}`}</span>
+                          </td>
+                          <td className="text-right">{f.trades}</td>
+                          <td className="text-right">{f.daysOut}</td>
+                          <td className="text-right font-mono text-xs">{pp(f.driftTax)}</td>
+                          <td className="text-right font-mono text-xs">{pp(f.commissions)}</td>
+                          <td className={`text-right font-mono text-xs ${
+                            f.timing > 0 ? 'text-success' : 'text-error'}`}
+                          >
+                            {pp(f.timing)}
+                          </td>
+                          <td className="text-right text-xs">
+                            {f.accuracy == null
+                              ? <span className="opacity-60" title="Money-trained: no class to be right about">—</span>
+                              : `${(f.accuracy * 100).toFixed(1)}%`}
+                            {f.baselineAcc != null && (
+                              <span className="opacity-60" title="Always predicting the training majority class">
+                                {` / ${(f.baselineAcc * 100).toFixed(1)}%`}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-sm text-base-content/60 mt-2">
+                Paired columns show the strategy against buy-and-hold over the same window.
+                A negative <span className="font-mono">Timing</span> means the days the model
+                sat out were <em>better</em> than average — it picked wrong. The three
+                attribution terms approximate Excess rather than summing to it exactly,
+                because they are additive and the returns are geometric.
+              </p>
+              {detail.run.hyperparams && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm">
+                    Hyperparameters and configuration
+                  </summary>
+                  <div className="mt-2 text-xs font-mono bg-base-200 rounded-box p-3">
+                    <div>
+                      feature set {detail.run.featureSetId ?? '—'} · {detail.run.inputWidth} inputs
+                      {' · '}cost {detail.run.costBps} bps · parked in {detail.run.park}
+                      {detail.run.threshold != null && ` · threshold ${detail.run.threshold}`}
+                    </div>
+                    <div className="mt-1">
+                      {Object.entries(detail.run.hyperparams)
+                        .map(([k, v]) => `${k}=${v}`).join('  ')}
+                    </div>
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <h2 className="text-lg font-semibold mb-2">Trained models on disk</h2>
+      <div className="overflow-x-auto bg-base-200 rounded-box">
         <table className="table table-sm">
           <thead>
             <tr>
@@ -88,7 +364,11 @@ export default function TrainingStage() {
           </tbody>
         </table>
       </div>
-      <p className="text-sm text-base-content/60 mt-3 font-mono">{data.modelsDir}</p>
+      <p className="text-sm text-base-content/60 mt-3">
+        A model on disk is not linked to the run that produced it — the loader does not record
+        the run id with the artifact, so these two tables cannot be joined yet.
+      </p>
+      <p className="text-sm text-base-content/60 mt-1 font-mono">{data.modelsDir}</p>
     </StageShell>
   )
 }

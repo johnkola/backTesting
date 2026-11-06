@@ -3,6 +3,7 @@ package com.bazarbozorg.backtest.api;
 import com.bazarbozorg.backtest.config.AppConfig;
 import com.bazarbozorg.backtest.data.BacktestResultRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
+import com.bazarbozorg.backtest.data.WalkforwardRepository;
 import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.engine.BacktestResult;
 import com.bazarbozorg.backtest.loader.LoaderAggregator;
@@ -10,6 +11,8 @@ import com.bazarbozorg.backtest.model.commission.CommissionModel;
 import com.bazarbozorg.backtest.model.commission.FixedCommission;
 import com.bazarbozorg.backtest.model.commission.PercentageCommission;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
+import com.bazarbozorg.backtest.model.WalkforwardFold;
+import com.bazarbozorg.backtest.model.WalkforwardRun;
 import com.bazarbozorg.backtest.model.slippage.FixedSlippage;
 import com.bazarbozorg.backtest.model.slippage.PercentageSlippage;
 import com.bazarbozorg.backtest.model.slippage.SlippageModel;
@@ -20,6 +23,7 @@ import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.util.DateTimeUtils;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.slf4j.Logger;
@@ -87,6 +91,11 @@ public class EngineApi {
         server.createContext("/api/strategies", ex -> serve(ex, "GET", this::listStrategies));
         server.createContext("/api/run", ex -> serve(ex, "POST", this::runBacktest));
         server.createContext("/api/results", ex -> serve(ex, "DELETE", this::deleteResult));
+        // One context for both the list and {id}: the JDK server matches
+        // prefixes, not patterns, so the handler dispatches on whether a
+        // trailing segment is present -- the same shape /api/results uses.
+        server.createContext("/api/walkforward/runs",
+                ex -> serve(ex, "GET", this::walkforwardRuns));
         server.createContext("/api/health", ex -> serve(ex, "GET", this::health));
 
         server.start();
@@ -239,6 +248,148 @@ public class EngineApi {
         body.put("status", "deleted");
         body.put("id", id);
         return body;
+    }
+
+    // ---- GET /api/walkforward/runs[/{id}] ------------------------------------
+
+    /**
+     * The walk-forward record: every run with its folds summarised, or one run
+     * with its folds listed.
+     *
+     * <p>This is the read the Training tab was missing. The runner used to print
+     * folds to a terminal and persist nothing, so the tab could list the models
+     * on disk and say nothing about how any of them scored. Python writes the
+     * runs now; this serves them.
+     *
+     * <p><strong>Holdout runs are excluded unless asked for.</strong> The design
+     * allows the test block to be spent once, to confirm a variant already
+     * chosen on the validation folds. Listing those runs beside the ordinary
+     * ones is how someone starts comparing variants on the holdout, which turns
+     * it into training data. {@code ?includeTest=true} is the deliberate act.
+     *
+     * <p>Query parameters: {@code timeframe}, {@code includeTest},
+     * {@code limit}. On the detail route they are ignored &mdash; an id is an
+     * id.
+     */
+    private Object walkforwardRuns(HttpExchange exchange) {
+        WalkforwardRepository repo = new WalkforwardRepository(databaseManager);
+        Optional<String> idSegment = lastPathSegment(exchange, "/api/walkforward/runs");
+
+        if (idSegment.isPresent()) {
+            long id = parseRunId(idSegment.get());
+            WalkforwardRun run = repo.findRun(id)
+                    .orElseThrow(() -> notFound("no walk-forward run with id " + id));
+            List<WalkforwardFold> folds = repo.findFolds(id);
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("run", runPayload(run));
+            body.put("folds", folds);
+            return body;
+        }
+
+        Map<String, String> params = query(exchange);
+        String timeframe = params.get("timeframe");
+        boolean includeTest = "true".equalsIgnoreCase(params.get("includeTest"));
+        int limit = parseLimit(params.get("limit"));
+
+        List<WalkforwardRun> runs = repo.findRuns(timeframe, includeTest, limit);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", runs.stream().map(EngineApi::runPayload).toList());
+        // Echoed back so a client can tell a filtered list from a complete one
+        // -- an empty list means something different under each.
+        body.put("timeframe", timeframe);
+        body.put("includeTest", includeTest);
+        body.put("limit", limit);
+        return body;
+    }
+
+    /**
+     * A run as the client wants it, with {@code hyperparamsJson} replaced by the
+     * parsed object.
+     *
+     * <p>The record keeps the raw text because an entity row stays pure data
+     * with no Gson knowledge, the same rule {@code BacktestResultRow} follows
+     * for {@code resultJson}. Parsing belongs out here, at the edge. Text that
+     * will not parse is passed through under {@code hyperparamsRaw} rather than
+     * dropped: it is still the only record of what the run was launched with.
+     */
+    private static Map<String, Object> runPayload(WalkforwardRun run) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", run.id());
+        out.put("label", run.label());
+        out.put("instrumentId", run.instrumentId());
+        out.put("symbol", run.symbol());
+        out.put("sourceId", run.sourceId());
+        out.put("sourceName", run.sourceName());
+        out.put("timeframe", run.timeframe());
+        out.put("featureSetId", run.featureSetId());
+        out.put("inputWidth", run.inputWidth());
+        out.put("objective", run.objective());
+        out.put("loss", run.loss());
+        out.put("costBps", run.costBps());
+        out.put("park", run.park());
+        out.put("threshold", run.threshold());
+        out.put("trainStart", run.trainStart());
+        out.put("firstVal", run.firstVal());
+        out.put("lastVal", run.lastVal());
+        out.put("isTest", run.isTest());
+        out.put("startedAt", run.startedAt());
+        out.put("finishedAt", run.finishedAt());
+        out.put("inProgress", run.inProgress());
+        out.put("folds", run.folds());
+        out.put("foldsWon", run.foldsWon());
+        out.put("meanExcess", run.meanExcess());
+        out.put("meanStratReturn", run.meanStratReturn());
+        out.put("meanHoldReturn", run.meanHoldReturn());
+        out.put("meanStratSharpe", run.meanStratSharpe());
+        out.put("meanHoldSharpe", run.meanHoldSharpe());
+        out.put("worstStratDrawdown", run.worstStratDrawdown());
+        out.put("worstHoldDrawdown", run.worstHoldDrawdown());
+        out.put("totalTrades", run.totalTrades());
+        out.put("meanDaysOut", run.meanDaysOut());
+        out.put("meanDriftTax", run.meanDriftTax());
+        out.put("meanCommissions", run.meanCommissions());
+        out.put("meanTiming", run.meanTiming());
+        out.put("beatsHoldOnReturn", run.beatsHoldOnReturn());
+
+        String raw = run.hyperparamsJson();
+        JsonObject parsed = null;
+        if (raw != null && !raw.isBlank()) {
+            try {
+                JsonElement el = JsonParser.parseString(raw);
+                if (el.isJsonObject()) {
+                    parsed = el.getAsJsonObject();
+                }
+            } catch (RuntimeException e) {
+                logger.warn("walkforward_runs.hyperparams_json for run {} is not JSON",
+                        run.id(), e);
+            }
+        }
+        out.put("hyperparams", parsed);
+        if (parsed == null && raw != null && !raw.isBlank()) {
+            out.put("hyperparamsRaw", raw);
+        }
+        return out;
+    }
+
+    private static long parseRunId(String segment) {
+        try {
+            return Long.parseLong(segment);
+        } catch (NumberFormatException e) {
+            throw badRequest("run id must be a number, got '" + segment + "'");
+        }
+    }
+
+    /** Absent or unparseable means the default, not an error. */
+    private static int parseLimit(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return WalkforwardRepository.DEFAULT_LIMIT;
+        }
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException e) {
+            throw badRequest("limit must be a number, got '" + raw + "'");
+        }
     }
 
     // ---- GET /api/health -----------------------------------------------------

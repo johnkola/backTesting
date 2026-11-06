@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -49,9 +50,26 @@ final class HttpSupport {
         }
     }
 
+    /**
+     * Serialises {@link LocalDate} as {@code YYYY-MM-DD}.
+     *
+     * <p>Same failure as {@link ZonedDateTimeAdapter} and found the same way:
+     * without this, a walk-forward fold's {@code trainFrom} reached the client
+     * as {@code {"year":2003,"month":1,"day":2}} — Gson reflecting over the
+     * record's fields. A date column is a date, and every other date this API
+     * emits is an ISO string.
+     */
+    private static class LocalDateAdapter implements JsonSerializer<LocalDate> {
+        @Override
+        public JsonElement serialize(LocalDate src, Type type, JsonSerializationContext ctx) {
+            return new JsonPrimitive(src.format(DateTimeFormatter.ISO_LOCAL_DATE));
+        }
+    }
+
     static final Gson GSON = new GsonBuilder()
             .serializeNulls()
             .registerTypeAdapter(ZonedDateTime.class, new ZonedDateTimeAdapter())
+            .registerTypeAdapter(LocalDate.class, new LocalDateAdapter())
             .create();
 
     private HttpSupport() {}

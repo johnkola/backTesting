@@ -263,7 +263,7 @@ There is no `import` subcommand — CSV import belongs to the loader. See [Bulk 
 
 ## API reference
 
-Everything below is reachable at **`http://localhost:8001`**, the single origin the client uses. Node answers the reads itself and proxies the rest: `/api/strategies`, `/api/run` and `DELETE /api/results/:id` go to the Java engine; imports, aggregation, audit and `/api/nn/*` go to the Python loader. CORS is open by default (`CORS_ALLOW_ORIGIN`) because the client is on a different origin.
+Everything below is reachable at **`http://localhost:8001`**, the single origin the client uses. Node answers the older reads itself and proxies the rest: `/api/strategies`, `/api/run`, `DELETE /api/results/:id` and `/api/walkforward/*` go to the Java engine &mdash; new reads are written in Java now, and Node only carries them; imports, aggregation, audit and `/api/nn/*` go to the Python loader. CORS is open by default (`CORS_ALLOW_ORIGIN`) because the client is on a different origin.
 
 ### Reads — served by Node from Postgres
 
@@ -284,6 +284,8 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 
 | Endpoint | Body / params | Does |
 |---|---|---|
+| `GET /api/walkforward/runs` | `timeframe` `includeTest` `limit` | `{items, timeframe, includeTest, limit}` — walk-forward runs, newest first, each with its folds summarised on read: `folds`, `foldsWon`, `meanExcess`, `worstStratDrawdown`, `totalTrades` and the cost attribution (`meanDriftTax`, `meanCommissions`, `meanTiming`). None of that is stored; it is aggregated from `walkforward_folds`, so it cannot disagree with the folds. A run with no folds yet reports `null` for each average rather than a zero that reads as a measurement, and `inProgress` is true until `finishedAt` is stamped. **Holdout runs are excluded** unless `includeTest=true` — spending the test block is a one-way door, and listing those runs beside the validation ones is how it becomes training data. `limit` defaults to 50, capped at 500 |
+| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. `404` for an unknown id, `400` for a non-numeric one |
 | `GET /api/strategies` | — | `{items: [...]}` — every registered strategy with its description, default parameters, and `requiresTrainedModel`. What a strategy picker and parameter form are built from |
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing` | Runs a backtest, saves it, returns the full result. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range |
 | `DELETE /api/results/:id` | — | Deletes one saved result. `404` if it doesn't exist |

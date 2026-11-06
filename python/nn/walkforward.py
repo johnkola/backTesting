@@ -41,12 +41,13 @@ import numpy as np
 import psycopg
 import torch
 import torch.nn as nn
-from nn import feature_store
+from torch.utils.data import DataLoader, TensorDataset
+
+from nn import feature_store, walkforward_store
 from nn.labels import CLASS_SELL, NUM_CLASSES
 from nn.model import ArchSpec, build
 from nn.standardise import fit as fit_scaler
 from nn.train_features import build_labels, load_closes
-from torch.utils.data import DataLoader, TensorDataset
 
 TRADING_DAYS = 252
 
@@ -441,6 +442,10 @@ def main() -> int:
                         "everything after it. A one-way door - tuning on the result "
                         "turns the test block into training data")
     p.add_argument("--label", default="", help="Name this variant in the output")
+    p.add_argument("--no-save", action="store_true",
+                   help="Score the folds but write nothing to walkforward_runs. For a "
+                        "throwaway sweep; the default is to record the run, because a "
+                        "fold result nobody can read afterwards is not an artifact")
     args = p.parse_args()
 
     conn = connect()
@@ -488,10 +493,21 @@ def main() -> int:
           f"{'shrp':>6} {'maxdd':>7} {'trd':>4} │ {'out':>4} {'drift':>7} {'comm':>6} "
           f"{'timing':>7}")
 
+    # Opened before the first fold so the row exists while the run is still
+    # going: fourteen retrains is minutes to hours, and a run that only appears
+    # once it finishes is the silent wait the design is explicitly against.
+    run_id = None
+    if not args.no_save:
+        run_id = walkforward_store.open_run(conn, args, set_id, x_all.shape[1])
+        print(f"recording    walkforward_runs id={run_id} "
+              f"(folds committed as they finish)")
+
     results: list[FoldResult] = []
     for i, (year, tr, va) in enumerate(folds, 1):
         r = run_fold(i, year, tr, va, x_all, y_all, rets, wdates, args, park)
         results.append(r)
+        if run_id is not None:
+            walkforward_store.save_fold(conn, run_id, r)
         print(f"{r.fold:>4} {r.val_year:>5} {r.strat_return:>8.2f} "
               f"{r.hold_return:>8.2f} {r.excess:>+8.2f} {r.strat_sharpe:>6.2f} "
               f"{r.strat_maxdd:>7.2f} {r.trades:>4} │ {r.days_out:>4} "
@@ -566,6 +582,15 @@ def main() -> int:
     if total_trades == 0:
         print("         (it never left the market — this is buy-and-hold with extra steps)")
     print("=" * 72)
+
+    if run_id is not None:
+        # Stamps finished_at. Until this runs the row reads as in progress, so
+        # a crash above leaves an unfinished run with its completed folds
+        # intact rather than no evidence that anything happened.
+        walkforward_store.close_run(conn, run_id)
+        print(f"recorded     run {run_id}, {len(results)} folds in walkforward_folds")
+        print("             nothing derivable is stored -- folds won, mean excess and")
+        print("             worst drawdown are all computed on read from the folds")
 
     conn.close()
     return 0

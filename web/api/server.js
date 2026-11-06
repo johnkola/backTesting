@@ -490,6 +490,14 @@ app.get('/api/strategies', proxyTo(ENGINE_URL, 'engine'));
 app.post('/api/run', proxyTo(ENGINE_URL, 'engine'));
 app.delete('/api/results/:id', proxyTo(ENGINE_URL, 'engine'));
 
+// The walk-forward record, served by Java (WalkforwardRepository). Forwarded
+// rather than implemented here: Architecture.md §3.5 retires this layer, so new
+// reads go in Java and Node only carries them, the same as /api/strategies
+// above. Mounted by prefix so /runs and /runs/:id both reach the engine --
+// safe because proxyRequest forwards req.originalUrl, which app.use does not
+// strip.
+app.use('/api/walkforward', proxyTo(ENGINE_URL, 'engine'));
+
 app.get('/api/results', async (req, res) => {
   try {
     const { limit, offset } = parsePagination(req.query);

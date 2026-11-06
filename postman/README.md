@@ -11,7 +11,7 @@ values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
 
 | File | What it is |
 |------|------------|
-| `backtest.postman_collection.json` | 34 requests in 8 folders, 101 assertions |
+| `backtest.postman_collection.json` | 44 requests in 8 folders, 145 assertions |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://api:8001` — from inside the compose network |
 

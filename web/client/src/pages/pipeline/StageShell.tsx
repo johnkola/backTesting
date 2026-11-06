@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react'
 
 /** What a stage can say about itself. `unknown` is a real state and the honest
- *  default: nothing records stage status yet, so a tab that cannot prove it
- *  passed must not claim it did. */
+ *  default for a stage with no recorded verdict: a tab that cannot prove it
+ *  passed must not claim it did. Training is the first that can — a walk-forward
+ *  run records whether it beat buy-and-hold on its folds — and Features reports
+ *  `stale` by comparing the built set's schema against the config. The rest are
+ *  still `unknown` because nothing stores their gate's result. */
 export type StageState = 'passed' | 'failed' | 'stale' | 'empty' | 'unknown'
 
 const BADGES: Record<StageState, { label: string, cls: string }> = {

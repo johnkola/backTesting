@@ -904,6 +904,116 @@ export type FeatureGaps = {
   truncated: boolean
 }
 
+/**
+ * One validation fold of a walk-forward run, from GET /api/walkforward/runs/:id.
+ *
+ * Both sides of every comparison are carried, not just the difference: "+5"
+ * hides whether the model made 12 against a 7 or 2 against a -3, and those are
+ * different claims about the same number.
+ *
+ * `driftTax`, `commissions` and `timing` split the gap to buy-and-hold into the
+ * price of being out of the market at all, the mechanical cost of trading, and
+ * the model's own contribution. **Only `timing` is the model.** A negative
+ * `timing` means the days it sat out were better than average — it picked
+ * wrong. A fold can lose heavily with `timing` near zero, which is the
+ * difference between "the model lost 20 points" and "the model is absent and
+ * the structure lost 20 points".
+ */
+export type WalkforwardFold = {
+  runId: number
+  fold: number
+  valYear: number
+  /** ISO dates. */
+  trainFrom: string
+  trainTo: string
+  nTrain: number
+  nVal: number
+  stratReturn: number
+  holdReturn: number
+  stratSharpe: number
+  holdSharpe: number
+  stratMaxdd: number
+  holdMaxdd: number
+  trades: number
+  /** Null for a money-trained model, which has no class to be right about. */
+  accuracy: number | null
+  baselineAcc: number | null
+  daysOut: number
+  driftTax: number
+  commissions: number
+  timing: number
+}
+
+/**
+ * A walk-forward run: the configuration, plus its folds summarised.
+ *
+ * The summary half is aggregated by the API on read from `walkforward_folds`,
+ * never stored — a stored copy would go stale the moment a fold was corrected.
+ * Every average is **null when `folds` is 0**: a run still executing, or one
+ * that died before its first fold. Zero would read as "the model broke even"
+ * when nothing has been measured.
+ */
+export type WalkforwardRun = {
+  id: number
+  label: string
+  instrumentId: number
+  symbol: string
+  sourceId: number
+  sourceName: string
+  timeframe: string
+  featureSetId: number | null
+  /** Network inputs: columns × lookback, not values per bar. */
+  inputWidth: number
+  objective: 'return' | 'sharpe' | 'drawdown' | string
+  /** What the network trained on; differs from `objective` on purpose. */
+  loss: string
+  costBps: number
+  park: string
+  /** Null for a classifier — there is no position to cut. */
+  threshold: number | null
+  trainStart: number
+  firstVal: number
+  lastVal: number
+  /** True when the run spent the holdout. A one-way door. */
+  isTest: boolean
+  startedAt: string
+  finishedAt: string | null
+  inProgress: boolean
+  folds: number
+  foldsWon: number
+  meanExcess: number | null
+  meanStratReturn: number | null
+  meanHoldReturn: number | null
+  meanStratSharpe: number | null
+  meanHoldSharpe: number | null
+  worstStratDrawdown: number | null
+  worstHoldDrawdown: number | null
+  totalTrades: number
+  meanDaysOut: number | null
+  meanDriftTax: number | null
+  meanCommissions: number | null
+  meanTiming: number | null
+  /** Null until a fold exists. Only decided for the `return` objective. */
+  beatsHoldOnReturn: boolean | null
+  /** Parsed by the API; the seed lives here, which §6.1 needs for reproducibility. */
+  hyperparams: Record<string, number | boolean | string> | null
+  /** Present only when the stored text would not parse. */
+  hyperparamsRaw?: string
+}
+
+export type WalkforwardRuns = {
+  items: WalkforwardRun[]
+  /** Echoed back: an empty list means something different filtered than not. */
+  timeframe: string | null
+  includeTest: boolean
+  limit: number
+}
+
+export type WalkforwardRunDetail = {
+  run: WalkforwardRun
+  folds: WalkforwardFold[]
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthReport>('/api/health', signal),
   sources: (signal?: AbortSignal) =>
@@ -940,6 +1050,24 @@ export const api = {
     ),
   strategies: (signal?: AbortSignal) =>
     getJson<{ items: Strategy[] }>('/api/strategies', signal),
+  /**
+   * Walk-forward runs, newest first. Served by Java and proxied through this
+   * origin.
+   *
+   * `includeTest` defaults to false server-side and is left off here on
+   * purpose: the design allows the holdout to be spent once, to confirm a
+   * variant already chosen, and listing those runs beside the validation ones
+   * is how it quietly becomes training data. Asking for them is deliberate.
+   */
+  walkforwardRuns: (
+    params: { timeframe?: string, includeTest?: boolean, limit?: number } = {},
+    signal?: AbortSignal,
+  ) => getJson<WalkforwardRuns>(`/api/walkforward/runs?${qs(params)}`, signal),
+  /** One run with every fold in sequence. */
+  walkforwardRun: (id: number, signal?: AbortSignal) =>
+    getJson<WalkforwardRunDetail>(
+      `/api/walkforward/runs/${encodeURIComponent(String(id))}`, signal,
+    ),
   features: (timeframe?: string, signal?: AbortSignal) =>
     getJson<FeaturesReport>(`/api/features${timeframe ? `?${qs({ timeframe })}` : ''}`, signal),
   /** The feature catalogue and the sets coverage can be measured against. */
