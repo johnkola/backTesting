@@ -18,15 +18,15 @@ so the ordinary `pytest` run stays green without the stack up. To run it:
 from __future__ import annotations
 
 import datetime
-import os
 
 import pytest
 
 pytest.importorskip("torch")  # whole module skips if torch isn't installed
 
-import psycopg  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+from .dbfixtures import purge_instrument, requires_db  # noqa: E402
 
 # Dedicated instrument/source so the test never collides with real data and
 # can clean up after itself.
@@ -48,27 +48,7 @@ PARAMS = {
 }
 
 
-def _dsn() -> str:
-    return (
-        f"host={os.environ.get('PGHOST', 'localhost')} "
-        f"port={os.environ.get('PGPORT', '5432')} "
-        f"dbname={os.environ.get('PGDATABASE', 'backtest')} "
-        f"user={os.environ.get('PGUSER', 'backtest')} "
-        f"password={os.environ.get('PGPASSWORD', 'backtest')}"
-    )
-
-
-def _db_up() -> bool:
-    try:
-        psycopg.connect(_dsn() + " connect_timeout=2").close()
-        return True
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _db_up(), reason="integration test: requires docker-compose Postgres"
-)
+pytestmark = requires_db
 
 
 def _seed_candles(n: int = 120) -> None:
@@ -95,44 +75,6 @@ def _seed_candles(n: int = 120) -> None:
             upsert_candles(conn, inst, src, TF, rows)
 
 
-def _cleanup() -> None:
-    """Remove everything the seed created — candles, then the instrument and
-    the source themselves. Deleting only the candles (which is all this used
-    to do) leaves a ZZ_NN_PIN_TEST instrument and an nn_pin_test source in the
-    developer's database forever, where they show up in `list-instruments` and
-    `list-sources` next to real data. Both deletes are guarded on having no
-    candles left, so a name collision with real data can't destroy anything."""
-
-    from loader.db import pool
-
-    with pool().connection() as conn:
-        with conn.transaction(), conn.cursor() as cur:
-            cur.execute(
-                """
-                DELETE FROM candles
-                 WHERE instrument_id = (SELECT id FROM instruments WHERE symbol = %s)
-                   AND source_id = (SELECT id FROM data_sources WHERE name = %s)
-                """,
-                (SYMBOL, SOURCE),
-            )
-            cur.execute(
-                """
-                DELETE FROM instruments i
-                 WHERE i.symbol = %s
-                   AND NOT EXISTS (SELECT 1 FROM candles c WHERE c.instrument_id = i.id)
-                """,
-                (SYMBOL,),
-            )
-            cur.execute(
-                """
-                DELETE FROM data_sources ds
-                 WHERE ds.name = %s
-                   AND NOT EXISTS (SELECT 1 FROM candles c WHERE c.source_id = ds.id)
-                """,
-                (SOURCE,),
-            )
-
-
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     # Throwaway model dir so we never touch real data/models, and disable
@@ -148,7 +90,7 @@ def client(tmp_path, monkeypatch):
     try:
         yield TestClient(app)
     finally:
-        _cleanup()
+        purge_instrument(SYMBOL, SOURCE)
 
 
 def _train(client, **overrides):

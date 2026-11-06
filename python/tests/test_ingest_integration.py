@@ -16,10 +16,9 @@ stays green without the stack up. To run it:
 
 from __future__ import annotations
 
-import os
-
-import psycopg
 import pytest
+
+from .dbfixtures import purge_instrument, requires_db
 
 # Dedicated instrument/source so the test never collides with real data and
 # can clean up after itself. No '__' in either name (the filename parser
@@ -49,46 +48,7 @@ CSV_2YEARS_CHANGED = (
 )
 
 
-def _dsn() -> str:
-    return (
-        f"host={os.environ.get('PGHOST', 'localhost')} "
-        f"port={os.environ.get('PGPORT', '5432')} "
-        f"dbname={os.environ.get('PGDATABASE', 'backtest')} "
-        f"user={os.environ.get('PGUSER', 'backtest')} "
-        f"password={os.environ.get('PGPASSWORD', 'backtest')}"
-    )
-
-
-def _db_up() -> bool:
-    try:
-        psycopg.connect(_dsn() + " connect_timeout=2").close()
-        return True
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _db_up(), reason="integration test: requires docker-compose Postgres"
-)
-
-
-def _cleanup_db() -> None:
-    from loader.db import pool
-
-    with pool().connection() as conn:
-        with conn.transaction(), conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM data_imports WHERE instrument_id = "
-                "(SELECT id FROM instruments WHERE symbol = %s)",
-                (SYMBOL,),
-            )
-            cur.execute(
-                "DELETE FROM candles WHERE instrument_id = "
-                "(SELECT id FROM instruments WHERE symbol = %s)",
-                (SYMBOL,),
-            )
-            cur.execute("DELETE FROM instruments WHERE symbol = %s", (SYMBOL,))
-            cur.execute("DELETE FROM data_sources WHERE name = %s", (SOURCE,))
+pytestmark = requires_db
 
 
 @pytest.fixture
@@ -101,7 +61,7 @@ def inbox(tmp_path, monkeypatch):
     try:
         yield box
     finally:
-        _cleanup_db()
+        purge_instrument(SYMBOL, SOURCE)
         from loader.db import close_pool
 
         close_pool()

@@ -10,49 +10,16 @@ Postgres is reachable. To run it:
 
 from __future__ import annotations
 
-import os
-
-import psycopg
 import pytest
+
+from .dbfixtures import purge_instrument, requires_db
 
 SYMBOL = "ZZAUDIT"
 SOURCE = "audittest"
 TF = "D1"
 
 
-def _dsn() -> str:
-    return (
-        f"host={os.environ.get('PGHOST', 'localhost')} "
-        f"port={os.environ.get('PGPORT', '5432')} "
-        f"dbname={os.environ.get('PGDATABASE', 'backtest')} "
-        f"user={os.environ.get('PGUSER', 'backtest')} "
-        f"password={os.environ.get('PGPASSWORD', 'backtest')}"
-    )
-
-
-def _db_up() -> bool:
-    try:
-        psycopg.connect(_dsn() + " connect_timeout=2").close()
-        return True
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _db_up(), reason="integration test: requires docker-compose Postgres"
-)
-
-
-def _cleanup() -> None:
-    from loader.db import pool
-
-    with pool().connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM candles WHERE instrument_id=(SELECT id FROM instruments WHERE symbol=%s)",
-            (SYMBOL,),
-        )
-        cur.execute("DELETE FROM instruments WHERE symbol=%s", (SYMBOL,))
-        cur.execute("DELETE FROM data_sources WHERE name=%s", (SOURCE,))
+pytestmark = requires_db
 
 
 @pytest.fixture
@@ -76,7 +43,7 @@ def seeded():
     try:
         yield
     finally:
-        _cleanup()
+        purge_instrument(SYMBOL, SOURCE)
         close_pool()
 
 
