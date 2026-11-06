@@ -326,3 +326,136 @@ def test_a_method_with_no_default_and_no_value_is_rejected(tmp_path):
     """)
     with pytest.raises(fc.FeatureConfigError, match="cyc: method 'cyclical' needs `period`"):
         fc.load(p)
+
+
+# ---------------------------------------------------------------------------
+# [[check]] blocks — a computed column against a published one
+# ---------------------------------------------------------------------------
+#
+# Same standard as the features above: every rejection names the offending
+# check. A check is a claim that two sources agree, so a malformed one that
+# loads and quietly never runs is the worst outcome available — it reads as
+# coverage that is not there.
+
+CHECK = """
+[[check]]
+name = "price_vs_published"
+feature = "price_close"
+published = { symbol = "QQQ", source = "twelvedata", field = "close" }
+tolerance = 0.01
+"""
+
+
+def test_a_valid_check_loads(tmp_path):
+    cfg = fc.load(write(tmp_path, MINIMAL + CHECK))
+    assert len(cfg.checks) == 1
+    c = cfg.checks[0]
+    assert c.name == "price_vs_published"
+    assert c.feature == "price_close"
+    assert c.tolerance == 0.01
+    assert c.warmup_days == 0, "no warm-up unless asked for"
+
+
+def test_a_config_with_no_checks_is_fine(tmp_path):
+    # Checks are optional. Requiring one would be inventing a rule the design
+    # does not state.
+    assert fc.load(write(tmp_path, MINIMAL)).checks == ()
+
+
+def test_a_check_naming_an_unknown_feature_is_rejected(tmp_path):
+    # Almost always a rename that missed the check. Left to load, it would be a
+    # check that never runs and never says so.
+    p = write(tmp_path, MINIMAL + CHECK.replace('feature = "price_close"',
+                                                'feature = "price_clsoe"'))
+    with pytest.raises(fc.FeatureConfigError, match="no feature named 'price_clsoe'"):
+        fc.load(p)
+
+
+def test_a_check_with_no_name_is_rejected(tmp_path):
+    p = write(tmp_path, MINIMAL + CHECK.replace('name = "price_vs_published"', ""))
+    with pytest.raises(fc.FeatureConfigError, match="no `name`"):
+        fc.load(p)
+
+
+def test_a_check_with_no_feature_is_rejected(tmp_path):
+    p = write(tmp_path, MINIMAL + CHECK.replace('feature = "price_close"', ""))
+    with pytest.raises(fc.FeatureConfigError, match="price_vs_published: `feature`"):
+        fc.load(p)
+
+
+def test_a_check_with_no_published_series_is_rejected(tmp_path):
+    p = write(tmp_path, MINIMAL + CHECK.replace(
+        'published = { symbol = "QQQ", source = "twelvedata", field = "close" }', ""))
+    with pytest.raises(fc.FeatureConfigError, match="price_vs_published: `published`"):
+        fc.load(p)
+
+
+def test_a_published_series_is_validated_like_any_other(tmp_path):
+    p = write(tmp_path, MINIMAL + CHECK.replace(
+        'published = { symbol = "QQQ", source = "twelvedata", field = "close" }',
+        'published = { symbol = "QQQ" }'))
+    with pytest.raises(fc.FeatureConfigError, match="published: series needs"):
+        fc.load(p)
+
+
+def test_a_check_with_no_tolerance_is_rejected(tmp_path):
+    # Deliberately no default: a tolerance is a claim about how closely two
+    # sources ought to agree, in the series' own units. No number this module
+    # could pick would mean anything.
+    p = write(tmp_path, MINIMAL + CHECK.replace("tolerance = 0.01", ""))
+    with pytest.raises(fc.FeatureConfigError, match="price_vs_published: `tolerance`"):
+        fc.load(p)
+
+
+@pytest.mark.parametrize("bad", ["0", "-0.5", '"0.01"', "true"])
+def test_a_non_positive_or_non_numeric_tolerance_is_rejected(tmp_path, bad):
+    # Zero would flag every float that is not bit-identical; a string or a bool
+    # would compare in ways nobody intended.
+    p = write(tmp_path, MINIMAL + CHECK.replace("tolerance = 0.01", f"tolerance = {bad}"))
+    with pytest.raises(fc.FeatureConfigError, match="tolerance must be a positive number"):
+        fc.load(p)
+
+
+@pytest.mark.parametrize("bad", ["-1", "1.5", "true"])
+def test_a_bad_warmup_is_rejected(tmp_path, bad):
+    p = write(tmp_path, MINIMAL + CHECK + f"warmup_days = {bad}\n")
+    with pytest.raises(fc.FeatureConfigError, match="warmup_days must be an integer >= 0"):
+        fc.load(p)
+
+
+def test_duplicate_check_names_are_rejected(tmp_path):
+    p = write(tmp_path, MINIMAL + CHECK + CHECK)
+    with pytest.raises(fc.FeatureConfigError, match="duplicate check name"):
+        fc.load(p)
+
+
+def test_a_checks_published_series_must_be_loadable(tmp_path):
+    # The published side is nobody's feature input, so only the check keeps it
+    # in required_series. Dropping it would turn a missing import into a
+    # build-time surprise instead of an up-front one.
+    cfg = fc.load(write(tmp_path, MINIMAL + CHECK))
+    assert ("QQQ", "twelvedata") in cfg.required_series()
+
+
+def test_a_check_on_a_disabled_feature_requires_nothing(tmp_path):
+    p = write(tmp_path, MINIMAL + """
+    [[feature]]
+    name = "off"
+    series = { symbol = "DFF", source = "fred", field = "close" }
+    method = "daily_change"
+    scope = "market"
+    cadence = "daily"
+    cost = "free"
+    units = "percent"
+    enabled = false
+    """ + """
+[[check]]
+name = "off_vs_published"
+feature = "off"
+published = { symbol = "DFF", source = "othervendor", field = "close" }
+tolerance = 0.01
+""")
+    cfg = fc.load(p)
+    assert len(cfg.checks) == 1
+    assert cfg.live_checks == (), "a column that is not built has nothing to compare"
+    assert ("DFF", "othervendor") not in cfg.required_series()

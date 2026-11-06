@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, type FeatureColumn, type FeaturesReport } from '../../lib/api'
+import { api, type FeatureCheck, type FeatureColumn, type FeaturesReport } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import StageShell, { type StageState } from './StageShell'
@@ -19,12 +19,17 @@ function stateBadge(col: FeatureColumn) {
   if (!col.status) return { label: 'data only', cls: 'badge-ghost' }
   switch (col.status) {
     case 'blocked': return { label: 'blocked', cls: 'badge-error' }
-    case 'needs-import': return { label: 'needs import', cls: 'badge-warning' }
+    case 'not-imported': return { label: 'not imported', cls: 'badge-warning' }
     case 'later-paid': return { label: 'later — paid', cls: 'badge-info' }
     case 'short-history': return { label: 'short history', cls: 'badge-warning' }
     case 'undecided': return { label: 'undecided', cls: 'badge-ghost' }
     default: return { label: col.status, cls: 'badge-warning' }
   }
+}
+
+/** `symbol/source` for a check's published series, as the table prints it. */
+function publishedRef(c: FeatureCheck) {
+  return `${c.published.symbol}/${c.published.source}`
 }
 
 function fmtParams(params: Record<string, number | string>) {
@@ -59,6 +64,11 @@ export default function FeaturesStage() {
   const off = config.columns.filter((c) => !c.enabled)
   const newest = data.sets[0] ?? null
   const stale = newest ? newest.schemaVersion !== config.schemaVersion : false
+
+  // Only LIVE checks mark a column. A check on a disabled column is skipped,
+  // and a badge next to it would claim verification that never runs.
+  const checks = config.checks ?? []
+  const checkByFeature = new Map(checks.filter((c) => c.live).map((c) => [c.feature, c]))
 
   const state: StageState = newest === null ? 'empty' : stale ? 'stale' : 'passed'
 
@@ -117,6 +127,7 @@ export default function FeaturesStage() {
               <th>Params</th>
               <th className="text-right">Width</th>
               <th>State</th>
+              <th>Checked</th>
               <th>Why</th>
             </tr>
           </thead>
@@ -130,6 +141,19 @@ export default function FeaturesStage() {
                   <td className="font-mono text-xs">{fmtParams(c.params)}</td>
                   <td className="text-right">{c.width}</td>
                   <td><span className={`badge badge-sm ${badge.cls}`}>{badge.label}</span></td>
+                  <td>
+                    {checkByFeature.has(c.name)
+                      ? (
+                        <span
+                          className="badge badge-sm badge-outline tooltip tooltip-right"
+                          data-tip={`vs ${publishedRef(checkByFeature.get(c.name)!)}, `
+                            + `tolerance ${checkByFeature.get(c.name)!.tolerance}`}
+                        >
+                          cross-checked
+                        </span>
+                      )
+                      : <span className="text-base-content/40">—</span>}
+                  </td>
                   <td>
                     {c.note
                       ? (
@@ -159,6 +183,50 @@ export default function FeaturesStage() {
             </pre>
           </div>
         </div>
+      )}
+
+      {checks.length > 0 && (
+        <>
+          <h2 className="text-lg font-semibold mb-2">Data checks</h2>
+          <p className="text-sm text-base-content/70 mb-2">
+            A column computed here, against the vendor&apos;s own version of the same
+            number. The design asks for these so a figure is verifiable rather than
+            merely present: the yield curve is computed from its two legs, and
+            FRED&apos;s published spread is kept only to disagree with. A check flags,
+            it never blocks a build &mdash; the result is printed by{' '}
+            <span className="font-mono">nn.feature_build</span>.
+          </p>
+          <div className="overflow-x-auto bg-base-200 rounded-box mb-6">
+            <table className="table table-sm">
+              <thead>
+                <tr>
+                  <th>Check</th>
+                  <th>Computed column</th>
+                  <th>Compared with</th>
+                  <th className="text-right">Tolerance</th>
+                  <th className="text-right">Warm-up</th>
+                  <th>State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {checks.map((c) => (
+                  <tr key={c.name} className={c.live ? '' : 'opacity-60'}>
+                    <td className="font-mono text-xs">{c.name}</td>
+                    <td className="font-mono text-xs">{c.feature}</td>
+                    <td className="font-mono text-xs">{publishedRef(c)}</td>
+                    <td className="text-right font-mono text-xs">{c.tolerance}</td>
+                    <td className="text-right">{c.warmupDays || '—'}</td>
+                    <td>
+                      <span className={`badge badge-sm ${c.live ? 'badge-success' : 'badge-ghost'}`}>
+                        {c.live ? 'live' : 'skipped — column off'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <h2 className="text-lg font-semibold mb-2">Built sets</h2>

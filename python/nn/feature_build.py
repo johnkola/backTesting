@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+from nn import data_checks
 from nn import feature_config
 from nn import normalize as nz
 from nn.feature_config import Feature, FeatureConfig
@@ -403,6 +404,14 @@ def main() -> int:
 
     # Normalize over everything, then trim — see trim()'s docstring.
     columns = build_columns(cur, cfg, calendar, prev_close)
+
+    # Data checks run on the UNTRIMMED calendar and before the trim rebinds it:
+    # they are a reading about the source series, not about the output window,
+    # so a bad bar in 2007 is worth hearing about even for a --since 2015 build.
+    checks = data_checks.run(
+        cfg, calendar, lambda spec: resolve_aligned(cur, spec, cfg, calendar)
+    )
+
     calendar, columns = trim(args.since, calendar, columns)
     if args.since:
         print(f"trimmed   to {len(calendar)} rows from {calendar[0]} "
@@ -416,6 +425,9 @@ def main() -> int:
                   f"{min(vals):>8.2f} {max(vals):>8.2f} {sum(vals)/len(vals):>8.2f}")
         else:
             print(f"{col.name:<24} {col.feature.method:<22} {0:>9}  {'ALL NULL':>26}")
+
+    if checks:
+        print(data_checks.report(checks))
 
     empty = [c.name for c in columns if c.non_null == 0]
     if empty:

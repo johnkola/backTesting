@@ -40,6 +40,10 @@ from nn import feature_config
 # nothing about them is impossible, the decision is just deferred. `blocked`
 # means there is no free source at full history, which is a different problem
 # and the one the design treats as a hard stop.
+# `not-imported` joins them as `undecided` for the same reason: the series is
+# free at full history and nothing about it is impossible, it simply is not in
+# the store yet. Calling it `blocked` would claim a dead end that does not
+# exist, and `active` would offer the builder a column with no values behind it.
 _STATUS_MAP = {
     None: "active",
     "": "active",
@@ -47,6 +51,7 @@ _STATUS_MAP = {
     "undecided": "undecided",
     "later-paid": "undecided",
     "short-history": "undecided",
+    "not-imported": "undecided",
 }
 
 

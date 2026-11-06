@@ -609,6 +609,34 @@ export type FeatureColumn = {
   series: Record<string, unknown>
 }
 
+/**
+ * A computed column checked against the vendor's own version of the same
+ * number — a `[[check]]` block in features.toml.
+ *
+ * Features.md 23: the yield curve is computed from DGS10 - DGS2 and FRED's
+ * published T10Y2Y is imported "only as a cross-check: any day where computed
+ * and published values differ is flagged as a possible data problem". Reading
+ * the published spread straight gave one number nobody could verify.
+ */
+export type FeatureCheck = {
+  name: string
+  /** The column whose raw series is the computed side. */
+  feature: string
+  published: { symbol: string, source: string, field: string }
+  /** How far apart the two may be, in the series' own units. */
+  tolerance: number
+  /** Leading days skipped, for a statistic whose start depends on where the
+   *  series began (MACD, RSI). Zero for a plain subtraction. */
+  warmupDays: number
+  note: string | null
+  /**
+   * Whether the check actually runs. A check on a disabled column is skipped,
+   * and the UI must not mark that column as cross-checked — that would claim
+   * verification which never happens.
+   */
+  live: boolean
+}
+
 export type FeatureConfig = {
   schemaVersion: number
   defaults: Record<string, number>
@@ -623,6 +651,8 @@ export type FeatureConfig = {
   lookbackWindow: number | null
   columns: FeatureColumn[]
   requiredSeries: { symbol: string, source: string }[]
+  /** Optional: absent from an older loader that predates the checks. */
+  checks?: FeatureCheck[]
 }
 
 export type FeatureSetColumn = {

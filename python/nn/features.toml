@@ -55,7 +55,7 @@
 #            normalized output. It is what makes the right `method` obvious (a
 #            yield already in percent wants daily_change, not daily_return) and
 #            what a chart axis is labelled from.
-schema_version = 4
+schema_version = 5
 
 # Bumping schema_version changes the model cache key, so an old model is never
 # silently reused against a feature vector built by different rules.
@@ -307,6 +307,56 @@ daily_change. Note this is DGS2, not the DTB3 3-month bill also on disk:
 3-month and 2-year are different instruments and DTB3 is not referenced here."""
 
 [[feature]]
+name = "fed_funds"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
+series = { symbol = "DFF", source = "fred", field = "close" }
+method = "rescale"
+min = 0.0
+max = 20.0
+enabled = false
+status = "not-imported"
+note = """Features.md 41. The Fed's overnight policy rate: the realized cost of
+short-term money, where treasury_2y is the market's GUESS at where it goes next.
+Both earn a place only because they differ -- DGS2 moves daily on expectations,
+DFF moves only when the Fed actually acts.
+
+Dual role, and the second one is why it is here now: Features.md calls it "the
+benchmark brokers use for USD margin, so the same raw series feeds the margin
+interest cost". Design Notes requires Strategy 2 to charge "a variable rate
+tracking each historical period's rate environment, not one fixed figure", and
+this is that series. The raw bars serve the margin cost; this normalized column
+is the separate question of whether the model should SEE the policy rate.
+
+RESCALE, not daily_change like its neighbours, and not rolling_zscore. A policy
+rate is a staircase: flat for months, then a 25-75bp step. daily_change would be
+0.0 on roughly every day and carries what DGS2 already says better. A 60-day
+rolling z-score is worse than it looks -- across a long hold the window is flat,
+which rolling_zscore reports as 0.0 ("not unusual"), so the column says nothing
+for months and then spikes on a single step. The level is the signal the doc
+describes, and 0..20 is a genuinely declared band, not a fitted one: the series
+has run between 0.04 and 19.10 since 1954, so nothing in the training window
+lands outside it. rescale does not clip, so a breach would show up as a value
+outside 0..1 rather than hide.
+
+DISABLED because the series is not in the store yet. Enabling a column before
+its data exists would build it all-NULL, and read_matrix drops every date where
+any column is NULL -- the whole table would vanish. That is the trap
+breakeven_inflation documents below, and the reason this ships off.
+
+To turn it on, two steps, then set enabled = true:
+
+    python fetch_fred_series.py DFF
+    curl -F file=@test-data/DFF_daily.csv -F symbol=DFF -F type=INDEX          -F timeframe=D1 -F source=fred http://localhost:8001/api/imports
+
+No API key needed: DFF is Fed-published, not one of the licensed ICE BofA
+series the free graph endpoint truncates. INDEX, not STOCK, so the engine
+cannot open a position in a policy rate. DFF reaches back to 1954-07-01, so
+unlike breakeven_inflation it cannot move the training floor."""
+
+[[feature]]
 name = "breakeven_inflation"
 scope = "market"
 cadence = "daily"
@@ -332,11 +382,27 @@ scope = "market"
 cadence = "daily"
 cost = "free"
 units = "percent"
-series = { symbol = "T10Y2Y", source = "fred", field = "close" }
+series = { op = "subtract", a = { symbol = "DGS10", source = "fred", field = "close" }, b = { symbol = "DGS2", source = "fred", field = "close" } }
 method = "rolling_zscore"
 window = 60
 enabled = true
-note = "Negative on 2,079 days (inversion). Never daily_return on this."
+note = """COMPUTED from the two legs, not read from FRED's published T10Y2Y.
+Features.md 23 is explicit about the direction: "the feature is computed from
+the two yields above. The published spread (FRED T10Y2Y) is imported too, only
+as a cross-check".
+
+The reason is that it buys a free data check on three series at once. Reading
+T10Y2Y gave one number nobody could verify; computing DGS10 - DGS2 and holding
+the published spread beside it means any disagreement points at a bad or missing
+bar in one of the three. See [[check]] yield_curve_vs_published at the foot of
+this file -- it flags, it does not block.
+
+Both legs are already required: treasury_10y and treasury_2y read them. The
+spread is therefore computed from data the table already depends on, while
+T10Y2Y drops out of required_series for the features and is pulled back in by
+the check.
+
+Negative on 2,079 days (inversion). Never daily_return on this."""
 
 [[feature]]
 name = "oil_wti"
@@ -595,3 +661,70 @@ window = 60
 enabled = false
 status = "undecided"
 note = "Tech leadership versus the broad market. Price-derived, but from a second index."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA CHECKS — a computed column against a published one
+# ─────────────────────────────────────────────────────────────────────────────
+# The design asks for two of these in so many words, and they share a shape:
+# compute something ourselves, import the vendor's own version of the same
+# number, and flag the days they disagree.
+#
+#   Features.md 23 (wired below): "the feature is computed from the two yields
+#   above. The published spread (FRED T10Y2Y) is imported too, only as a
+#   cross-check: any day where computed and published values differ is flagged
+#   as a possible data problem."
+#
+#   Features.md 7-8 (not wired yet): MACD and RSI "computed from our own prices,
+#   then compared with values published by a data API (e.g. Twelve Data) ... The
+#   first weeks of a series can differ slightly because moving averages depend
+#   on their starting point, so the comparison skips that warm-up." That one
+#   needs an external API client, which is why `warmup_days` exists here now
+#   rather than being invented later.
+#
+# WHAT IS COMPARED. The feature's RAW aligned series — after alignment onto the
+# calendar, before normalization. Comparing normalized output would be
+# meaningless: a z-score of the spread and a z-score of the published spread are
+# fitted on different windows and would disagree by construction.
+#
+# A check NEVER blocks the build. It is a reading about data quality, like the
+# cohesion report on an import, and the right response to "17 days disagree" is
+# to go and look at those days, not to lose the table.
+#
+# FIELDS
+#   name          unique; what the report calls it.
+#   feature       the feature whose raw series is the computed side. Must be a
+#                 [[feature]] defined above. A disabled feature's check is
+#                 skipped, and its `published` series is not required to load.
+#   published     series spec for the vendor's version, same shape as a
+#                 feature's `series`.
+#   tolerance     how far apart the two may be before a day is flagged, in the
+#                 series' OWN units (so 0.02 here is two basis points).
+#   warmup_days   skip this many leading calendar days before comparing, for a
+#                 statistic whose start value depends on where the series began.
+
+[[check]]
+name = "yield_curve_vs_published"
+feature = "yield_curve_10y2y"
+published = { symbol = "T10Y2Y", source = "fred", field = "close" }
+tolerance = 0.02
+warmup_days = 0
+note = """Two basis points, and the measurement says that is the right number.
+FRED publishes DGS10, DGS2 and T10Y2Y each rounded to two decimals, so
+subtracting two rounded numbers can legitimately sit 0.01 off the independently
+rounded spread.
+
+Measured over the full 6,930-day calendar: exactly ONE day disagrees by more
+than 1e-12 -- 2026-09-25, computed 0.37 against published 0.36 -- and the mean
+absolute difference is 1.44e-06, which is that single day spread across the
+history (0.01 / 6930). So 0.02 admits the one real rounding day and nothing
+else; tightening to 0.005 would flag it falsely, and loosening further would
+start hiding genuine single-bar errors.
+
+No warm-up: a subtraction has no window to fill, unlike MACD.
+
+Coverage disagreement is reported separately from value disagreement. Measured
+at zero on both sides here -- after alignment the two legs and the published
+spread cover identical days -- but it is the half worth watching, because a day
+where only one side has a value is a gap in a series rather than a wrong number
+in either, and it has a different fix."""

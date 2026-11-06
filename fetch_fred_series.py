@@ -44,6 +44,10 @@ Series this project uses (see the design notes):
     DCOILWTICO  WTI crude spot, USD/barrel (went negative on 2020-04-20)
     BAMLC0A0CM  Investment-grade corporate option-adjusted spread, percent
                 (full history from 1996-12-31)
+    DFF         Effective federal funds rate, percent (from 1954-07-01). Two
+                jobs: the policy-rate feature column, and the benchmark the
+                margin interest cost tracks, so Strategy 2 charges a rate that
+                moves with each period instead of one fixed figure.
 
 Not usable here: BAMLH0A0HYM2, the high-yield spread. This free endpoint
 truncates the licensed ICE BofA series to roughly the last three years, so it

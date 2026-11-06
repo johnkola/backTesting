@@ -690,6 +690,9 @@ def get_features_config() -> JSONResponse:
         # the Features tab, not a 500 with a stack trace.
         return JSONResponse(status_code=422, content={"error": str(e)})
 
+    # By name, not by object: Check is frozen but carries a dict, so it is
+    # unhashable. Names are validated unique at load, so this is exact.
+    live_check_names = {c.name for c in cfg.live_checks}
     return JSONResponse(
         status_code=200,
         content={
@@ -721,6 +724,26 @@ def get_features_config() -> JSONResponse:
             "requiredSeries": [
                 {"symbol": s, "source": src}
                 for s, src in sorted(cfg.required_series())
+            ],
+            # The [[check]] blocks: a computed column against the vendor's own
+            # version of the same number. Reported here rather than projected
+            # into `feature_definitions` because a check is config, and this
+            # endpoint is already the one place the TOML is parsed.
+            #
+            # `live` is whether the check actually runs. A check on a disabled
+            # column is skipped, and a UI that showed it as cross-checked anyway
+            # would be claiming verification that never happens.
+            "checks": [
+                {
+                    "name": c.name,
+                    "feature": c.feature,
+                    "published": c.published,
+                    "tolerance": c.tolerance,
+                    "warmupDays": c.warmup_days,
+                    "note": c.note,
+                    "live": c.name in live_check_names,
+                }
+                for c in cfg.checks
             ],
         },
     )

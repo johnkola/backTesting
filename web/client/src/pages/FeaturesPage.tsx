@@ -276,7 +276,7 @@ function Row(
   const [gapsError, setGapsError] = useState<string | null>(null)
   const [gapsBusy, setGapsBusy] = useState(false)
 
-  // Gaps are fetched per feature on expand, not for all 35 up front: a gap list
+  // Gaps are fetched per feature on expand, not for every column up front: a gap list
   // for every feature over 6,900 bars is a report nobody reads.
   async function toggle() {
     const next = !open

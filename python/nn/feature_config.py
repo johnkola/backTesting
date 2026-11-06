@@ -123,11 +123,33 @@ class Feature:
 
 
 @dataclass(frozen=True)
+class Check:
+    """A computed column against a published one — see [[check]] in the TOML.
+
+    The comparison runs on the feature's RAW aligned series, before
+    normalization: a z-score of our spread and a z-score of FRED's are fitted on
+    different windows and would disagree by construction, which would make the
+    check noise rather than a reading.
+
+    Never blocks a build. It is a data-quality reading like the cohesion report
+    on an import, and the useful response to a flagged day is to look at it.
+    """
+
+    name: str
+    feature: str
+    published: dict[str, Any]
+    tolerance: float
+    warmup_days: int = 0
+    note: str | None = None
+
+
+@dataclass(frozen=True)
 class FeatureConfig:
     schema_version: int
     defaults: dict[str, Any]
     alignment: Alignment
     features: tuple[Feature, ...]
+    checks: tuple[Check, ...] = ()
 
     @property
     def enabled(self) -> tuple[Feature, ...]:
@@ -161,7 +183,22 @@ class FeatureConfig:
 
         for f in self.enabled:
             walk(f.series)
+
+        # The published side of every check whose feature is actually built.
+        # Without this, moving a column from "read the vendor's number" to
+        # "compute it and check the vendor's number" would silently drop that
+        # vendor series from the list of imports the pipeline verifies up front,
+        # and the check would fail at build time on missing data instead.
+        for c in self.live_checks:
+            walk(c.published)
         return out
+
+    @property
+    def live_checks(self) -> tuple[Check, ...]:
+        """Checks whose feature is enabled. A disabled column is not built, so
+        there is nothing to compare and its published series is not needed."""
+        on = {f.name for f in self.enabled}
+        return tuple(c for c in self.checks if c.feature in on)
 
 
 def _validate_series(name: str, spec: Any) -> None:
@@ -241,6 +278,50 @@ def _build_feature(raw: dict[str, Any], defaults: dict[str, Any]) -> Feature:
     )
 
 
+def _build_check(raw: dict[str, Any], feature_names: set[str]) -> Check:
+    name = raw.get("name")
+    if not name:
+        raise FeatureConfigError("a [[check]] block has no `name`")
+
+    feature = raw.get("feature")
+    if not feature:
+        raise FeatureConfigError(f"check {name}: `feature` is required")
+    if feature not in feature_names:
+        # Naming a column that does not exist is almost always a rename that
+        # missed the check, and a check that silently never runs is worse than
+        # no check -- it reads as coverage that is not there.
+        raise FeatureConfigError(
+            f"check {name}: no feature named {feature!r}; "
+            f"expected one of {sorted(feature_names)}"
+        )
+
+    if "published" not in raw:
+        raise FeatureConfigError(f"check {name}: `published` series is required")
+    _validate_series(f"check {name}.published", raw["published"])
+
+    if "tolerance" not in raw:
+        # No default. A tolerance is a claim about how closely two sources ought
+        # to agree, which depends entirely on the series' units and rounding --
+        # there is no number this module could pick that would mean anything.
+        raise FeatureConfigError(f"check {name}: `tolerance` is required")
+    tolerance = raw["tolerance"]
+    if not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool) or tolerance <= 0:
+        raise FeatureConfigError(f"check {name}: tolerance must be a positive number")
+
+    warmup = raw.get("warmup_days", 0)
+    if not isinstance(warmup, int) or isinstance(warmup, bool) or warmup < 0:
+        raise FeatureConfigError(f"check {name}: warmup_days must be an integer >= 0")
+
+    return Check(
+        name=name,
+        feature=feature,
+        published=raw["published"],
+        tolerance=float(tolerance),
+        warmup_days=warmup,
+        note=raw.get("note"),
+    )
+
+
 def load(path: Path | str = DEFAULT_PATH) -> FeatureConfig:
     """Parse and validate the feature table. Raises FeatureConfigError naming
     the offending feature rather than letting a bad edit reach training."""
@@ -282,11 +363,19 @@ def load(path: Path | str = DEFAULT_PATH) -> FeatureConfig:
     if not any(f.enabled for f in features):
         raise FeatureConfigError("every feature is disabled — nothing to train on")
 
+    checks = tuple(_build_check(c, seen) for c in raw.get("check", []))
+    check_names: set[str] = set()
+    for c in checks:
+        if c.name in check_names:
+            raise FeatureConfigError(f"duplicate check name {c.name!r}")
+        check_names.add(c.name)
+
     return FeatureConfig(
         schema_version=int(raw["schema_version"]),
         defaults=defaults,
         alignment=alignment,
         features=features,
+        checks=checks,
     )
 
 
@@ -309,6 +398,13 @@ def describe(cfg: FeatureConfig) -> str:
         params = ", ".join(f"{k}={v}" for k, v in sorted(f.params.items()))
         state = "enabled" if f.enabled else (f.status or "disabled")
         lines.append(f"{f.name:<22} {f.method:<22} {params:<16} {state}")
+
+    if cfg.checks:
+        live = {c.name for c in cfg.live_checks}
+        lines += ["", f"{'CHECK':<26} {'FEATURE':<22} {'TOL':>8}  STATE"]
+        for c in cfg.checks:
+            state = "live" if c.name in live else "skipped (feature off)"
+            lines.append(f"{c.name:<26} {c.feature:<22} {c.tolerance:>8.4g}  {state}")
 
     lines += ["", "Series that must be loadable:"]
     for symbol, source in sorted(cfg.required_series()):
