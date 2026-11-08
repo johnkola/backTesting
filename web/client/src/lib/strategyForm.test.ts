@@ -203,6 +203,7 @@ describe('newestVersions', () => {
     objective: {
       loss: 'ce', classWeights: false, positionThreshold: null,
       verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
+      taxTrain: false,
     },
     objectiveDefaulted: false,
     notes: null, createdAt: '', createdBy: 'web', updatedAt: '', updatedBy: 'web',
@@ -228,6 +229,7 @@ const SPEC: ObjectiveSpec = {
   defaults: {
     loss: 'ce', classWeights: false, positionThreshold: null,
     verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
+    taxTrain: false,
   },
   losses: ['ce', 'return', 'sharpe', 'calmar'],
   verdicts: ['return', 'sharpe', 'drawdown'],
@@ -286,6 +288,19 @@ describe('objectiveFromForm', () => {
   it('sends a blank rate as null, for the server to refuse by name', () => {
     expect(objectiveFromForm({ ...form, taxScore: true, taxRatePct: ' ' }, SPEC).taxRatePct)
       .toBeNull()
+  })
+
+  it('keeps train with tax for a money loss scored after tax', () => {
+    const f = { ...form, loss: 'return' as const, taxScore: true, taxRatePct: '25', taxTrain: true }
+    expect(objectiveFromForm(f, SPEC).taxTrain).toBe(true)
+  })
+
+  it('drops train with tax left ticked once scoring after tax is off or the loss is ce', () => {
+    expect(objectiveFromForm({ ...form, loss: 'return', taxTrain: true }, SPEC).taxTrain)
+      .toBe(false)
+    expect(objectiveFromForm(
+      { ...form, taxScore: true, taxRatePct: '25', taxTrain: true }, SPEC,
+    ).taxTrain).toBe(false)
   })
 
   it('round-trips a saved after-tax objective', () => {

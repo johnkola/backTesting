@@ -614,6 +614,23 @@ export default function StrategyPage() {
                     />
                   </label>
                 )}
+                {objectiveForm.taxScore && objectiveForm.loss !== 'ce' && (
+                  <label className="form-control">
+                    <FieldLabel
+                      className="text-xs" text="Train with tax" hint={hintFor('objective.taxTrain')}
+                    />
+                    <input
+                      type="checkbox" className="toggle toggle-sm toggle-warning mt-2"
+                      checked={objectiveForm.taxTrain}
+                      onChange={(e) => setObjective({ taxTrain: e.target.checked })}
+                    />
+                    {objectiveForm.taxTrain && (
+                      <span className="text-xs text-warning mt-1">
+                        Changes the signals. Not for a strategy published as a signal.
+                      </span>
+                    )}
+                  </label>
+                )}
               </div>
             </Section>
           )}

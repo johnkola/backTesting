@@ -166,6 +166,28 @@ class TestRunnerArgs:
         s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxRatePct": 30})
         assert "tax_rate" not in ss.runner_args(s)
 
+    def test_train_with_tax_is_passed_for_a_money_loss_scored_after_tax(self):
+        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "loss": "return",
+                                  "positionThreshold": 0.5, "taxScore": True,
+                                  "taxRatePct": 25, "taxTrain": True})
+        args = ss.runner_args(s)
+        assert args["tax_train"] is True and args["tax_rate"] == 25.0
+
+    def test_train_with_tax_without_scoring_after_tax_is_refused(self):
+        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "loss": "return", "taxTrain": True})
+        with pytest.raises(ss.StrategyRefused, match="score after tax"):
+            ss.runner_args(s)
+
+    def test_train_with_tax_on_ce_is_refused(self):
+        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxScore": True,
+                                  "taxRatePct": 25, "taxTrain": True})
+        with pytest.raises(ss.StrategyRefused, match="money-trained"):
+            ss.runner_args(s)
+
+    def test_scoring_after_tax_alone_does_not_train_with_it(self):
+        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxScore": True, "taxRatePct": 25})
+        assert "tax_train" not in ss.runner_args(s)
+
     def test_the_switch_on_with_no_rate_is_refused(self):
         s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxScore": True})
         with pytest.raises(ss.StrategyRefused, match="tax rate"):

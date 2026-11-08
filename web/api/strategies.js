@@ -66,6 +66,7 @@ const OBJECTIVE_DEFAULTS = {
   park: 'cash',
   taxScore: false,
   taxRatePct: null,
+  taxTrain: false,
 };
 /** Loss → what it trains. `ce` is the 3-class label; the rest a position head. */
 const LOSSES = new Set(['ce', 'return', 'sharpe', 'calmar']);
@@ -134,6 +135,14 @@ function validateObjective(raw, errors) {
   } else if (o.taxScore === false && taxRate !== null) {
     errors.push('a tax rate only applies when scoring after tax');
   }
+  // Train with tax changes the model and so its signals: its own switch, on
+  // top of scoring after tax, and only for a loss that trains on money.
+  if (typeof o.taxTrain !== 'boolean') errors.push('objective.taxTrain must be true or false');
+  else if (o.taxTrain && o.taxScore !== true) {
+    errors.push('train with tax needs score after tax');
+  } else if (o.taxTrain && o.loss === 'ce') {
+    errors.push('train with tax needs a money-trained loss, not ce');
+  }
 
   if (o.loss === 'ce') {
     if (threshold !== null) {
@@ -148,7 +157,7 @@ function validateObjective(raw, errors) {
   return {
     loss: o.loss, classWeights: o.classWeights, positionThreshold: threshold,
     verdict: o.verdict, costBps: cost, park: o.park,
-    taxScore: o.taxScore, taxRatePct: taxRate,
+    taxScore: o.taxScore, taxRatePct: taxRate, taxTrain: o.taxTrain,
   };
 }
 

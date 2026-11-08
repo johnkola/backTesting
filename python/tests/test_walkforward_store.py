@@ -158,6 +158,11 @@ class TestTaxRate:
     def test_a_run_scored_after_tax_stores_its_rate(self):
         assert ws.run_row(an_args(tax_rate=26.5), 6, 580, 47, 2)["tax_rate"] == 26.5
 
+    def test_whether_it_trained_with_tax_is_stored(self):
+        assert ws.run_row(an_args(), 6, 580, 47, 2)["tax_train"] is False
+        row = ws.run_row(an_args(tax_rate=25.0, tax_train=True), 6, 580, 47, 2)
+        assert row["tax_train"] is True
+
 
 # --------------------------------------------------------------------------
 # fold_row

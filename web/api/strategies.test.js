@@ -282,6 +282,30 @@ describe('validateStrategy — objective', () => {
     );
   });
 
+  it('trains untaxed unless asked, even when scoring after tax', () => {
+    const o = objective({ taxScore: true, taxRatePct: 25 }).value.objective;
+    assert.equal(o.taxTrain, false);
+  });
+
+  it('keeps train with tax for a money loss scored after tax', () => {
+    const o = objective({ loss: 'return', taxScore: true, taxRatePct: 25, taxTrain: true })
+      .value.objective;
+    assert.equal(o.taxTrain, true);
+  });
+
+  it('refuses train with tax without scoring after tax', () => {
+    assert.match(
+      errorsFor(body({ objective: { loss: 'return', taxTrain: true } })), /needs score after tax/,
+    );
+  });
+
+  it('refuses train with tax on the ce loss, which has no gains to tax', () => {
+    assert.match(
+      errorsFor(body({ objective: { taxScore: true, taxRatePct: 25, taxTrain: true } })),
+      /money-trained loss/,
+    );
+  });
+
   it('refuses a rate of 0 or above 100', () => {
     for (const bad of [0, -5, 101, 'abc']) {
       assert.match(

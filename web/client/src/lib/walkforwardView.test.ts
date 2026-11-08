@@ -26,6 +26,7 @@ function aRun(over: Partial<WalkforwardRun> = {}): WalkforwardRun {
     park: 'cash',
     threshold: null,
     taxRate: null,
+    taxTrain: false,
     trainStart: 2003,
     firstVal: 2016,
     lastVal: 2021,

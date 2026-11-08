@@ -184,9 +184,13 @@ export default function TrainingStage() {
                 <td className="text-right font-mono text-xs">{pp(r.meanCommissions)}</td>
                 <td
                   className="text-right font-mono text-xs"
-                  title={r.taxRate === null ? 'Scored before tax' : `${r.taxRate}% on realized gains`}
+                  title={r.taxRate === null
+                    ? 'Scored before tax'
+                    : `${r.taxRate}% on realized gains`
+                      + (r.taxTrain ? ', trained with it too' : ', scoring only')}
                 >
                   {r.taxRate === null ? 'off' : pp(r.meanGainsTax)}
+                  {r.taxTrain && <span className="badge badge-xs badge-warning ml-1">trained</span>}
                 </td>
                 <td className={`text-right font-mono text-xs ${
                   r.meanTiming == null ? '' : r.meanTiming > 0 ? 'text-success' : 'text-error'}`}

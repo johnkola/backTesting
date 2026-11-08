@@ -70,7 +70,7 @@ HYPERPARAM_KEYS = (
 _INSERT_RUN = """
 INSERT INTO walkforward_runs
     (label, instrument_id, source_id, timeframe, feature_set_id, input_width,
-     objective, loss, cost_bps, park, threshold, tax_rate,
+     objective, loss, cost_bps, park, threshold, tax_rate, tax_train,
      train_start, first_val, last_val, is_test, hyperparams_json, columns_json,
      strategy_id, strategy_name, strategy_version, dropped_json, partial_json,
      train_first, train_bars_used, train_bars, test_end)
@@ -78,6 +78,7 @@ VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
      %(objective)s, %(loss)s, %(cost_bps)s, %(park)s, %(threshold)s, %(tax_rate)s,
+     %(tax_train)s,
      %(train_start)s, %(first_val)s, %(last_val)s, %(is_test)s,
      %(hyperparams_json)s, %(columns_json)s,
      %(strategy_id)s, %(strategy_name)s, %(strategy_version)s,
@@ -187,6 +188,9 @@ def run_row(args: Any, set_id: int, input_width: int,
         # Percent on realized gains, or NULL for a run scored before tax. NULL
         # rather than 0 so "off" and "a 0% rate" never read the same.
         "tax_rate": float(args.tax_rate) if getattr(args, "tax_rate", None) else None,
+        # True when the loss was charged the tax as well, so the model (and its
+        # signals) differ from an untaxed run of the same strategy.
+        "tax_train": bool(getattr(args, "tax_train", False)),
         "train_start": int(args.train_start),
         "first_val": int(args.first_val),
         "last_val": int(args.last_val),

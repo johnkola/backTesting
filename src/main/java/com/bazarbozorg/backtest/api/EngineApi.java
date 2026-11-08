@@ -331,6 +331,7 @@ public class EngineApi {
         out.put("park", run.park());
         out.put("threshold", run.threshold());
         out.put("taxRate", run.taxRate());
+        out.put("taxTrain", run.taxTrain());
         out.put("trainStart", run.trainStart());
         out.put("firstVal", run.firstVal());
         out.put("lastVal", run.lastVal());

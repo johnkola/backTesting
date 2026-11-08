@@ -828,6 +828,11 @@ export type StrategyObjective = {
   taxScore: boolean
   /** Percent on realized gains; null unless `taxScore`. */
   taxRatePct: number | null
+  /**
+   * Train against the after-tax curve too. Unlike `taxScore` this changes the
+   * model and so its signals; needs `taxScore` and a money-trained loss.
+   */
+  taxTrain: boolean
 }
 
 /** The rules the form draws the objective section from, served by the API. */
@@ -1089,6 +1094,8 @@ export type WalkforwardRun = {
   threshold: number | null
   /** Percent on realized gains when scored after tax; null when scored before tax. */
   taxRate: number | null
+  /** True when the model was trained against the tax too, so its signals differ. */
+  taxTrain: boolean
   trainStart: number
   firstVal: number
   lastVal: number

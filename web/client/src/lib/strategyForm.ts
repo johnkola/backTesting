@@ -201,6 +201,7 @@ export type ObjectiveForm = {
   park: StrategyObjective['park']
   taxScore: boolean
   taxRatePct: string
+  taxTrain: boolean
 }
 
 /** A saved (or default) objective, as the form's starting values. */
@@ -214,6 +215,7 @@ export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
     park: o.park,
     taxScore: o.taxScore,
     taxRatePct: o.taxRatePct === null ? '' : String(o.taxRatePct),
+    taxTrain: o.taxTrain,
   }
 }
 
@@ -223,7 +225,9 @@ export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
  * a strategy that claims a setting no run would apply, and the form hides
  * those fields, so a value left behind in a hidden field must not reach it.
  * The tax rate is cleared the same way when scoring after tax is off; a blank
- * rate with it on is sent as null, for the server to refuse by name.
+ * rate with it on is sent as null, for the server to refuse by name. Train
+ * with tax is cleared unless scoring after tax is on and the loss is a money
+ * loss, the only case where the form shows it.
  */
 export function objectiveFromForm(f: ObjectiveForm, spec: ObjectiveSpec): StrategyObjective {
   const money = f.loss !== 'ce'
@@ -239,5 +243,6 @@ export function objectiveFromForm(f: ObjectiveForm, spec: ObjectiveSpec): Strate
     park: f.park,
     taxScore: f.taxScore,
     taxRatePct: f.taxScore && f.taxRatePct.trim() !== '' ? Number(f.taxRatePct) : null,
+    taxTrain: f.taxScore && money ? f.taxTrain : false,
   }
 }

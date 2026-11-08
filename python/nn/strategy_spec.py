@@ -94,6 +94,7 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
     "park": "cash",
     "taxScore": False,
     "taxRatePct": None,
+    "taxTrain": False,
 })
 
 #: What the runner can execute. Mirrors MODEL_TYPES and the label check in
@@ -295,6 +296,15 @@ def runner_args(s: Strategy) -> dict[str, Any]:
         if not rate or rate <= 0:
             raise StrategyRefused(["score after tax is on but the tax rate is not set"])
         out["tax_rate"] = float(rate)
+    # Train with tax changes the model, so it is its own switch and never
+    # implied by the rate. It needs the rate and a money loss; the API refuses
+    # saving it otherwise, and this guards a row written any other way.
+    if s.objective.get("taxTrain"):
+        if "tax_rate" not in out:
+            raise StrategyRefused(["train with tax needs score after tax and a rate"])
+        if out.get("loss", "ce") == "ce":
+            raise StrategyRefused(["train with tax needs a money-trained loss, not ce"])
+        out["tax_train"] = True
     horizon = s.label.get("horizonBars")
     if horizon is not None:
         if "forward" in out and out["forward"] != horizon:

@@ -47,6 +47,11 @@ export const fieldHints: Record<string, string> = {
     + 'the position is sold, losses offset later gains in the same year, and buy-and-hold, '
     + 'which never sells, pays nothing. Scoring only: the model and its signals are the '
     + 'same either way, so leave it off for a strategy published as a signal.',
+  'objective.taxTrain':
+    'Also charge the tax while training, so the model learns that a trade has to clear '
+    + 'the tax to be worth making. This changes the model and its signals: use it for '
+    + 'your own taxable account, not for a strategy published as a signal. Money-trained '
+    + 'losses only.',
   'objective.taxRatePct':
     'Your effective rate on realized gains, in percent. Every tax situation differs, so '
     + 'it is yours to enter (in Canada, for example, the inclusion rate times your '

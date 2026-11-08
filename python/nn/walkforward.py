@@ -256,6 +256,27 @@ def make_folds(
     return out
 
 
+def train_tax_rate(args) -> float:
+    """The tax the loss charges while training, as a fraction; 0 unless
+    `--tax-train`. Separate from scoring after tax on purpose: this one changes
+    the model and therefore its signals, so it is never implied by a rate."""
+    if not getattr(args, "tax_train", False):
+        return 0.0
+    return (args.tax_rate or 0.0) / 100.0
+
+
+def tax_train_problem(args) -> str | None:
+    """Why `--tax-train` cannot apply to these settings, or None."""
+    if not getattr(args, "tax_train", False):
+        return None
+    if not args.tax_rate:
+        return "--tax-train needs --tax-rate: training against a tax nobody is scored on makes no sense"
+    if args.loss == "ce":
+        return ("--tax-train needs a money-trained loss (return, sharpe or calmar); the ce "
+                "classifier is trained on a label, which has no gains to tax")
+    return None
+
+
 def train_money(
     x_tr: np.ndarray, r_tr: np.ndarray, args
 ) -> tuple[nn.Module, object]:
@@ -282,7 +303,8 @@ def train_money(
         model.train()
         opt.zero_grad()
         pos = money_loss.positions_from_logits(model(xs))
-        loss, _ = money_loss.objective(args.loss, pos, r, cost_bps=args.cost_bps)
+        loss, _ = money_loss.objective(args.loss, pos, r, cost_bps=args.cost_bps,
+                                       tax_rate=train_tax_rate(args))
         loss.backward()
         opt.step()
     return model, scaler
@@ -496,6 +518,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "model and on buy-and-hold alike (which never sells, so never "
                         "pays). Scoring only; the model and its signals are unchanged. "
                         "Off when absent")
+    p.add_argument("--tax-train", action="store_true",
+                   help="Train against the after-tax curve too, so the model learns to skip "
+                        "trades that do not clear the tax. Needs --tax-rate and a money "
+                        "loss. Unlike --tax-rate alone this CHANGES THE SIGNALS, so it does "
+                        "not belong on a strategy published as a signal")
     p.add_argument("--park", choices=["cash", "bills", "bonds"], default="cash",
                    help="Where money sits while out of equities. 'cash' earns nothing "
                         "(the pessimistic default); 'bills' earns the 3-month T-bill "
@@ -611,6 +638,9 @@ def main(argv: list[str] | None = None) -> int:
         set_id = args.set_id or feature_store.latest_set_id(
             cur, args.symbol, args.source, args.timeframe
         )
+    if (problem := tax_train_problem(args)) is not None:
+        print(f"refused: {problem}")
+        return 2
     fm = feature_store.read_matrix(
         cur, set_id, columns=setup.columns.kept if setup else None,
     )
@@ -674,7 +704,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"simulation   long unless SELL, {args.cost_bps:.0f} bps per change, "
           f"signal acted on the next session")
     print("tax          " + (f"{args.tax_rate:g}% on each realized gain, buy-and-hold taxed "
-                             "the same way (it never sells); scoring only"
+                             "the same way (it never sells); "
+                             + ("TRAINED with it too, so the signals differ from an untaxed run"
+                                if args.tax_train else "scoring only")
                              if args.tax_rate else "off: scored before tax"))
     print(f"\n{'fold':>4} {'val':>5} {'strat%':>8} {'hold%':>8} {'excess':>8} "
           f"{'shrp':>6} {'maxdd':>7} {'trd':>4} │ {'out':>4} {'drift':>7} {'comm':>6} "

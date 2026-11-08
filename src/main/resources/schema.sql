@@ -469,6 +469,10 @@ CREATE TABLE IF NOT EXISTS walkforward_folds (
 -- sitting out of the market.
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS tax_rate DOUBLE PRECISION;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS gains_tax DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- Train with tax: the loss was charged the same tax while training, so the
+-- model learned to skip trades that do not clear it. Unlike tax_rate alone
+-- this changes the signals, which is why it is recorded on its own.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS tax_train BOOLEAN NOT NULL DEFAULT false;
 
 -- ---------------------------------------------------------------------------
 -- The buy-and-hold benchmark, computed once per window

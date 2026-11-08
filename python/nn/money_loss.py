@@ -55,6 +55,61 @@ def portfolio_returns(
     return traded * returns - turnover * (cost_bps / 10_000.0)
 
 
+def portfolio_returns_taxed(
+    positions: torch.Tensor, returns: torch.Tensor, cost_bps: float, tax_rate: float,
+) -> torch.Tensor:
+    """`portfolio_returns`, with tax charged on each realized gain, differentiably.
+
+    This is "train with tax" (Design Notes, Tax and Trading Costs: "the tax
+    must be inside the signal the model learns from"). Trained on this, a
+    marginal in-and-out trade costs the model its tax as well as its
+    commission, so it learns to hold through moves that do not clear both.
+    It changes what the model learns, and so the signals it emits; scoring
+    after tax alone (`walkforward.simulate_taxed`) does not.
+
+    The position is continuous here, so the cost basis is an average: holding
+    value `h` and basis `b`, in units of starting wealth. Cutting the position
+    from `p` to `q` sells `(p - q) / p` of the holding, which realizes that
+    share of its unrealized gain and leaves the basis of the rest in
+    proportion. The tax rule is the
+    scoring rule: a realized loss is carried and offsets later gains, and
+    only a positive net is taxed (`relu`, subdifferentiable at zero like the
+    turnover's `abs`). Nothing is taxed while held, so a position held
+    throughout pays nothing, as buy-and-hold does.
+
+    A loop over bars, because each day's basis depends on the last. At
+    `tax_rate == 0` it equals `portfolio_returns` to rounding; the tests hold
+    the two together.
+    """
+    n = returns.shape[0]
+    dtype, device = returns.dtype, returns.device
+    traded = torch.cat([positions[:1], positions[:-1]]).to(dtype)
+    cost = cost_bps / 10_000.0
+    zero = torch.zeros((), dtype=dtype, device=device)
+    # w: wealth; h: value held in equities; b: its cost basis. Units of
+    # starting wealth. A sale is the position going DOWN, not wealth drifting:
+    # the plain curve holds a fixed fraction of wealth every day, and taxing
+    # that implicit daily rebalancing would tax every commission as a sale.
+    w = torch.ones((), dtype=dtype, device=device)
+    h, b, carry, prev = zero, zero, zero, zero
+    daily = []
+    for t in range(n):
+        w_start = w
+        share = torch.relu(prev - traded[t]) / (prev + _EPS)
+        bought = torch.relu(traded[t] - prev) * w_start
+        net = share * (h - b) + carry
+        tax = tax_rate * torch.relu(net)
+        carry = net - torch.relu(net)
+        b = b * (1.0 - share) + bought
+        h = h * (1.0 - share) + bought
+        # The day's move, on the plain curve's terms, so 0% tax is that curve.
+        h = h * (1.0 + returns[t])
+        w = w_start * (1.0 + traded[t] * returns[t] - torch.abs(traded[t] - prev) * cost) - tax
+        daily.append(w / w_start - 1.0)
+        prev = traded[t]
+    return torch.stack(daily)
+
+
 def log_wealth(daily: torch.Tensor) -> torch.Tensor:
     """Total compounded return, in logs.
 
@@ -84,7 +139,8 @@ def max_drawdown(daily: torch.Tensor) -> torch.Tensor:
 
 
 def objective(
-    name: str, positions: torch.Tensor, returns: torch.Tensor, *, cost_bps: float
+    name: str, positions: torch.Tensor, returns: torch.Tensor, *, cost_bps: float,
+    tax_rate: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Loss to MINIMISE, plus the readable metrics behind it.
 
@@ -92,8 +148,13 @@ def objective(
     genuinely different targets, not rescalings of one: `return` will happily
     accept any amount of volatility, `sharpe` trades away upside for smoothness,
     and `calmar` cares only about the worst stretch.
+
+    `tax_rate` (a fraction) trains against the after-tax curve; all three
+    objectives are then computed on it, as the design asks. 0 is the plain,
+    vectorised curve.
     """
-    daily = portfolio_returns(positions, returns, cost_bps)
+    daily = (portfolio_returns_taxed(positions, returns, cost_bps, tax_rate) if tax_rate > 0
+             else portfolio_returns(positions, returns, cost_bps))
 
     if name == "return":
         loss = -log_wealth(daily)

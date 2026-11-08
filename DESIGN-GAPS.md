@@ -103,6 +103,7 @@ feature set was built from, which is what G3 (an input snapshot id) needs.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
+| G21 | A new strategy always starts on the design's QQQ windows (train from 2003), so a series with a shorter history (AAPL was stored from 2019-12-02 only) gets an empty train window and a warning. A "fit windows to this series" action would propose windows from the stored range | Architecture §8.2a | `strategyForm.ts:117` | S | open |
 | G20 | The Java Backtest tab is still pre-tax. G2 taxes the walk-forward scoring only; the engine's backtest has no tax switch | Design Notes, Tax and Trading Costs ("the tax and strategy toggles") | `BacktestStage.tsx:92` says returns are gross | M | open |
 | G19 | No early stopping. The validation window is only used for scoring, while the design says it is for early stopping and hyperparameter choice, and §8.2a lists early stopping as a hyperparameter | Architecture §8.1a, §8.2a | no `patience` or early stopping anywhere in `python/nn/` | M | open |
 
@@ -128,7 +129,7 @@ buy-and-hold once real costs are charged? Gaps that block that answer come first
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
 | G1 | A saved strategy does not decide what is trained. Its feature list is recorded and ignored, and the walk-forward runner has no way to take a strategy | Architecture §8.1a, §8.2a | `CoverageWarning.tsx:36` says so on screen; `walkforward.py` has no strategy or feature argument | M | done, uncommitted |
-| G2 | Tax is not inside the objective, and there is no tax toggle. `money_loss` charges `cost_bps` only, so the model never feels tax | Design Notes, Tax and Trading Costs | `money_loss.py:43-55`; `BacktestStage.tsx:92` says returns are gross | M | partial: scoring after tax done, uncommitted; training with tax next |
+| G2 | Tax is not inside the objective, and there is no tax toggle. `money_loss` charges `cost_bps` only, so the model never feels tax | Design Notes, Tax and Trading Costs | `money_loss.py:43-55`; `BacktestStage.tsx:92` says returns are gross | M | done, uncommitted (both switches; see G2 progress) |
 | G3 | No run can be recomputed from its record: no input snapshot id, no `feature_runs` table | Architecture §3.5, §6.1 | no `feature_runs` or `snapshot_id` anywhere in the code or `schema.sql` | M | open |
 | G4 | Fed funds (41) is configured but never imported. Strategy 2's margin interest needs it | Features.md 41 | `features.toml`: `fed_funds` is `not-imported` | S | open |
 | G5 | Strategy 2 does not exist: margin long and inverse, PSQ, the 50% ceiling, variable interest | Design Notes, Strategy 2 | no `PSQ` or margin interest anywhere in the code | L | open |
@@ -150,11 +151,29 @@ ran as run 132 with exactly run 98's trades, drift, commissions and timing (the 
 change) and a mean gains tax of -4.74 pp per fold: 2/6 folds won before tax, 0/6 after, mean
 excess -2.60 to -7.83 pp.
 
-*Train with tax*, next: `objective.taxTrain`, requires score after tax, money losses only, and
-it changes the signals, so the form says so.
+*Train with tax*, done, uncommitted. `objective.taxTrain` (runner `--tax-train`), refused
+without score after tax or on the ce loss. `money_loss.portfolio_returns_taxed` charges the
+same rule inside the loss: average cost basis, a sale is the position going down (not wealth
+drifting), losses carried, `relu` on the net. It equals the plain curve at 0% and the scorer
+at 0/1 positions. The run stores `tax_train`; the Training tab badges it "trained". Live check,
+2026-11-08: strategy 23 as a `return`-loss model at 25%, v8 scoring only (run 148) and v9
+trained with tax (run 149). v8 traded in 2018 (3 changes, -1.98 pp tax, -4.89 pp excess); v9
+never left the market (6 changes in total, one entry per fold), so the signals did differ, and
+mean excess went from -0.87 to -0.06 pp. Neither beats buy-and-hold: trained with tax, this
+2-feature model learns to hold.
+
+**Cost:** the taxed loss is a loop over bars. The v9 run took 6 min 50 s against 6 s for v8,
+about 70 times slower. Fine for single runs; worth vectorising or compiling before sweeps.
 
 Also found: the ingest integration tests failed against Postgres because `purge_instrument`
 did not delete the R7 `import_files` rows; fixed in `tests/dbfixtures.py`.
+
+**Data, 2026-11-08.** All 101 current Nasdaq-100 members (`data/ndx-constituents/`) downloaded
+from Yahoo, full history, as `yahoo` (raw) and `yahoo-adj` (dividend-adjusted): 202 series, all
+imported; only AAPL raw needed `force` (its stored 2019 year gained earlier days, and the
+2026-09-18 bar's volume was revised by Yahoo). AAPL now runs from 1980-12-12. Survivorship
+bias: this is today's membership. WBD starts 2026-10-05 on Yahoo, which looks like a new
+security under the ticker; check it before use.
 
 **G1 progress.** Section 1 done, uncommitted: `read_matrix(columns=...)` and
 `nn/strategy_spec.py`, which turns a strategy into folds, runner settings and resolved

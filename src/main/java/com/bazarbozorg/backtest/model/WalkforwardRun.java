@@ -52,6 +52,9 @@ import java.time.ZonedDateTime;
  * @param taxRate             percent charged on realized gains when the run was scored
  *                            after tax; null when it was scored before tax. Scoring
  *                            only: the model and its signals are the same either way
+ * @param taxTrain            true when the loss was charged the tax while training too;
+ *                            unlike {@code taxRate} alone, that changes the model and
+ *                            its signals
  * @param threshold           position below which a money-trained model counts as flat;
  *                            null for a classifier, which has no position to cut
  * @param trainStart          first training year
@@ -98,6 +101,7 @@ public record WalkforwardRun(
         String park,
         Double threshold,
         Double taxRate,
+        boolean taxTrain,
         int trainStart,
         int firstVal,
         int lastVal,

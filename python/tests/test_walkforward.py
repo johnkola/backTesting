@@ -190,6 +190,42 @@ def test_with_tax_the_loop_tracks_the_vectorised_curve_until_the_first_sale():
     np.testing.assert_allclose(eq[:first_sale], plain[:first_sale], rtol=1e-12)
 
 
+# --------------------------------------------------------------------------
+# train with tax
+# --------------------------------------------------------------------------
+
+
+def _args(**over):
+    from argparse import Namespace
+    base = dict(tax_train=False, tax_rate=None, loss="return")
+    base.update(over)
+    return Namespace(**base)
+
+
+def test_scoring_after_tax_alone_trains_untaxed():
+    assert wf.train_tax_rate(_args(tax_rate=25.0)) == 0.0
+
+
+def test_train_with_tax_charges_the_loss_the_rate_as_a_fraction():
+    assert wf.train_tax_rate(_args(tax_rate=25.0, tax_train=True)) == 0.25
+
+
+def test_train_with_tax_needs_a_rate_and_a_money_loss():
+    assert "needs --tax-rate" in wf.tax_train_problem(_args(tax_train=True))
+    assert "money-trained" in wf.tax_train_problem(_args(tax_train=True, tax_rate=25.0, loss="ce"))
+    assert wf.tax_train_problem(_args(tax_train=True, tax_rate=25.0)) is None
+    assert wf.tax_train_problem(_args()) is None
+
+
+def test_the_runner_refuses_train_with_tax_on_ce_before_reading_data(monkeypatch):
+    class NoDb:
+        def cursor(self):
+            return object()
+    monkeypatch.setattr(wf, "connect", lambda: NoDb())
+    monkeypatch.setattr(wf.feature_store, "latest_set_id", lambda *a: 1)
+    assert wf.main(["--tax-train", "--tax-rate", "25"]) == 2
+
+
 def test_simulate_matches_the_money_loss_convention():
     """The trainer and the evaluator must shift identically. If they drift, a
     model is optimised against one timing and scored against another, and the
