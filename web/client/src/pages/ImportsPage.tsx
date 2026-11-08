@@ -9,6 +9,7 @@ import { useApiData } from '../lib/useApiData'
 import Pagination from '../components/Pagination'
 import { tipClass } from '../components/FieldLabel'
 import UploadCard from '../components/UploadCard'
+import FileVersions from '../components/FileVersions'
 import { useTimeframe } from '../lib/useTimeframe'
 
 const LIMIT = 25
@@ -109,6 +110,8 @@ export default function ImportsPage() {
       <h1 className="text-2xl font-semibold mb-4">Imports</h1>
 
       <UploadCard onSuccess={refreshHistory} />
+
+      <FileVersions source={source} instrument={instrument} reloadKey={reloadKey} />
 
       <div className="flex flex-wrap gap-2 mb-4">
         <span className={tipClass} data-tip="Show only imports filed under this source. Matched exactly.">

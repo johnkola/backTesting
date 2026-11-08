@@ -8,6 +8,10 @@ import {
   type UploadImportResponse,
 } from '../lib/api'
 import FieldLabel, { tipClass } from './FieldLabel'
+import {
+  CHANGE_KIND_BADGE, CHANGE_KIND_HINT, CHANGE_KIND_LABEL,
+  countByStatus, diffSummary, exampleDates, isFix, summarize,
+} from '../lib/fileVersions'
 
 const TIMEFRAMES = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'] as const
 const TYPES = ['STOCK', 'FOREX', 'CRYPTO', 'INDEX', 'COMMODITY'] as const
@@ -53,7 +57,9 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
       const result = await api.uploadImport({ file, symbol, type, timeframe, source, force })
       setState({ kind: 'success', result })
       if (result.status === 'completed') {
-        const anyWrite = result.imports.some((s) => s.status === 'created' || s.status === 'overwritten')
+        const anyWrite = result.imports.some(
+          (s) => s.status === 'created' || s.status === 'extended' || s.status === 'overwritten',
+        )
         resetAfterSuccess()
         if (anyWrite) onSuccess()
       } else if (result.status === 'conflict') {
@@ -149,7 +155,7 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
           <div className="md:col-span-6 flex flex-wrap gap-3 items-center">
             <label
               className={`label cursor-pointer gap-2 ${tipClass}`}
-              data-tip="Overwrite year slices that are already archived with different content. Without it a clash returns 409 and nothing is written."
+              data-tip="Accept a data fix: overwrite years whose stored bars changed or were removed. A file that only adds later days goes in without this. Without it a fix returns 409 with what would change, and nothing is written."
             >
               <input
                 type="checkbox"
@@ -199,13 +205,34 @@ function UploadFeedback({ state }: { state: UploadState }) {
   }
   if (result.status === 'completed') {
     const counts = countByStatus(result.imports)
-    const allSkipped = counts.created === 0 && counts.overwritten === 0
+    const allSkipped = counts.created === 0 && counts.extended === 0 && counts.overwritten === 0
+    const f = result.file
     return (
       <div className={`alert ${allSkipped ? 'alert-info' : 'alert-success'} mt-3 text-sm`}>
         <div className="w-full">
-          <div className="font-medium">
-            {summarize(counts, result.imports.length)}
-          </div>
+          {f?.alreadyLoaded ? (
+            <div className="font-medium">
+              Already loaded: this exact file is what the database holds, as version {f.id}{' '}
+              ({CHANGE_KIND_LABEL[f.changeKind]}, {new Date(f.importedAt).toLocaleDateString()}).
+              Nothing was read or written.
+            </div>
+          ) : (
+            <div className="font-medium">
+              {summarize(counts, result.imports.length)}
+              {f && (
+                <>
+                  {' · '}recorded as version {f.id}{' '}
+                  <span
+                    className={`badge badge-sm ${CHANGE_KIND_BADGE[f.changeKind]} ${tipClass}`}
+                    data-tip={CHANGE_KIND_HINT[f.changeKind]}
+                  >
+                    {CHANGE_KIND_LABEL[f.changeKind]}
+                  </span>
+                  {f.seenBefore && <span className="opacity-70"> (these bytes were loaded before)</span>}
+                </>
+              )}
+            </div>
+          )}
           <SliceList rows={result.imports} />
           {result.cohesion && <CohesionPanel report={result.cohesion} />}
         </div>
@@ -217,36 +244,34 @@ function UploadFeedback({ state }: { state: UploadState }) {
     <div className="alert alert-warning mt-3 text-sm">
       <div className="w-full">
         <div className="font-medium">
-          <strong>Conflict.</strong> {result.message}
+          <strong>Data fix.</strong> {result.message}.{' '}
+          {fixYears(result.imports)} stored bars that this file changes or removes.
         </div>
         <SliceList rows={result.imports} />
         <div className="mt-2 opacity-80">
-          Force overwrite is now checked — click Upload again to apply the changes above.
+          Check the changed dates above. Force overwrite is now checked; click Upload again to
+          accept the fix. It will be recorded as a data-fix version.
         </div>
       </div>
     </div>
   )
 }
 
-function countByStatus(rows: SliceOutcome[]) {
-  const c = { created: 0, overwritten: 0, skipped: 0 }
-  for (const r of rows) c[r.status]++
-  return c
-}
-
-function summarize(c: { created: number; overwritten: number; skipped: number }, total: number) {
-  const parts: string[] = []
-  if (c.created)     parts.push(`${c.created} created`)
-  if (c.overwritten) parts.push(`${c.overwritten} overwritten`)
-  if (c.skipped)     parts.push(`${c.skipped} skipped`)
-  return `${total} year ${total === 1 ? 'slice' : 'slices'}: ${parts.join(' · ')}`
+/** "2015 and 2019 hold" / "2015 holds", for the fix banner. */
+function fixYears(rows: SlicePreview[]): string {
+  const years = rows.filter((r) => r.status === 'conflict').map((r) => r.year)
+  if (years.length === 0) return 'Some years hold'
+  if (years.length === 1) return `${years[0]} holds`
+  return `${years.slice(0, -1).join(', ')} and ${years[years.length - 1]} hold`
 }
 
 const STATUS_BADGE: Record<string, string> = {
   created:          'badge-success',
   overwritten:      'badge-success',
+  extended:         'badge-success',
   skipped:          'badge-ghost',
   'would-create':   'badge-info',
+  'would-extend':   'badge-info',
   'would-overwrite':'badge-info',
   'would-skip':     'badge-ghost',
   conflict:         'badge-warning',
@@ -322,6 +347,7 @@ function SliceList({ rows }: { rows: (SliceOutcome | SlicePreview)[] }) {
           <th>Status</th>
           <th>Archive path</th>
           <th className="text-right">Rows</th>
+          <th>Change</th>
           <th>Existing</th>
         </tr>
       </thead>
@@ -332,6 +358,8 @@ function SliceList({ rows }: { rows: (SliceOutcome | SlicePreview)[] }) {
           const rowCount = 'import' in r ? r.import.rowCount
             : 'rowCount' in r ? r.rowCount : 0
           const existing = 'existing' in r ? r.existing : null
+          const diff = r.diff ?? null
+          const dates = exampleDates(diff)
           return (
             <tr key={r.year}>
               <td>{r.year}</td>
@@ -342,6 +370,12 @@ function SliceList({ rows }: { rows: (SliceOutcome | SlicePreview)[] }) {
               </td>
               <td className="font-mono text-xs">{archivePath ?? '—'}</td>
               <td className="text-right tabular-nums">{rowCount.toLocaleString()}</td>
+              <td className={`text-xs ${isFix(diff) ? 'text-warning' : ''}`}>
+                {diffSummary(diff) || '—'}
+                {dates.length > 0 && (
+                  <div className="font-mono opacity-80">{dates.join(', ')}</div>
+                )}
+              </td>
               <td className="text-xs opacity-70">
                 {existing ? (
                   <>

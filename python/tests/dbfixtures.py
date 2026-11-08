@@ -87,6 +87,12 @@ def purge_instrument(symbol: str, source: str) -> None:
             cur.execute(
                 "DELETE FROM data_imports WHERE instrument_id = %s", (instrument_id,)
             )
+            # The file versions those slices came from. After data_imports,
+            # whose import_file_id points here; before instruments, which
+            # import_files points at.
+            cur.execute(
+                "DELETE FROM import_files WHERE instrument_id = %s", (instrument_id,)
+            )
         if instrument_id is not None and source_id is not None:
             cur.execute(
                 "DELETE FROM candles WHERE instrument_id = %s AND source_id = %s",

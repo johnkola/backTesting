@@ -1,4 +1,4 @@
-import type { SavedStrategy } from './api'
+import type { ObjectiveSpec, SavedStrategy, StrategyObjective } from './api'
 
 /**
  * The pure logic behind the Strategy tab (Architecture.md §8.1a / §8.2a).
@@ -183,4 +183,61 @@ export function newestVersions(items: SavedStrategy[]): SavedStrategy[] {
     if (!prev || s.version > prev.version) best.set(s.name, s)
   }
   return [...best.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * The objective section as the form holds it: numbers as typed text.
+ *
+ * Kept separate from `StrategyObjective` so a half-typed cost ("7.") is not
+ * coerced mid-keystroke. `objectiveFromForm` is the one place it becomes the
+ * saved shape.
+ */
+export type ObjectiveForm = {
+  loss: StrategyObjective['loss']
+  classWeights: boolean
+  positionThreshold: string
+  verdict: StrategyObjective['verdict']
+  costBps: string
+  park: StrategyObjective['park']
+  taxScore: boolean
+  taxRatePct: string
+}
+
+/** A saved (or default) objective, as the form's starting values. */
+export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
+  return {
+    loss: o.loss,
+    classWeights: o.classWeights,
+    positionThreshold: o.positionThreshold === null ? '' : String(o.positionThreshold),
+    verdict: o.verdict,
+    costBps: String(o.costBps),
+    park: o.park,
+    taxScore: o.taxScore,
+    taxRatePct: o.taxRatePct === null ? '' : String(o.taxRatePct),
+  }
+}
+
+/**
+ * What the form sends. The two settings that only one kind of loss reads are
+ * cleared for the other kind, rather than sent and refused: the server rejects
+ * a strategy that claims a setting no run would apply, and the form hides
+ * those fields, so a value left behind in a hidden field must not reach it.
+ * The tax rate is cleared the same way when scoring after tax is off; a blank
+ * rate with it on is sent as null, for the server to refuse by name.
+ */
+export function objectiveFromForm(f: ObjectiveForm, spec: ObjectiveSpec): StrategyObjective {
+  const money = f.loss !== 'ce'
+  const threshold = f.positionThreshold.trim() === ''
+    ? spec.defaultPositionThreshold
+    : Number(f.positionThreshold)
+  return {
+    loss: f.loss,
+    classWeights: money ? false : f.classWeights,
+    positionThreshold: money ? threshold : null,
+    verdict: f.verdict,
+    costBps: f.costBps.trim() === '' ? spec.defaults.costBps : Number(f.costBps),
+    park: f.park,
+    taxScore: f.taxScore,
+    taxRatePct: f.taxScore && f.taxRatePct.trim() !== '' ? Number(f.taxRatePct) : null,
+  }
 }

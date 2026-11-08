@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   api,
   type TrainedModel,
+  type WalkforwardRun,
   type WalkforwardFold,
 } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import { newestFinished, num, pp, stageSummary } from '../../lib/walkforwardView'
+import StartWalkforward from '../../components/StartWalkforward'
 import StageShell, { NotWired } from './StageShell'
 
 type Loaded = { items: TrainedModel[], modelsDir: string }
@@ -32,10 +34,13 @@ export default function TrainingStage() {
   const [tf] = useTimeframe()
   const [includeTest, setIncludeTest] = useState(false)
   const [openRun, setOpenRun] = useState<number | null>(null)
+  // Bumped when a run started here opens its row or ends, so the table re-reads.
+  const [runsKey, setRunsKey] = useState(0)
+  const bumpRuns = useCallback(() => setRunsKey((k) => k + 1), [])
 
   const { data: runsData, error: runsError, loading: runsLoading } = useApiData(
     (signal) => api.walkforwardRuns({ timeframe: tf, includeTest, limit: 50 }, signal),
-    [tf, includeTest],
+    [tf, includeTest, runsKey],
   )
 
   const { data: detail, loading: detailLoading } = useApiData(
@@ -81,6 +86,8 @@ export default function TrainingStage() {
           + 'progress row written per epoch would be what this tab reads to draw a curve.'}
       />
 
+      <StartWalkforward onRunChange={bumpRuns} />
+
       <div className="flex items-center justify-between flex-wrap gap-3 mt-6 mb-2">
         <h2 className="text-lg font-semibold">Walk-forward runs</h2>
         <label className="label cursor-pointer gap-2">
@@ -119,6 +126,12 @@ export default function TrainingStage() {
                   structure around it. */}
               <th className="text-right">Drift</th>
               <th className="text-right">Comm</th>
+              <th
+                className="text-right tooltip tooltip-bottom"
+                data-tip="Tax on realized gains, when the run was scored after tax"
+              >
+                Tax
+              </th>
               <th className="text-right">Timing</th>
               <th>State</th>
               <th />
@@ -130,6 +143,12 @@ export default function TrainingStage() {
                 <td className="text-xs">
                   <span className="font-mono">#{r.id}</span>
                   {r.label && <span className="ml-2">{r.label}</span>}
+                  {r.strategy && (
+                    <div className="opacity-70" title={`Saved strategy id ${r.strategy.id}`}>
+                      {r.strategy.name}
+                      {r.strategy.version !== null && ` v${r.strategy.version}`}
+                    </div>
+                  )}
                   {r.isTest && (
                     <span
                       className="badge badge-xs badge-warning ml-2 tooltip"
@@ -163,6 +182,12 @@ export default function TrainingStage() {
                 <td className="text-right">{r.folds === 0 ? '—' : r.totalTrades}</td>
                 <td className="text-right font-mono text-xs">{pp(r.meanDriftTax)}</td>
                 <td className="text-right font-mono text-xs">{pp(r.meanCommissions)}</td>
+                <td
+                  className="text-right font-mono text-xs"
+                  title={r.taxRate === null ? 'Scored before tax' : `${r.taxRate}% on realized gains`}
+                >
+                  {r.taxRate === null ? 'off' : pp(r.meanGainsTax)}
+                </td>
                 <td className={`text-right font-mono text-xs ${
                   r.meanTiming == null ? '' : r.meanTiming > 0 ? 'text-success' : 'text-error'}`}
                 >
@@ -191,7 +216,7 @@ export default function TrainingStage() {
             ))}
             {runs.length === 0 && !runsLoading && (
               <tr>
-                <td colSpan={13} className="text-center text-base-content/60">
+                <td colSpan={14} className="text-center text-base-content/60">
                   No walk-forward runs recorded at {tf}
                   {!includeTest && ' (holdout runs are hidden)'}.
                 </td>
@@ -216,6 +241,7 @@ export default function TrainingStage() {
           </h3>
           {detail && (
             <>
+              <RunProvenance run={detail.run} />
               <div className="overflow-x-auto bg-base-200 rounded-box">
                 <table className="table table-sm">
                   <thead>
@@ -233,6 +259,7 @@ export default function TrainingStage() {
                       <th className="text-right">Days out</th>
                       <th className="text-right">Drift</th>
                       <th className="text-right">Comm</th>
+                      <th className="text-right">Tax</th>
                       <th className="text-right">Timing</th>
                       <th className="text-right">Accuracy</th>
                     </tr>
@@ -269,6 +296,9 @@ export default function TrainingStage() {
                           <td className="text-right">{f.daysOut}</td>
                           <td className="text-right font-mono text-xs">{pp(f.driftTax)}</td>
                           <td className="text-right font-mono text-xs">{pp(f.commissions)}</td>
+                          <td className="text-right font-mono text-xs">
+                            {detail.run.taxRate === null ? 'off' : pp(f.gainsTax)}
+                          </td>
                           <td className={`text-right font-mono text-xs ${
                             f.timing > 0 ? 'text-success' : 'text-error'}`}
                           >
@@ -370,5 +400,60 @@ export default function TrainingStage() {
       </p>
       <p className="text-sm text-base-content/60 mt-1 font-mono">{data.modelsDir}</p>
     </StageShell>
+  )
+}
+
+/**
+ * What a run trained on: the strategy behind it, its columns, and how much of
+ * the train window those columns really covered. A partial column is kept but
+ * moves the first train bar, which is easy to miss from the fold table alone.
+ */
+function RunProvenance({ run }: { run: WalkforwardRun }) {
+  const s = run.strategy
+  if (!s && !run.columns) {
+    return (
+      <p className="text-xs text-base-content/60 mb-2">
+        Launched from flags before the column list was recorded: it read every column of
+        feature set {run.featureSetId ?? '(deleted)'}.
+      </p>
+    )
+  }
+  return (
+    <div className="text-xs mb-2 space-y-1">
+      {s
+        ? (
+          <p>
+            Strategy <strong>{s.name}</strong>{s.version !== null && ` v${s.version}`}{' '}
+            <span className="opacity-60">(id {s.id})</span>
+            {s.trainBars !== null && s.trainBarsUsed !== null && (
+              <>
+                {' '}· first fold trained on {s.trainBarsUsed.toLocaleString()} of{' '}
+                {s.trainBars.toLocaleString()} bars{s.trainFirst && `, from ${s.trainFirst}`}
+                {s.trainBarsUsed < s.trainBars && (
+                  <span className="text-warning"> (short: a partial column starts late)</span>
+                )}
+              </>
+            )}
+            {s.testEnd && <> · holdout scored to {s.testEnd}</>}
+          </p>
+        )
+        : <p>Launched from flags, not a saved strategy.</p>}
+      {run.columns && (
+        <p>
+          {run.columns.length} column{run.columns.length === 1 ? '' : 's'}:{' '}
+          <span className="font-mono">{run.columns.join(', ')}</span>
+        </p>
+      )}
+      {s?.dropped && s.dropped.length > 0 && (
+        <p className="text-warning">
+          Dropped: {s.dropped.map((d) => `${d.name} (${d.why})`).join('; ')}
+        </p>
+      )}
+      {s?.partial && s.partial.length > 0 && (
+        <p className="text-warning">
+          Partial: {s.partial.map((p) => `${p.name} ${p.values} of ${p.bars} bars`).join('; ')}
+        </p>
+      )}
+    </div>
   )
 }

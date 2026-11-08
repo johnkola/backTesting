@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { SavedStrategy } from './api'
+import type { ObjectiveSpec, SavedStrategy } from './api'
 import {
   classifyCoverage,
   designDefaultWindows,
   isRealDate,
   newestVersions,
+  objectiveFromForm,
+  objectiveToForm,
   resolveFeatures,
   windowDays,
   windowErrors,
@@ -198,6 +200,11 @@ describe('newestVersions', () => {
     instrument: 'QQQ', source: 'yahoo-adj', timeframe: 'D1',
     modelType: 'mlp', validationScheme: 'walkforward',
     features: ['price_close'], windows: {}, label: null, hyperparams: {},
+    objective: {
+      loss: 'ce', classWeights: false, positionThreshold: null,
+      verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
+    },
+    objectiveDefaulted: false,
     notes: null, createdAt: '', createdBy: 'web', updatedAt: '', updatedBy: 'web',
   })
 
@@ -214,5 +221,75 @@ describe('newestVersions', () => {
 
   it('handles an empty list', () => {
     expect(newestVersions([])).toEqual([])
+  })
+})
+
+const SPEC: ObjectiveSpec = {
+  defaults: {
+    loss: 'ce', classWeights: false, positionThreshold: null,
+    verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
+  },
+  losses: ['ce', 'return', 'sharpe', 'calmar'],
+  verdicts: ['return', 'sharpe', 'drawdown'],
+  parks: ['cash', 'bills', 'bonds'],
+  maxCostBps: 100,
+  maxTaxRatePct: 100,
+  defaultPositionThreshold: 0.5,
+}
+
+describe('objectiveFromForm', () => {
+  const form = objectiveToForm(SPEC.defaults)
+
+  it('round-trips the defaults', () => {
+    expect(objectiveFromForm(form, SPEC)).toEqual(SPEC.defaults)
+  })
+
+  it('sends the typed cost as a number', () => {
+    expect(objectiveFromForm({ ...form, costBps: '7.5' }, SPEC).costBps).toBe(7.5)
+  })
+
+  it('a blank cost is the default, not zero: free trading would flatter every run', () => {
+    expect(objectiveFromForm({ ...form, costBps: ' ' }, SPEC).costBps).toBe(5)
+  })
+
+  it('drops a threshold left in the hidden field when the loss is ce', () => {
+    expect(objectiveFromForm({ ...form, positionThreshold: '0.7' }, SPEC).positionThreshold)
+      .toBeNull()
+  })
+
+  it('drops class weights left ticked when the loss is money-trained', () => {
+    const o = objectiveFromForm({ ...form, loss: 'sharpe', classWeights: true }, SPEC)
+    expect(o.classWeights).toBe(false)
+    expect(o.positionThreshold).toBe(0.5)
+  })
+
+  it('keeps a typed threshold for a money-trained loss', () => {
+    const o = objectiveFromForm({ ...form, loss: 'return', positionThreshold: '0.6' }, SPEC)
+    expect(o.positionThreshold).toBe(0.6)
+  })
+
+  it('scores before tax by default', () => {
+    const o = objectiveFromForm(form, SPEC)
+    expect(o.taxScore).toBe(false)
+    expect(o.taxRatePct).toBeNull()
+  })
+
+  it('sends the typed tax rate as a number when scoring after tax', () => {
+    const o = objectiveFromForm({ ...form, taxScore: true, taxRatePct: '26.5' }, SPEC)
+    expect(o.taxRatePct).toBe(26.5)
+  })
+
+  it('drops a rate left in the field when scoring after tax is switched off', () => {
+    expect(objectiveFromForm({ ...form, taxRatePct: '30' }, SPEC).taxRatePct).toBeNull()
+  })
+
+  it('sends a blank rate as null, for the server to refuse by name', () => {
+    expect(objectiveFromForm({ ...form, taxScore: true, taxRatePct: ' ' }, SPEC).taxRatePct)
+      .toBeNull()
+  })
+
+  it('round-trips a saved after-tax objective', () => {
+    const saved = { ...SPEC.defaults, taxScore: true, taxRatePct: 25 }
+    expect(objectiveFromForm(objectiveToForm(saved), SPEC)).toEqual(saved)
   })
 })

@@ -17,6 +17,41 @@
  */
 
 export const fieldHints: Record<string, string> = {
+  // --- Strategy: the objective -------------------------------------------
+  // Saved with the strategy rather than passed as runner flags, so a run's
+  // record always says what it was trained toward and charged.
+  'objective.loss':
+    'What training minimises. ce fits the buy/hold/sell label; return, sharpe '
+    + 'and calmar instead train a position directly against the simulated '
+    + 'trades, so the gradient carries profit and loss, costs included.',
+  'objective.classWeights':
+    'Reweight the ce loss so rare labels count as much as common ones. Without '
+    + 'it a model can score well by mostly predicting HOLD. Only the ce loss '
+    + 'reads it.',
+  'objective.positionThreshold':
+    'A money-trained model outputs a position from 0 to 1; below this it counts '
+    + 'as flat when the run is scored. Only money-trained losses read it.',
+  'objective.verdict':
+    'The metric that decides whether a run beat buy-and-hold: total return, '
+    + 'Sharpe ratio, or maximum drawdown. It changes the headline, not the '
+    + 'training.',
+  'objective.costBps':
+    'Basis points charged on every change of position. Phase one asks whether '
+    + 'the model beats holding once real costs are paid, so zero is allowed but '
+    + 'flatters every result.',
+  'objective.park':
+    'Where money sits while the model is out of equities: cash earns nothing, '
+    + 'bills earns the 3-month T-bill rate, bonds a 10-year total return.',
+  'objective.taxScore':
+    'Score the run as a taxable account would see it: each realized gain is taxed when '
+    + 'the position is sold, losses offset later gains in the same year, and buy-and-hold, '
+    + 'which never sells, pays nothing. Scoring only: the model and its signals are the '
+    + 'same either way, so leave it off for a strategy published as a signal.',
+  'objective.taxRatePct':
+    'Your effective rate on realized gains, in percent. Every tax situation differs, so '
+    + 'it is yours to enter (in Canada, for example, the inclusion rate times your '
+    + 'marginal rate).',
+
   // --- Strategy: the twelve hyperparameters -------------------------------
   // The network is an MLP over a flattened window, so the first two decide the
   // shape of its input and everything else decides how it is fitted.

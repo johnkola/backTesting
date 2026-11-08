@@ -43,7 +43,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from nn import feature_store, walkforward_store
+from nn import feature_store, strategy_spec, walkforward_store
 from nn.labels import CLASS_SELL, NUM_CLASSES
 from nn.model import ArchSpec, build
 from nn.standardise import fit as fit_scaler
@@ -87,6 +87,10 @@ class FoldResult:
     drift_tax: float = 0.0
     commissions: float = 0.0
     timing: float = 0.0
+    # Tax on realized gains, in negative points of starting capital; 0 when the
+    # run scores before tax. Not the same thing as `drift_tax`, which is the
+    # price of sitting out and has nothing to do with tax.
+    gains_tax: float = 0.0
 
     @property
     def excess(self) -> float:
@@ -94,9 +98,9 @@ class FoldResult:
 
     @property
     def attributed(self) -> float:
-        """The three parts. Approximates `excess`; the gap is compounding,
-        since the attribution is additive and the returns are geometric."""
-        return self.drift_tax + self.commissions + self.timing
+        """The parts. Approximates `excess`; the gap is compounding, since the
+        attribution is additive and the returns are geometric."""
+        return self.drift_tax + self.commissions + self.gains_tax + self.timing
 
 
 def sharpe(daily: np.ndarray) -> float:
@@ -151,8 +155,69 @@ def simulate(
     return np.cumprod(1.0 + daily), int((changes > 0).sum())
 
 
+def simulate_taxed(
+    predictions: np.ndarray, returns: np.ndarray, *, cost_bps: float,
+    park_returns: np.ndarray | None = None, tax_rate: float = 0.0,
+) -> tuple[np.ndarray, int, float]:
+    """`simulate`, with tax charged on each realized gain. Also returns the tax
+    paid, in points of starting capital.
+
+    Scoring only: this never touches what the model learns, so a strategy
+    scored after tax publishes exactly the signals it would publish before tax.
+    That is what lets the app be a signal provider and still show a taxable
+    account's view (Design Notes, Tax and Trading Costs: "only the scoring and
+    presentation layer changes").
+
+    The rule, applied the same way to the model and to the benchmark:
+
+    * A gain is taxed when it is REALIZED, on the day the position is sold.
+      Basis is the equity on the day the position was opened; the exit
+      commission is netted from the proceeds, so commissions reduce the gain
+      the way they do on a real return.
+    * A realized loss offsets later gains within the fold. A fold is scored on
+      its own, so nothing carries into the next one.
+    * A position still open when the fold ends is not taxed: nothing was sold.
+      Buy-and-hold never sells, so it is never taxed under this rule. That is
+      the "same honest basis" the design asks for, and it is exactly the
+      handicap the design suspects is why timing loses to holding.
+    * Interest earned while parked is not taxed; only equity gains are.
+
+    `tax_rate` is a fraction (0.25 for 25%). At 0 the result is `simulate`'s,
+    bit for bit, and the tax is 0.
+    """
+    equity, trades = simulate(predictions, returns, cost_bps=cost_bps,
+                              park_returns=park_returns)
+    if tax_rate <= 0.0 or len(returns) == 0:
+        return equity, trades, 0.0
+
+    position = np.where(predictions == CLASS_SELL, 0.0, 1.0)
+    traded = np.concatenate([[position[0]], position[:-1]])
+    prev = np.concatenate([[0.0], traded[:-1]])
+    cost = cost_bps / 10_000.0
+    park = np.zeros_like(returns) if park_returns is None else park_returns
+
+    out = np.empty(len(returns))
+    e, basis, carry, paid = 1.0, 0.0, 0.0, 0.0
+    for i in range(len(returns)):
+        if traded[i] == 1.0 and prev[i] == 0.0:
+            basis = e
+        elif traded[i] == 0.0 and prev[i] == 1.0:
+            net = e * (1.0 - cost) - basis + carry
+            if net > 0.0:
+                tax = tax_rate * net
+                e -= tax
+                paid += tax
+                carry = 0.0
+            else:
+                carry = net
+        changed = traded[i] != prev[i]
+        e *= 1.0 + traded[i] * returns[i] + (1.0 - traded[i]) * park[i] - (cost if changed else 0.0)
+        out[i] = e
+    return out, trades, -paid * 100.0
+
+
 def make_test_fold(
-    dates: list[date], train_start: int, first_test: int
+    dates: list[date], train_start: int, first_test: int, last_day: date | None = None,
 ) -> list[tuple[int, list[int], list[int]]]:
     """ONE fold: train on everything before `first_test`, evaluate all of it.
 
@@ -160,9 +225,14 @@ def make_test_fold(
     of a variant already chosen on the validation folds — running it year by
     year would hand back five numbers to pick from, and picking from them is
     what turns a test set into a training set.
+
+    `last_day` is a strategy's `test.to`. Bars after it are the strategy's
+    prediction window, so scoring them would spend bars the strategy set aside.
+    Without a strategy there is no such window and the holdout runs to the end.
     """
     tr = [i for i, d in enumerate(dates) if train_start <= d.year < first_test]
-    te = [i for i, d in enumerate(dates) if d.year >= first_test]
+    te = [i for i, d in enumerate(dates)
+          if d.year >= first_test and (last_day is None or d <= last_day)]
     if not tr or not te:
         return []
     return [(first_test, tr, te)]
@@ -289,8 +359,11 @@ def run_fold(
         pred = np.where(pos < args.threshold, CLASS_SELL, 0).astype(np.int64)
 
     r = rets[va]
-    equity, trades = simulate(pred, r, cost_bps=args.cost_bps,
-                              park_returns=None if park is None else park[va])
+    rate = (getattr(args, "tax_rate", None) or 0.0) / 100.0
+    equity, trades, gains_tax = simulate_taxed(
+        pred, r, cost_bps=args.cost_bps,
+        park_returns=None if park is None else park[va], tax_rate=rate,
+    )
     hold = np.cumprod(1.0 + r)
 
     strat_daily = np.diff(np.concatenate([[1.0], equity])) / np.concatenate([[1.0], equity[:-1]])
@@ -331,6 +404,7 @@ def run_fold(
         drift_tax=drift_tax,
         commissions=commissions,
         timing=timing,
+        gains_tax=gains_tax,
     )
 
 
@@ -393,8 +467,13 @@ def connect():
     )
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Walk-forward validation, scored in money.")
+    p.add_argument("--strategy-id", type=int,
+                   help="Run a saved strategy (Strategy tab). It sets the instrument, "
+                        "windows, features, hyperparameters and objective, so the flags "
+                        "for those are refused alongside it; only --set-id (of the "
+                        "strategy's own series), --test, --label and --no-save combine")
     p.add_argument("--symbol", default="QQQ")
     p.add_argument("--source", default="yahoo-adj")
     p.add_argument("--timeframe", default="D1")
@@ -412,6 +491,11 @@ def main() -> int:
                    default="return", help="Which metric decides the headline verdict")
     p.add_argument("--cost-bps", type=float, default=5.0,
                    help="Round-trip cost charged on each position change")
+    p.add_argument("--tax-rate", type=float, default=None,
+                   help="Score after tax: percent charged on each realized gain, on the "
+                        "model and on buy-and-hold alike (which never sells, so never "
+                        "pays). Scoring only; the model and its signals are unchanged. "
+                        "Off when absent")
     p.add_argument("--park", choices=["cash", "bills", "bonds"], default="cash",
                    help="Where money sits while out of equities. 'cash' earns nothing "
                         "(the pessimistic default); 'bills' earns the 3-month T-bill "
@@ -446,14 +530,113 @@ def main() -> int:
                    help="Score the folds but write nothing to walkforward_runs. For a "
                         "throwaway sweep; the default is to record the run, because a "
                         "fold result nobody can read afterwards is not an artifact")
-    args = p.parse_args()
+    return p
+
+
+def explicit_flags(argv: list[str] | None) -> set[str]:
+    """The flags actually typed, as argparse dests.
+
+    Parsed a second time with every default suppressed, so a flag typed at its
+    default value still counts as typed. Comparing values to defaults would
+    miss `--cost-bps 5`, which is exactly the flag someone types to be sure.
+    """
+    probe = build_parser()
+    for action in probe._actions:
+        action.default = argparse.SUPPRESS
+    return set(vars(probe.parse_args(argv)))
+
+
+@dataclass(frozen=True)
+class StrategySetup:
+    """What a strategy run resolved to before any data is read."""
+
+    strategy: strategy_spec.Strategy
+    plan: strategy_spec.FoldPlan
+    args: argparse.Namespace
+    set_id: int
+    columns: strategy_spec.ResolvedColumns
+    train_since: date
+    train_until: date
+    train_bars: int
+
+
+def strategy_setup(cur, args: argparse.Namespace, explicit: set[str]) -> StrategySetup:
+    """Turn `--strategy-id` into runner settings, or raise `StrategyRefused`.
+
+    The set is the newest one for the strategy's own series unless `--set-id`
+    names another, which must be of the same instrument, source and timeframe:
+    a set of another series would train one instrument and record the other.
+    """
+    s = strategy_spec.load(cur, args.strategy_id)
+    plan = strategy_spec.fold_plan(s)
+    settings = argparse.Namespace(**strategy_spec.overlay(vars(args), explicit, s, plan))
+    if args.set_id is not None:
+        if not strategy_spec.set_matches(cur, args.set_id, s):
+            raise strategy_spec.StrategyRefused([
+                f"--set-id {args.set_id} is not a feature set of {s.instrument} "
+                f"({s.source}, {s.timeframe}), which the strategy is for"
+            ])
+        set_id = args.set_id
+    else:
+        set_id = feature_store.latest_set_id(cur, s.instrument, s.source, s.timeframe)
+
+    since, until = strategy_spec.train_window(s)
+    counts = feature_store.column_counts(cur, set_id, since.isoformat(), until.isoformat())
+    bars = feature_store.window_bars(cur, set_id, since.isoformat(), until.isoformat())
+    columns = strategy_spec.resolve_columns(
+        s.features, feature_store.column_names(cur, set_id), counts, bars,
+    )
+    return StrategySetup(s, plan, settings, set_id, columns, since, until, bars)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     conn = connect()
     cur = conn.cursor()
-    set_id = args.set_id or feature_store.latest_set_id(
-        cur, args.symbol, args.source, args.timeframe
+    setup: StrategySetup | None = None
+    provenance = None
+    if args.strategy_id is not None:
+        try:
+            setup = strategy_setup(cur, args, explicit_flags(argv))
+        except (strategy_spec.StrategyRefused, LookupError) as exc:
+            reasons = getattr(exc, "reasons", [str(exc)])
+            print(f"strategy {args.strategy_id} refused:")
+            for why in reasons:
+                print(f"  - {why}")
+            return 2
+        args = setup.args
+        set_id = setup.set_id
+    else:
+        set_id = args.set_id or feature_store.latest_set_id(
+            cur, args.symbol, args.source, args.timeframe
+        )
+    fm = feature_store.read_matrix(
+        cur, set_id, columns=setup.columns.kept if setup else None,
     )
-    fm = feature_store.read_matrix(cur, set_id)
+
+    if setup is not None:
+        s, cols = setup.strategy, setup.columns
+        cov = strategy_spec.train_coverage(
+            fm.dates, setup.train_since, setup.train_until, setup.train_bars,
+        )
+        print(f"strategy     {s.name} v{s.version} (id {s.id})  "
+              f"{len(cols.kept)} of {len(s.features)} selected features")
+        if s.objective_defaulted:
+            print("             saved before the objective was part of a strategy: "
+                  "loss, cost and park are the defaults")
+        for name, why in cols.dropped:
+            print(f"  dropped    {name}: {why}")
+        for name, have, of in cols.partial:
+            print(f"  partial    {name}: {have} of {of} train bars")
+        print(f"train cover  {cov.first} .. {cov.last}: {cov.used} of {cov.bars} bars"
+              + (f"  (SHORT: the strategy asked from {setup.train_since})" if cov.short else ""))
+        if cov.used == 0:
+            print("refused: no train bar has every kept column, so there is nothing to fit")
+            return 2
+        provenance = strategy_spec.provenance(
+            s, cols, cov, setup.plan.test_end if args.test else None,
+        )
     closes = load_closes(cur, args.symbol, args.source, args.timeframe)
 
     x_all = feature_store.stack_lookback(fm.values, args.lookback)
@@ -472,7 +655,8 @@ def main() -> int:
     )
 
     if args.test:
-        folds = make_test_fold(wdates, args.train_start, args.last_val + 1)
+        folds = make_test_fold(wdates, args.train_start, args.last_val + 1,
+                               last_day=setup.plan.test_end if setup else None)
     else:
         folds = make_folds(wdates, args.train_start, args.first_val, args.last_val)
 
@@ -489,16 +673,20 @@ def main() -> int:
           f"(test block {args.last_val + 1}+ untouched)")
     print(f"simulation   long unless SELL, {args.cost_bps:.0f} bps per change, "
           f"signal acted on the next session")
+    print("tax          " + (f"{args.tax_rate:g}% on each realized gain, buy-and-hold taxed "
+                             "the same way (it never sells); scoring only"
+                             if args.tax_rate else "off: scored before tax"))
     print(f"\n{'fold':>4} {'val':>5} {'strat%':>8} {'hold%':>8} {'excess':>8} "
           f"{'shrp':>6} {'maxdd':>7} {'trd':>4} │ {'out':>4} {'drift':>7} {'comm':>6} "
-          f"{'timing':>7}")
+          f"{'tax':>6} {'timing':>7}")
 
     # Opened before the first fold so the row exists while the run is still
     # going: fourteen retrains is minutes to hours, and a run that only appears
     # once it finishes is the silent wait the design is explicitly against.
     run_id = None
     if not args.no_save:
-        run_id = walkforward_store.open_run(conn, args, set_id, x_all.shape[1])
+        run_id = walkforward_store.open_run(conn, args, set_id, x_all.shape[1],
+                                            fm.names, provenance)
         print(f"recording    walkforward_runs id={run_id} "
               f"(folds committed as they finish)")
 
@@ -511,7 +699,8 @@ def main() -> int:
         print(f"{r.fold:>4} {r.val_year:>5} {r.strat_return:>8.2f} "
               f"{r.hold_return:>8.2f} {r.excess:>+8.2f} {r.strat_sharpe:>6.2f} "
               f"{r.strat_maxdd:>7.2f} {r.trades:>4} │ {r.days_out:>4} "
-              f"{r.drift_tax:>+7.2f} {r.commissions:>+6.2f} {r.timing:>+7.2f}")
+              f"{r.drift_tax:>+7.2f} {r.commissions:>+6.2f} {r.gains_tax:>+6.2f} "
+              f"{r.timing:>+7.2f}")
 
     won = sum(1 for r in results if r.excess > 0)
     mean_excess = float(np.mean([r.excess for r in results]))
@@ -542,6 +731,7 @@ def main() -> int:
     mean_drift = float(np.mean([r.drift_tax for r in results]))
     mean_comm = float(np.mean([r.commissions for r in results]))
     mean_timing = float(np.mean([r.timing for r in results]))
+    mean_tax = float(np.mean([r.gains_tax for r in results]))
     print("\nWHERE THE GAP COMES FROM  (pp per fold; only `timing` is the model)")
     print(f"  days out of the market     {mean_out:>8.0f}")
     verdict = ("the skipped days really were worse than average" if mean_timing > 0.05
@@ -550,12 +740,16 @@ def main() -> int:
           f"equity return forfeited net of the {args.park} earned while out")
     print(f"  commissions                {mean_comm:>+8.2f}   "
           f"{args.cost_bps:.0f} bps x {total_trades / len(results):.0f} changes")
+    if args.tax_rate:
+        print(f"  gains tax                  {mean_tax:>+8.2f}   "
+              f"{args.tax_rate:g}% of realized gains; buy-and-hold realized none")
     print(f"  timing                     {mean_timing:>+8.2f}   {verdict}")
     print(f"  {'-' * 56}")
-    print(f"  attributed total           {mean_drift + mean_comm + mean_timing:>+8.2f}   "
+    costs = mean_drift + mean_comm + mean_tax
+    print(f"  attributed total           {costs + mean_timing:>+8.2f}   "
           f"(vs measured excess {mean_excess:+.2f}; gap is compounding)")
-    if mean_drift + mean_comm != 0:
-        covered = mean_timing / abs(mean_drift + mean_comm) * 100
+    if costs != 0:
+        covered = mean_timing / abs(costs) * 100
         print(f"  timing covers              {covered:>7.1f}%   of the cost of trading")
 
     if args.objective == "return":

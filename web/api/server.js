@@ -8,6 +8,7 @@ const { normaliseMetadata } = require('./modelMetadata');
 const featureCatalogue = require('./featureCatalogue');
 const docs = require('./docs');
 const strategies = require('./strategies');
+const importFiles = require('./importFiles');
 const { DOCS, DOC_BY_SLUG } = require('./docsRegistry');
 
 // CSV upload is owned by the Python loader. In docker-compose this is the
@@ -440,6 +441,16 @@ app.get('/api/imports', async (req, res) => {
   }
 });
 
+// The version history of each series' input file (see importFiles.js): which
+// file was loaded when, and whether it was an update or a data fix.
+app.get('/api/import-files', async (req, res) => {
+  try {
+    res.json(await importFiles.listVersions(pool, req.query, parsePagination(req.query)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Loader-owned routes: POST /api/imports, POST /api/aggregate, and the
 // /api/nn/* family (train + predict + models). Streamed straight through
 // so multipart uploads and large prediction batches don't buffer here.
@@ -727,6 +738,7 @@ app.get('/api/strategies/saved', async (req, res) => {
       items: await strategies.list({ name, latestOnly }),
       // The form is generated from the same spec the validator enforces.
       paramSpec: strategies.PARAM_SPEC,
+      objectiveSpec: strategies.OBJECTIVE_SPEC,
       modelTypes: [...strategies.MODEL_TYPES],
       validationSchemes: [...strategies.VALIDATION_SCHEMES],
       windows: strategies.WINDOWS,
@@ -790,6 +802,9 @@ app.delete('/api/strategies/saved/:id', async (req, res) => {
     const n = await strategies.removeByName(found.name);
     res.json({ status: 'deleted', name: found.name, versionsDeleted: n });
   } catch (err) {
+    if (err instanceof strategies.StrategyInUseError) {
+      return res.status(409).json({ error: err.message, runs: err.runs });
+    }
     res.status(500).json({ error: err.message });
   }
 });

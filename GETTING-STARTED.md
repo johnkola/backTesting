@@ -102,6 +102,11 @@ Date,Open,High,Low,Close,Volume
 2020-01-02,75.34,76.13,75.13,75.89,79255505
 ```
 
+Columns are read by position, so a file with any other header is refused rather than
+guessed at. Case, spaces, quotes and the first column's name (`Date`, `Datetime`,
+`Timestamp` or `Time`) don't matter. A raw Yahoo download has an extra `Adj Close`
+column: delete it first, or its values would have been stored as volume.
+
 Then import it. In the browser, use the upload form on **Imports** — pick the file, give
 it a symbol, type, timeframe and source name. Or from a shell:
 

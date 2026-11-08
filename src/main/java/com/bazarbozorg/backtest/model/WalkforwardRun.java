@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.model;
 
+import java.time.LocalDate;
 import java.time.ZonedDateTime;
 
 /**
@@ -23,9 +24,15 @@ import java.time.ZonedDateTime;
  * partway. Its folds are still readable either way, which is what makes the
  * Training tab a progress view rather than a silent wait.
  *
- * <p>The exact feature list §6.1 asks for is not duplicated here:
- * {@code featureSetId} points at the set, and {@code feature_spec} already holds
- * that set's ordered columns and the method each was built with.
+ * <p>The exact feature list §6.1 asks for is {@code columnsJson}, the columns
+ * the network was fed, in input order. It once was implied by
+ * {@code featureSetId}, when every run read the whole set; a strategy run reads
+ * a subset, so the set alone no longer says. It is null only on a run recorded
+ * before the column existed, which read the whole set.
+ *
+ * <p>{@code strategy} is where a strategy run came from and what it really
+ * covered (§6.1, §6.2), or null for a run launched from flags alone. Grouped
+ * in one record because the fields are all present or all absent together.
  *
  * @param id                  surrogate key
  * @param label               the variant's name, {@code ""} when unnamed
@@ -42,6 +49,9 @@ import java.time.ZonedDateTime;
  *                            are reported every run
  * @param costBps             round-trip cost charged on each position change
  * @param park                where money sat while out of equities
+ * @param taxRate             percent charged on realized gains when the run was scored
+ *                            after tax; null when it was scored before tax. Scoring
+ *                            only: the model and its signals are the same either way
  * @param threshold           position below which a money-trained model counts as flat;
  *                            null for a classifier, which has no position to cut
  * @param trainStart          first training year
@@ -51,6 +61,9 @@ import java.time.ZonedDateTime;
  *                            mark it, because a holdout run sitting unlabelled among
  *                            validation runs is how it quietly becomes training data
  * @param hyperparamsJson     the knobs with no column of their own, as stored text
+ * @param columnsJson         the input columns in order, as stored JSON text; null on a
+ *                            run older than the column
+ * @param strategy            the saved strategy the run executed, or null for a flags run
  * @param startedAt           when the run row was written, before the first fold
  * @param finishedAt          when the last fold landed, or null if still going
  * @param folds               how many folds are stored
@@ -66,6 +79,7 @@ import java.time.ZonedDateTime;
  * @param meanDaysOut         mean days per fold spent flat
  * @param meanDriftTax        mean cost of being out at all
  * @param meanCommissions     mean mechanical trading cost
+ * @param meanGainsTax        mean tax on realized gains per fold; 0 when scored before tax
  * @param meanTiming          mean model contribution — the only term that is the model
  */
 public record WalkforwardRun(
@@ -83,11 +97,14 @@ public record WalkforwardRun(
         double costBps,
         String park,
         Double threshold,
+        Double taxRate,
         int trainStart,
         int firstVal,
         int lastVal,
         boolean isTest,
         String hyperparamsJson,
+        String columnsJson,
+        StrategyProvenance strategy,
         ZonedDateTime startedAt,
         ZonedDateTime finishedAt,
         int folds,
@@ -103,8 +120,42 @@ public record WalkforwardRun(
         Double meanDaysOut,
         Double meanDriftTax,
         Double meanCommissions,
+        Double meanGainsTax,
         Double meanTiming
 ) {
+
+    /**
+     * Which saved strategy a run executed, and what its training window really
+     * held.
+     *
+     * <p>Name and version are kept beside the id because a strategy row can be
+     * deleted, and the run must still say what it ran. The coverage is the first
+     * fold's train window as the matrix held it: a partial column (kept, with
+     * holes) moves {@code trainFirst} later and lowers {@code trainBarsUsed}
+     * below {@code trainBars}, the bars in the calendar window.
+     *
+     * @param id            {@code strategies.id}; no foreign key, the web layer owns that table
+     * @param name          the strategy's name at run time
+     * @param version       its version at run time
+     * @param droppedJson   {@code [[name, why], ...]}: selected columns left out
+     * @param partialJson   {@code [[name, values, bars], ...]}: kept columns with holes
+     * @param trainFirst    first train bar the matrix actually held
+     * @param trainBarsUsed train bars with every kept column present
+     * @param trainBars     bars in the strategy's train window
+     * @param testEnd       the strategy's {@code test.to}, set only on a holdout run
+     */
+    public record StrategyProvenance(
+            long id,
+            String name,
+            Integer version,
+            String droppedJson,
+            String partialJson,
+            LocalDate trainFirst,
+            Integer trainBarsUsed,
+            Integer trainBars,
+            LocalDate testEnd
+    ) {
+    }
 
     /** True while the run has not stamped {@code finishedAt}. */
     public boolean inProgress() {

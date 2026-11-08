@@ -97,6 +97,28 @@ export default function ResolvedStrategy(
         </div>
       )}
 
+      <div>
+        <div className="text-xs font-medium mb-1">Objective and costs</div>
+        <p className="text-xs font-mono">
+          {[
+            `loss=${s.objective.loss}`,
+            s.objective.loss === 'ce'
+              ? `classWeights=${s.objective.classWeights}`
+              : `positionThreshold=${s.objective.positionThreshold}`,
+            `verdict=${s.objective.verdict}`,
+            `cost=${s.objective.costBps} bps`,
+            `park=${s.objective.park}`,
+            s.objective.taxScore ? `tax=${s.objective.taxRatePct}% on realized gains` : 'tax=off',
+          ].join('  ·  ')}
+        </p>
+        {s.objectiveDefaulted && (
+          <p className="text-xs text-warning mt-0.5">
+            Saved before the objective was part of a strategy, so these are the defaults.
+            Re-save it on the Strategy tab to record them as a choice.
+          </p>
+        )}
+      </div>
+
       {hyper.length > 0 && (
         <div>
           <div className="text-xs font-medium mb-1">Hyperparameters set by the strategy</div>

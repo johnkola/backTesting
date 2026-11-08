@@ -8,6 +8,15 @@ expectations):
   expected input format:  Date,Open,High,Low,Close,Volume  (header line)
   date column accepts:    yyyy-MM-dd      or   yyyy-MM-dd HH:mm:ss
 
+THE HEADER IS CHECKED, BECAUSE THE ROWS ARE READ BY POSITION. Field 5 is
+stored as volume whatever the header calls it. Before `check_header` existed, a
+raw Yahoo download (`Date,Open,High,Low,Close,Adj Close,Volume`) imported
+cleanly with Adj Close stored as volume: no error, and the cohesion checks
+never look at the header. So a header that does not name these six columns in
+this order is refused before anything is read into the database, rather than
+mapped by name. Mapping would make the archived slice, which keeps the file's
+own header, mean different things depending on which reader opened it.
+
 Multi-year inputs are split into one slice per year. Each slice has its
 own synthesised CSV (header + that year's rows), SHA-256 hash, and
 archive_path = <source>/<symbol>/<year>/<timeframe>.csv.
@@ -15,8 +24,30 @@ archive_path = <source>/<symbol>/<year>/<timeframe>.csv.
 Per-slice dup-check against `data_imports.archive_path`:
   no row at this path                  → 'create'
   same hash at this path               → 'skip'   (idempotent)
+  different hash, only later days      → 'extend' (a refreshed download)
   different hash + !force              → 'conflict'  (whole upload rejected)
   different hash +  force              → 'overwrite'
+
+EVERY FILE IS A VERSION, AND EACH VERSION SAYS WHAT KIND OF CHANGE IT WAS.
+This importer is the one way outside data reaches the database: Yahoo prices,
+the market series and the FRED series all arrive as CSV. Providers revise
+history (FRED does it routinely), so "is this file loaded, and if not, how does
+it differ" has to be answerable afterwards, not only at upload time.
+`import_files` holds one row per distinct file (SHA-256 of its exact bytes)
+per series, labelled 'new', 'update' (only later days added), 'fix' (stored
+values changed or rows dropped), 'update+fix', or 'same' (different bytes,
+identical data: line endings, spacing). Each `data_imports` slice points at the
+version it came from, and `diff_json` keeps what changed per year.
+
+An identical re-upload is recognised by the file hash alone, before parsing,
+but only while every year it produced still holds exactly that slice. A file
+hash by itself would say "already loaded" after a later file overwrote one of
+its years, or after that year was undone.
+
+Updates go in without `force`; fixes do not. New days after the stored ones
+change nothing that was there, while a changed past value changes every run and
+feature built on it, so it stays deliberate. The diff is in the 409 preview so
+the person forcing a fix sees what it changes.
 
 Pre-flight: any 'conflict' fails the whole upload before we touch the DB
 or filesystem.
@@ -29,6 +60,7 @@ the DB transaction commits, so a crashed DB write doesn't leak files.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -46,6 +78,14 @@ ALLOWED_TYPES = {"STOCK", "FOREX", "CRYPTO", "INDEX", "COMMODITY"}
 # Postgres' 65535-parameter cap divided by 9 params per candle row, with
 # headroom. Matches the Node importer's batch size for consistency.
 CANDLE_BATCH_ROWS = 5000
+
+#: The column order rows are parsed in. Positions, not names, decide what is
+#: stored where, so this is the whole contract.
+EXPECTED_COLUMNS = ("open", "high", "low", "close", "volume")
+#: Names accepted for the first column. Only its position matters; the value
+#: format is checked row by row.
+DATE_COLUMN_NAMES = {"date", "datetime", "timestamp", "time"}
+EXPECTED_HEADER = "Date,Open,High,Low,Close,Volume"
 
 _DATE_ONLY = re.compile(r"^(\d{4})-\d{2}-\d{2}$")
 _DATE_TIME = re.compile(r"^(\d{4})-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
@@ -78,7 +118,91 @@ class SlicePlan:
     hash: str
     archive_path: str
     existing: ImportRecord | None
-    plan: str  # 'create' | 'skip' | 'overwrite' | 'conflict'
+    plan: str  # 'create' | 'skip' | 'extend' | 'overwrite' | 'conflict'
+    #: Against the archived previous slice; None when there was none, it
+    #: matched, or its archive file could not be read.
+    diff: SliceDiff | None = None
+
+
+@dataclass(frozen=True)
+class SliceDiff:
+    """How one year's new slice differs from the stored one."""
+
+    added: int
+    changed: int
+    removed: int
+    #: Every added bar is after the last stored one: a refreshed download.
+    later_only: bool
+    #: Up to five timestamps that changed or were removed, for the reader.
+    examples: tuple[str, ...]
+
+    @property
+    def is_extension(self) -> bool:
+        return self.changed == 0 and self.removed == 0 and self.added > 0 and self.later_only
+
+    def to_dict(self) -> dict[str, object]:
+        return {"added": self.added, "changed": self.changed, "removed": self.removed,
+                "laterOnly": self.later_only, "examples": list(self.examples)}
+
+
+def diff_slices(old_rows: Iterable[str], new_rows: Iterable[str]) -> SliceDiff:
+    """Compare two slices as parsed bars, not as text.
+
+    Parsed so that a change of spacing or number formatting ("1.50" vs "1.5")
+    is not reported as a data change. Pure.
+    """
+    old = {t[0]: t[1:] for t in parse_rows_to_tuples(old_rows)}
+    new = {t[0]: t[1:] for t in parse_rows_to_tuples(new_rows)}
+    changed = sorted(ts for ts in old.keys() & new.keys() if old[ts] != new[ts])
+    removed = sorted(old.keys() - new.keys())
+    added = sorted(new.keys() - old.keys())
+    last_old = max(old) if old else None
+    later_only = all(last_old is None or ts > last_old for ts in added)
+    return SliceDiff(
+        added=len(added), changed=len(changed), removed=len(removed),
+        later_only=later_only, examples=tuple((changed + removed)[:5]),
+    )
+
+
+def change_kind(slices: list[SlicePlan]) -> str:
+    """Label a file version from its slices' plans.
+
+    Called on the committed plan, so 'conflict' never appears: a conflicting
+    upload is refused before anything is recorded.
+    """
+    plans = {s.plan for s in slices}
+    if all(s.existing is None for s in slices):
+        return "new"
+    fix = "overwrite" in plans
+    update = "extend" in plans or "create" in plans
+    if fix and update:
+        return "update+fix"
+    if fix:
+        return "fix"
+    if update:
+        return "update"
+    return "same"
+
+
+def file_sha256(path: str | os.PathLike[str]) -> tuple[str, int]:
+    """SHA-256 of a file's exact bytes, and its size. Streams; never slurps."""
+    h = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+            size += len(chunk)
+    return h.hexdigest(), size
+
+
+def _read_archived_rows(archive_path: str) -> list[str] | None:
+    """The stored slice's data rows, or None when its archive file is gone."""
+    try:
+        text = (resolve_archive_root() / archive_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return lines[1:]
 
 
 def scan_and_bucket(stream: IO[bytes]) -> tuple[str | None, dict[int, list[str]]]:
@@ -105,6 +229,48 @@ def scan_and_bucket(stream: IO[bytes]) -> tuple[str | None, dict[int, list[str]]
         rows_by_year.setdefault(year, []).append(line)
 
     return header, rows_by_year
+
+
+def read_header(path: str | os.PathLike[str]) -> str | None:
+    """The file's first non-empty line, as `scan_and_bucket` would take it.
+
+    So the header can be refused before the database is touched, even on the
+    path that answers an identical file from its hash without parsing it.
+    """
+    with open(path, "rb") as f:
+        for raw in f:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if line:
+                return line
+    return None
+
+
+def check_header(header: str) -> str | None:
+    """Why this header cannot be imported, or None when it can.
+
+    Compared without case, surrounding spaces, quotes or a UTF-8 byte-order
+    mark (Excel writes one), since none of those change which column is which.
+    Anything else that differs is refused: an extra, missing or reordered
+    column means some value would be stored under the wrong name.
+    """
+    names = [c.strip().strip('"').strip("'").strip().lower()
+             for c in header.lstrip("\ufeff").split(",")]
+    if len(names) == 6 and names[0] in DATE_COLUMN_NAMES \
+            and tuple(names[1:]) == EXPECTED_COLUMNS:
+        return None
+
+    shown = header.lstrip("\ufeff")
+    if "adj close" in names:
+        return (
+            f"header is {shown!r}, which has an Adj Close column (a raw Yahoo "
+            f"download). Rows are read by position, so it would be stored as volume. "
+            f"Remove the Adj Close column, leaving {EXPECTED_HEADER!r}"
+        )
+    return (
+        f"header is {shown!r}, but rows are read by position as "
+        f"{EXPECTED_HEADER!r}. Rename or reorder the columns to match, so no value "
+        f"is stored under the wrong name"
+    )
 
 
 def synthesize_slice(header: str, rows: Iterable[str]) -> str:
@@ -260,14 +426,24 @@ def plan_slices(
         h = sha256_hex(content)
         ap = relative_path(source_name, symbol, year, timeframe)
         existing = _fetch_by_archive_path(conn, ap)
+        diff = None
         if existing is None:
             plan = "create"
         elif existing.fileHash == h:
             plan = "skip"
-        elif force:
-            plan = "overwrite"
         else:
-            plan = "conflict"
+            # Without the archived slice there is nothing to compare against,
+            # so the year is a conflict exactly as before this check existed.
+            old_rows = _read_archived_rows(existing.archivePath or ap)
+            diff = diff_slices(old_rows, rows) if old_rows is not None else None
+            if diff is not None and diff.is_extension:
+                plan = "extend"
+            elif diff is not None and diff.added == diff.changed == diff.removed == 0:
+                plan = "skip"  # same bars, different text: nothing to write
+            elif force:
+                plan = "overwrite"
+            else:
+                plan = "conflict"
         slices.append(
             SlicePlan(
                 year=year,
@@ -277,9 +453,112 @@ def plan_slices(
                 archive_path=ap,
                 existing=existing,
                 plan=plan,
+                diff=diff,
             )
         )
     return slices
+
+
+@dataclass(frozen=True)
+class SourceFile:
+    """The uploaded file itself, as `import_files` records it."""
+
+    hash: str
+    size: int
+    name: str
+
+
+_SELECT_FILE = """
+    SELECT f.id, f.file_hash, f.file_name, f.change_kind, f.slices_json,
+           f.imported_at, f.row_count
+      FROM import_files f
+      JOIN data_sources ds ON ds.id = f.source_id
+      JOIN instruments i ON i.id = f.instrument_id
+     WHERE f.file_hash = %s AND ds.name = %s AND i.symbol = %s AND f.timeframe = %s
+"""
+
+
+def find_loaded_file(
+    conn: Connection, file_hash: str, *, source_name: str, symbol: str, timeframe: str,
+) -> dict[str, object] | None:
+    """This exact file, if it is what the database holds now; else None.
+
+    "What it holds now" is checked year by year: each slice the file produced
+    must still be the newest import at its archive path. A file whose year was
+    later overwritten by another file, or undone, is not loaded any more,
+    whatever its hash, and goes through the normal comparison.
+
+    On a match, `last_seen_at` moves, so the history shows the re-upload.
+    """
+    with conn.cursor() as cur:
+        cur.execute(_SELECT_FILE, (file_hash, source_name, symbol, timeframe))
+        row = cur.fetchone()
+    if row is None:
+        return None
+    file_id, _, file_name, kind, slices_json, imported_at, row_count = row
+    current: list[dict[str, object]] = []
+    for sl in json.loads(slices_json):
+        ap = relative_path(source_name, symbol, int(sl["year"]), timeframe)
+        rec = _fetch_by_archive_path(conn, ap)
+        if rec is None or rec.fileHash != sl["hash"]:
+            return None
+        current.append({"year": int(sl["year"]), "status": "skipped", "import": _dump(rec)})
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute("UPDATE import_files SET last_seen_at = now() WHERE id = %s", (file_id,))
+    return {
+        "file": {
+            "id": int(file_id), "hash": file_hash, "name": file_name, "changeKind": kind,
+            "rowCount": int(row_count), "alreadyLoaded": True,
+            "importedAt": imported_at.isoformat() if imported_at is not None else "",
+        },
+        "imports": current,
+    }
+
+
+_UPSERT_FILE = """
+    INSERT INTO import_files
+        (source_id, instrument_id, timeframe, file_hash, file_name, byte_size,
+         row_count, first_date, last_date, change_kind, slices_json, diff_json)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_id, instrument_id, timeframe, file_hash) DO UPDATE
+        SET last_seen_at = now()
+    RETURNING id, change_kind, imported_at, (xmax = 0) AS inserted
+"""
+
+
+def _iso_of(line: str) -> str | None:
+    parsed = parse_rows_to_tuples([line])
+    return parsed[0][0] if parsed else None
+
+
+def record_file(
+    conn: Connection, f: SourceFile, slices: list[SlicePlan], *,
+    source_id: int, instrument_id: int, timeframe: str,
+) -> dict[str, object]:
+    """Insert this file's version row, or touch it if these bytes were seen before.
+
+    A hash seen before keeps its original label: the first time a file was
+    loaded is when its kind was decided, and re-uploading it after an undo is
+    not a new version.
+    """
+    ordered = sorted(slices, key=lambda sl: sl.year)
+    first = _iso_of(ordered[0].rows[0]) if ordered and ordered[0].rows else None
+    last = _iso_of(ordered[-1].rows[-1]) if ordered and ordered[-1].rows else None
+    diffs = {str(sl.year): sl.diff.to_dict() for sl in ordered if sl.diff is not None}
+    with conn.cursor() as cur:
+        cur.execute(_UPSERT_FILE, (
+            source_id, instrument_id, timeframe, f.hash, f.name, f.size,
+            sum(len(sl.rows) for sl in ordered), first, last, change_kind(ordered),
+            json.dumps([{"year": sl.year, "hash": sl.hash} for sl in ordered]),
+            json.dumps(diffs) if diffs else None,
+        ))
+        row = cur.fetchone()
+    assert row is not None
+    return {
+        "id": int(row[0]), "hash": f.hash, "name": f.name, "changeKind": row[1],
+        "importedAt": row[2].isoformat() if row[2] is not None else "",
+        "alreadyLoaded": False, "seenBefore": not row[3],
+    }
 
 
 def commit_slices(
@@ -294,14 +573,58 @@ def commit_slices(
 ) -> list[dict[str, object]]:
     """Run candle upserts + audit-row inserts for every non-skipped slice
     inside a single transaction. Returns one result entry per input slice
-    (skipped slices echo their existing record)."""
+    (skipped slices echo their existing record). Records no file version;
+    `commit_file` is the same with one."""
 
+    results, _ = _commit(conn, slices, source_name=source_name, symbol=symbol,
+                         type_=type_, timeframe=timeframe, file_name=file_name,
+                         source_file=None)
+    return results
+
+
+def commit_file(
+    conn: Connection,
+    slices: list[SlicePlan],
+    source_file: SourceFile,
+    *,
+    source_name: str,
+    symbol: str,
+    type_: str,
+    timeframe: str,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """`commit_slices`, plus the file's version row in the same transaction.
+
+    Returns the slice results and the version record. Every written slice's
+    `data_imports.import_file_id` points at that version.
+    """
+    results, file_rec = _commit(conn, slices, source_name=source_name, symbol=symbol,
+                                type_=type_, timeframe=timeframe,
+                                file_name=source_file.name, source_file=source_file)
+    assert file_rec is not None
+    return results, file_rec
+
+
+def _commit(
+    conn: Connection,
+    slices: list[SlicePlan],
+    *,
+    source_name: str,
+    symbol: str,
+    type_: str,
+    timeframe: str,
+    file_name: str,
+    source_file: SourceFile | None,
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     archive_root = resolve_archive_root()
     results: list[dict[str, object]] = []
 
     with conn.transaction():
         source_id = get_or_create_data_source(conn, source_name)
         instrument_id = get_or_create_instrument(conn, symbol, type_)
+        file_rec = (record_file(conn, source_file, slices, source_id=source_id,
+                                instrument_id=instrument_id, timeframe=timeframe)
+                    if source_file is not None else None)
+        file_id = file_rec["id"] if file_rec else None
 
         for slice_ in slices:
             if slice_.plan == "skip":
@@ -329,8 +652,8 @@ def commit_slices(
                     """
                     INSERT INTO data_imports
                       (source_id, instrument_id, timeframe, file_path, file_name,
-                       row_count, file_hash, archive_path)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       row_count, file_hash, archive_path, import_file_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, imported_at
                     """,
                     (
@@ -342,6 +665,7 @@ def commit_slices(
                         len(candles),
                         slice_.hash,
                         slice_.archive_path,
+                        file_id,
                     ),
                 )
                 ins = cur.fetchone()
@@ -350,7 +674,8 @@ def commit_slices(
             results.append(
                 {
                     "year": slice_.year,
-                    "status": "overwritten" if slice_.plan == "overwrite" else "created",
+                    "status": _DONE_STATUS[slice_.plan],
+                    "diff": slice_.diff.to_dict() if slice_.diff is not None else None,
                     "import": {
                         "id": int(ins[0]),
                         "sourceId": source_id,
@@ -368,7 +693,11 @@ def commit_slices(
                 }
             )
 
-    return results
+    return results, file_rec
+
+
+#: Plan -> the status a committed slice reports.
+_DONE_STATUS = {"create": "created", "extend": "extended", "overwrite": "overwritten"}
 
 
 def write_archive_files(slices: list[SlicePlan]) -> None:
@@ -411,6 +740,7 @@ def conflict_preview(slices: list[SlicePlan]) -> list[dict[str, object]]:
     mapping = {
         "create": "would-create",
         "skip": "would-skip",
+        "extend": "would-extend",
         "overwrite": "would-overwrite",
         "conflict": "conflict",
     }
@@ -422,6 +752,9 @@ def conflict_preview(slices: list[SlicePlan]) -> list[dict[str, object]]:
             "rowCount": len(s.rows),
             "fileHash": s.hash,
             "existing": _dump(s.existing),
+            # What forcing this year would change. None for a new year, or
+            # when the stored slice's archive file could not be read.
+            "diff": s.diff.to_dict() if s.diff is not None else None,
         }
         for s in slices
     ]

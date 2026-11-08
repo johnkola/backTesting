@@ -39,6 +39,119 @@ const PARAM_SPEC = {
   seed: { kind: 'int', min: 0, max: 2147483647, label: 'Seed' },
 };
 
+/**
+ * What the model is trained to want and what a run is charged: the settings
+ * that decide the verdict, not the shape of the network.
+ *
+ * §8.2a: "a form that exposes every choice a run can make; nothing is fixed in
+ * code". These were runner flags until they moved here, so two runs of one
+ * strategy could differ by cost or loss with neither run record saying so.
+ *
+ * Kept out of `hyperparams` on purpose: the Train and Run pages forward
+ * `hyperparams` key-for-key to the loader's single-model endpoints, which know
+ * none of these. And unlike hyperparameters, nothing here may be left blank:
+ * `validateObjective` fills every default, so a saved row states every value
+ * and stays meaningful if a default in code later changes.
+ *
+ * Defaults mirror `walkforward.py`'s flags, and `nn/strategy_spec.py` holds
+ * the same table for rows saved before this existed; `test_strategy_spec`
+ * keeps the two together.
+ */
+const OBJECTIVE_DEFAULTS = {
+  loss: 'ce',
+  classWeights: false,
+  positionThreshold: null,
+  verdict: 'return',
+  costBps: 5,
+  park: 'cash',
+  taxScore: false,
+  taxRatePct: null,
+};
+/** Loss → what it trains. `ce` is the 3-class label; the rest a position head. */
+const LOSSES = new Set(['ce', 'return', 'sharpe', 'calmar']);
+/** The metric that decides whether a run beat holding. */
+const VERDICTS = new Set(['return', 'sharpe', 'drawdown']);
+/** Where money sits while out of equities. */
+const PARKS = new Set(['cash', 'bills', 'bonds']);
+/** A money-trained model's default cut between flat and long. */
+const DEFAULT_POSITION_THRESHOLD = 0.5;
+const MAX_COST_BPS = 100;
+/** Percent charged on realized gains when scoring after tax. */
+const MAX_TAX_RATE_PCT = 100;
+
+/**
+ * Validates and completes `objective`. Absent fields take their default.
+ *
+ * Two combinations are refused because one setting would silently do nothing:
+ * class weights only reweight the classifier's loss, and a position threshold
+ * only cuts a money-trained position. A record that claims a setting that was
+ * never applied is the thing §6.1 exists to prevent.
+ */
+function validateObjective(raw, errors) {
+  if (raw !== undefined && raw !== null && !isPlainObject(raw)) {
+    errors.push('objective must be an object');
+    return null;
+  }
+  const o = { ...OBJECTIVE_DEFAULTS, ...(raw ?? {}) };
+  for (const key of Object.keys(raw ?? {})) {
+    if (!(key in OBJECTIVE_DEFAULTS)) errors.push(`unknown objective setting: ${key}`);
+  }
+  const before = errors.length;
+
+  if (!LOSSES.has(o.loss)) errors.push(`objective.loss must be one of ${[...LOSSES].join(', ')}`);
+  if (!VERDICTS.has(o.verdict)) {
+    errors.push(`objective.verdict must be one of ${[...VERDICTS].join(', ')}`);
+  }
+  if (!PARKS.has(o.park)) errors.push(`objective.park must be one of ${[...PARKS].join(', ')}`);
+  if (typeof o.classWeights !== 'boolean') errors.push('objective.classWeights must be true or false');
+
+  const cost = typeof o.costBps === 'string' && o.costBps.trim() !== '' ? Number(o.costBps) : o.costBps;
+  if (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0 || cost > MAX_COST_BPS) {
+    errors.push(`objective.costBps must be a number between 0 and ${MAX_COST_BPS}`);
+  }
+
+  let threshold = o.positionThreshold === '' ? null : o.positionThreshold;
+  if (typeof threshold === 'string') threshold = Number(threshold);
+  if (threshold !== null
+      && (typeof threshold !== 'number' || !Number.isFinite(threshold)
+          || threshold <= 0 || threshold >= 1)) {
+    errors.push('objective.positionThreshold must be between 0 and 1, exclusive');
+  }
+
+  // Score after tax: a switch and a rate. Scoring only -- the model and its
+  // signals are the same either way, so a strategy published as a signal can
+  // still show a taxable account's view. A rate with the switch off would be
+  // recorded and never applied, so it is refused like the two settings below.
+  if (typeof o.taxScore !== 'boolean') errors.push('objective.taxScore must be true or false');
+  let taxRate = o.taxRatePct === '' ? null : o.taxRatePct;
+  if (typeof taxRate === 'string') taxRate = Number(taxRate);
+  if (taxRate !== null
+      && (typeof taxRate !== 'number' || !Number.isFinite(taxRate)
+          || taxRate <= 0 || taxRate > MAX_TAX_RATE_PCT)) {
+    errors.push(`objective.taxRatePct must be above 0 and at most ${MAX_TAX_RATE_PCT}`);
+  } else if (o.taxScore === true && taxRate === null) {
+    errors.push('score after tax needs a tax rate');
+  } else if (o.taxScore === false && taxRate !== null) {
+    errors.push('a tax rate only applies when scoring after tax');
+  }
+
+  if (o.loss === 'ce') {
+    if (threshold !== null) {
+      errors.push('a position threshold only applies to a money-trained loss, not ce');
+    }
+  } else if (LOSSES.has(o.loss)) {
+    if (o.classWeights === true) errors.push('class weights only apply to the ce loss');
+    if (threshold === null) threshold = DEFAULT_POSITION_THRESHOLD;
+  }
+
+  if (errors.length > before) return null;
+  return {
+    loss: o.loss, classWeights: o.classWeights, positionThreshold: threshold,
+    verdict: o.verdict, costBps: cost, park: o.park,
+    taxScore: o.taxScore, taxRatePct: taxRate,
+  };
+}
+
 /** §8.2a: single split, k-fold by time, or walk-forward. */
 const VALIDATION_SCHEMES = new Set(['single', 'kfold_time', 'walkforward']);
 
@@ -233,6 +346,8 @@ function validateStrategy(body) {
     }
   }
 
+  const objective = validateObjective(b.objective, errors);
+
   let notes = null;
   if (b.notes !== undefined && b.notes !== null && b.notes !== '') {
     if (typeof b.notes !== 'string') errors.push('notes must be text');
@@ -246,7 +361,7 @@ function validateStrategy(body) {
     ok: true,
     value: {
       name, instrument, source, timeframe, modelType,
-      validationScheme: scheme, features, windows, label, hyperparams, notes,
+      validationScheme: scheme, features, windows, label, hyperparams, objective, notes,
       actor: typeof b.actor === 'string' && b.actor.trim() ? b.actor.trim() : DEFAULT_ACTOR,
     },
   };
@@ -282,6 +397,10 @@ async function ensureSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS uq_strategies_name_version
       ON strategies(name, version)
   `);
+  // Added after the table shipped, so nullable: a row saved before it holds
+  // NULL, and readers apply OBJECTIVE_DEFAULTS, which is what every run of such
+  // a row used. Every save since writes all six values.
+  await pool.query('ALTER TABLE strategies ADD COLUMN IF NOT EXISTS objective_json TEXT');
   // The newest version of each name is the hot read, for the builder's list.
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_strategies_name_version_desc
@@ -310,6 +429,9 @@ function toItem(r) {
     windows: parse(r.windows_json, {}),
     label: parse(r.label_json, null),
     hyperparams: parse(r.hyperparams_json, {}),
+    objective: { ...OBJECTIVE_DEFAULTS, ...parse(r.objective_json, {}) },
+    /** True for a row saved before `objective` existed: its values are the defaults. */
+    objectiveDefaulted: r.objective_json == null,
     notes: r.notes,
     createdAt: r.created_at,
     createdBy: r.created_by,
@@ -350,45 +472,88 @@ async function save(v) {
     `INSERT INTO strategies
        (name, version, instrument, source, timeframe, model_type, validation_scheme,
         features_json, windows_json, label_json, hyperparams_json, notes,
-        created_by, updated_by)
+        created_by, updated_by, objective_json)
      -- $1 is cast explicitly because it appears twice in two different
      -- positions -- once as the inserted value and once in the subquery's
      -- comparison -- and Postgres refuses to deduce one type for both
      -- ("inconsistent types deduced for parameter $1").
      SELECT $1::text,
             COALESCE((SELECT MAX(version) FROM strategies WHERE name = $1::text), 0) + 1,
-            $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12
+            $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13
      RETURNING *`,
     [
       v.name, v.instrument, v.source, v.timeframe, v.modelType, v.validationScheme,
       JSON.stringify(v.features), JSON.stringify(v.windows), JSON.stringify(v.label),
-      JSON.stringify(v.hyperparams), v.notes, v.actor,
+      JSON.stringify(v.hyperparams), v.notes, v.actor, JSON.stringify(v.objective),
     ],
   );
   return toItem(rows[0]);
 }
 
 /**
- * Removes one saved version.
+ * Removes one saved version, unless a run was trained from it.
  *
  * Deleting is not the same as the overwrite §8.2a forbids. That rule exists so
  * a run always points at exactly what it was trained from; a version nothing
  * has been trained from carries no such promise, and leaving mistakes in the
  * list forever makes the list useless.
  *
- * So the guard is on provenance, not on deletion: once a run records which
- * strategy version produced it, this must refuse to remove a referenced one.
- * Nothing links them yet, which is stated here rather than silently assumed --
- * when `backtest_results.strategy_id` arrives, the check belongs in this
- * function and the API should answer 409.
+ * So the guard is on provenance, not on deletion: `walkforward_runs.strategy_id`
+ * records which version a run executed, and a referenced version is refused
+ * with a `StrategyInUseError` (the route answers 409). The run keeps the name
+ * and version beside the id, but the windows, features and objective live only
+ * here, so deleting the row would leave the run unexplainable.
  */
+class StrategyInUseError extends Error {
+  constructor(ids, runs) {
+    super(
+      `${runs} walk-forward run${runs === 1 ? '' : 's'} trained from this strategy `
+      + `(id ${ids.join(', ')}); a version a run points at cannot be removed`,
+    );
+    this.name = 'StrategyInUseError';
+    this.runs = runs;
+  }
+}
+
+/**
+ * How many runs point at any of these strategy ids.
+ *
+ * `walkforward_runs` and its `strategy_id` column come from schema.sql, which
+ * the Java engine applies on start. Until it has, nothing can reference a
+ * strategy, so a missing table or column reads as zero rather than failing
+ * every delete.
+ */
+async function runsReferencing(ids) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM walkforward_runs WHERE strategy_id = ANY($1::bigint[])',
+      [ids],
+    );
+    return rows[0].n;
+  } catch (err) {
+    if (err.code === '42P01' || err.code === '42703') return 0;
+    throw err;
+  }
+}
+
 async function remove(id) {
+  const runs = await runsReferencing([id]);
+  if (runs > 0) throw new StrategyInUseError([id], runs);
   const { rowCount } = await pool.query('DELETE FROM strategies WHERE id = $1', [id]);
   return rowCount > 0;
 }
 
-/** Every version of a name, removed together. Returns how many went. */
+/**
+ * Every version of a name, removed together. Returns how many went.
+ *
+ * All or nothing: if any version was trained from, none is removed, so a
+ * name is never left with a hole in its version history.
+ */
 async function removeByName(name) {
+  const { rows } = await pool.query('SELECT id FROM strategies WHERE name = $1', [name]);
+  const ids = rows.map((r) => String(r.id));
+  const runs = ids.length ? await runsReferencing(ids) : 0;
+  if (runs > 0) throw new StrategyInUseError(ids, runs);
   const { rowCount } = await pool.query('DELETE FROM strategies WHERE name = $1', [name]);
   return rowCount;
 }
@@ -398,8 +563,21 @@ async function getById(id) {
   return rows.length ? toItem(rows[0]) : null;
 }
 
+/** What the form needs to draw the objective section from the same rules. */
+const OBJECTIVE_SPEC = {
+  defaults: OBJECTIVE_DEFAULTS,
+  losses: [...LOSSES],
+  verdicts: [...VERDICTS],
+  parks: [...PARKS],
+  maxCostBps: MAX_COST_BPS,
+  maxTaxRatePct: MAX_TAX_RATE_PCT,
+  defaultPositionThreshold: DEFAULT_POSITION_THRESHOLD,
+};
+
 module.exports = {
   PARAM_SPEC,
+  OBJECTIVE_DEFAULTS,
+  OBJECTIVE_SPEC,
   VALIDATION_SCHEMES,
   MODEL_TYPES,
   WINDOWS,
@@ -414,5 +592,6 @@ module.exports = {
   remove,
   removeByName,
   getById,
+  StrategyInUseError,
   toItem,
 };

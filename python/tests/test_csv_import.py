@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from loader.csv_import import (
     SlicePlan,
+    check_header,
     conflict_preview,
     parse_rows_to_tuples,
     scan_and_bucket,
@@ -80,3 +83,42 @@ def test_conflict_preview_maps_plan_to_status():
     ]
     assert [p["year"] for p in preview] == [2008, 2009, 2010, 2011]
     assert [p["rowCount"] for p in preview] == [1, 2, 1, 1]
+
+
+# --------------------------------------------------------------------------
+# check_header: rows are read by position, so the header is the contract
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("header", [
+    "Date,Open,High,Low,Close,Volume",
+    "date,open,high,low,close,volume",
+    " Date , Open , High , Low , Close , Volume ",
+    '"Date","Open","High","Low","Close","Volume"',
+    "\ufeffDate,Open,High,Low,Close,Volume",          # Excel's byte-order mark
+    "Timestamp,Open,High,Low,Close,Volume",
+    "Datetime,Open,High,Low,Close,Volume",
+])
+def test_the_six_columns_in_order_are_accepted_however_they_are_spelled(header):
+    assert check_header(header) is None
+
+
+def test_a_raw_yahoo_download_is_refused_with_what_to_remove():
+    """The case that motivated the check: Adj Close would land in volume."""
+    why = check_header("Date,Open,High,Low,Close,Adj Close,Volume")
+    assert why is not None
+    assert "Adj Close" in why and "volume" in why
+
+
+@pytest.mark.parametrize("header", [
+    "Date,Open,High,Low,Close",                         # volume missing
+    "Date,Open,High,Low,Close,Volume,OpenInt",          # extra column
+    "Date,Open,Low,High,Close,Volume",                  # high and low swapped
+    "Date,Close,Open,High,Low,Volume",                  # close first
+    "Symbol,Date,Open,High,Low,Close",                  # shifted by one
+    "2008-01-02,1,2,0,1.5,100",                         # no header at all
+])
+def test_any_other_layout_is_refused_and_names_the_expected_header(header):
+    why = check_header(header)
+    assert why is not None
+    assert "Date,Open,High,Low,Close,Volume" in why

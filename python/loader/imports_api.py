@@ -18,10 +18,15 @@ from loader.cohesion import check_import
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
-    commit_slices,
+    SourceFile,
+    check_header,
+    commit_file,
     conflict_preview,
+    file_sha256,
+    find_loaded_file,
     is_compressed_chunk_error,
     plan_slices,
+    read_header,
     scan_and_bucket,
     write_archive_files,
 )
@@ -76,6 +81,22 @@ async def post_imports(
         with os.fdopen(fd, "wb") as out:
             shutil.copyfileobj(file.file, out)
 
+        first_line = read_header(tmp_path)
+        header_problem = check_header(first_line) if first_line else None
+        if header_problem:
+            return _bad(header_problem)
+
+        # An identical file is answered from its hash, before parsing, but only
+        # while every year it produced is still what the database holds.
+        file_hash, file_size = file_sha256(tmp_path)
+        source_file = SourceFile(hash=file_hash, size=file_size,
+                                 name=file.filename or "upload.csv")
+        with pool().connection() as conn:
+            loaded = find_loaded_file(conn, file_hash, source_name=source_name,
+                                      symbol=symbol, timeframe=timeframe)
+        if loaded is not None:
+            return JSONResponse(status_code=200, content={"status": "completed", **loaded})
+
         with open(tmp_path, "rb") as stream:
             header, rows_by_year = scan_and_bucket(stream)
         if not header or not rows_by_year:
@@ -104,18 +125,19 @@ async def post_imports(
                             "pass force=true to overwrite"
                         ),
                         "imports": conflict_preview(slices),
+                        "file": {"hash": file_hash, "name": source_file.name},
                     },
                 )
 
             try:
-                results = commit_slices(
+                results, file_rec = commit_file(
                     conn,
                     slices,
+                    source_file,
                     source_name=source_name,
                     symbol=symbol,
                     type_=type,
                     timeframe=timeframe,
-                    file_name=file.filename or "upload.csv",
                 )
             except Exception as exc:  # noqa: BLE001 — narrow check below
                 if is_compressed_chunk_error(exc):
@@ -173,7 +195,8 @@ async def post_imports(
                             )
                             aggregate_results.append({"timeframe": tf, "rowsWritten": written})
 
-        payload: dict[str, object] = {"status": "completed", "imports": results}
+        payload: dict[str, object] = {"status": "completed", "imports": results,
+                                      "file": file_rec}
         if aggregate_results:
             payload["aggregated"] = aggregate_results
         # Read-only cohesiveness advisory over the uploaded bars. Never blocks

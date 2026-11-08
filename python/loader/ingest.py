@@ -43,10 +43,15 @@ from loader.cohesion import check_import
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
-    commit_slices,
+    SourceFile,
+    check_header,
+    commit_file,
     conflict_preview,
+    file_sha256,
+    find_loaded_file,
     is_compressed_chunk_error,
     plan_slices,
+    read_header,
     scan_and_bucket,
     write_archive_files,
 )
@@ -134,6 +139,26 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
         print(f"  SKIP  {path.name}: {exc}")
         return "parse-error"
 
+    first_line = read_header(path)
+    header_problem = check_header(first_line) if first_line else None
+    if header_problem:
+        print(f"  FAIL  {path.name}: {header_problem}")
+        return "parse-error"
+
+    file_hash, file_size = file_sha256(path)
+    source_file = SourceFile(hash=file_hash, size=file_size, name=path.name)
+    if not dry_run:
+        from loader.db import pool
+
+        with pool().connection() as conn:
+            loaded = find_loaded_file(conn, file_hash, source_name=source,
+                                      symbol=symbol, timeframe=timeframe)
+        if loaded is not None:
+            f = loaded["file"]
+            print(f"  SAME  {path.name}: already loaded {f['importedAt'][:10]} "
+                  f"as version {f['id']} ({f['changeKind']}); nothing to do")
+            return "imported"
+
     with open(path, "rb") as stream:
         header, rows_by_year = scan_and_bucket(stream)
     if not header or not rows_by_year:
@@ -163,7 +188,8 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
         if dry_run:
             print(f"  PLAN  {path.name}  [{source}/{symbol} {type_} {timeframe}]")
             for s in conflict_preview(slices):
-                print(f"          {s['year']}: {s['status']} ({s['rowCount']} rows)")
+                print(f"          {s['year']}: {s['status']} ({s['rowCount']} rows)"
+                      f"{_diff_note(s.get('diff'))}")
             return "imported"
 
         conflicts = [s for s in slices if s.plan == "conflict"]
@@ -173,18 +199,18 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
                 "conflict; re-run with --force to overwrite"
             )
             for s in conflict_preview(slices):
-                print(f"          {s['year']}: {s['status']}")
+                print(f"          {s['year']}: {s['status']}{_diff_note(s.get('diff'))}")
             return "conflict"
 
         try:
-            results = commit_slices(
+            results, file_rec = commit_file(
                 conn,
                 slices,
+                source_file,
                 source_name=source,
                 symbol=symbol,
                 type_=type_,
                 timeframe=timeframe,
-                file_name=path.name,
             )
         except Exception as exc:  # noqa: BLE001 — narrow check, then re-raise
             if is_compressed_chunk_error(exc):
@@ -197,14 +223,32 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
 
     write_archive_files(slices)
 
-    created = sum(1 for r in results if r["status"] in {"created", "overwritten"})
+    created = sum(1 for r in results if r["status"] in {"created", "extended", "overwritten"})
     skipped = sum(1 for r in results if r["status"] == "skipped")
     rows = sum(int(r["import"]["rowCount"]) for r in results if r.get("import") and r["status"] != "skipped")
     print(
         f"  OK    {path.name}  [{source}/{symbol} {type_} {timeframe}]  "
         f"{created} slice(s)/{rows} rows written, {skipped} skipped"
     )
+    print(f"          version {file_rec['id']}: {file_rec['changeKind']}"
+          + (" (these bytes were seen before)" if file_rec.get("seenBefore") else ""))
+    for r in results:
+        if r.get("diff") and r["status"] != "skipped":
+            print(f"          {r['year']}: {r['status']}{_diff_note(r['diff'])}")
     return "imported"
+
+
+def _diff_note(diff: dict | None) -> str:
+    """' (+3 added, 2 changed: 2015-06-01...)' for a year that differs; '' otherwise."""
+    if not diff:
+        return ""
+    parts = [f"+{diff['added']} added"] if diff["added"] else []
+    if diff["changed"]:
+        parts.append(f"{diff['changed']} changed")
+    if diff["removed"]:
+        parts.append(f"{diff['removed']} removed")
+    ex = f": {', '.join(e[:10] for e in diff['examples'])}" if diff["examples"] else ""
+    return f"  ({', '.join(parts)}{ex})" if parts else ""
 
 
 def main(argv: list[str] | None = None) -> int:

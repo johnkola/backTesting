@@ -40,6 +40,9 @@ import java.time.LocalDate;
  * @param driftTax     return forfeited by being out, net of what was earned while parked
  * @param commissions  cost of the position changes, percentage points
  * @param timing       whether the days skipped were actually worse than average
+ * @param gainsTax     tax on realized gains, percentage points of starting capital;
+ *                     0 for a run scored before tax. Not {@code driftTax}, which is
+ *                     the price of sitting out and has nothing to do with tax
  */
 public record WalkforwardFold(
         long runId,
@@ -61,7 +64,8 @@ public record WalkforwardFold(
         int daysOut,
         double driftTax,
         double commissions,
-        double timing
+        double timing,
+        double gainsTax
 ) {
 
     /** The headline: did the model beat holding over this fold, in points. */

@@ -377,6 +377,51 @@
           ]
         },
         {
+          "name": "List file versions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/import-files?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "import-files?limit=5"
+              ]
+            },
+            "description": "One row per distinct file loaded for a series, newest first, labelled new / update / fix / update+fix / same. `available` is false until the engine has applied schema.sql."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('is a paginated list that says whether history exists', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "    pm.expect(d).to.include.keys('total', 'limit', 'offset', 'available');",
+                  "});",
+                  "",
+                  "pm.test('every version has a known change kind and its file hash', function () {",
+                  "    const kinds = ['new', 'update', 'fix', 'update+fix', 'same'];",
+                  "    for (const v of pm.response.json().items) {",
+                  "        pm.expect(kinds).to.include(v.changeKind);",
+                  "        pm.expect(v.fileHash).to.match(/^[0-9a-f]{64}$/);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Cohesion audit over stored candles",
           "request": {
             "method": "POST",
@@ -1232,6 +1277,16 @@
                   "    pm.expect(d.version).to.be.at.least(1);",
                   "    pm.expect(d.features).to.eql(['price_close', 'vxn_close']);",
                   "    pm.collectionVariables.set('savedStrategyId', String(d.id));",
+                  "});",
+                  "",
+                  "pm.test('the objective comes back whole, defaults filled', function () {",
+                  "    // The body sends no objective; every saved row still states all six,",
+                  "    // so a run is never charged a cost its strategy does not record.",
+                  "    const o = pm.response.json().objective;",
+                  "    pm.expect(o).to.include.keys(",
+                  "        'loss', 'classWeights', 'positionThreshold', 'verdict', 'costBps', 'park');",
+                  "    pm.expect(o.costBps).to.eql(5);",
+                  "    pm.expect(o.loss).to.eql('ce');",
                   "});",
                   "",
                   "pm.test('numbers come back as numbers', function () {",

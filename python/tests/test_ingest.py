@@ -57,3 +57,14 @@ def test_main_empty_inbox_creates_dir_and_exits_clean(tmp_path, capsys):
     assert main(["--inbox", str(inbox)]) == 0
     assert inbox.is_dir()
     assert "Nothing to do" in capsys.readouterr().out
+
+
+def test_a_file_with_the_wrong_header_fails_before_the_database(tmp_path, capsys):
+    """No pool is opened: the refusal must not depend on Postgres being up."""
+    from loader import ingest
+
+    f = tmp_path / "yahoo__QQQ__D1.csv"
+    f.write_text("Date,Open,High,Low,Close,Adj Close,Volume\n"
+                 "2008-01-02,1,2,0,1.5,1.4,100\n", encoding="utf-8")
+    assert ingest._process_one(f, force=False, dry_run=False) == "parse-error"
+    assert "Adj Close" in capsys.readouterr().out

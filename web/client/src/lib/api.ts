@@ -138,18 +138,71 @@ export type ImportRecord = {
 /** One slice of an upload — multi-year files are split server-side, so a
  *  single POST returns N of these (one per year present in the input). */
 export type SliceOutcome =
-  | { year: number; status: 'created' | 'overwritten'; import: ImportRecord }
-  | { year: number; status: 'skipped'; import: ImportRecord }
+  | { year: number; status: 'created' | 'extended' | 'overwritten'; import: ImportRecord; diff?: SliceDiff | null }
+  | { year: number; status: 'skipped'; import: ImportRecord; diff?: SliceDiff | null }
+
+/**
+ * How one year of a new file differs from the stored year, compared as bars
+ * rather than text. `laterOnly` with nothing changed or removed is an update
+ * (a refreshed download); anything changed or removed is a data fix.
+ */
+export type SliceDiff = {
+  added: number
+  changed: number
+  removed: number
+  laterOnly: boolean
+  /** Up to five timestamps that changed or were removed. */
+  examples: string[]
+}
+
+/** What kind of change a file version was, against the one before it. */
+export type ChangeKind = 'new' | 'update' | 'fix' | 'update+fix' | 'same'
+
+/** The file version an upload recorded, or matched when it was already loaded. */
+export type UploadedFile = {
+  id: number
+  hash: string
+  name: string
+  changeKind: ChangeKind
+  importedAt: string
+  /** These exact bytes are what the database holds now; nothing was parsed. */
+  alreadyLoaded: boolean
+  /** These bytes were recorded before (e.g. re-loaded after an undo). */
+  seenBefore?: boolean
+}
+
+/** One row of GET /api/import-files: a series' file at one version. */
+export type FileVersion = {
+  id: string
+  sourceName: string
+  instrumentSymbol: string
+  timeframe: string
+  fileName: string
+  fileHash: string
+  byteSize: number
+  rowCount: number
+  firstDate: string | null
+  lastDate: string | null
+  changeKind: ChangeKind
+  years: number[]
+  /** Per year, keyed by the year as a string. */
+  diff: Record<string, SliceDiff>
+  importedAt: string
+  lastSeenAt: string
+  importedBy: string | null
+}
 
 /** Preview entry returned with a 409 conflict — describes what each year
  *  WOULD do if the user resubmits with force=true. */
 export type SlicePreview = {
   year: number
   archivePath: string
-  status: 'would-create' | 'would-skip' | 'would-overwrite' | 'conflict'
+  status: 'would-create' | 'would-skip' | 'would-extend' | 'would-overwrite' | 'conflict'
   rowCount: number
   fileHash: string
   existing: ImportRecord | null
+  /** What forcing this year would change; null for a new year or a lost archive. */
+  diff?: SliceDiff | null
 }
 
 /** The read-only data-cohesiveness advisory the loader attaches to a
@@ -173,8 +226,8 @@ export type CohesionReport = {
 
 /** Discriminated union of POST /api/imports response shapes. */
 export type UploadImportResponse =
-  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport }
-  | { status: 'conflict'; message: string; imports: SlicePreview[] }
+  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; file?: UploadedFile }
+  | { status: 'conflict'; message: string; imports: SlicePreview[]; file?: { hash: string, name: string } }
   | { status: 'compressed_chunk'; error: string; hint: string; detail: string }
 
 export type UploadImportRequest = {
@@ -753,8 +806,64 @@ export type ParamSpec = {
   label: string
 }
 
+/**
+ * What the model is trained to want and what a run is charged. Unlike
+ * `hyperparams`, never partial: the API fills every default on save, and a row
+ * saved before this existed reads back as the defaults with
+ * `objectiveDefaulted` set.
+ */
+export type StrategyObjective = {
+  loss: 'ce' | 'return' | 'sharpe' | 'calmar'
+  classWeights: boolean
+  /** Only for a money-trained loss; null for ce. */
+  positionThreshold: number | null
+  verdict: 'return' | 'sharpe' | 'drawdown'
+  costBps: number
+  park: 'cash' | 'bills' | 'bonds'
+  /**
+   * Score after tax: realized gains taxed at `taxRatePct`, buy-and-hold on the
+   * same rule. Scoring only -- the model and its signals are unchanged, so a
+   * strategy published as a signal can still show a taxable account's view.
+   */
+  taxScore: boolean
+  /** Percent on realized gains; null unless `taxScore`. */
+  taxRatePct: number | null
+}
+
+/** The rules the form draws the objective section from, served by the API. */
+export type ObjectiveSpec = {
+  defaults: StrategyObjective
+  losses: StrategyObjective['loss'][]
+  verdicts: StrategyObjective['verdict'][]
+  parks: StrategyObjective['park'][]
+  maxCostBps: number
+  maxTaxRatePct: number
+  defaultPositionThreshold: number
+}
+
 /** An inclusive date range, YYYY-MM-DD at both ends. */
 export type DateWindow = { from: string, to: string }
+
+/**
+ * A walk-forward run started from the web: the runner process, not the run.
+ * The run itself is `walkforward_runs` (`runId` once the runner opens it); a
+ * job that never gets one was refused or crashed, and `output` says which.
+ */
+export type WalkforwardJob = {
+  id: number
+  strategyId: number
+  label: string
+  command: string
+  startedAt: string
+  finishedAt: string | null
+  running: boolean
+  exitCode: number | null
+  runId: number | null
+  /** The runner's last 40 lines. */
+  output: string[]
+}
+
+export type WalkforwardJobs = { items: WalkforwardJob[], running: number | null }
 
 /**
  * A saved strategy: every choice a training run makes, named and versioned
@@ -779,6 +888,9 @@ export type SavedStrategy = {
   windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
   label: { kind: string, horizonBars: number } | null
   hyperparams: Record<string, number>
+  objective: StrategyObjective
+  /** True for a row saved before `objective` existed: its values are the defaults. */
+  objectiveDefaulted: boolean
   notes: string | null
   createdAt: string
   createdBy: string
@@ -791,6 +903,7 @@ export type SavedStrategiesResponse = {
   items: SavedStrategy[]
   /** The editable fields and bounds, so the form matches what the API enforces. */
   paramSpec: Record<string, ParamSpec>
+  objectiveSpec: ObjectiveSpec
   /** §8.2a: populated from what the model layer registers, not hard-coded. */
   modelTypes: string[]
   validationSchemes: string[]
@@ -810,6 +923,7 @@ export type SaveStrategyRequest = {
   windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
   label: { kind: string, horizonBars: number }
   hyperparams: Record<string, string | number>
+  objective: StrategyObjective
   notes?: string | null
 }
 
@@ -942,6 +1056,8 @@ export type WalkforwardFold = {
   driftTax: number
   commissions: number
   timing: number
+  /** Tax on realized gains, points of starting capital; 0 when scored before tax. */
+  gainsTax: number
 }
 
 /**
@@ -971,11 +1087,17 @@ export type WalkforwardRun = {
   park: string
   /** Null for a classifier — there is no position to cut. */
   threshold: number | null
+  /** Percent on realized gains when scored after tax; null when scored before tax. */
+  taxRate: number | null
   trainStart: number
   firstVal: number
   lastVal: number
   /** True when the run spent the holdout. A one-way door. */
   isTest: boolean
+  /** The input columns in order; null on a run older than the record, which read the whole set. */
+  columns: string[] | null
+  /** The saved strategy the run executed; null for a run launched from flags. */
+  strategy: WalkforwardStrategyRef | null
   startedAt: string
   finishedAt: string | null
   inProgress: boolean
@@ -992,6 +1114,8 @@ export type WalkforwardRun = {
   meanDaysOut: number | null
   meanDriftTax: number | null
   meanCommissions: number | null
+  /** Mean tax on realized gains per fold; 0 when scored before tax. */
+  meanGainsTax: number | null
   meanTiming: number | null
   /** Null until a fold exists. Only decided for the `return` objective. */
   beatsHoldOnReturn: boolean | null
@@ -999,6 +1123,27 @@ export type WalkforwardRun = {
   hyperparams: Record<string, number | boolean | string> | null
   /** Present only when the stored text would not parse. */
   hyperparamsRaw?: string
+}
+
+/**
+ * Where a strategy run came from and what its training window really held
+ * (§6.1, §6.2). Name and version are stored beside the id because a strategy
+ * can be deleted and the run must still say what it ran.
+ */
+export type WalkforwardStrategyRef = {
+  id: number
+  name: string
+  version: number | null
+  /** Selected columns left out, and why. */
+  dropped: { name: string, why: string }[] | null
+  /** Kept columns with holes: `values` of `bars` train bars present. */
+  partial: { name: string, values: number, bars: number }[] | null
+  /** First train bar the matrix held; later than asked when a partial column starts late. */
+  trainFirst: string | null
+  trainBarsUsed: number | null
+  trainBars: number | null
+  /** The strategy's test.to; set only on a holdout run. */
+  testEnd: string | null
 }
 
 export type WalkforwardRuns = {
@@ -1030,6 +1175,14 @@ export const api = {
     } = {},
     signal?: AbortSignal,
   ) => getJson<Paginated<ImportRecord>>(`/api/imports?${qs(params)}`, signal),
+  /** Version history of input files; `available` is false before the schema exists. */
+  importFiles: (
+    params: { limit?: number, offset?: number, source?: string, instrument?: string,
+      timeframe?: string, kind?: string },
+    signal?: AbortSignal,
+  ) => getJson<Paginated<FileVersion> & { available: boolean }>(
+    `/api/import-files?${qs(params)}`, signal,
+  ),
   results: (
     params: {
       limit?: number; offset?: number; strategy?: string; instrument?: string;
@@ -1068,6 +1221,30 @@ export const api = {
     getJson<WalkforwardRunDetail>(
       `/api/walkforward/runs/${encodeURIComponent(String(id))}`, signal,
     ),
+  /**
+   * Starts `python -m nn.walkforward --strategy-id N` on the loader. Resolves
+   * to the job, or to `refused` with every reason the strategy cannot run as
+   * saved: a refusal is an answer to show, not an error to throw.
+   */
+  walkforwardStart: async (
+    body: { strategyId: number, label?: string },
+  ): Promise<{ job: WalkforwardJob } | { refused: string, reasons: string[] }> => {
+    const res = await fetch(apiUrl('/api/nn/walkforward'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    let parsed: { error?: string, reasons?: string[] } & Partial<WalkforwardJob> = {}
+    try { parsed = await res.json() } catch { /* not JSON */ }
+    if (res.ok) return { job: parsed as WalkforwardJob }
+    if (res.status === 400 && Array.isArray(parsed.reasons)) {
+      return { refused: parsed.error ?? 'refused', reasons: parsed.reasons }
+    }
+    throw new Error(parsed.error ?? `${res.status} ${res.statusText}`)
+  },
+  /** Jobs the loader has started since it came up, newest first. */
+  walkforwardJobs: (signal?: AbortSignal) =>
+    getJson<WalkforwardJobs>('/api/nn/walkforward/jobs', signal),
   features: (timeframe?: string, signal?: AbortSignal) =>
     getJson<FeaturesReport>(`/api/features${timeframe ? `?${qs({ timeframe })}` : ''}`, signal),
   /** The feature catalogue and the sets coverage can be measured against. */

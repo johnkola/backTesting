@@ -32,6 +32,7 @@ AUDITED_TABLES = [
     "instruments",
     "data_sources",
     "data_imports",
+    "import_files",
     "backtest_results",
     "feature_sets",
     "feature_spec",

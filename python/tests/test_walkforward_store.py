@@ -61,6 +61,7 @@ class FakeFold:
         self.drift_tax = -2.1
         self.commissions = -0.3
         self.timing = -0.2
+        self.gains_tax = -1.4
 
 
 # --------------------------------------------------------------------------
@@ -148,6 +149,16 @@ class TestHyperparams:
         assert json.loads(a)["seed"] == 42
 
 
+class TestTaxRate:
+    def test_a_run_scored_before_tax_stores_null_not_zero(self):
+        # NULL is "off"; 0 would read as a 0% rate that was applied.
+        assert ws.run_row(an_args(), 6, 580, 47, 2)["tax_rate"] is None
+        assert ws.run_row(an_args(tax_rate=None), 6, 580, 47, 2)["tax_rate"] is None
+
+    def test_a_run_scored_after_tax_stores_its_rate(self):
+        assert ws.run_row(an_args(tax_rate=26.5), 6, 580, 47, 2)["tax_rate"] == 26.5
+
+
 # --------------------------------------------------------------------------
 # fold_row
 # --------------------------------------------------------------------------
@@ -174,6 +185,7 @@ class TestFoldRow:
         assert row["drift_tax"] == -2.1
         assert row["commissions"] == -0.3
         assert row["timing"] == -0.2
+        assert row["gains_tax"] == -1.4
 
     def test_carries_the_training_window_so_a_fold_can_be_rebuilt(self):
         row = ws.fold_row(99, FakeFold())
@@ -354,3 +366,28 @@ class TestRoundTrip:
         with pytest.raises(ValueError, match="no feature_set with id"):
             ws.open_run(db, an_args(), 10**9, 580)
         db.rollback()
+
+
+class TestRunProvenance:
+    def test_the_column_list_is_stored_in_input_order(self):
+        row = ws.run_row(an_args(), 6, 580, 47, 2, columns=["price_close", "vxn_close"])
+        assert json.loads(row["columns_json"]) == ["price_close", "vxn_close"]
+
+    def test_a_run_from_flags_records_no_strategy(self):
+        row = ws.run_row(an_args(), 6, 580, 47, 2, columns=["a"])
+        assert row["strategy_id"] is None
+        assert row["train_first"] is None
+
+    def test_a_strategy_run_records_what_it_came_from(self):
+        prov = {**ws.NO_PROVENANCE, "strategy_id": 7, "strategy_name": "baseline",
+                "strategy_version": 2, "train_first": date(2006, 1, 3),
+                "train_bars_used": 2500, "train_bars": 3270}
+        row = ws.run_row(an_args(), 6, 580, 47, 2, columns=["a"], provenance=prov)
+        assert (row["strategy_id"], row["strategy_version"]) == (7, 2)
+        assert row["train_bars_used"] == 2500
+
+    def test_every_insert_placeholder_has_a_value(self):
+        """A key the INSERT names but run_row omits fails only against Postgres."""
+        import re
+        wanted = set(re.findall(r"%\((\w+)\)s", ws._INSERT_RUN))
+        assert wanted == set(ws.run_row(an_args(), 6, 580, 47, 2, columns=["a"]))

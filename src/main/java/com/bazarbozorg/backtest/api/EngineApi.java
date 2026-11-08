@@ -21,6 +21,7 @@ import com.bazarbozorg.backtest.strategy.TradingStrategy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.util.DateTimeUtils;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -329,10 +330,13 @@ public class EngineApi {
         out.put("costBps", run.costBps());
         out.put("park", run.park());
         out.put("threshold", run.threshold());
+        out.put("taxRate", run.taxRate());
         out.put("trainStart", run.trainStart());
         out.put("firstVal", run.firstVal());
         out.put("lastVal", run.lastVal());
         out.put("isTest", run.isTest());
+        out.put("columns", jsonArray(run.columnsJson(), run.id(), "columns_json"));
+        out.put("strategy", strategyPayload(run));
         out.put("startedAt", run.startedAt());
         out.put("finishedAt", run.finishedAt());
         out.put("inProgress", run.inProgress());
@@ -349,6 +353,7 @@ public class EngineApi {
         out.put("meanDaysOut", run.meanDaysOut());
         out.put("meanDriftTax", run.meanDriftTax());
         out.put("meanCommissions", run.meanCommissions());
+        out.put("meanGainsTax", run.meanGainsTax());
         out.put("meanTiming", run.meanTiming());
         out.put("beatsHoldOnReturn", run.beatsHoldOnReturn());
 
@@ -368,6 +373,72 @@ public class EngineApi {
         out.put("hyperparams", parsed);
         if (parsed == null && raw != null && !raw.isBlank()) {
             out.put("hyperparamsRaw", raw);
+        }
+        return out;
+    }
+
+    /**
+     * Where a strategy run came from and what it covered, or null for a run
+     * launched from flags.
+     *
+     * <p>The stored pairs and triples ({@code [name, why]},
+     * {@code [name, values, bars]}) become named objects here, at the edge, so
+     * the client reads {@code partial[0].values} rather than an index.
+     */
+    private static Map<String, Object> strategyPayload(WalkforwardRun run) {
+        WalkforwardRun.StrategyProvenance p = run.strategy();
+        if (p == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", p.id());
+        out.put("name", p.name());
+        out.put("version", p.version());
+        out.put("dropped", tuples(jsonArray(p.droppedJson(), run.id(), "dropped_json"),
+                "name", "why"));
+        out.put("partial", tuples(jsonArray(p.partialJson(), run.id(), "partial_json"),
+                "name", "values", "bars"));
+        out.put("trainFirst", p.trainFirst());
+        out.put("trainBarsUsed", p.trainBarsUsed());
+        out.put("trainBars", p.trainBars());
+        out.put("testEnd", p.testEnd());
+        return out;
+    }
+
+    /** Stored JSON text as an array, or null when absent or not an array. */
+    private static JsonArray jsonArray(String raw, long runId, String column) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            JsonElement el = JsonParser.parseString(raw);
+            if (el.isJsonArray()) {
+                return el.getAsJsonArray();
+            }
+        } catch (RuntimeException e) {
+            // Fall through: logged below, served as null rather than failing the read.
+        }
+        logger.warn("walkforward_runs.{} for run {} is not a JSON array", column, runId);
+        return null;
+    }
+
+    /** {@code [[a, b], ...]} to {@code [{k1: a, k2: b}, ...]}; extra items are ignored. */
+    private static List<Map<String, Object>> tuples(JsonArray rows, String... keys) {
+        if (rows == null) {
+            return null;
+        }
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (JsonElement row : rows) {
+            if (!row.isJsonArray()) {
+                continue;
+            }
+            JsonArray cells = row.getAsJsonArray();
+            Map<String, Object> obj = new LinkedHashMap<>();
+            for (int i = 0; i < keys.length && i < cells.size(); i++) {
+                JsonElement cell = cells.get(i);
+                obj.put(keys[i], cell.isJsonNull() ? null : cell);
+            }
+            out.add(obj);
         }
         return out;
     }

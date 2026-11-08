@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import type { FeatureCoverage } from '../lib/api'
 
 /**
@@ -25,21 +26,22 @@ export type Resolved = {
 /**
  * A standing caveat, shown whatever the coverage says.
  *
- * The feature list is saved with the strategy and read back faithfully, but
- * nothing trains from it yet: `nn-feedforward` computes its own fixed twelve
- * features from the candles and its endpoint takes no feature list, and the
- * stored-feature trainer uses the whole set with no subset option. Selecting
- * 26 columns and training therefore produces a model that never saw that
- * choice -- which is a confusing thing to discover from the Models page, so it
- * is said here, where the choice is made.
+ * Only one trainer reads the feature list: the walk-forward runner
+ * (`walkforward.py --strategy-id`, started from Pipeline > Training), which
+ * trains on the resolved columns and records them on the run. The two others
+ * do not: `nn-feedforward` computes its own fixed twelve features from the
+ * candles and its endpoint takes no feature list, and the stored-feature
+ * trainer uses the whole set. Training here and finding a model that never
+ * saw the choice is confusing to discover from the Models page, so it is said
+ * where the choice is made, along with where the list does count.
  */
 export function FeatureListNotUsedNote() {
   return (
     <p className="text-xs text-warning mt-2">
-      Note: this list is recorded with the strategy but training does not consume it yet.
-      nn-feedforward computes its own fixed 12 features from the candles, and the
-      stored-feature trainer uses the whole set. Until one of them accepts a subset, the
-      selection is a declaration of intent.
+      Note: only a walk-forward run{' '}
+      (<Link className="link" to="/pipeline/training">Pipeline &rsaquo; Training</Link>)
+      trains on this list. nn-feedforward, which this page trains, computes its own fixed 12
+      features from the candles, and the stored-feature trainer uses the whole set.
     </p>
   )
 }

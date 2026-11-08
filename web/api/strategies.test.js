@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  MODEL_TYPES, PARAM_SPEC, VALIDATION_SCHEMES, validateStrategy,
+  MODEL_TYPES, OBJECTIVE_DEFAULTS, PARAM_SPEC, VALIDATION_SCHEMES, toItem, validateStrategy,
 } = require('./strategies');
 
 /**
@@ -201,6 +201,115 @@ describe('validateStrategy — the rest of the form', () => {
   });
 });
 
+describe('validateStrategy — objective', () => {
+  const objective = (o) => validateStrategy(body({ objective: o }));
+
+  it('fills every default when the body has none, so a saved row states all six', () => {
+    const r = validateStrategy(body());
+    assert.equal(r.ok, true, r.errors?.join('; '));
+    assert.deepEqual(r.value.objective, OBJECTIVE_DEFAULTS);
+  });
+
+  it('keeps what was chosen and fills the rest', () => {
+    const r = objective({ costBps: 10, park: 'bills' });
+    assert.equal(r.ok, true, r.errors?.join('; '));
+    assert.equal(r.value.objective.costBps, 10);
+    assert.equal(r.value.objective.park, 'bills');
+    assert.equal(r.value.objective.loss, 'ce');
+  });
+
+  it('coerces a cost typed into the form', () => {
+    assert.equal(objective({ costBps: '7.5' }).value.objective.costBps, 7.5);
+  });
+
+  it('gives a money-trained loss the default position threshold', () => {
+    assert.equal(objective({ loss: 'sharpe' }).value.objective.positionThreshold, 0.5);
+  });
+
+  it('refuses a position threshold on ce, where it would do nothing', () => {
+    assert.match(errorsFor(body({ objective: { positionThreshold: 0.6 } })), /money-trained/);
+  });
+
+  it('refuses class weights on a money-trained loss, where they would do nothing', () => {
+    assert.match(
+      errorsFor(body({ objective: { loss: 'return', classWeights: true } })), /only apply to the ce/,
+    );
+  });
+
+  for (const [field, bad, msg] of [
+    ['loss', 'mse', /loss must be one of/],
+    ['verdict', 'calmar', /verdict must be one of/],
+    ['park', 'gold', /park must be one of/],
+    ['classWeights', 'yes', /true or false/],
+    ['costBps', -1, /costBps/],
+    ['costBps', 101, /costBps/],
+    ['costBps', 'cheap', /costBps/],
+  ]) {
+    it(`refuses ${field}=${JSON.stringify(bad)}`, () => {
+      assert.match(errorsFor(body({ objective: { [field]: bad } })), msg);
+    });
+  }
+
+  it('refuses a position threshold at the edges, which would be always or never long', () => {
+    assert.match(
+      errorsFor(body({ objective: { loss: 'return', positionThreshold: 1 } })), /exclusive/,
+    );
+  });
+
+  it('refuses a setting it does not know rather than store it unused', () => {
+    assert.match(errorsFor(body({ objective: { slippage: 3 } })), /unknown objective setting/);
+  });
+
+  it('scores before tax unless asked, so an existing strategy keeps its meaning', () => {
+    const o = objective(undefined).value.objective;
+    assert.equal(o.taxScore, false);
+    assert.equal(o.taxRatePct, null);
+  });
+
+  it('keeps a tax rate when scoring after tax, and reads one typed as text', () => {
+    const o = objective({ taxScore: true, taxRatePct: '26.5' }).value.objective;
+    assert.equal(o.taxScore, true);
+    assert.equal(o.taxRatePct, 26.5);
+  });
+
+  it('refuses scoring after tax with no rate', () => {
+    assert.match(errorsFor(body({ objective: { taxScore: true } })), /needs a tax rate/);
+  });
+
+  it('refuses a rate with the switch off, which would be recorded and never applied', () => {
+    assert.match(
+      errorsFor(body({ objective: { taxRatePct: 25 } })), /only applies when scoring after tax/,
+    );
+  });
+
+  it('refuses a rate of 0 or above 100', () => {
+    for (const bad of [0, -5, 101, 'abc']) {
+      assert.match(
+        errorsFor(body({ objective: { taxScore: true, taxRatePct: bad } })), /taxRatePct/,
+      );
+    }
+  });
+});
+
+describe('toItem — objective', () => {
+  const row = (objectiveJson) => ({
+    id: 1, name: 'n', version: 1, features_json: '[]', windows_json: '{}',
+    label_json: 'null', hyperparams_json: '{}', objective_json: objectiveJson,
+  });
+
+  it('reads a row saved before objective existed as the defaults, and says so', () => {
+    const item = toItem(row(null));
+    assert.deepEqual(item.objective, OBJECTIVE_DEFAULTS);
+    assert.equal(item.objectiveDefaulted, true);
+  });
+
+  it('reads a saved objective as saved', () => {
+    const item = toItem(row(JSON.stringify({ ...OBJECTIVE_DEFAULTS, costBps: 12 })));
+    assert.equal(item.objective.costBps, 12);
+    assert.equal(item.objectiveDefaulted, false);
+  });
+});
+
 describe('PARAM_SPEC', () => {
   it('covers the twelve hyperparameters the loader accepts', () => {
     // Mirrors TrainConfig in python/nn/train.py.
@@ -220,6 +329,14 @@ describe('removing a saved strategy', () => {
     const mod = require('./strategies');
     assert.equal(typeof mod.remove, 'function');
     assert.equal(typeof mod.removeByName, 'function');
+  });
+
+  it('refuses a version a run points at, with a count the route can report', () => {
+    // The 409 path. The guard itself needs Postgres; the error's shape does not.
+    const { StrategyInUseError } = require('./strategies');
+    const err = new StrategyInUseError(['7'], 2);
+    assert.equal(err.runs, 2);
+    assert.match(err.message, /2 walk-forward runs trained from this strategy/);
   });
 
   it('still has no update path', () => {

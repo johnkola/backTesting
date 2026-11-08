@@ -1,0 +1,14 @@
+# The repo is LF. This checkout lives on a Windows drive, where a tool can
+# rewrite a tree to CRLF in one pass; without this file that shows up as every
+# line of every file changed, and `git add -A` would commit it.
+* text=auto eol=lf
+
+# Stay CRLF: Windows batch files need it.
+*.bat text eol=crlf
+
+# Committed with CRLF; left byte-exact rather than rewritten by this file.
+gradle/wrapper/gradle-wrapper.properties -text
+test-data/QQQ_daily.csv -text
+test-data/SPY_daily.csv -text
+test-data/VIX_daily.csv -text
+test-data/VXN_daily.csv -text

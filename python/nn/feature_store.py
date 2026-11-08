@@ -12,6 +12,7 @@ read back with its columns permuted would score nonsense while looking fine.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
@@ -60,7 +61,8 @@ def latest_set_id(cur, symbol: str, source: str, timeframe: str) -> int:
 
 
 def read_matrix(cur, set_id: int, *, since: str | None = None,
-                until: str | None = None, drop_incomplete: bool = True) -> FeatureMatrix:
+                until: str | None = None, drop_incomplete: bool = True,
+                columns: Sequence[str] | None = None) -> FeatureMatrix:
     """Pivot one feature set into a dense matrix.
 
     With `drop_incomplete` (the default) any date where a column is NULL is
@@ -68,6 +70,14 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     imputing the hole would invent data the feature builder deliberately
     refused to invent — it wrote NULL precisely because the window was not full
     or the source series had not started.
+
+    `columns` narrows the read to a subset, and the narrowing happens BEFORE the
+    drop. That order is the point: a strategy that leaves out a late-starting
+    column has to get that column's early rows back, not lose them to a NULL it
+    never asked for. The subset keeps `feature_spec` order whatever order it was
+    asked in, because weights are positional and a run must not depend on the
+    order someone ticked boxes. A name the set does not hold is an error here;
+    deciding what to drop, and saying so, is `strategy_spec.resolve_columns`.
     """
     cur.execute(
         "SELECT feature_name FROM feature_spec WHERE feature_set_id = %s "
@@ -77,6 +87,14 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     names = [r[0] for r in cur.fetchall()]
     if not names:
         raise LookupError(f"feature set {set_id} has no feature_spec rows")
+    if columns is not None:
+        missing = sorted(set(columns) - set(names))
+        if missing:
+            raise LookupError(f"feature set {set_id} has no column(s): {', '.join(missing)}")
+        wanted = set(columns)
+        names = [n for n in names if n in wanted]
+        if not names:
+            raise LookupError("columns selects nothing: an empty subset is not a model")
 
     clauses = ["feature_set_id = %(set_id)s"]
     params: dict[str, object] = {"set_id": set_id}
@@ -96,10 +114,10 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     index = {name: i for i, name in enumerate(names)}
     rows: dict[date, list[float | None]] = {}
     for day, name, value in cur.fetchall():
-        slot = rows.setdefault(day, [None] * len(names))
         pos = index.get(name)
-        if pos is not None:  # a column dropped from the spec but still on disk
-            slot[pos] = value
+        if pos is None:  # outside the subset, or dropped from the spec but on disk
+            continue
+        rows.setdefault(day, [None] * len(names))[pos] = value
 
     dates = sorted(rows)
     if drop_incomplete:
@@ -112,6 +130,46 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
         dtype=np.float32,
     )
     return FeatureMatrix(set_id=set_id, dates=dates, names=names, values=matrix)
+
+
+def column_names(cur, set_id: int) -> list[str]:
+    """The set's columns in `feature_spec` order: what a strategy may select."""
+    cur.execute(
+        "SELECT feature_name FROM feature_spec WHERE feature_set_id = %s "
+        "ORDER BY column_index",
+        (set_id,),
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
+def column_counts(cur, set_id: int, since: str, until: str) -> dict[str, int]:
+    """Non-NULL values per column over `[since, until)`.
+
+    A column with no rows in the window is simply absent from the result, which
+    `strategy_spec.resolve_columns` reads as zero.
+    """
+    cur.execute(
+        "SELECT feature_name, COUNT(value) FROM feature_values "
+        "WHERE feature_set_id = %s AND timestamp >= %s AND timestamp < %s "
+        "GROUP BY feature_name",
+        (set_id, since, until),
+    )
+    return {name: int(n) for name, n in cur.fetchall()}
+
+
+def window_bars(cur, set_id: int, since: str, until: str) -> int:
+    """Bars the set's calendar holds over `[since, until)`, whatever their values.
+
+    The denominator `column_counts` is read against: a column with fewer
+    non-NULL values than this is partial in the window.
+    """
+    cur.execute(
+        "SELECT COUNT(DISTINCT timestamp) FROM feature_values "
+        "WHERE feature_set_id = %s AND timestamp >= %s AND timestamp < %s",
+        (set_id, since, until),
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row else 0
 
 
 def stack_lookback(matrix: np.ndarray, lookback: int) -> np.ndarray:

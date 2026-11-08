@@ -12,16 +12,17 @@ import { useTimeframe } from '../lib/useTimeframe'
 import {
   WINDOW_KEYS,
   classifyCoverage, designDefaultWindows, isRealDate, resolveFeatures,
-  windowDays, windowErrors,
-  type WindowKey, type Windows,
+  objectiveFromForm, objectiveToForm, windowDays, windowErrors,
+  type ObjectiveForm, type WindowKey, type Windows,
 } from '../lib/strategyForm'
 
 /**
  * The Strategy tab — the builder (Architecture.md §8.1a / §8.2a).
  *
  * Compose a strategy *before* anything is trained: the feature subset, the four
- * date windows, the validation scheme, the model type, the label definition and
- * the hyperparameters. Saving stores a named, versioned record; Train executes
+ * date windows, the validation scheme, the model type, the label definition,
+ * the hyperparameters, and the objective: the loss, the verdict metric, the cost
+ * charged and where money parks. Saving stores a named, versioned record; Train executes
  * one and makes no choices of its own.
  *
  * Why this is a separate tab rather than more fields on Train: the Train page
@@ -66,6 +67,8 @@ export default function StrategyPage() {
   const [selected, setSelected] = useState<string[]>([])
   const [horizon, setHorizon] = useState('5')
   const [params, setParams] = useState<Record<string, string>>({})
+  // Null until touched, then derived from the API's defaults like the windows.
+  const [editedObjective, setEditedObjective] = useState<ObjectiveForm | null>(null)
 
   // The series fields and the windows are stored as "what the user chose, or
   // null for not yet chosen", and the effective value is derived during render.
@@ -198,8 +201,13 @@ export default function StrategyPage() {
 
   const windowProblems = windowErrors(windows)
   const paramSpec = saved?.paramSpec ?? {}
+  const objectiveSpec = saved?.objectiveSpec
+  const objectiveForm: ObjectiveForm | null = editedObjective
+    ?? (objectiveSpec ? objectiveToForm(objectiveSpec.defaults) : null)
+  const setObjective = (part: Partial<ObjectiveForm>) =>
+    setEditedObjective((o) => ({ ...(o ?? objectiveForm!), ...part }))
   const ready = !!(name.trim() && slice && selected.length > 0
-    && windowProblems.length === 0 && !busy)
+    && windowProblems.length === 0 && objectiveSpec && objectiveForm && !busy)
 
   function setWindow(key: WindowKey, part: Partial<{ from: string, to: string }>) {
     setEditedWindows((w) => {
@@ -210,7 +218,7 @@ export default function StrategyPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!ready || !slice) return
+    if (!ready || !slice || !objectiveSpec || !objectiveForm) return
     setBusy(true); setSubmitError(null); setResult(null)
     try {
       const hyperparams: Record<string, string> = {}
@@ -226,6 +234,7 @@ export default function StrategyPage() {
         windows,
         label: { kind: 'forward_return_3class', horizonBars: Number(horizon) },
         hyperparams,
+        objective: objectiveFromForm(objectiveForm, objectiveSpec),
         notes: notes.trim() || null,
       })
       setResult(stored)
@@ -272,6 +281,7 @@ export default function StrategyPage() {
     setParams(Object.fromEntries(
       Object.entries(s.hyperparams).map(([k, v]) => [k, String(v)]),
     ))
+    setEditedObjective(objectiveToForm(s.objective))
     setResult(null); setSubmitError(null)
   }
 
@@ -513,6 +523,100 @@ export default function StrategyPage() {
               ))}
             </div>
           </Section>
+
+          {objectiveSpec && objectiveForm && (
+            <Section
+              title="7 · Objective and costs"
+              note="What the model is trained to want, the metric that decides whether a run beat holding, and what each trade costs. Every value is saved with the strategy, so a run cannot be charged something its record does not show."
+            >
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <label className="form-control">
+                  <FieldLabel className="text-xs" text="Loss" hint={hintFor('objective.loss')} />
+                  <select
+                    className="select select-bordered select-sm" value={objectiveForm.loss}
+                    onChange={(e) => setObjective({ loss: e.target.value as ObjectiveForm['loss'] })}
+                  >
+                    {objectiveSpec.losses.map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </label>
+                {objectiveForm.loss === 'ce' ? (
+                  <label className="form-control">
+                    <FieldLabel
+                      className="text-xs" text="Class weights" hint={hintFor('objective.classWeights')}
+                    />
+                    <input
+                      type="checkbox" className="checkbox checkbox-sm mt-2"
+                      checked={objectiveForm.classWeights}
+                      onChange={(e) => setObjective({ classWeights: e.target.checked })}
+                    />
+                  </label>
+                ) : (
+                  <label className="form-control">
+                    <FieldLabel
+                      className="text-xs" text="Position threshold"
+                      hint={hintFor('objective.positionThreshold')}
+                    />
+                    <input
+                      className="input input-bordered input-sm" inputMode="decimal"
+                      placeholder={String(objectiveSpec.defaultPositionThreshold)}
+                      value={objectiveForm.positionThreshold}
+                      onChange={(e) => setObjective({ positionThreshold: e.target.value })}
+                    />
+                  </label>
+                )}
+                <label className="form-control">
+                  <FieldLabel className="text-xs" text="Verdict metric" hint={hintFor('objective.verdict')} />
+                  <select
+                    className="select select-bordered select-sm" value={objectiveForm.verdict}
+                    onChange={(e) => setObjective({ verdict: e.target.value as ObjectiveForm['verdict'] })}
+                  >
+                    {objectiveSpec.verdicts.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </label>
+                <label className="form-control">
+                  <FieldLabel className="text-xs" text="Cost (bps per change)" hint={hintFor('objective.costBps')} />
+                  <input
+                    className="input input-bordered input-sm" inputMode="decimal"
+                    placeholder={String(objectiveSpec.defaults.costBps)}
+                    value={objectiveForm.costBps}
+                    onChange={(e) => setObjective({ costBps: e.target.value })}
+                  />
+                </label>
+                <label className="form-control">
+                  <FieldLabel className="text-xs" text="Park money in" hint={hintFor('objective.park')} />
+                  <select
+                    className="select select-bordered select-sm" value={objectiveForm.park}
+                    onChange={(e) => setObjective({ park: e.target.value as ObjectiveForm['park'] })}
+                  >
+                    {objectiveSpec.parks.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </label>
+                <label className="form-control">
+                  <FieldLabel
+                    className="text-xs" text="Score after tax" hint={hintFor('objective.taxScore')}
+                  />
+                  <input
+                    type="checkbox" className="toggle toggle-sm mt-2"
+                    checked={objectiveForm.taxScore}
+                    onChange={(e) => setObjective({ taxScore: e.target.checked })}
+                  />
+                </label>
+                {objectiveForm.taxScore && (
+                  <label className="form-control">
+                    <FieldLabel
+                      className="text-xs" text="Tax rate (%)" hint={hintFor('objective.taxRatePct')}
+                    />
+                    <input
+                      className="input input-bordered input-sm" inputMode="decimal"
+                      placeholder="e.g. 25"
+                      value={objectiveForm.taxRatePct}
+                      onChange={(e) => setObjective({ taxRatePct: e.target.value })}
+                    />
+                  </label>
+                )}
+              </div>
+            </Section>
+          )}
 
           <div className="flex items-center gap-3">
             <button type="submit" className="btn btn-primary" disabled={!ready}>

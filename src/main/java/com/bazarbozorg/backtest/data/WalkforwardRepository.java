@@ -11,6 +11,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -64,9 +65,13 @@ public class WalkforwardRepository {
             SELECT r.id, r.label, r.instrument_id, i.symbol,
                    r.source_id, ds.name AS source_name, r.timeframe,
                    r.feature_set_id, r.input_width, r.objective, r.loss,
-                   r.cost_bps, r.park, r.threshold,
+                   r.cost_bps, r.park, r.threshold, r.tax_rate,
                    r.train_start, r.first_val, r.last_val, r.is_test,
-                   r.hyperparams_json, r.started_at, r.finished_at,
+                   r.hyperparams_json, r.columns_json,
+                   r.strategy_id, r.strategy_name, r.strategy_version,
+                   r.dropped_json, r.partial_json,
+                   r.train_first, r.train_bars_used, r.train_bars, r.test_end,
+                   r.started_at, r.finished_at,
                    count(f.fold) AS folds,
                    count(f.fold) FILTER (WHERE f.strat_return > f.hold_return) AS folds_won,
                    avg(f.strat_return - f.hold_return) AS mean_excess,
@@ -80,6 +85,7 @@ public class WalkforwardRepository {
                    avg(f.days_out) AS mean_days_out,
                    avg(f.drift_tax) AS mean_drift_tax,
                    avg(f.commissions) AS mean_commissions,
+                   avg(f.gains_tax) AS mean_gains_tax,
                    avg(f.timing) AS mean_timing
               FROM walkforward_runs r
               JOIN instruments i ON i.id = r.instrument_id
@@ -157,7 +163,7 @@ public class WalkforwardRepository {
                 SELECT run_id, fold, val_year, train_from, train_to, n_train, n_val,
                        strat_return, hold_return, strat_sharpe, hold_sharpe,
                        strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
-                       days_out, drift_tax, commissions, timing
+                       days_out, drift_tax, commissions, timing, gains_tax
                   FROM walkforward_folds
                  WHERE run_id = ?
                  ORDER BY fold
@@ -204,6 +210,35 @@ public class WalkforwardRepository {
         return ts == null ? null : ts.toInstant().atZone(ZoneOffset.UTC);
     }
 
+    private static Integer nullableInt(ResultSet rs, String column) throws SQLException {
+        int v = rs.getInt(column);
+        return rs.wasNull() ? null : v;
+    }
+
+    private static LocalDate nullableDate(ResultSet rs, String column) throws SQLException {
+        java.sql.Date d = rs.getDate(column);
+        return d == null ? null : d.toLocalDate();
+    }
+
+    /** Null for a run launched from flags, which has no strategy behind it. */
+    private static WalkforwardRun.StrategyProvenance mapProvenance(ResultSet rs)
+            throws SQLException {
+        Long strategyId = nullableLong(rs, "strategy_id");
+        if (strategyId == null) {
+            return null;
+        }
+        return new WalkforwardRun.StrategyProvenance(
+                strategyId,
+                rs.getString("strategy_name"),
+                nullableInt(rs, "strategy_version"),
+                rs.getString("dropped_json"),
+                rs.getString("partial_json"),
+                nullableDate(rs, "train_first"),
+                nullableInt(rs, "train_bars_used"),
+                nullableInt(rs, "train_bars"),
+                nullableDate(rs, "test_end"));
+    }
+
     private static WalkforwardRun mapRun(ResultSet rs) throws SQLException {
         return new WalkforwardRun(
                 rs.getLong("id"),
@@ -220,11 +255,14 @@ public class WalkforwardRepository {
                 rs.getDouble("cost_bps"),
                 rs.getString("park"),
                 nullableDouble(rs, "threshold"),
+                nullableDouble(rs, "tax_rate"),
                 rs.getInt("train_start"),
                 rs.getInt("first_val"),
                 rs.getInt("last_val"),
                 rs.getBoolean("is_test"),
                 rs.getString("hyperparams_json"),
+                rs.getString("columns_json"),
+                mapProvenance(rs),
                 nullableTimestamp(rs, "started_at"),
                 nullableTimestamp(rs, "finished_at"),
                 rs.getInt("folds"),
@@ -240,6 +278,7 @@ public class WalkforwardRepository {
                 nullableDouble(rs, "mean_days_out"),
                 nullableDouble(rs, "mean_drift_tax"),
                 nullableDouble(rs, "mean_commissions"),
+                nullableDouble(rs, "mean_gains_tax"),
                 nullableDouble(rs, "mean_timing"));
     }
 
@@ -264,6 +303,7 @@ public class WalkforwardRepository {
                 rs.getInt("days_out"),
                 rs.getDouble("drift_tax"),
                 rs.getDouble("commissions"),
-                rs.getDouble("timing"));
+                rs.getDouble("timing"),
+                rs.getDouble("gains_tax"));
     }
 }

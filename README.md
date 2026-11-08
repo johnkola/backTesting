@@ -285,7 +285,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | Endpoint | Body / params | Does |
 |---|---|---|
 | `GET /api/walkforward/runs` | `timeframe` `includeTest` `limit` | `{items, timeframe, includeTest, limit}` — walk-forward runs, newest first, each with its folds summarised on read: `folds`, `foldsWon`, `meanExcess`, `worstStratDrawdown`, `totalTrades` and the cost attribution (`meanDriftTax`, `meanCommissions`, `meanTiming`). None of that is stored; it is aggregated from `walkforward_folds`, so it cannot disagree with the folds. A run with no folds yet reports `null` for each average rather than a zero that reads as a measurement, and `inProgress` is true until `finishedAt` is stamped. **Holdout runs are excluded** unless `includeTest=true` — spending the test block is a one-way door, and listing those runs beside the validation ones is how it becomes training data. `limit` defaults to 50, capped at 500 |
-| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. `404` for an unknown id, `400` for a non-numeric one |
+| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. `404` for an unknown id, `400` for a non-numeric one |
 | `GET /api/strategies` | — | `{items: [...]}` — every registered strategy with its description, default parameters, and `requiresTrainedModel`. What a strategy picker and parameter form are built from |
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing` | Runs a backtest, saves it, returns the full result. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range |
 | `DELETE /api/results/:id` | — | Deletes one saved result. `404` if it doesn't exist |
@@ -294,7 +294,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 
 | Endpoint | Body / params | Does |
 |---|---|---|
-| `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. Returns per-slice status (`created`/`skipped`/`overwritten`/`conflict`) plus a `cohesion` report. `409` on conflict or a compressed chunk |
+| `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. Returns per-slice status (`created`/`extended`/`skipped`/`overwritten`/`conflict`, each changed year with a `diff` of added/changed/removed bars), a `file` object for the version it recorded (`changeKind`: `new`, `update`, `fix`, `update+fix` or `same`; `alreadyLoaded` when these exact bytes are what the database holds), and a `cohesion` report. A year that only gains later days is `extended` without `force`; a changed or dropped past bar is a `conflict` until `force`. `400` when the header is not `Date,Open,High,Low,Close,Volume` in that order (the drop-folder ingest moves such a file to `failed/`). `409` on conflict or a compressed chunk |
 | `DELETE /api/imports/:id` | `dry_run` | Undoes one import: deletes the candles in that slice's calendar year and the audit row. The archived CSV is **kept** — it's how you put the data back. `dry_run=true` reports what would go |
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
@@ -302,6 +302,8 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/nn/predict_range` | `symbol`, `source`, `timeframe`, `cache_key`, `version_id`, `since`, `until` | Predicts every bar in a range in one call. This is what the engine uses |
 | `POST /api/nn/predict` | `cache_key`, `version_id`, feature rows | Single-shot scoring against a stored model, for callers that already have features |
 | `GET /api/nn/models` | `strategy` | Cached models from the loader's own registry |
+| `POST /api/nn/walkforward` | `strategyId`, `label` | Starts `python -m nn.walkforward --strategy-id N [--label=…]` in the loader and returns `202` with the job. The strategy is checked first: `400` with `reasons` if it cannot run as saved, `404` if it does not exist, `409` while another run is going (one at a time). Validation folds only; the holdout (`--test`) is terminal-only. The run itself lands in `GET /api/walkforward/runs` as the runner records it |
+| `GET /api/nn/walkforward/jobs` | — | `{items, running}` — jobs started since the loader came up, newest first (last 20): `running`, `exitCode`, `runId` once the runner opens its row, and the last 40 lines of output. In memory only; a restart forgets them, and `walkforward_runs` stays the record. A job that ends with `runId: null` was refused or crashed, and its output says which |
 
 ## Bulk CSV import (drop folder)
 
@@ -316,7 +318,7 @@ cp yahoo__AAPL__D1.csv yahoo__EURUSD__FOREX__H1.csv data/csv-inbox/
 cd python && python -m loader.ingest            # --dry-run to preview, --force to overwrite
 ```
 
-Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / overwrite / conflict), and upserted into `candles` in one transaction. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
+Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / extend / overwrite / conflict), and upserted into `candles` in one transaction. Every distinct file is recorded as a version in `import_files` and labelled `new`, `update` (later days only), `fix` (past bars changed or dropped) or `update+fix`. An identical file prints `SAME` and is not parsed, and a changed year prints its diff with the first changed dates. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
 
 ## Data cohesiveness checks
 
@@ -455,15 +457,18 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight. Last shipped: the front-end pass — a startup service check with a
-maintenance page and a global maintenance switch, global themes, the docs moved out of
-their own server-rendered UI and into the client at `/docs`, an undo control on the
-imports table, and `npm run lint` extended to formatting, whitespace and imports in both
-`web/client/` and `web/api/`. Replace this line when you pick the next thing up.)*
+*(nothing in flight. Last shipped: walk-forward folds kept in the database and shown on
+the Training tab, and the yield curve computed and checked against FRED's published
+spread.)*
 
 ### Next
 
-*(no concrete follow-ups queued — pick the next idea up from notes / issues when you sit down)*
+*Ordered by what blocks the phase-one question. Full list: [`DESIGN-GAPS.md`](DESIGN-GAPS.md).*
+
+1. Make a saved strategy decide what gets trained.
+2. Charge tax inside the objective, and add the tax toggle.
+3. Record an input snapshot on every run, so it can be recomputed.
+4. Import fed funds, then build Strategy 2.
 
 ### Done
 

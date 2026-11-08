@@ -103,6 +103,68 @@ def test_a_column_on_disk_but_absent_from_the_spec_is_ignored():
     assert list(fm.values[0]) == [1.0]
 
 
+def test_a_subset_gets_back_the_rows_a_left_out_column_would_have_cost():
+    """beta starts late. A strategy without it must not lose beta's head."""
+    cur = FakeCursor(
+        spec_rows("alpha", "beta"),
+        [(D1, "alpha", 1.0), (D1, "beta", None),
+         (D2, "alpha", 2.0), (D2, "beta", 5.0)],
+    )
+    fm = fs.read_matrix(cur, 1, columns=["alpha"])
+    assert fm.names == ["alpha"]
+    assert fm.dates == [D1, D2]
+
+
+def test_a_subset_keeps_spec_order_whatever_order_it_was_asked_in():
+    """Weights are positional; ticking boxes differently must not permute them."""
+    cur = FakeCursor(
+        spec_rows("alpha", "beta", "gamma"),
+        [(D1, "gamma", 3.0), (D1, "alpha", 1.0), (D1, "beta", 2.0)],
+    )
+    fm = fs.read_matrix(cur, 1, columns=["gamma", "alpha"])
+    assert fm.names == ["alpha", "gamma"]
+    assert fm.values.tolist() == [[1.0, 3.0]]
+
+
+def test_a_day_holding_only_unselected_columns_is_not_a_row():
+    cur = FakeCursor(
+        spec_rows("alpha", "beta"),
+        [(D1, "beta", 2.0), (D2, "alpha", 1.0)],
+    )
+    fm = fs.read_matrix(cur, 1, columns=["alpha"], drop_incomplete=False)
+    assert fm.dates == [D2]
+
+
+def test_a_subset_naming_an_unknown_column_is_an_error():
+    cur = FakeCursor(spec_rows("alpha"))
+    with pytest.raises(LookupError, match="zeta"):
+        fs.read_matrix(cur, 1, columns=["alpha", "zeta"])
+
+
+def test_an_empty_subset_is_an_error():
+    cur = FakeCursor(spec_rows("alpha"))
+    with pytest.raises(LookupError, match="empty subset"):
+        fs.read_matrix(cur, 1, columns=[])
+
+
+def test_column_counts_reads_the_half_open_window():
+    cur = FakeCursor([("alpha", 10), ("beta", 0)])
+    counts = fs.column_counts(cur, 1, "2003-01-01", "2016-01-01")
+    assert counts == {"alpha": 10, "beta": 0}
+    assert cur.last_params == (1, "2003-01-01", "2016-01-01")
+
+
+def test_window_bars_counts_distinct_days_in_the_half_open_window():
+    cur = FakeCursor([(250,)])
+    assert fs.window_bars(cur, 1, "2003-01-01", "2004-01-01") == 250
+    assert "DISTINCT timestamp" in cur.last_sql
+    assert cur.last_params == (1, "2003-01-01", "2004-01-01")
+
+
+def test_window_bars_with_no_rows_is_zero():
+    assert fs.window_bars(FakeCursor([]), 1, "2003-01-01", "2004-01-01") == 0
+
+
 def test_missing_spec_is_an_error_not_an_empty_matrix():
     with pytest.raises(LookupError, match="no feature_spec rows"):
         fs.read_matrix(FakeCursor([], []), 99)

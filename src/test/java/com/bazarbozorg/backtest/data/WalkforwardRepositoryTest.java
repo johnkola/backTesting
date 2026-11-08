@@ -57,6 +57,10 @@ class WalkforwardRepositoryTest {
     private static long emptyRunId;
     /** A holdout run, which the list must hide by default. */
     private static long holdoutRunId;
+    /** A run of a saved strategy, with its columns and coverage recorded. */
+    private static long strategyRunId;
+    /** A run scored after tax, with tax paid on one of its two folds. */
+    private static long taxedRunId;
 
     @BeforeAll
     static void setUp() {
@@ -87,6 +91,21 @@ class WalkforwardRepositoryTest {
 
         emptyRunId = insertRun(LABEL, false, "sharpe", "sharpe", 0.35);
         holdoutRunId = insertRun(TEST_LABEL, true, "return", "ce", null);
+        strategyRunId = insertRun(LABEL, false, "return", "ce", null);
+        exec("UPDATE walkforward_runs SET"
+             + " columns_json = '[\"price_close\", \"vxn_close\"]',"
+             + " strategy_id = 23, strategy_name = 'zz-strategy', strategy_version = 6,"
+             + " dropped_json = '[[\"breadth\", \"no values in the train window\"]]',"
+             + " partial_json = '[[\"vxn_close\", 3000, 3273]]',"
+             + " train_first = '2004-03-01', train_bars_used = 3000, train_bars = 3273"
+             + " WHERE id = " + strategyRunId);
+        // Scored after tax at 25%: one fold paid 2 points, the other nothing.
+        taxedRunId = insertRun(LABEL, false, "return", "ce", null);
+        exec("UPDATE walkforward_runs SET tax_rate = 25 WHERE id = " + taxedRunId);
+        insertFold(taxedRunId, 1, 2016, 3.0, 7.0, 0.5, 0.6, 9.0, 11.0, 4, -0.5, -0.2, +1.0);
+        insertFold(taxedRunId, 2, 2017, 2.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, -1.5, -0.5, -2.0);
+        exec("UPDATE walkforward_folds SET gains_tax = -2.0 WHERE run_id = " + taxedRunId
+             + " AND fold = 1");
     }
 
     @AfterAll
@@ -193,6 +212,54 @@ class WalkforwardRepositoryTest {
         // something. There is no position to cut.
         assertNull(theRun(runId).threshold());
         assertEquals(0.35, theRun(emptyRunId).threshold(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("a strategy run says which strategy, which columns, and what it covered")
+    void strategyRunCarriesItsProvenance() {
+        WalkforwardRun run = theRun(strategyRunId);
+        assertEquals("[\"price_close\", \"vxn_close\"]", run.columnsJson());
+        WalkforwardRun.StrategyProvenance p = run.strategy();
+        assertNotNull(p, "a run with a strategy_id must carry its provenance");
+        assertEquals(23L, p.id());
+        assertEquals("zz-strategy", p.name());
+        assertEquals(6, p.version());
+        assertTrue(p.droppedJson().contains("breadth"));
+        assertTrue(p.partialJson().contains("vxn_close"));
+        assertEquals(java.time.LocalDate.of(2004, 3, 1), p.trainFirst());
+        assertEquals(3000, p.trainBarsUsed());
+        assertEquals(3273, p.trainBars());
+        assertNull(p.testEnd(), "test_end is set only on a holdout run");
+    }
+
+    @Test
+    @DisplayName("a run from flags alone has no strategy, rather than an empty one")
+    void flagsRunHasNoProvenance() {
+        // Null, not a record of nulls: the client tells the two kinds of run
+        // apart by whether `strategy` is there at all.
+        WalkforwardRun run = theRun(runId);
+        assertNull(run.strategy());
+        assertNull(run.columnsJson(), "the fixture predates columns_json, like old runs");
+    }
+
+    @Test
+    @DisplayName("a run scored before tax has no rate and pays no tax")
+    void untaxedRunHasNoRate() {
+        WalkforwardRun run = theRun(runId);
+        assertNull(run.taxRate(), "null is 'off'; 0 would read as a 0% rate that was applied");
+        assertEquals(0.0, run.meanGainsTax(), 1e-9);
+        assertEquals(0.0, repo.findFolds(runId).get(0).gainsTax(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("a run scored after tax carries its rate and the tax per fold")
+    void taxedRunCarriesRateAndTax() {
+        WalkforwardRun run = theRun(taxedRunId);
+        assertEquals(25.0, run.taxRate(), 1e-9);
+        assertEquals(-1.0, run.meanGainsTax(), 1e-9); // (-2 + 0) / 2
+        List<WalkforwardFold> folds = repo.findFolds(taxedRunId);
+        assertEquals(-2.0, folds.get(0).gainsTax(), 1e-9);
+        assertEquals(0.0, folds.get(1).gainsTax(), 1e-9);
     }
 
     // ---- the derived half ---------------------------------------------------

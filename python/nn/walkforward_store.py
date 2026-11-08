@@ -21,9 +21,20 @@ either way. That is the difference between a progress view and a silent wait.
 NOTHING IS STORED THAT A FOLD ALREADY IMPLIES. No folds-won count, no mean
 excess, no worst drawdown. Every one is derivable from `walkforward_folds`, and
 a stored copy is a second source of truth that goes stale the moment a fold is
-corrected. The same rule keeps the feature list out: `feature_set_id` points at
-the set, and `feature_spec` already holds that set's ordered columns and their
-methods, so §6.1's "exact feature list" is one join away rather than duplicated.
+corrected.
+
+THE COLUMN LIST IS STORED, THOUGH IT LOOKS DERIVABLE. It once was: every run
+read the whole set, so `feature_set_id` plus `feature_spec` gave §6.1's exact
+feature list. A strategy run reads a subset, so the set no longer says which
+columns trained the model. `columns_json` is that list in input order, written
+on every run so the field never means "all of them" by being empty.
+
+A STRATEGY RUN SAYS WHICH STRATEGY, AND WHAT IT REALLY COVERED. `strategy_id`,
+`strategy_name` and `strategy_version` together, because a strategy row can be
+removed and the run must still say what it ran. Then §6.2's coverage: the
+columns dropped and why, the partial ones kept, and the first fold's train window
+as the matrix held it (`train_first`, `train_bars_used` of `train_bars`), which
+a partial column moves. All NULL on a run from flags alone.
 
 COLUMNS THAT EXIST GET COLUMNS, NOT JSON. `objective`, `loss`, `cost_bps`,
 `park` and `threshold` are queryable columns because the UI filters and compares
@@ -46,7 +57,7 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, types only
 DEFAULT_ACTOR = "nn:walkforward"
 
 #: Recorded in `hyperparams_json`. Deliberately NOT the knobs with their own
-#: column (objective, loss, cost_bps, park, threshold) and not the plumbing that
+#: column (objective, loss, cost_bps, park, threshold, tax_rate) and not the plumbing that
 #: does not change the model (symbol, source, timeframe, set_id, label, save).
 #: `seed` is in here because §6.1 requires it: without the seed a run is not
 #: reproducible, only approximately repeatable.
@@ -59,14 +70,19 @@ HYPERPARAM_KEYS = (
 _INSERT_RUN = """
 INSERT INTO walkforward_runs
     (label, instrument_id, source_id, timeframe, feature_set_id, input_width,
-     objective, loss, cost_bps, park, threshold,
-     train_start, first_val, last_val, is_test, hyperparams_json)
+     objective, loss, cost_bps, park, threshold, tax_rate,
+     train_start, first_val, last_val, is_test, hyperparams_json, columns_json,
+     strategy_id, strategy_name, strategy_version, dropped_json, partial_json,
+     train_first, train_bars_used, train_bars, test_end)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
-     %(objective)s, %(loss)s, %(cost_bps)s, %(park)s, %(threshold)s,
+     %(objective)s, %(loss)s, %(cost_bps)s, %(park)s, %(threshold)s, %(tax_rate)s,
      %(train_start)s, %(first_val)s, %(last_val)s, %(is_test)s,
-     %(hyperparams_json)s)
+     %(hyperparams_json)s, %(columns_json)s,
+     %(strategy_id)s, %(strategy_name)s, %(strategy_version)s,
+     %(dropped_json)s, %(partial_json)s,
+     %(train_first)s, %(train_bars_used)s, %(train_bars)s, %(test_end)s)
 RETURNING id
 """
 
@@ -75,13 +91,13 @@ INSERT INTO walkforward_folds
     (run_id, fold, val_year, train_from, train_to, n_train, n_val,
      strat_return, hold_return, strat_sharpe, hold_sharpe,
      strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
-     days_out, drift_tax, commissions, timing)
+     days_out, drift_tax, commissions, timing, gains_tax)
 VALUES
     (%(run_id)s, %(fold)s, %(val_year)s, %(train_from)s, %(train_to)s,
      %(n_train)s, %(n_val)s,
      %(strat_return)s, %(hold_return)s, %(strat_sharpe)s, %(hold_sharpe)s,
      %(strat_maxdd)s, %(hold_maxdd)s, %(trades)s, %(accuracy)s, %(baseline_acc)s,
-     %(days_out)s, %(drift_tax)s, %(commissions)s, %(timing)s)
+     %(days_out)s, %(drift_tax)s, %(commissions)s, %(timing)s, %(gains_tax)s)
 ON CONFLICT (run_id, fold) DO UPDATE SET
     val_year = EXCLUDED.val_year,
     train_from = EXCLUDED.train_from,
@@ -101,6 +117,7 @@ ON CONFLICT (run_id, fold) DO UPDATE SET
     drift_tax = EXCLUDED.drift_tax,
     commissions = EXCLUDED.commissions,
     timing = EXCLUDED.timing,
+    gains_tax = EXCLUDED.gains_tax,
     updated_at = now(),
     updated_by = audit_actor()
 """
@@ -141,7 +158,8 @@ def owner_of_set(cur, set_id: int) -> tuple[int, int]:
 
 
 def run_row(args: Any, set_id: int, input_width: int,
-            instrument_id: int, source_id: int) -> dict[str, Any]:
+            instrument_id: int, source_id: int, columns: list[str] | None = None,
+            provenance: dict[str, Any] | None = None) -> dict[str, Any]:
     """The run's own record, as column values. Pure — no database.
 
     `first_val`/`last_val` are stored as configured, even on a `--test` run
@@ -166,11 +184,16 @@ def run_row(args: Any, set_id: int, input_width: int,
         "cost_bps": float(args.cost_bps),
         "park": args.park,
         "threshold": threshold,
+        # Percent on realized gains, or NULL for a run scored before tax. NULL
+        # rather than 0 so "off" and "a 0% rate" never read the same.
+        "tax_rate": float(args.tax_rate) if getattr(args, "tax_rate", None) else None,
         "train_start": int(args.train_start),
         "first_val": int(args.first_val),
         "last_val": int(args.last_val),
         "is_test": bool(getattr(args, "test", False)),
         "hyperparams_json": json.dumps(hyperparams(args), sort_keys=True),
+        "columns_json": json.dumps(list(columns)) if columns is not None else None,
+        **{**NO_PROVENANCE, **(provenance or {})},
     }
 
 
@@ -197,10 +220,21 @@ def fold_row(run_id: int, r: FoldResult) -> dict[str, Any]:
         "drift_tax": r.drift_tax,
         "commissions": r.commissions,
         "timing": r.timing,
+        "gains_tax": r.gains_tax,
     }
 
 
-def open_run(conn, args: Any, set_id: int, input_width: int) -> int:
+#: A run from flags alone records no strategy and no coverage.
+NO_PROVENANCE: dict[str, Any] = {
+    "strategy_id": None, "strategy_name": None, "strategy_version": None,
+    "dropped_json": None, "partial_json": None,
+    "train_first": None, "train_bars_used": None, "train_bars": None, "test_end": None,
+}
+
+
+def open_run(conn, args: Any, set_id: int, input_width: int,
+             columns: list[str] | None = None,
+             provenance: dict[str, Any] | None = None) -> int:
     """Insert the run and return its id, committed, before any fold is scored.
 
     Committed immediately on purpose: the row is what the Training tab reads to
@@ -210,7 +244,8 @@ def open_run(conn, args: Any, set_id: int, input_width: int) -> int:
     with conn.cursor() as cur:
         set_actor(cur)
         instrument_id, source_id = owner_of_set(cur, set_id)
-        cur.execute(_INSERT_RUN, run_row(args, set_id, input_width, instrument_id, source_id))
+        cur.execute(_INSERT_RUN, run_row(args, set_id, input_width, instrument_id,
+                                         source_id, columns, provenance))
         run_id = int(cur.fetchone()[0])
     conn.commit()
     return run_id
