@@ -65,6 +65,7 @@ RUNNER_ARGS = {
     "dropoutRate": "dropout",
     "learningRate": "lr",
     "numEpochs": "epochs",
+    "earlyStoppingPatience": "patience",
     "batchSize": "batch",
     "seed": "seed",
 }

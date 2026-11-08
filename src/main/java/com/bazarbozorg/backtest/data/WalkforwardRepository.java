@@ -65,7 +65,7 @@ public class WalkforwardRepository {
             SELECT r.id, r.label, r.instrument_id, i.symbol,
                    r.source_id, ds.name AS source_name, r.timeframe,
                    r.feature_set_id, r.input_width, r.objective, r.loss,
-                   r.cost_bps, r.park, r.threshold, r.tax_rate, r.tax_train,
+                   r.cost_bps, r.park, r.threshold, r.tax_rate, r.tax_train, r.purge_bars,
                    r.train_start, r.first_val, r.last_val, r.is_test,
                    r.hyperparams_json, r.columns_json,
                    r.strategy_id, r.strategy_name, r.strategy_version,
@@ -163,7 +163,8 @@ public class WalkforwardRepository {
                 SELECT run_id, fold, val_year, train_from, train_to, n_train, n_val,
                        strat_return, hold_return, strat_sharpe, hold_sharpe,
                        strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
-                       days_out, drift_tax, commissions, timing, gains_tax
+                       days_out, drift_tax, commissions, timing, gains_tax,
+                       best_epoch, epochs_run
                   FROM walkforward_folds
                  WHERE run_id = ?
                  ORDER BY fold
@@ -257,6 +258,7 @@ public class WalkforwardRepository {
                 nullableDouble(rs, "threshold"),
                 nullableDouble(rs, "tax_rate"),
                 rs.getBoolean("tax_train"),
+                nullableInt(rs, "purge_bars"),
                 rs.getInt("train_start"),
                 rs.getInt("first_val"),
                 rs.getInt("last_val"),
@@ -305,6 +307,8 @@ public class WalkforwardRepository {
                 rs.getDouble("drift_tax"),
                 rs.getDouble("commissions"),
                 rs.getDouble("timing"),
-                rs.getDouble("gains_tax"));
+                rs.getDouble("gains_tax"),
+                nullableInt(rs, "best_epoch"),
+                nullableInt(rs, "epochs_run"));
     }
 }

@@ -105,7 +105,7 @@ feature set was built from, which is what G3 (an input snapshot id) needs.
 |---|---|---|---|---|---|
 | G21 | A new strategy always starts on the design's QQQ windows (train from 2003), so a series with a shorter history (AAPL was stored from 2019-12-02 only) gets an empty train window and a warning. A "fit windows to this series" action would propose windows from the stored range | Architecture §8.2a | `strategyForm.ts:117` | S | open |
 | G20 | The Java Backtest tab is still pre-tax. G2 taxes the walk-forward scoring only; the engine's backtest has no tax switch | Design Notes, Tax and Trading Costs ("the tax and strategy toggles") | `BacktestStage.tsx:92` says returns are gross | M | open |
-| G19 | No early stopping. The validation window is only used for scoring, while the design says it is for early stopping and hyperparameter choice, and §8.2a lists early stopping as a hyperparameter | Architecture §8.1a, §8.2a | no `patience` or early stopping anywhere in `python/nn/` | M | open |
+| G19 | No early stopping. The validation window is only used for scoring, while the design says it is for early stopping and hyperparameter choice, and §8.2a lists early stopping as a hyperparameter | Architecture §8.1a, §8.2a | no `patience` or early stopping anywhere in `python/nn/` | M | done, uncommitted (see G19 progress) |
 
 ### Deliberate departures to confirm
 
@@ -133,6 +133,29 @@ buy-and-hold once real costs are charged? Gaps that block that answer come first
 | G3 | No run can be recomputed from its record: no input snapshot id, no `feature_runs` table | Architecture §3.5, §6.1 | no `feature_runs` or `snapshot_id` anywhere in the code or `schema.sql` | M | open |
 | G4 | Fed funds (41) is configured but never imported. Strategy 2's margin interest needs it | Features.md 41 | `features.toml`: `fed_funds` is `not-imported` | S | open |
 | G5 | Strategy 2 does not exist: margin long and inverse, PSQ, the 50% ceiling, variable interest | Design Notes, Strategy 2 | no `PSQ` or margin interest anywhere in the code | L | open |
+
+**G19 progress.** Done, uncommitted, with the leak found while planning it (R9).
+
+*R9, purge.* Folds had no gap between training and the scored year: a `ce` label looks
+`forward` bars ahead and the money loss's last row uses the next bar's return, so the last
+training rows were labelled with the scored year's prices. `make_folds` and `make_test_fold`
+now drop the last `forward` bars of each training window (`walkforward.purged`); the run stores
+`purge_bars`, NULL on a run from before it, which the Training tab flags as slightly optimistic.
+
+*Early stopping.* Hyperparameter `earlyStoppingPatience` (runner `--patience`), blank = off and
+Epochs is then exact. Option B, chosen 2026-11-08: each fold holds the last year of its training
+window out of fitting (`stop_split`, purged before it too) and stops after `patience` epochs
+without improving the training objective on it, keeping the best epoch's weights. Not the fold's
+validation year, which is what the fold is scored on. Folds store `best_epoch` and `epochs_run`;
+the Training tab shows them. The Train page does not forward patience, because nn-feedforward has
+no early stopping and would silently ignore it.
+
+*Live check, 2026-11-08,* strategy 23 (2 features, `ce`): run 98 unpurged, mean excess -2.60 pp;
+run 165 purged, -2.21 pp (2/6 folds won); run 166 purged with patience 5 (v10), +3.99 pp but
+1/6 folds won. Folds kept epoch 1-3 in five of six folds: on held-out data this model is best
+barely trained, so it mostly holds. The positive mean comes from one fold (2020: +24.27 pp,
+timing +15.88, it sat out part of the crash). One fold is not a verdict; the `return` verdict
+on mean excess is easily carried by an outlier, which is worth weighing when choosing variants.
 
 **G2 progress.** Split into two switches, because the app may be a signal provider: a
 published signal cannot depend on one person's tax rate, and a model trained with tax trades

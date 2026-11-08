@@ -43,6 +43,9 @@ import java.time.LocalDate;
  * @param gainsTax     tax on realized gains, percentage points of starting capital;
  *                     0 for a run scored before tax. Not {@code driftTax}, which is
  *                     the price of sitting out and has nothing to do with tax
+ * @param bestEpoch    the epoch whose weights early stopping kept; null when the run
+ *                     trained a fixed number of epochs
+ * @param epochsRun    epochs actually trained before stopping; null likewise
  */
 public record WalkforwardFold(
         long runId,
@@ -65,7 +68,9 @@ public record WalkforwardFold(
         double driftTax,
         double commissions,
         double timing,
-        double gainsTax
+        double gainsTax,
+        Integer bestEpoch,
+        Integer epochsRun
 ) {
 
     /** The headline: did the model beat holding over this fold, in points. */

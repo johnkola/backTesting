@@ -474,6 +474,16 @@ ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS gains_tax DOUBLE PRECISIO
 -- this changes the signals, which is why it is recorded on its own.
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS tax_train BOOLEAN NOT NULL DEFAULT false;
 
+-- Purge and early stopping (G19). purge_bars is how many bars were dropped from
+-- the end of each training window because their targets look past it into the
+-- scored window; NULL on a run from before the purge existed, which trained on
+-- them. best_epoch is the epoch whose weights a fold kept and epochs_run how
+-- many it trained, both NULL when the run trained a fixed number of epochs.
+-- Patience itself is a hyperparameter and lives in hyperparams_json.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS purge_bars INT;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS best_epoch INT;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS epochs_run INT;
+
 -- ---------------------------------------------------------------------------
 -- The buy-and-hold benchmark, computed once per window
 -- ---------------------------------------------------------------------------

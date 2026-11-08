@@ -104,6 +104,11 @@ export const fieldHints: Record<string, string> = {
     'Full passes over the training set. More is not better: past the point where '
     + 'validation loss turns back up, every extra epoch is the model memorising '
     + 'the training years. The Training tab is where that turn is visible.',
+  'param.earlyStoppingPatience':
+    'Walk-forward runs only. Each fold holds the last year of its training window out of '
+    + 'fitting and stops after this many epochs without improving on it, keeping the best '
+    + 'epoch. Epochs becomes the cap. Blank trains every fold for exactly Epochs. Not used '
+    + 'by the Train page, whose trainer has no early stopping.',
   'param.batchSize':
     'Samples averaged into each weight update. Small batches add noise that '
     + 'often helps generalisation but train slower; large ones are faster and '

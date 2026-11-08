@@ -1063,6 +1063,10 @@ export type WalkforwardFold = {
   timing: number
   /** Tax on realized gains, points of starting capital; 0 when scored before tax. */
   gainsTax: number
+  /** The epoch early stopping kept; null when the run trained fixed epochs. */
+  bestEpoch: number | null
+  /** Epochs actually trained before stopping; null likewise. */
+  epochsRun: number | null
 }
 
 /**
@@ -1096,6 +1100,12 @@ export type WalkforwardRun = {
   taxRate: number | null
   /** True when the model was trained against the tax too, so its signals differ. */
   taxTrain: boolean
+  /**
+   * Bars dropped from the end of each training window because their targets
+   * look into the scored window. Null on a run from before the purge, whose
+   * folds trained on them and so read slightly optimistic.
+   */
+  purgeBars: number | null
   trainStart: number
   firstVal: number
   lastVal: number

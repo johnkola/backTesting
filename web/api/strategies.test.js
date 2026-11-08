@@ -335,9 +335,12 @@ describe('toItem — objective', () => {
 });
 
 describe('PARAM_SPEC', () => {
-  it('covers the twelve hyperparameters the loader accepts', () => {
-    // Mirrors TrainConfig in python/nn/train.py.
-    assert.equal(Object.keys(PARAM_SPEC).length, 12);
+  it('covers the twelve hyperparameters the loader accepts, plus walk-forward patience', () => {
+    // Twelve mirror TrainConfig in python/nn/train.py; earlyStoppingPatience is
+    // the walk-forward runner's alone, and the Train page does not forward it.
+    const walkforwardOnly = ['earlyStoppingPatience'];
+    assert.equal(Object.keys(PARAM_SPEC).length, 12 + walkforwardOnly.length);
+    for (const k of walkforwardOnly) assert.ok(k in PARAM_SPEC, `${k} missing`);
     for (const [key, spec] of Object.entries(PARAM_SPEC)) {
       assert.ok(spec.label, `${key} has no label`);
       assert.ok(spec.min < spec.max, `${key} has an empty range`);

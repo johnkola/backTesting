@@ -91,6 +91,10 @@ class FoldResult:
     # run scores before tax. Not the same thing as `drift_tax`, which is the
     # price of sitting out and has nothing to do with tax.
     gains_tax: float = 0.0
+    # Early stopping: the epoch whose weights were kept, and how many ran. None
+    # when the run trained for a fixed number of epochs.
+    best_epoch: int | None = None
+    epochs_run: int | None = None
 
     @property
     def excess(self) -> float:
@@ -216,8 +220,21 @@ def simulate_taxed(
     return out, trades, -paid * 100.0
 
 
+def purged(tr: list[int], purge: int) -> list[int]:
+    """Training indices minus the last `purge`, the bars whose target looks past them.
+
+    A row's label is decided `forward` bars later, and its money-loss return
+    by the next bar, so the last `forward` rows of a training window are
+    labelled with prices from the window after it. Without the gap, a fold
+    trains on information from the very year it is scored on. `purge` is
+    `forward`, which covers both (forward >= 1).
+    """
+    return tr[:-purge] if purge > 0 else tr
+
+
 def make_test_fold(
     dates: list[date], train_start: int, first_test: int, last_day: date | None = None,
+    purge: int = 0,
 ) -> list[tuple[int, list[int], list[int]]]:
     """ONE fold: train on everything before `first_test`, evaluate all of it.
 
@@ -230,7 +247,7 @@ def make_test_fold(
     prediction window, so scoring them would spend bars the strategy set aside.
     Without a strategy there is no such window and the holdout runs to the end.
     """
-    tr = [i for i, d in enumerate(dates) if train_start <= d.year < first_test]
+    tr = purged([i for i, d in enumerate(dates) if train_start <= d.year < first_test], purge)
     te = [i for i, d in enumerate(dates)
           if d.year >= first_test and (last_day is None or d <= last_day)]
     if not tr or not te:
@@ -239,21 +256,70 @@ def make_test_fold(
 
 
 def make_folds(
-    dates: list[date], train_start: int, first_val: int, last_val: int
+    dates: list[date], train_start: int, first_val: int, last_val: int, purge: int = 0,
 ) -> list[tuple[int, list[int], list[int]]]:
     """(validation year, train indices, validation indices) per fold.
 
     Train always runs from `train_start` to the end of the year before the
     validation year — an expanding window, not a sliding one, so each fold
-    keeps every lesson the earlier ones had.
+    keeps every lesson the earlier ones had. The last `purge` training bars are
+    dropped (see `purged`).
     """
     out = []
     for year in range(first_val, last_val + 1):
-        tr = [i for i, d in enumerate(dates) if train_start <= d.year < year]
+        tr = purged([i for i, d in enumerate(dates) if train_start <= d.year < year], purge)
         va = [i for i, d in enumerate(dates) if d.year == year]
         if tr and va:
             out.append((year, tr, va))
     return out
+
+
+def stop_split(tr: list[int], dates: list[date], purge: int) -> tuple[list[int], list[int]]:
+    """(fit, stop): a fold's training indices split for early stopping.
+
+    `stop` is the last calendar year of the training window; it decides when
+    to stop and is never fitted on. `fit` is everything before it, purged the
+    same way a fold is, so the stopping slice is not leaked into by labels.
+
+    Not the fold's validation year, deliberately. That year is what the fold
+    is scored on, and the folds pick the winning variant; stopping at the
+    epoch that does best on it would make every fold's score optimistic. This
+    costs each fold a year of fitting data, which the expanding window
+    mostly gives back.
+    """
+    if not tr:
+        return [], []
+    last_year = dates[tr[-1]].year
+    stop = [i for i in tr if dates[i].year == last_year]
+    fit = purged([i for i in tr if dates[i].year < last_year], purge)
+    return fit, stop
+
+
+@dataclass
+class Stopper:
+    """Early stopping: keep the best weights, stop after `patience` epochs
+    without improvement on the stopping slice."""
+
+    patience: int
+    best: float = float("inf")
+    best_epoch: int = 0
+    epochs_run: int = 0
+    state: dict | None = None
+    _since: int = 0
+
+    def step(self, epoch: int, loss: float, model: nn.Module) -> bool:
+        """Record one epoch's stopping loss; True when training should stop."""
+        self.epochs_run = epoch
+        if loss < self.best - 1e-12:
+            self.best, self.best_epoch, self._since = loss, epoch, 0
+            self.state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            return False
+        self._since += 1
+        return self._since >= self.patience
+
+    def restore(self, model: nn.Module) -> None:
+        if self.state is not None:
+            model.load_state_dict(self.state)
 
 
 def train_tax_rate(args) -> float:
@@ -278,8 +344,9 @@ def tax_train_problem(args) -> str | None:
 
 
 def train_money(
-    x_tr: np.ndarray, r_tr: np.ndarray, args
-) -> tuple[nn.Module, object]:
+    x_tr: np.ndarray, r_tr: np.ndarray, args,
+    stop: tuple[np.ndarray, np.ndarray] | None = None,
+) -> tuple[nn.Module, object, Stopper | None]:
     """Fit a position model by optimising the trade simulation directly.
 
     Full-batch rather than mini-batch, because Sharpe and drawdown are
@@ -299,20 +366,38 @@ def train_money(
                            seed=args.seed, output_size=1))
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    for _ in range(args.epochs):
+    tax = train_tax_rate(args)
+    stopper = None
+    if stop is not None:
+        stopper = Stopper(args.patience)
+        xs_stop = torch.from_numpy(scaler.transform(stop[0]))
+        r_stop = torch.from_numpy(stop[1].astype(np.float32))
+    for epoch in range(1, args.epochs + 1):
         model.train()
         opt.zero_grad()
         pos = money_loss.positions_from_logits(model(xs))
         loss, _ = money_loss.objective(args.loss, pos, r, cost_bps=args.cost_bps,
-                                       tax_rate=train_tax_rate(args))
+                                       tax_rate=tax)
         loss.backward()
         opt.step()
-    return model, scaler
+        if stopper is not None:
+            # The same objective, tax included, on bars the weights never saw.
+            model.eval()
+            with torch.no_grad():
+                held, _ = money_loss.objective(
+                    args.loss, money_loss.positions_from_logits(model(xs_stop)), r_stop,
+                    cost_bps=args.cost_bps, tax_rate=tax)
+            if stopper.step(epoch, float(held), model):
+                break
+    if stopper is not None:
+        stopper.restore(model)
+    return model, scaler, stopper
 
 
 def train_one(
-    x_tr: np.ndarray, y_tr: np.ndarray, args
-) -> tuple[nn.Module, object]:
+    x_tr: np.ndarray, y_tr: np.ndarray, args,
+    stop: tuple[np.ndarray, np.ndarray] | None = None,
+) -> tuple[nn.Module, object, Stopper | None]:
     """Fit a scaler and a network on one fold's training slice.
 
     The scaler is refitted per fold on purpose. It is the non-causal step the
@@ -342,14 +427,27 @@ def train_one(
         TensorDataset(torch.from_numpy(xs), torch.from_numpy(y_tr)),
         batch_size=args.batch, shuffle=True, generator=gen,
     )
-    for _ in range(args.epochs):
+    stopper = None
+    if stop is not None:
+        stopper = Stopper(args.patience)
+        xs_stop = torch.from_numpy(scaler.transform(stop[0]))
+        ys_stop = torch.from_numpy(stop[1])
+    for epoch in range(1, args.epochs + 1):
         model.train()
         for xb, yb in loader:
             opt.zero_grad()
             loss = loss_fn(model(xb), yb)
             loss.backward()
             opt.step()
-    return model, scaler
+        if stopper is not None:
+            model.eval()
+            with torch.no_grad():
+                held = float(loss_fn(model(xs_stop), ys_stop))
+            if stopper.step(epoch, held, model):
+                break
+    if stopper is not None:
+        stopper.restore(model)
+    return model, scaler, stopper
 
 
 def run_fold(
@@ -357,18 +455,24 @@ def run_fold(
     x_all: np.ndarray, y_all: np.ndarray, rets: np.ndarray,
     dates: list[date], args, park: np.ndarray | None = None,
 ) -> FoldResult:
+    patience = getattr(args, "patience", None)
+    stop_ix: list[int] = []
+    if patience:
+        tr, stop_ix = stop_split(tr, dates, args.forward)
     x_tr, y_tr = x_all[tr], y_all[tr]
     x_va, y_va = x_all[va], y_all[va]
 
     if args.loss == "ce":
-        model, scaler = train_one(x_tr, y_tr, args)
+        model, scaler, stopper = train_one(
+            x_tr, y_tr, args, stop=(x_all[stop_ix], y_all[stop_ix]) if patience else None)
         model.eval()
         with torch.no_grad():
             pred = model(torch.from_numpy(scaler.transform(x_va))).argmax(dim=1).numpy()
     else:
         from nn import money_loss
 
-        model, scaler = train_money(x_tr, rets[tr], args)
+        model, scaler, stopper = train_money(
+            x_tr, rets[tr], args, stop=(x_all[stop_ix], rets[stop_ix]) if patience else None)
         model.eval()
         with torch.no_grad():
             pos = money_loss.positions_from_logits(
@@ -427,6 +531,8 @@ def run_fold(
         commissions=commissions,
         timing=timing,
         gains_tax=gains_tax,
+        best_epoch=stopper.best_epoch if stopper else None,
+        epochs_run=stopper.epochs_run if stopper else None,
     )
 
 
@@ -539,6 +645,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lr", type=float, default=0.001)
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch", type=int, default=32)
+    p.add_argument("--patience", type=int, default=None,
+                   help="Early stopping: stop a fold after this many epochs without "
+                        "improvement on the last year of its training window, which is "
+                        "held out of fitting for it, and keep the best epoch's weights. "
+                        "--epochs becomes the cap. Off when absent"),
     p.add_argument("--class-weights", action="store_true")
     p.add_argument("--loss", choices=["ce", "return", "sharpe", "calmar"], default="ce",
                    help="'ce' trains the 3-class classifier against the ±2%%/5-day label. "
@@ -686,9 +797,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.test:
         folds = make_test_fold(wdates, args.train_start, args.last_val + 1,
-                               last_day=setup.plan.test_end if setup else None)
+                               last_day=setup.plan.test_end if setup else None,
+                               purge=args.forward)
     else:
-        folds = make_folds(wdates, args.train_start, args.first_val, args.last_val)
+        folds = make_folds(wdates, args.train_start, args.first_val, args.last_val,
+                           purge=args.forward)
+    args.purge_bars = args.forward
+    if args.patience:
+        short = [y for y, tr, _ in folds if not all(stop_split(tr, wdates, args.forward))]
+        if short:
+            print(f"refused: early stopping needs at least two training years per fold; "
+                  f"fold(s) validating {short} have one")
+            return 2
 
     park = park_series(cur, wdates, args.park)
     if not folds:
@@ -701,6 +821,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"folds        train from {args.train_start}, validate "
           f"{args.first_val}..{args.last_val}   "
           f"(test block {args.last_val + 1}+ untouched)")
+    print(f"training     last {args.forward} bars of each train window purged (their "
+          f"targets look past it); "
+          + (f"early stopping, patience {args.patience}, on the last train year "
+             f"(held out of fitting), at most {args.epochs} epochs"
+             if args.patience else f"fixed {args.epochs} epochs"))
     print(f"simulation   long unless SELL, {args.cost_bps:.0f} bps per change, "
           f"signal acted on the next session")
     print("tax          " + (f"{args.tax_rate:g}% on each realized gain, buy-and-hold taxed "
@@ -732,7 +857,8 @@ def main(argv: list[str] | None = None) -> int:
               f"{r.hold_return:>8.2f} {r.excess:>+8.2f} {r.strat_sharpe:>6.2f} "
               f"{r.strat_maxdd:>7.2f} {r.trades:>4} │ {r.days_out:>4} "
               f"{r.drift_tax:>+7.2f} {r.commissions:>+6.2f} {r.gains_tax:>+6.2f} "
-              f"{r.timing:>+7.2f}")
+              f"{r.timing:>+7.2f}"
+              + (f"  ep {r.best_epoch}/{r.epochs_run}" if r.epochs_run else ""))
 
     won = sum(1 for r in results if r.excess > 0)
     mean_excess = float(np.mean([r.excess for r in results]))

@@ -155,7 +155,11 @@ export default function TrainPage() {
     setTimeframe(chosen.timeframe)
     setParams((prev) => ({
       ...prev,
-      ...Object.fromEntries(Object.entries(chosen.hyperparams).map(([k, v]) => [k, String(v)])),
+      // Early stopping is walk-forward only: the nn-feedforward trainer this
+      // page calls has none and would silently ignore it.
+      ...Object.fromEntries(Object.entries(chosen.hyperparams)
+        .filter(([k]) => k !== 'earlyStoppingPatience')
+        .map(([k, v]) => [k, String(v)])),
     }))
     setResult(null); setError(null)
   }

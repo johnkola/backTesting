@@ -27,6 +27,7 @@ function aRun(over: Partial<WalkforwardRun> = {}): WalkforwardRun {
     threshold: null,
     taxRate: null,
     taxTrain: false,
+    purgeBars: 5,
     trainStart: 2003,
     firstVal: 2016,
     lastVal: 2021,

@@ -266,6 +266,12 @@ export default function TrainingStage() {
                       <th className="text-right">Tax</th>
                       <th className="text-right">Timing</th>
                       <th className="text-right">Accuracy</th>
+                      <th
+                        className="text-right tooltip tooltip-left"
+                        data-tip="Early stopping: the epoch kept / epochs trained"
+                      >
+                        Epochs
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -317,6 +323,14 @@ export default function TrainingStage() {
                                 {` / ${(f.baselineAcc * 100).toFixed(1)}%`}
                               </span>
                             )}
+                          </td>
+                          <td
+                            className="text-right font-mono text-xs"
+                            title={f.epochsRun === null
+                              ? 'Trained a fixed number of epochs'
+                              : `Kept epoch ${f.bestEpoch}; stopped after ${f.epochsRun}`}
+                          >
+                            {f.epochsRun === null ? '—' : `${f.bestEpoch}/${f.epochsRun}`}
                           </td>
                         </tr>
                       )
@@ -442,6 +456,13 @@ function RunProvenance({ run }: { run: WalkforwardRun }) {
           </p>
         )
         : <p>Launched from flags, not a saved strategy.</p>}
+      <p className={run.purgeBars === null ? 'text-warning' : ''}>
+        {run.purgeBars === null
+          ? 'Trained before the purge: the last training bars, whose targets look into the '
+            + 'scored year, were fitted on, so these folds read slightly optimistic.'
+          : `The last ${run.purgeBars} bars of each training window were purged: their `
+            + 'targets look into the scored year.'}
+      </p>
       {run.columns && (
         <p>
           {run.columns.length} column{run.columns.length === 1 ? '' : 's'}:{' '}

@@ -55,6 +55,9 @@ import java.time.ZonedDateTime;
  * @param taxTrain            true when the loss was charged the tax while training too;
  *                            unlike {@code taxRate} alone, that changes the model and
  *                            its signals
+ * @param purgeBars           bars dropped from the end of each training window because
+ *                            their targets look into the scored window; null on a run
+ *                            from before the purge, which trained on them
  * @param threshold           position below which a money-trained model counts as flat;
  *                            null for a classifier, which has no position to cut
  * @param trainStart          first training year
@@ -102,6 +105,7 @@ public record WalkforwardRun(
         Double threshold,
         Double taxRate,
         boolean taxTrain,
+        Integer purgeBars,
         int trainStart,
         int firstVal,
         int lastVal,

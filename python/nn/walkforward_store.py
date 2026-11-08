@@ -64,13 +64,13 @@ DEFAULT_ACTOR = "nn:walkforward"
 HYPERPARAM_KEYS = (
     "lookback", "forward", "buy_threshold", "sell_threshold",
     "hidden", "layers", "dropout", "lr", "epochs", "batch",
-    "class_weights", "seed",
+    "class_weights", "seed", "patience",
 )
 
 _INSERT_RUN = """
 INSERT INTO walkforward_runs
     (label, instrument_id, source_id, timeframe, feature_set_id, input_width,
-     objective, loss, cost_bps, park, threshold, tax_rate, tax_train,
+     objective, loss, cost_bps, park, threshold, tax_rate, tax_train, purge_bars,
      train_start, first_val, last_val, is_test, hyperparams_json, columns_json,
      strategy_id, strategy_name, strategy_version, dropped_json, partial_json,
      train_first, train_bars_used, train_bars, test_end)
@@ -78,7 +78,7 @@ VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
      %(objective)s, %(loss)s, %(cost_bps)s, %(park)s, %(threshold)s, %(tax_rate)s,
-     %(tax_train)s,
+     %(tax_train)s, %(purge_bars)s,
      %(train_start)s, %(first_val)s, %(last_val)s, %(is_test)s,
      %(hyperparams_json)s, %(columns_json)s,
      %(strategy_id)s, %(strategy_name)s, %(strategy_version)s,
@@ -92,13 +92,14 @@ INSERT INTO walkforward_folds
     (run_id, fold, val_year, train_from, train_to, n_train, n_val,
      strat_return, hold_return, strat_sharpe, hold_sharpe,
      strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
-     days_out, drift_tax, commissions, timing, gains_tax)
+     days_out, drift_tax, commissions, timing, gains_tax, best_epoch, epochs_run)
 VALUES
     (%(run_id)s, %(fold)s, %(val_year)s, %(train_from)s, %(train_to)s,
      %(n_train)s, %(n_val)s,
      %(strat_return)s, %(hold_return)s, %(strat_sharpe)s, %(hold_sharpe)s,
      %(strat_maxdd)s, %(hold_maxdd)s, %(trades)s, %(accuracy)s, %(baseline_acc)s,
-     %(days_out)s, %(drift_tax)s, %(commissions)s, %(timing)s, %(gains_tax)s)
+     %(days_out)s, %(drift_tax)s, %(commissions)s, %(timing)s, %(gains_tax)s,
+     %(best_epoch)s, %(epochs_run)s)
 ON CONFLICT (run_id, fold) DO UPDATE SET
     val_year = EXCLUDED.val_year,
     train_from = EXCLUDED.train_from,
@@ -119,6 +120,8 @@ ON CONFLICT (run_id, fold) DO UPDATE SET
     commissions = EXCLUDED.commissions,
     timing = EXCLUDED.timing,
     gains_tax = EXCLUDED.gains_tax,
+    best_epoch = EXCLUDED.best_epoch,
+    epochs_run = EXCLUDED.epochs_run,
     updated_at = now(),
     updated_by = audit_actor()
 """
@@ -191,6 +194,10 @@ def run_row(args: Any, set_id: int, input_width: int,
         # True when the loss was charged the tax as well, so the model (and its
         # signals) differ from an untaxed run of the same strategy.
         "tax_train": bool(getattr(args, "tax_train", False)),
+        # Bars dropped from the end of each training window because their
+        # targets look past it. NULL on a run from before the purge, which
+        # trained on them: such a run's folds are slightly optimistic.
+        "purge_bars": getattr(args, "purge_bars", None),
         "train_start": int(args.train_start),
         "first_val": int(args.first_val),
         "last_val": int(args.last_val),
@@ -225,6 +232,8 @@ def fold_row(run_id: int, r: FoldResult) -> dict[str, Any]:
         "commissions": r.commissions,
         "timing": r.timing,
         "gains_tax": r.gains_tax,
+        "best_epoch": getattr(r, "best_epoch", None),
+        "epochs_run": getattr(r, "epochs_run", None),
     }
 
 

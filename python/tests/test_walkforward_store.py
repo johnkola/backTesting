@@ -158,6 +158,13 @@ class TestTaxRate:
     def test_a_run_scored_after_tax_stores_its_rate(self):
         assert ws.run_row(an_args(tax_rate=26.5), 6, 580, 47, 2)["tax_rate"] == 26.5
 
+    def test_the_purge_is_stored_and_absent_means_before_it_existed(self):
+        assert ws.run_row(an_args(), 6, 580, 47, 2)["purge_bars"] is None
+        assert ws.run_row(an_args(purge_bars=5), 6, 580, 47, 2)["purge_bars"] == 5
+
+    def test_patience_is_a_hyperparameter(self):
+        assert '"patience": 4' in ws.run_row(an_args(patience=4), 6, 580, 47, 2)["hyperparams_json"]
+
     def test_whether_it_trained_with_tax_is_stored(self):
         assert ws.run_row(an_args(), 6, 580, 47, 2)["tax_train"] is False
         row = ws.run_row(an_args(tax_rate=25.0, tax_train=True), 6, 580, 47, 2)
@@ -191,6 +198,7 @@ class TestFoldRow:
         assert row["commissions"] == -0.3
         assert row["timing"] == -0.2
         assert row["gains_tax"] == -1.4
+        assert row["best_epoch"] is None and row["epochs_run"] is None
 
     def test_carries_the_training_window_so_a_fold_can_be_rebuilt(self):
         row = ws.fold_row(99, FakeFold())

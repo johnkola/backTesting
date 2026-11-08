@@ -23,7 +23,10 @@
 
 const { pool } = require('./db');
 
-/** Hyperparameter bounds. Mirrors TrainConfig in python/nn/train.py. */
+/**
+ * Hyperparameter bounds. Mirrors TrainConfig in python/nn/train.py, plus
+ * earlyStoppingPatience, which only the walk-forward runner reads.
+ */
 const PARAM_SPEC = {
   lookbackWindow: { kind: 'int', min: 1, max: 500, label: 'Lookback window' },
   forwardBars: { kind: 'int', min: 1, max: 100, label: 'Forward bars' },
@@ -34,6 +37,9 @@ const PARAM_SPEC = {
   dropoutRate: { kind: 'float', min: 0, max: 0.95, label: 'Dropout rate' },
   learningRate: { kind: 'float', min: 1e-8, max: 1, label: 'Learning rate' },
   numEpochs: { kind: 'int', min: 1, max: 10000, label: 'Epochs' },
+  // Walk-forward only: the nn-feedforward trainer has no early stopping, so
+  // the Train page does not forward it. Blank is off; Epochs is then the cap.
+  earlyStoppingPatience: { kind: 'int', min: 1, max: 1000, label: 'Early stopping patience' },
   batchSize: { kind: 'int', min: 1, max: 8192, label: 'Batch size' },
   trainSplitRatio: { kind: 'float', min: 0.05, max: 0.95, label: 'Train split ratio' },
   seed: { kind: 'int', min: 0, max: 2147483647, label: 'Seed' },

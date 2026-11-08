@@ -375,3 +375,105 @@ def test_strategy_setup_refuses_a_set_of_another_series():
     cur = _QueueCursor([_strategy_row()], [])      # load, then set_matches: no row
     with pytest.raises(wf.strategy_spec.StrategyRefused, match="--set-id 99"):
         wf.strategy_setup(cur, args, {"strategy_id", "set_id"})
+
+
+# --------------------------------------------------------------------------
+# purge (G19): no training row may be labelled with the scored year's prices
+# --------------------------------------------------------------------------
+
+
+def test_the_purge_drops_the_last_training_bars_of_every_fold():
+    cal = days((2006, 20), (2007, 20), (2008, 20))
+    plain = wf.make_folds(cal, 2006, 2007, 2008)
+    purged = wf.make_folds(cal, 2006, 2007, 2008, purge=5)
+    for (_, tr, va), (_, ptr, pva) in zip(plain, purged):
+        assert ptr == tr[:-5]
+        assert pva == va  # the scored year is untouched
+
+
+def test_a_purged_fold_leaves_a_gap_of_forward_bars_before_validation():
+    """A label decided `forward` bars ahead must end before the first scored bar."""
+    cal = days((2006, 20), (2007, 20))
+    [(_, tr, va)] = wf.make_folds(cal, 2006, 2007, 2007, purge=5)
+    assert va[0] - tr[-1] > 5
+
+
+def test_the_holdout_fold_is_purged_too():
+    [(_, tr, _)] = wf.make_test_fold(HOLDOUT_DAYS, 2020, 2022, purge=1)
+    [(_, full, _)] = wf.make_test_fold(HOLDOUT_DAYS, 2020, 2022)
+    assert tr == full[:-1]
+
+
+# --------------------------------------------------------------------------
+# early stopping (G19)
+# --------------------------------------------------------------------------
+
+
+def test_the_stopping_slice_is_the_last_train_year_and_is_never_fitted():
+    cal = days((2006, 20), (2007, 20), (2008, 20))
+    tr = list(range(40))  # 2006 and 2007
+    fit, stop = wf.stop_split(tr, cal, purge=5)
+    assert {cal[i].year for i in stop} == {2007}
+    assert set(fit).isdisjoint(stop)
+    assert fit == list(range(15))  # 2006 minus its last 5, purged before the slice
+
+
+def test_one_training_year_cannot_be_split():
+    cal = days((2006, 20))
+    fit, stop = wf.stop_split(list(range(20)), cal, purge=5)
+    assert fit == [] and stop
+
+
+def test_the_stopper_keeps_the_best_epoch_and_stops_after_patience():
+    import torch
+    import torch.nn as tnn
+
+    model = tnn.Linear(1, 1)
+    s = wf.Stopper(patience=2)
+    losses = [1.0, 0.5, 0.6, 0.4, 0.45, 0.5, 0.3]
+    stopped_at = None
+    for epoch, loss in enumerate(losses, 1):
+        with torch.no_grad():
+            model.weight.fill_(float(epoch))
+        if s.step(epoch, loss, model):
+            stopped_at = epoch
+            break
+    assert (s.best_epoch, stopped_at, s.epochs_run) == (4, 6, 6)
+    s.restore(model)
+    assert float(model.weight) == 4.0  # the best epoch's weights, not the last
+
+
+def _stop_args(**over):
+    from argparse import Namespace
+    base = dict(hidden=8, layers=1, dropout=0.0, lr=0.01, epochs=200, batch=16, seed=1,
+                class_weights=False, loss="return", cost_bps=0.0, tax_train=False,
+                tax_rate=None, patience=3)
+    base.update(over)
+    return Namespace(**base)
+
+
+def test_a_classifier_stops_before_the_cap_and_reports_its_epochs():
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(200, 4)).astype(np.float32)
+    y = rng.integers(0, 3, 200).astype(np.int64)  # noise: the held-out loss soon rises
+    model, _, stopper = wf.train_one(x[:150], y[:150], _stop_args(),
+                                     stop=(x[150:], y[150:]))
+    assert stopper is not None
+    assert stopper.epochs_run < 200
+    assert 1 <= stopper.best_epoch <= stopper.epochs_run - 3
+
+
+def test_a_money_model_stops_too():
+    rng = np.random.default_rng(1)
+    x = rng.normal(size=(200, 4)).astype(np.float32)
+    r = rng.normal(0, 0.01, 200)
+    _, _, stopper = wf.train_money(x[:150], r[:150], _stop_args(), stop=(x[150:], r[150:]))
+    assert stopper.epochs_run < 200
+
+
+def test_without_patience_training_runs_every_epoch_and_reports_none():
+    rng = np.random.default_rng(2)
+    x = rng.normal(size=(60, 4)).astype(np.float32)
+    y = rng.integers(0, 3, 60).astype(np.int64)
+    _, _, stopper = wf.train_one(x, y, _stop_args(epochs=3, patience=None))
+    assert stopper is None
