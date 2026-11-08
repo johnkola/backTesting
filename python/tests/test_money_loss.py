@@ -204,6 +204,63 @@ def test_positions_are_bounded_to_long_or_flat():
     assert float(pos.max()) <= 1.0
 
 
+# The torch-op implementation the fast one replaced, kept as the reference
+# both its values and its gradients are held to.
+def reference_taxed(
+    positions: torch.Tensor, returns: torch.Tensor, cost_bps: float, tax_rate: float,
+) -> torch.Tensor:
+    """`portfolio_returns`, with tax charged on each realized gain, differentiably.
+
+    This is "train with tax" (Design Notes, Tax and Trading Costs: "the tax
+    must be inside the signal the model learns from"). Trained on this, a
+    marginal in-and-out trade costs the model its tax as well as its
+    commission, so it learns to hold through moves that do not clear both.
+    It changes what the model learns, and so the signals it emits; scoring
+    after tax alone (`walkforward.simulate_taxed`) does not.
+
+    The position is continuous here, so the cost basis is an average: holding
+    value `h` and basis `b`, in units of starting wealth. Cutting the position
+    from `p` to `q` sells `(p - q) / p` of the holding, which realizes that
+    share of its unrealized gain and leaves the basis of the rest in
+    proportion. The tax rule is the
+    scoring rule: a realized loss is carried and offsets later gains, and
+    only a positive net is taxed (`relu`, subdifferentiable at zero like the
+    turnover's `abs`). Nothing is taxed while held, so a position held
+    throughout pays nothing, as buy-and-hold does.
+
+    A loop over bars, because each day's basis depends on the last. At
+    `tax_rate == 0` it equals `portfolio_returns` to rounding; the tests hold
+    the two together.
+    """
+    n = returns.shape[0]
+    dtype, device = returns.dtype, returns.device
+    traded = torch.cat([positions[:1], positions[:-1]]).to(dtype)
+    cost = cost_bps / 10_000.0
+    zero = torch.zeros((), dtype=dtype, device=device)
+    # w: wealth; h: value held in equities; b: its cost basis. Units of
+    # starting wealth. A sale is the position going DOWN, not wealth drifting:
+    # the plain curve holds a fixed fraction of wealth every day, and taxing
+    # that implicit daily rebalancing would tax every commission as a sale.
+    w = torch.ones((), dtype=dtype, device=device)
+    h, b, carry, prev = zero, zero, zero, zero
+    daily = []
+    for t in range(n):
+        w_start = w
+        share = torch.relu(prev - traded[t]) / (prev + ml._EPS)
+        bought = torch.relu(traded[t] - prev) * w_start
+        net = share * (h - b) + carry
+        tax = tax_rate * torch.relu(net)
+        carry = net - torch.relu(net)
+        b = b * (1.0 - share) + bought
+        h = h * (1.0 - share) + bought
+        # The day's move, on the plain curve's terms, so 0% tax is that curve.
+        h = h * (1.0 + returns[t])
+        w = w_start * (1.0 + traded[t] * returns[t] - torch.abs(traded[t] - prev) * cost) - tax
+        daily.append(w / w_start - 1.0)
+        prev = traded[t]
+    return torch.stack(daily)
+
+
 # --------------------------------------------------------------------------
 # train with tax: the after-tax curve inside the loss
 # --------------------------------------------------------------------------
@@ -267,3 +324,42 @@ def test_the_tax_reaches_the_gradient():
     assert float(taxed) > float(untaxed)  # a loss to minimise: tax makes it worse
     taxed.backward()
     assert torch.isfinite(logits.grad).all() and logits.grad.abs().sum() > 0
+
+
+# --------------------------------------------------------------------------
+# the fast taxed curve is the reference, values and gradients
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("scale", [0.5, 2.0, 8.0], ids=["soft", "mixed", "near-binary"])
+@pytest.mark.parametrize("rate", [0.0, 0.25, 0.5])
+def test_the_fast_taxed_curve_matches_the_reference(scale, rate):
+    g = torch.Generator().manual_seed(int(scale * 10 + rate * 100))
+    r = torch.randn(250, generator=g, dtype=torch.float64) * 0.015 + 0.0004
+    x = (torch.randn(250, generator=g, dtype=torch.float64) * scale).requires_grad_()
+
+    fast = ml.portfolio_returns_taxed(torch.sigmoid(x), r, 5.0, rate)
+    (g_fast,) = torch.autograd.grad(-torch.log1p(fast).sum(), x)
+    ref = reference_taxed(torch.sigmoid(x), r, 5.0, rate)
+    (g_ref,) = torch.autograd.grad(-torch.log1p(ref).sum(), x)
+
+    assert torch.allclose(fast, ref, atol=1e-13)
+    assert torch.allclose(g_fast, g_ref, atol=1e-12)
+
+
+def test_the_fast_taxed_gradient_passes_gradcheck():
+    """Against finite differences, not just against the other implementation,
+    so a mistake shared by both would still be caught."""
+    g = torch.Generator().manual_seed(9)
+    r = torch.randn(40, generator=g, dtype=torch.float64) * 0.02
+    x = torch.randn(40, generator=g, dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(
+        lambda z: ml.portfolio_returns_taxed(torch.sigmoid(z), r, 5.0, 0.3), (x,),
+        eps=1e-7, atol=1e-6,
+    )
+
+
+def test_the_taxed_curve_keeps_the_dtype_it_is_given():
+    pos = torch.rand(10)
+    r = torch.full((10,), 0.01)
+    assert ml.portfolio_returns_taxed(pos, r, 5.0, 0.25).dtype == torch.float32

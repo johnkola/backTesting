@@ -185,8 +185,12 @@ never left the market (6 changes in total, one entry per fold), so the signals d
 mean excess went from -0.87 to -0.06 pp. Neither beats buy-and-hold: trained with tax, this
 2-feature model learns to hold.
 
-**Cost:** the taxed loss is a loop over bars. The v9 run took 6 min 50 s against 6 s for v8,
-about 70 times slower. Fine for single runs; worth vectorising or compiling before sweeps.
+**Cost, fixed 2026-11-08 (uncommitted).** The taxed loss was a loop of torch ops (~66,000
+autograd nodes per epoch): 1.09 s per epoch, and the v9 run took 6 min 50 s against 6 s for v8.
+`money_loss._TaxedReturns` now runs the same loop on plain floats with a hand-written backward:
+0.031 s per epoch, and the same strategy ran in 8 s (run 172). The torch-op version is kept in
+`tests/test_money_loss.py` as the reference; values match exactly and gradients to 1e-12 across
+rates and position shapes, and the new backward also passes `gradcheck`.
 
 Also found: the ingest integration tests failed against Postgres because `purge_instrument`
 did not delete the R7 `import_files` rows; fixed in `tests/dbfixtures.py`.
