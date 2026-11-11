@@ -329,27 +329,30 @@ class TestShippedConfig:
         # 0.01 is reachable without anything being wrong.
         assert c.tolerance == pytest.approx(0.02)
 
-    def test_fed_funds_is_defined_but_not_enabled(self):
-        # Features.md 41. Off because DFF is not in the store: read_matrix drops
-        # every date where any column is NULL, so an all-NULL column would take
-        # the whole table with it.
+    def test_fed_funds_is_enabled_and_reads_dff(self):
+        # Features.md 41. Enabled once DFF was imported (2026-11-10); before
+        # that it shipped off, because an all-NULL column makes read_matrix
+        # drop every date. No status: it is a plain enabled column now.
         f = fc.load().by_name("fed_funds")
-        assert not f.enabled
-        assert f.status == "not-imported"
-        assert f.series["symbol"] == "DFF"
+        assert f.enabled
+        assert f.status is None
+        assert f.series == {"symbol": "DFF", "source": "fred", "field": "close"}
 
     def test_fed_funds_uses_a_declared_band_not_a_fitted_one(self):
         # rescale's range must be a constant from the config. A data-driven
         # min/max reads identically here and leaks the future into every row.
+        # 25, not 20: daily DFF printed 22.36 in 1981.
         f = fc.load().by_name("fed_funds")
         assert f.method == "rescale"
         assert f.params["min"] == 0.0
-        assert f.params["max"] == 20.0
+        assert f.params["max"] == 25.0
 
-    def test_a_disabled_fed_funds_adds_nothing_to_the_vector(self):
+    def test_fed_funds_adds_one_column_and_requires_dff(self):
         cfg = fc.load()
-        assert "fed_funds" not in {f.name for f in cfg.enabled}
-        assert ("DFF", "fred") not in cfg.required_series()
+        f = cfg.by_name("fed_funds")
+        assert f in cfg.enabled
+        assert f.width == 1
+        assert ("DFF", "fred") in cfg.required_series()
 
 
 # --------------------------------------------------------------------------

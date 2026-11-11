@@ -2,6 +2,7 @@ package com.bazarbozorg.backtest.report;
 
 import com.bazarbozorg.backtest.model.EquityPoint;
 import com.bazarbozorg.backtest.model.Trade;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.util.MathUtils;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
@@ -11,6 +12,20 @@ import java.util.List;
 /**
  * Calculates all performance metrics from trade history and equity curve data.
  * Uses Apache Commons Math DescriptiveStatistics for statistical calculations.
+ *
+ * <p>ANNUALISING IS PER PERIOD, NOT PER BAR (DESIGN-GAPS I5). The annualised
+ * return, Sharpe, Sortino and Calmar all scale a per-bar figure up to a year,
+ * so they need the number of bars in a year, which depends on the timeframe.
+ * This used to be 252 for every timeframe, so an M30 run (13 bars a day) was
+ * scaled as if each bar were a day: two years of M30 annualised as 25 years,
+ * and +14% over two years of H1 came out as +0.97% a year. Weekly and monthly
+ * runs were wrong the same way.
+ *
+ * <p>{@link #periodsPerYear} fixes the daily-and-up timeframes at 252, 52 and
+ * 12, and for intraday multiplies 252 by the bars each trading day actually
+ * holds, measured from the run. Measured rather than derived from the bar
+ * length, because the session decides it: H1 over a 09:30-16:00 NYSE day is
+ * seven bars, over a 24-hour FX day 24. A D1 run is exactly what it was.
  */
 public final class MetricsCalculator {
 
@@ -34,20 +49,36 @@ public final class MetricsCalculator {
     public static PerformanceMetrics calculate(List<Trade> trades, List<EquityPoint> equityHistory,
                                                 double initialCapital, double finalEquity,
                                                 double buyAndHoldReturnPct, long tradingDays) {
+        // Daily bars: one bar per trading day, so bars, days and periods agree.
+        return calculate(trades, equityHistory, initialCapital, finalEquity,
+                buyAndHoldReturnPct, tradingDays, tradingDays, TRADING_DAYS_PER_YEAR);
+    }
+
+    /**
+     * As above, for any timeframe.
+     *
+     * @param bars           the bars the strategy traded over (the annualising exponent)
+     * @param tradingDays    distinct trading days those bars fall on (reported only)
+     * @param periodsPerYear bars in a year at this timeframe, from {@link #periodsPerYear}
+     */
+    public static PerformanceMetrics calculate(List<Trade> trades, List<EquityPoint> equityHistory,
+                                                double initialCapital, double finalEquity,
+                                                double buyAndHoldReturnPct, long bars,
+                                                long tradingDays, double periodsPerYear) {
 
         double totalReturnPct = MathUtils.safeDiv(finalEquity - initialCapital, initialCapital) * 100.0;
 
         double annualizedReturnPct = 0.0;
-        if (tradingDays > 0 && initialCapital > 0) {
+        if (bars > 0 && initialCapital > 0 && periodsPerYear > 0) {
             annualizedReturnPct = (Math.pow(finalEquity / initialCapital,
-                    (double) TRADING_DAYS_PER_YEAR / tradingDays) - 1.0) * 100.0;
+                    periodsPerYear / bars) - 1.0) * 100.0;
         }
 
-        // Daily returns from equity history
+        // Per-bar returns from the equity history: one point per bar.
         double[] dailyReturns = calculateDailyReturns(equityHistory);
 
-        double sharpeRatio = calculateSharpeRatio(dailyReturns);
-        double sortinoRatio = calculateSortinoRatio(dailyReturns);
+        double sharpeRatio = calculateSharpeRatio(dailyReturns, periodsPerYear);
+        double sortinoRatio = calculateSortinoRatio(dailyReturns, periodsPerYear);
 
         // Max drawdown
         double maxDrawdownPct = 0.0;
@@ -125,6 +156,34 @@ public final class MetricsCalculator {
     }
 
     /**
+     * Bars in a year at {@code timeframe}.
+     *
+     * <p>D1, W1 and MN1 are fixed: 252 trading days, 52 weeks, 12 months.
+     * Intraday is 252 times the bars per trading day, measured as
+     * {@code bars / tradingDays}, because the session length decides it and
+     * the timeframe alone does not say what the session is. With no days to
+     * measure from, the bar length over a 6.5-hour NYSE session is used.
+     *
+     * @param timeframe   the run's timeframe
+     * @param bars        bars in the run
+     * @param tradingDays distinct trading days those bars fall on
+     */
+    public static double periodsPerYear(Timeframe timeframe, long bars, long tradingDays) {
+        return switch (timeframe) {
+            case D1 -> TRADING_DAYS_PER_YEAR;
+            case W1 -> 52;
+            case MN1 -> 12;
+            default -> {
+                if (bars > 0 && tradingDays > 0) {
+                    yield TRADING_DAYS_PER_YEAR * ((double) bars / tradingDays);
+                }
+                double minutes = timeframe.getDuration().toMinutes();
+                yield TRADING_DAYS_PER_YEAR * Math.ceil(390.0 / minutes);
+            }
+        };
+    }
+
+    /**
      * Calculates daily returns from the equity curve.
      *
      * @param equityHistory the equity curve
@@ -146,12 +205,12 @@ public final class MetricsCalculator {
 
     /**
      * Calculates the annualized Sharpe ratio from daily returns.
-     * Sharpe = mean(dailyReturns) / stddev(dailyReturns) * sqrt(252)
+     * Sharpe = mean(returns) / stddev(returns) * sqrt(periodsPerYear)
      *
      * @param dailyReturns array of daily returns
      * @return the Sharpe ratio, or 0.0 if insufficient data
      */
-    private static double calculateSharpeRatio(double[] dailyReturns) {
+    private static double calculateSharpeRatio(double[] dailyReturns, double periodsPerYear) {
         if (dailyReturns.length < 2) {
             return 0.0;
         }
@@ -168,18 +227,18 @@ public final class MetricsCalculator {
             return 0.0;
         }
 
-        return (mean / stddev) * Math.sqrt(TRADING_DAYS_PER_YEAR);
+        return (mean / stddev) * Math.sqrt(periodsPerYear);
     }
 
     /**
      * Calculates the annualized Sortino ratio from daily returns.
-     * Sortino = mean(dailyReturns) / downsideDeviation * sqrt(252)
+     * Sortino = mean(returns) / downsideDeviation * sqrt(periodsPerYear)
      * where downsideDeviation only considers negative returns.
      *
      * @param dailyReturns array of daily returns
      * @return the Sortino ratio, or 0.0 if insufficient data
      */
-    private static double calculateSortinoRatio(double[] dailyReturns) {
+    private static double calculateSortinoRatio(double[] dailyReturns, double periodsPerYear) {
         if (dailyReturns.length < 2) {
             return 0.0;
         }
@@ -211,7 +270,7 @@ public final class MetricsCalculator {
             return 0.0;
         }
 
-        return (mean / downsideDeviation) * Math.sqrt(TRADING_DAYS_PER_YEAR);
+        return (mean / downsideDeviation) * Math.sqrt(periodsPerYear);
     }
 
     /**

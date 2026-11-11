@@ -50,7 +50,8 @@ async function catalogue() {
            units, code_version, method, enabled, note, width,
            created_at, created_by, updated_at, updated_by
       FROM feature_definitions
-     ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'undecided' THEN 1 ELSE 2 END,
+     ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'data-only' THEN 1
+                          WHEN 'undecided' THEN 2 ELSE 3 END,
               name
   `);
   return rows.map((r) => ({

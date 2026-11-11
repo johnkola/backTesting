@@ -28,6 +28,8 @@ the fold report is always the discrete one.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 
 TRADING_DAYS = 252
@@ -187,6 +189,72 @@ def portfolio_returns_taxed(
     return _TaxedReturns.apply(traded, returns, cost_bps / 10_000.0, float(tax_rate))
 
 
+#: How sharply the smooth steps in `margin_returns` turn: at 0.1 either side of a
+#: threshold a leg is 92% or 8% open. Steep enough that what trains is close to
+#: the hard cut scoring applies, shallow enough that a position near a threshold
+#: still has a gradient to follow.
+SOFT_STEP = 25.0
+
+
+@dataclass(frozen=True)
+class MarginTerms:
+    """Strategy 2 in the loss (G5 step 2), as fractions, one value per bar where
+    a series. `rates` is Fed funds on the bar's date; `days` the calendar days to
+    the next bar; `psq` PSQ's return over the same step as `returns`."""
+    psq: torch.Tensor
+    rates: torch.Tensor
+    days: torch.Tensor
+    leverage: float
+    hedge: float
+    spread: float
+    threshold: float
+    long_threshold: float
+
+
+def margin_legs(positions: torch.Tensor, m: MarginTerms) -> tuple[torch.Tensor, torch.Tensor]:
+    """How open the margin QQQ leg and the PSQ leg are, each in [0, 1].
+
+    The scoring rule (`strategy2.signals_from_positions`) is a hard cut: at or
+    above the long threshold go long, below the position threshold hedge,
+    between hold the core. A hard cut has no gradient, so training uses a sigmoid
+    step at each threshold; `SOFT_STEP` sets how close to the cut it is.
+    """
+    up = torch.sigmoid(SOFT_STEP * (positions - m.long_threshold))
+    down = torch.sigmoid(SOFT_STEP * (m.threshold - positions))
+    return up, down
+
+
+def margin_returns(positions: torch.Tensor, returns: torch.Tensor, cost_bps: float,
+                   m: MarginTerms) -> torch.Tensor:
+    """Strategy 2's daily return, differentiably, so the model learns to borrow
+    only when a trade clears its interest and commission (Design Notes,
+    Strategy 2: "so the model only values a margin trade that clears its full
+    real cost").
+
+    The core earns QQQ's move every day and is never traded. On top of it the
+    QQQ leg earns `leverage x` QQQ's move and the PSQ leg `hedge x` PSQ's, both
+    paying (Fed funds + spread) / 360 per calendar day on what they borrow and
+    commission on every change in how open they are. Legs are sized on the
+    day's wealth rather than floating from entry as the scorer's are, the usual
+    smooth stand-in; the 50% trim and margin calls are left to scoring, where at
+    a 50% ceiling they rarely fire. With both legs shut the series is QQQ's own,
+    so a model that never borrows trains towards buy-and-hold, not towards cash.
+
+    Same timing as `portfolio_returns`: the position decided on day i-1 is the
+    one held over day i's return.
+    """
+    up, down = margin_legs(positions, m)
+    up = torch.cat([up[:1], up[:-1]])
+    down = torch.cat([down[:1], down[:-1]])
+    zero = torch.zeros(1, dtype=up.dtype, device=up.device)
+    turnover = (m.leverage * torch.abs(up - torch.cat([zero, up[:-1]]))
+                + m.hedge * torch.abs(down - torch.cat([zero, down[:-1]])))
+    borrowed = m.leverage * up + m.hedge * down
+    interest = borrowed * (m.rates + m.spread) * m.days / 360.0
+    return (returns + m.leverage * up * returns + m.hedge * down * m.psq
+            - interest - turnover * (cost_bps / 10_000.0))
+
+
 def log_wealth(daily: torch.Tensor) -> torch.Tensor:
     """Total compounded return, in logs.
 
@@ -217,7 +285,7 @@ def max_drawdown(daily: torch.Tensor) -> torch.Tensor:
 
 def objective(
     name: str, positions: torch.Tensor, returns: torch.Tensor, *, cost_bps: float,
-    tax_rate: float = 0.0,
+    tax_rate: float = 0.0, margin: MarginTerms | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Loss to MINIMISE, plus the readable metrics behind it.
 
@@ -228,10 +296,19 @@ def objective(
 
     `tax_rate` (a fraction) trains against the after-tax curve; all three
     objectives are then computed on it, as the design asks. 0 is the plain,
-    vectorised curve.
+    vectorised curve. `margin` trains against Strategy 2's curve instead
+    (`margin_returns`); the two are not combined yet.
     """
-    daily = (portfolio_returns_taxed(positions, returns, cost_bps, tax_rate) if tax_rate > 0
-             else portfolio_returns(positions, returns, cost_bps))
+    if margin is not None:
+        if tax_rate > 0:
+            # The taxed curve's backward is hand-written for the long/flat
+            # position; a margin version needs its own, checked the same way.
+            raise ValueError("training with tax and with margin together is not supported yet")
+        daily = margin_returns(positions, returns, cost_bps, margin)
+    elif tax_rate > 0:
+        daily = portfolio_returns_taxed(positions, returns, cost_bps, tax_rate)
+    else:
+        daily = portfolio_returns(positions, returns, cost_bps)
 
     if name == "return":
         loss = -log_wealth(daily)

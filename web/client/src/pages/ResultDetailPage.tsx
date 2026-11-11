@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -100,9 +101,14 @@ export default function ResultDetailPage() {
 
   const r = detail.result
   const equity = r?.equityHistory ?? []
-  const chartData = equity.map((p) => ({
+  // Buy-and-hold pairs with the equity history by position: the API built it
+  // from the same bars, one for one (web/api/holdCurve.js). A length mismatch
+  // can't come from the API, but a missing line beats a shifted one.
+  const hold = detail.holdEquity?.length === equity.length ? detail.holdEquity : null
+  const chartData = equity.map((p, i) => ({
     t: new Date(p.timestamp).getTime(),
     equity: p.equity,
+    hold: hold ? hold[i] : null,
   }))
 
   const METRIC_LABEL = 'text-xs uppercase tracking-wide text-base-content/60'
@@ -202,7 +208,19 @@ export default function ResultDetailPage() {
       </div>
 
       <div className="bg-base-200 rounded-box p-4">
-        <h2 className="font-semibold mb-2">Equity curve</h2>
+        <h2 className="font-semibold mb-1">Equity curve</h2>
+        {hold ? (
+          <p className="text-sm text-base-content/70 mb-2">
+            Against the stored buy-and-hold benchmark over the same bars: bought at the first
+            close ({num(detail.benchmark?.firstClose)}), held to the last
+            ({num(detail.benchmark?.lastClose)}), no costs. Where the solid line is below the
+            dashed one, holding was ahead.
+          </p>
+        ) : detail.holdEquityNote ? (
+          <p className="text-sm text-base-content/60 mb-2">
+            No buy-and-hold line: {detail.holdEquityNote}
+          </p>
+        ) : null}
         {chartData.length === 0 ? (
           <div className="text-base-content/60 text-sm">No equity points recorded.</div>
         ) : (
@@ -225,9 +243,20 @@ export default function ResultDetailPage() {
                 />
                 <Tooltip
                   labelFormatter={(t) => new Date(t as number).toLocaleString()}
-                  formatter={(v) => [money(typeof v === 'number' ? v : Number(v)), 'equity']}
+                  formatter={(v, name) => [money(typeof v === 'number' ? v : Number(v)), name]}
                 />
-                <Line type="monotone" dataKey="equity" stroke="oklch(60% 0.2 250)" dot={false} />
+                {hold && <Legend />}
+                <Line
+                  type="monotone" dataKey="equity" name="Strategy"
+                  stroke="oklch(60% 0.2 250)" dot={false} isAnimationActive={false}
+                />
+                {hold && (
+                  <Line
+                    type="monotone" dataKey="hold" name="Buy & hold"
+                    stroke="currentColor" strokeOpacity={0.55} strokeDasharray="5 4"
+                    dot={false} isAnimationActive={false}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>

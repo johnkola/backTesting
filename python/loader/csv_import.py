@@ -63,7 +63,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Iterable
 
@@ -205,17 +205,57 @@ def _read_archived_rows(archive_path: str) -> list[str] | None:
     return lines[1:]
 
 
-def scan_and_bucket(stream: IO[bytes]) -> tuple[str | None, dict[int, list[str]]]:
+#: How many skipped rows are quoted back; the count is always exact.
+MAX_SKIP_EXAMPLES = 5
+
+
+@dataclass
+class SkippedRows:
+    """Rows a file had that no candle came from (DESIGN-GAPS R6).
+
+    The importer is lenient on purpose: one bad line in a vendor export should
+    not refuse the other 6,000. But it used to drop those lines without a
+    word, so a file whose prices were in the wrong format could import as a
+    handful of bars and look fine. Skipping stays; saying so is new. Reported,
+    never stored: an identical file answered from its hash is not re-read.
+
+    `line` is the physical line number in the file, header included, so it is
+    the number an editor shows. Blank lines are not counted as skipped.
+    """
+
+    count: int = 0
+    examples: list[dict[str, object]] = field(default_factory=list)
+
+    def add(self, line_no: int, reason: str, text: str) -> None:
+        self.count += 1
+        if len(self.examples) < MAX_SKIP_EXAMPLES:
+            self.examples.append({"line": line_no, "reason": reason, "text": text[:120]})
+
+    def to_dict(self) -> dict[str, object]:
+        return {"count": self.count, "examples": list(self.examples)}
+
+    def summary(self) -> str:
+        return f"skipped {self.count} row{'' if self.count == 1 else 's'} that did not parse"
+
+
+def scan_and_bucket(
+    stream: IO[bytes], skipped: SkippedRows | None = None,
+) -> tuple[str | None, dict[int, list[str]]]:
     """Single streaming pass over the upload. Captures the header line
     (first non-empty), then groups each subsequent row by year extracted
-    from the date column. Rows that don't start with a yyyy-MM-dd pattern
-    are silently skipped — matches the lenient Java/Node behaviour."""
+    from the date column.
+
+    Rows that don't start with a yyyy-MM-dd date are left out, and rows that
+    do but will not parse into a candle stay in their year (so the slice and
+    its hash are what they always were) but produce no bar. Both are recorded
+    in `skipped` when one is passed, with the same reasons
+    `parse_rows_to_tuples` applies."""
 
     header: str | None = None
     rows_by_year: dict[int, list[str]] = {}
 
     # readline-friendly text wrapper without slurping the whole file.
-    for raw in stream:
+    for line_no, raw in enumerate(stream, start=1):
         line = raw.decode("utf-8", errors="replace").rstrip("\r\n").strip()
         if not line:
             continue
@@ -224,7 +264,13 @@ def scan_and_bucket(stream: IO[bytes]) -> tuple[str | None, dict[int, list[str]]
             continue
         m = re.match(r"^(\d{4})-\d{2}-\d{2}", line)
         if not m:
+            if skipped is not None:
+                skipped.add(line_no, "no yyyy-MM-dd date at the start", line)
             continue
+        if skipped is not None:
+            parsed = parse_row(line)
+            if isinstance(parsed, str):
+                skipped.add(line_no, parsed, line)
         year = int(m.group(1))
         rows_by_year.setdefault(year, []).append(line)
 
@@ -284,34 +330,48 @@ def sha256_hex(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def parse_rows_to_tuples(rows: Iterable[str]) -> list[tuple[str, float, float, float, float, float]]:
+CandleTuple = tuple[str, float, float, float, float, float]
+
+
+def parse_row(line: str) -> CandleTuple | str:
+    """One CSV row as a candle upsert tuple, or the reason it is not one.
+
+    The single definition of a readable row: `parse_rows_to_tuples` keeps
+    the tuples and `scan_and_bucket` reports the reasons, so what is
+    reported as skipped is exactly what is not stored."""
+    parts = line.split(",")
+    if len(parts) < 6:
+        return f"{len(parts)} fields, 6 needed"
+    date_str = parts[0].strip()
+    if _DATE_ONLY.match(date_str):
+        iso = f"{date_str}T00:00:00Z"
+    elif _DATE_TIME.match(date_str):
+        iso = date_str.replace(" ", "T", 1)
+        if not re.search(r"[Zz]|[+-]\d{2}:?\d{2}$", iso):
+            iso += "Z"
+    else:
+        return f"date {date_str!r} is not yyyy-MM-dd or yyyy-MM-dd HH:mm:ss"
+    values: list[float] = []
+    for name, raw in zip(("open", "high", "low", "close", "volume"), parts[1:6], strict=True):
+        try:
+            values.append(float(raw))
+        except ValueError:
+            return f"{name} {raw.strip()!r} is not a number"
+    o, h, lo, c, v = values
+    return (iso, o, h, lo, c, v)
+
+
+def parse_rows_to_tuples(rows: Iterable[str]) -> list[CandleTuple]:
     """Parse raw CSV row strings (no header) into candle upsert tuples.
     Same lenient skipping as the Java importer: anything that doesn't
-    parse cleanly is dropped without raising."""
+    parse cleanly is dropped without raising. `scan_and_bucket` is what
+    reports those rows (R6)."""
 
-    out: list[tuple[str, float, float, float, float, float]] = []
+    out: list[CandleTuple] = []
     for line in rows:
-        parts = line.split(",")
-        if len(parts) < 6:
-            continue
-        date_str = parts[0].strip()
-        if _DATE_ONLY.match(date_str):
-            iso = f"{date_str}T00:00:00Z"
-        elif _DATE_TIME.match(date_str):
-            iso = date_str.replace(" ", "T", 1)
-            if not re.search(r"[Zz]|[+-]\d{2}:?\d{2}$", iso):
-                iso += "Z"
-        else:
-            continue
-        try:
-            o = float(parts[1])
-            h = float(parts[2])
-            lo = float(parts[3])
-            c = float(parts[4])
-            v = float(parts[5])
-        except ValueError:
-            continue
-        out.append((iso, o, h, lo, c, v))
+        parsed = parse_row(line)
+        if not isinstance(parsed, str):
+            out.append(parsed)
     return out
 
 

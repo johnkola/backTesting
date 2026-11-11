@@ -3,8 +3,11 @@ import type { ObjectiveSpec, SavedStrategy } from './api'
 import {
   classifyCoverage,
   designDefaultWindows,
+  fitWindowsToSeries,
+  horizonSpan,
   isRealDate,
   newestVersions,
+  marginProblems,
   objectiveFromForm,
   objectiveToForm,
   resolveFeatures,
@@ -146,6 +149,82 @@ describe('designDefaultWindows', () => {
   })
 })
 
+describe('fitWindowsToSeries (G21)', () => {
+  it('splits a short series into whole years, the remainder as prediction', () => {
+    // AAPL as first stored: from 2019-12-02, so 2019 is not a whole year.
+    const w = fitWindowsToSeries('2019-12-02T00:00:00.000Z', '2026-11-06T00:00:00.000Z')
+    expect(w).toEqual({
+      train: { from: '2020-01-01', to: '2022-12-31' },
+      validation: { from: '2023-01-01', to: '2024-12-31' },
+      test: { from: '2025-01-01', to: '2025-12-31' },
+      prediction: { from: '2026-01-01', to: '2026-11-06' },
+    })
+    expect(windowErrors(w!)).toEqual([])
+  })
+
+  it('keeps about the design proportions on a long series', () => {
+    const w = fitWindowsToSeries('1999-03-10', '2026-11-06')!
+    expect(w.train).toEqual({ from: '2000-01-01', to: '2013-12-31' })
+    expect(w.validation).toEqual({ from: '2014-01-01', to: '2020-12-31' })
+    expect(w.test).toEqual({ from: '2021-01-01', to: '2025-12-31' })
+  })
+
+  it('counts a year whose first bar is after a New Year holiday as whole', () => {
+    const w = fitWindowsToSeries('2010-01-04', '2019-12-31')!
+    expect(w.train!.from).toBe('2010-01-01')
+    expect(w.test!.to).toBe('2019-12-31')
+    // The series ends on the year's last day: nothing is left to predict.
+    expect(w.prediction).toBeUndefined()
+  })
+
+  it('produces only shapes the walk-forward runner accepts', () => {
+    // nn/strategy_spec.fold_plan: whole years, each window the day after the last.
+    for (const [from, to] of [['2001-06-15', '2026-02-01'], ['2015-01-02', '2018-12-28']]) {
+      const w = fitWindowsToSeries(from, to)!
+      expect(w.train!.from.endsWith('-01-01')).toBe(true)
+      expect(w.validation!.from.endsWith('-01-01')).toBe(true)
+      expect(w.validation!.to.endsWith('-12-31')).toBe(true)
+      expect(Number(w.validation!.from.slice(0, 4))).toBe(Number(w.train!.to.slice(0, 4)) + 1)
+      expect(Number(w.test!.from.slice(0, 4))).toBe(Number(w.validation!.to.slice(0, 4)) + 1)
+      expect(windowErrors(w)).toEqual([])
+    }
+  })
+
+  it('refuses a series shorter than three whole years', () => {
+    expect(fitWindowsToSeries('2023-03-01', '2026-11-06')).toBeNull()
+    expect(fitWindowsToSeries('nope', '2026-11-06')).toBeNull()
+    expect(fitWindowsToSeries('2026-01-01', '2020-01-01')).toBeNull()
+  })
+})
+
+describe('horizonSpan (I8)', () => {
+  it('says what the bar count means on daily and up', () => {
+    expect(horizonSpan(5, 'D1')).toBe('5 bars on D1 = 5 trading days ahead')
+    expect(horizonSpan(1, 'D1')).toBe('1 bar on D1 = 1 trading day ahead')
+    expect(horizonSpan(4, 'W1')).toBe('4 bars on W1 = 4 weeks ahead')
+    expect(horizonSpan(3, 'MN1')).toBe('3 bars on MN1 = 3 months ahead')
+  })
+
+  it('says hours, not days, on intraday', () => {
+    expect(horizonSpan(5, 'M30')).toBe('5 bars on M30 = 2.5 hours of trading ahead')
+    expect(horizonSpan(3, 'M15')).toBe('3 bars on M15 = 45 minutes of trading ahead')
+    expect(horizonSpan(1, 'H1')).toBe('1 bar on H1 = 1 hour of trading ahead')
+  })
+
+  it('converts a long intraday horizon to trading days, naming the session', () => {
+    expect(horizonSpan(26, 'M30')).toBe(
+      '26 bars on M30 = 13 hours of trading, about 2 trading days on a 6.5-hour NYSE session',
+    )
+  })
+
+  it('says nothing for a horizon or timeframe it cannot read', () => {
+    expect(horizonSpan(0, 'D1')).toBeNull()
+    expect(horizonSpan(2.5, 'D1')).toBeNull()
+    expect(horizonSpan(Number(''), 'D1')).toBeNull()
+    expect(horizonSpan(5, '')).toBeNull()
+  })
+})
+
 describe('coverage and the resolved feature list (§6.2)', () => {
   const full = { share: 1, bars: 100, withValue: 100 }
   const partial = { share: 0.4, bars: 100, withValue: 40 }
@@ -203,7 +282,8 @@ describe('newestVersions', () => {
     objective: {
       loss: 'ce', classWeights: false, positionThreshold: null,
       verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
-      taxTrain: false,
+      taxTrain: false, execution: 'signals', leveragePct: null, hedgePct: null,
+      marginSpreadPct: null, maintenancePct: null, longThreshold: null, marginTrain: false,
     },
     objectiveDefaulted: false,
     notes: null, createdAt: '', createdBy: 'web', updatedAt: '', updatedBy: 'web',
@@ -229,7 +309,8 @@ const SPEC: ObjectiveSpec = {
   defaults: {
     loss: 'ce', classWeights: false, positionThreshold: null,
     verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
-    taxTrain: false,
+    taxTrain: false, execution: 'signals', leveragePct: null, hedgePct: null,
+    marginSpreadPct: null, maintenancePct: null, longThreshold: null, marginTrain: false,
   },
   losses: ['ce', 'return', 'sharpe', 'calmar'],
   verdicts: ['return', 'sharpe', 'drawdown'],
@@ -237,6 +318,10 @@ const SPEC: ObjectiveSpec = {
   maxCostBps: 100,
   maxTaxRatePct: 100,
   defaultPositionThreshold: 0.5,
+  executions: ['signals', 'margin'],
+  marginDefaults: { leveragePct: 20, hedgePct: 20, marginSpreadPct: 1.5, maintenancePct: 30 },
+  defaultLongThreshold: 0.75,
+  marginCeilingPct: 50,
 }
 
 describe('objectiveFromForm', () => {
@@ -306,5 +391,62 @@ describe('objectiveFromForm', () => {
   it('round-trips a saved after-tax objective', () => {
     const saved = { ...SPEC.defaults, taxScore: true, taxRatePct: 25 }
     expect(objectiveFromForm(objectiveToForm(saved), SPEC)).toEqual(saved)
+  })
+})
+
+describe('Strategy 2 in the objective (G5)', () => {
+  const form = objectiveToForm(SPEC.defaults)
+  const margin = { ...form, execution: 'margin' as const }
+
+  it('sends every margin dial null under Strategy 1, even one left typed in', () => {
+    const o = objectiveFromForm({ ...form, leveragePct: '30' }, SPEC)
+    expect(o.execution).toBe('signals')
+    expect([o.leveragePct, o.hedgePct, o.marginSpreadPct, o.maintenancePct, o.longThreshold])
+      .toEqual([null, null, null, null, null])
+  })
+
+  it('fills blank dials with the defaults under Strategy 2', () => {
+    const o = objectiveFromForm(margin, SPEC)
+    expect([o.leveragePct, o.hedgePct, o.marginSpreadPct, o.maintenancePct])
+      .toEqual([20, 20, 1.5, 30])
+    expect(o.longThreshold).toBeNull() // a classifier has no position to cut
+  })
+
+  it('sends a long threshold for a money-trained loss only', () => {
+    expect(objectiveFromForm({ ...margin, loss: 'return' }, SPEC).longThreshold).toBe(0.75)
+    expect(objectiveFromForm({ ...margin, loss: 'return', longThreshold: '0.8' }, SPEC).longThreshold)
+      .toBe(0.8)
+  })
+
+  it('round-trips a saved Strategy 2 objective', () => {
+    const saved = {
+      ...SPEC.defaults, execution: 'margin' as const, leveragePct: 30, hedgePct: 10,
+      marginSpreadPct: 1.5, maintenancePct: 30,
+    }
+    expect(objectiveFromForm(objectiveToForm(saved), SPEC)).toEqual(saved)
+  })
+
+  it('says before saving that a dial past 50% or a non-QQQ instrument is refused', () => {
+    expect(marginProblems({ ...margin, hedgePct: '55' }, SPEC, 'QQQ')[0]).toMatch(/at most 50%/)
+    expect(marginProblems({ ...margin, leveragePct: '50' }, SPEC, 'QQQ')).toEqual([])
+    expect(marginProblems(margin, SPEC, 'AAPL')[0]).toMatch(/QQQ only/)
+    expect(marginProblems({ ...form, hedgePct: '90' }, SPEC, 'AAPL')).toEqual([])
+  })
+})
+
+describe('train with margin (G5 step 2)', () => {
+  const form = { ...objectiveToForm(SPEC.defaults), execution: 'margin' as const, marginTrain: true }
+
+  it('is sent for Strategy 2 with a money loss', () => {
+    expect(objectiveFromForm({ ...form, loss: 'return' }, SPEC).marginTrain).toBe(true)
+  })
+
+  it('is cleared for ce, under Strategy 1, and beside train with tax', () => {
+    expect(objectiveFromForm(form, SPEC).marginTrain).toBe(false)
+    expect(objectiveFromForm({ ...form, loss: 'return', execution: 'signals' }, SPEC).marginTrain)
+      .toBe(false)
+    expect(objectiveFromForm({
+      ...form, loss: 'return', taxScore: true, taxRatePct: '25', taxTrain: true,
+    }, SPEC).marginTrain).toBe(false)
   })
 })

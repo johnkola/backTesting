@@ -11,7 +11,8 @@ import { useApiData } from '../lib/useApiData'
 import { useTimeframe } from '../lib/useTimeframe'
 import {
   WINDOW_KEYS,
-  classifyCoverage, designDefaultWindows, isRealDate, resolveFeatures,
+  classifyCoverage, designDefaultWindows, fitWindowsToSeries, horizonSpan, isRealDate,
+  marginProblems, resolveFeatures,
   objectiveFromForm, objectiveToForm, windowDays, windowErrors,
   type ObjectiveForm, type WindowKey, type Windows,
 } from '../lib/strategyForm'
@@ -112,6 +113,11 @@ export default function StrategyPage() {
   // Until a date is touched, offer the design's own split extended to the
   // newest stored bar. Derived, so changing instrument re-derives it.
   const windows: Windows = editedWindows ?? designDefaultWindows(slice?.toDate)
+  // G21: the same four windows cut from this series' own whole years, offered
+  // as a button rather than the default so the design's split stays the
+  // starting point wherever the series can hold it.
+  const fitted = slice ? fitWindowsToSeries(slice.fromDate, slice.toDate) : null
+  const alreadyFitted = !!fitted && JSON.stringify(fitted) === JSON.stringify(windows)
 
   const enabledColumns = useMemo(
     () => (features?.config?.columns ?? []).filter((c) => c.enabled),
@@ -206,8 +212,12 @@ export default function StrategyPage() {
     ?? (objectiveSpec ? objectiveToForm(objectiveSpec.defaults) : null)
   const setObjective = (part: Partial<ObjectiveForm>) =>
     setEditedObjective((o) => ({ ...(o ?? objectiveForm!), ...part }))
+  const marginIssues = objectiveSpec && objectiveForm
+    ? marginProblems(objectiveForm, objectiveSpec, symbol)
+    : []
   const ready = !!(name.trim() && slice && selected.length > 0
-    && windowProblems.length === 0 && objectiveSpec && objectiveForm && !busy)
+    && windowProblems.length === 0 && marginIssues.length === 0
+    && objectiveSpec && objectiveForm && !busy)
 
   function setWindow(key: WindowKey, part: Partial<{ from: string, to: string }>) {
     setEditedWindows((w) => {
@@ -437,6 +447,24 @@ export default function StrategyPage() {
                 )
               })}
             </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button" className="btn btn-xs"
+                disabled={!fitted || alreadyFitted}
+                onClick={() => fitted && setEditedWindows(fitted)}
+              >
+                Fit windows to this series
+              </button>
+              <span className="text-xs text-base-content/60">
+                {!slice
+                  ? 'Pick a series first.'
+                  : !fitted
+                    ? `${symbol}/${source}/${timeframe} holds fewer than three whole years, one each for train, validation and test.`
+                    : alreadyFitted
+                      ? 'The windows are fitted to this series.'
+                      : `Splits ${slice.fromDate.slice(0, 10)} → ${slice.toDate.slice(0, 10)} into whole years, about 55% train, 25% validation and 20% test, with any part year left as prediction.`}
+              </span>
+            </div>
             {windowProblems.length > 0 && (
               <ul className="mt-3 text-sm text-error list-disc list-inside space-y-1">
                 {windowProblems.map((p) => <li key={p}>{p}</li>)}
@@ -460,6 +488,7 @@ export default function StrategyPage() {
                       : 'That window cannot be scored.'}
                     {' '}The dates are still saveable — this is a warning, not a block — but
                     they are almost certainly wrong for this series.
+                    {fitted && ' "Fit windows to this series" proposes ones that are not.'}
                   </p>
                 </div>
               </div>
@@ -496,6 +525,12 @@ export default function StrategyPage() {
                   type="number" min={1} max={100} className="input input-bordered"
                   value={horizon} onChange={(e) => setHorizon(e.target.value)}
                 />
+                {/* I8: bars are not days below D1, so say what the number means here. */}
+                {horizonSpan(Number(horizon), timeframe) && (
+                  <span className="label-text-alt mt-1 text-base-content/60">
+                    {horizonSpan(Number(horizon), timeframe)}
+                  </span>
+                )}
               </label>
             </div>
           </Section>
@@ -631,7 +666,80 @@ export default function StrategyPage() {
                     )}
                   </label>
                 )}
+                <label className="form-control">
+                  <FieldLabel className="text-xs" text="Execution" hint={hintFor('objective.execution')} />
+                  <select
+                    className="select select-bordered select-sm" value={objectiveForm.execution}
+                    onChange={(e) => setObjective({ execution: e.target.value as ObjectiveForm['execution'] })}
+                  >
+                    <option value="signals">Strategy 1 · signals (long unless sell)</option>
+                    <option value="margin">Strategy 2 · margin long and inverse</option>
+                  </select>
+                </label>
+                {objectiveForm.execution === 'margin' && (
+                  <>
+                    {([
+                      ['leveragePct', 'Leverage (% of core)', objectiveSpec.marginDefaults.leveragePct],
+                      ['hedgePct', 'Hedge in PSQ (% of core)', objectiveSpec.marginDefaults.hedgePct],
+                      ['marginSpreadPct', 'Margin rate (Fed funds +)', objectiveSpec.marginDefaults.marginSpreadPct],
+                      ['maintenancePct', 'Margin call below (% equity)', objectiveSpec.marginDefaults.maintenancePct],
+                    ] as const).map(([key, label, def]) => (
+                      <label key={key} className="form-control">
+                        <FieldLabel className="text-xs" text={label} hint={hintFor(`objective.${key}`)} />
+                        <input
+                          className="input input-bordered input-sm" inputMode="decimal"
+                          placeholder={String(def)}
+                          value={objectiveForm[key]}
+                          onChange={(e) => setObjective({ [key]: e.target.value })}
+                        />
+                      </label>
+                    ))}
+                    {objectiveForm.loss !== 'ce' && !objectiveForm.taxTrain && (
+                      <label className="form-control">
+                        <FieldLabel
+                          className="text-xs" text="Train with margin" hint={hintFor('objective.marginTrain')}
+                        />
+                        <input
+                          type="checkbox" className="toggle toggle-sm toggle-warning mt-2"
+                          checked={objectiveForm.marginTrain}
+                          onChange={(e) => setObjective({ marginTrain: e.target.checked })}
+                        />
+                        {objectiveForm.marginTrain && (
+                          <span className="text-xs text-warning mt-1">
+                            Changes the signals, and training must start in 2007 or later.
+                          </span>
+                        )}
+                      </label>
+                    )}
+                    {objectiveForm.loss !== 'ce' && (
+                      <label className="form-control">
+                        <FieldLabel
+                          className="text-xs" text="Long threshold" hint={hintFor('objective.longThreshold')}
+                        />
+                        <input
+                          className="input input-bordered input-sm" inputMode="decimal"
+                          placeholder={String(objectiveSpec.defaultLongThreshold)}
+                          value={objectiveForm.longThreshold}
+                          onChange={(e) => setObjective({ longThreshold: e.target.value })}
+                        />
+                      </label>
+                    )}
+                  </>
+                )}
               </div>
+              {marginIssues.length > 0 && (
+                <ul className="mt-3 space-y-1">
+                  {marginIssues.map((m) => <li key={m} className="text-sm text-error">{m}</li>)}
+                </ul>
+              )}
+              {objectiveForm.execution === 'margin' && marginIssues.length === 0 && (
+                <p className="mt-3 text-sm text-base-content/70">
+                  The QQQ core is never sold. Interest is Fed funds on each day plus the margin
+                  rate, charged while money is borrowed; gains on the margin positions are taxed
+                  when scoring after tax. Scored windows must start on or after PSQ&apos;s first
+                  bar, 2006-06-21.
+                </p>
+              )}
             </Section>
           )}
 

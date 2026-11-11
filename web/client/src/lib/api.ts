@@ -224,9 +224,16 @@ export type CohesionReport = {
   examples: CohesionFinding[]
 }
 
+/** Rows in the file that produced no candle (DESIGN-GAPS R6). The count is
+ *  exact; examples are the first few, with the file's own line numbers. */
+export type SkippedRows = {
+  count: number
+  examples: { line: number, reason: string, text: string }[]
+}
+
 /** Discriminated union of POST /api/imports response shapes. */
 export type UploadImportResponse =
-  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; file?: UploadedFile }
+  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; skipped?: SkippedRows; file?: UploadedFile }
   | { status: 'conflict'; message: string; imports: SlicePreview[]; file?: { hash: string, name: string } }
   | { status: 'compressed_chunk'; error: string; hint: string; detail: string }
 
@@ -372,7 +379,32 @@ export type TrainedModel = {
   diskPath: string
 }
 
+/**
+ * The stored buy-and-hold row a result is measured against (Architecture §6.3):
+ * buy at the first close of the traded window, sell at the last, frictionless.
+ */
+export type Benchmark = {
+  id: string
+  startDate: string
+  endDate: string
+  initialCapital: number
+  returnPct: number
+  finalEquity: number
+  firstClose: number
+  lastClose: number
+  barCount: number
+}
+
 export type ResultDetail = ResultSummary & {
+  /** Null on results saved before benchmarks were stored. */
+  benchmark?: Benchmark | null
+  /**
+   * Buy-and-hold equity, one value per `result.equityHistory` point and in the
+   * same order. Null when the stored row can no longer be reproduced from the
+   * candles; `holdEquityNote` says why.
+   */
+  holdEquity?: number[] | null
+  holdEquityNote?: string | null
   result: {
     strategyName: string
     instrumentSymbol: string
@@ -713,6 +745,8 @@ export type FeatureSetColumn = {
   method: string
   params: Record<string, number | string>
   columnIndex: number
+  /** `input` feeds the network; `data` is stored beside it and never does. */
+  role: 'input' | 'data'
 }
 
 export type FeatureSet = {
@@ -833,6 +867,27 @@ export type StrategyObjective = {
    * model and so its signals; needs `taxScore` and a money-trained loss.
    */
   taxTrain: boolean
+  /**
+   * How the signals are acted on (Design Notes, Trading Strategies). 'signals'
+   * is Strategy 1, long unless SELL. 'margin' is Strategy 2: a QQQ core that is
+   * never sold, margin QQQ on an up signal, margin PSQ on a down one.
+   */
+  execution: 'signals' | 'margin'
+  /** Strategy 2: margin QQQ opened on an up signal, % of the core. Null under Strategy 1. */
+  leveragePct: number | null
+  /** Strategy 2: margin PSQ opened on a down signal, % of the core. */
+  hedgePct: number | null
+  /** Strategy 2: points over Fed funds the margin rate charges. */
+  marginSpreadPct: number | null
+  /** Strategy 2: equity / assets below which the margin position is force-closed. */
+  maintenancePct: number | null
+  /** Strategy 2, money-trained loss: position needed to go long on margin; null for ce. */
+  longThreshold: number | null
+  /**
+   * Train against Strategy 2's curve too. Like `taxTrain` this changes the
+   * model and so its signals; needs Strategy 2 and a money-trained loss.
+   */
+  marginTrain: boolean
 }
 
 /** The rules the form draws the objective section from, served by the API. */
@@ -844,6 +899,11 @@ export type ObjectiveSpec = {
   maxCostBps: number
   maxTaxRatePct: number
   defaultPositionThreshold: number
+  executions: StrategyObjective['execution'][]
+  marginDefaults: { leveragePct: number, hedgePct: number, marginSpreadPct: number, maintenancePct: number }
+  defaultLongThreshold: number
+  /** The design's hard rule: a margin position never exceeds this % of the holding. */
+  marginCeilingPct: number
 }
 
 /** An inclusive date range, YYYY-MM-DD at both ends. */
@@ -948,8 +1008,9 @@ export type CatalogueFeature = {
   rangeEnd: string | null
   /** `instrument` columns follow the chosen instrument; `market` ones are shared. */
   scope: 'instrument' | 'market'
-  /** Only `active` columns are offered in the strategy builder. */
-  status: 'active' | 'undecided' | 'blocked'
+  /** Only `active` columns are offered in the strategy builder. `data-only`
+   *  columns are stored for charts and rules, never a network input. */
+  status: 'active' | 'data-only' | 'undecided' | 'blocked'
   cost: 'free' | 'paid'
   /** Of the RAW series. Drives normalization and the chart axis. */
   units: 'percent' | 'level' | 'count' | 'ratio'
@@ -1067,6 +1128,45 @@ export type WalkforwardFold = {
   bestEpoch: number | null
   /** Epochs actually trained before stopping; null likewise. */
   epochsRun: number | null
+  /** The stored buy-and-hold row `holdReturn` was read from (§6.3); null on older folds. */
+  benchmarkId: number | null
+  /** Strategy 2: interest charged, negative points; this and the five below are null under Strategy 1. */
+  marginInterest: number | null
+  marginCalls: number | null
+  /** Cuts back to the 50% ceiling. */
+  trims: number | null
+  daysLong: number | null
+  daysHedged: number | null
+  /** Bars below maintenance with nothing left on margin: the core itself at risk. */
+  coreAtRisk: number | null
+  /** G25: the same fold always long on margin (no model), percent. Null under Strategy 1. */
+  leveredReturn: number | null
+}
+
+/**
+ * How a run acted on its signals (G5), with Strategy 2's dials and its margin
+ * figures summed or averaged over the folds. Dials and figures are null under
+ * Strategy 1.
+ */
+export type WalkforwardExecution = {
+  kind: 'signals' | 'margin'
+  leveragePct: number | null
+  hedgePct: number | null
+  marginSpreadPct: number | null
+  maintenancePct: number | null
+  longThreshold: number | null
+  /** The loss was Strategy 2's curve too, so the signals differ. */
+  marginTrain: boolean
+  meanMarginInterest: number | null
+  marginCalls: number | null
+  trims: number | null
+  coreAtRisk: number | null
+  meanDaysLong: number | null
+  meanDaysHedged: number | null
+  /** G25: mean fold return always long on margin, no model; null before G25 or under Strategy 1. */
+  meanLeveredReturn: number | null
+  /** Folds where the model beat always-long-on-margin; null under Strategy 1. */
+  foldsBeatLevered: number | null
 }
 
 /**
@@ -1115,6 +1215,16 @@ export type WalkforwardRun = {
   columns: string[] | null
   /** The saved strategy the run executed; null for a run launched from flags. */
   strategy: WalkforwardStrategyRef | null
+  /** What produced the run's inputs (G3); null on a run from before it. */
+  lineage: WalkforwardLineage | null
+  /** Strategy 1 or 2, and Strategy 2's dials and margin figures (G5). */
+  execution: WalkforwardExecution
+  /**
+   * G25: did a Strategy 2 run's mean return beat always long on margin? Null
+   * under Strategy 1 or with no baseline. False beside a win over buy-and-hold
+   * means the win is leverage, not the model.
+   */
+  beatsLeveredOnReturn?: boolean | null
   startedAt: string
   finishedAt: string | null
   inProgress: boolean
@@ -1161,6 +1271,23 @@ export type WalkforwardStrategyRef = {
   trainBars: number | null
   /** The strategy's test.to; set only on a holdout run. */
   testEnd: string | null
+}
+
+/**
+ * A run's input snapshot and code version (Architecture §1, §6.1; G3).
+ * `setRebuiltSince` / `valuesChangedSince` come from the stored builds; null
+ * when the run or the set has no build to compare.
+ */
+export type WalkforwardLineage = {
+  featureRunId: number | null
+  currentBuildId: number | null
+  inputSnapshot: string
+  parts: { matrix?: string, closes?: string, park?: string } | null
+  codeHash: string | null
+  gitSha: string | null
+  libVersions: Record<string, string> | null
+  setRebuiltSince: boolean | null
+  valuesChangedSince: boolean | null
 }
 
 export type WalkforwardRuns = {

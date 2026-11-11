@@ -101,7 +101,7 @@ public class BacktestCommand implements Runnable {
 
             // Resolve date range
             ZonedDateTime from = fromDate != null ? DateTimeUtils.parse(fromDate) : null;
-            ZonedDateTime to = toDate != null ? DateTimeUtils.parse(toDate) : null;
+            ZonedDateTime to = toDate != null ? DateTimeUtils.parseEnd(toDate) : null;
 
             // Resolve capital and cost models from config
             AppConfig config = AppConfig.getInstance();

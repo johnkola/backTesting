@@ -70,6 +70,7 @@ CSV shape:
 
 ```bash
 python fetch_historical_data.py QQQ --from 2015-01-01    # `py` instead of `python` on Windows
+python fetch_historical_data.py PSQ --adjusted            # Strategy 2's hedge; import as STOCK, source yahoo-adj
 ```
 
 **Macro series.** Rates, inflation expectations and commodity prices come from FRED, also
@@ -81,6 +82,9 @@ thing the engine will let you hold a position in:
 python fetch_fred_series.py DGS10        # 10-year Treasury yield
 python fetch_fred_series.py T10YIE       # 10-year breakeven inflation
 python fetch_fred_series.py DCOILWTICO   # WTI crude spot
+python fetch_fred_series.py DFF          # Fed funds: a feature column, and Strategy 2's margin rate
+python fetch_fred_series.py BAA10Y       # Baa corporate minus 10-year: the investment-grade credit column
+python fetch_boc_series.py AVG.INTWO --out test-data/CORRA_daily.csv   # Bank of Canada overnight rate; import with source boc
 ```
 
 **Nasdaq-100 breadth.** `build_ndx_breadth.py` downloads the current constituents and

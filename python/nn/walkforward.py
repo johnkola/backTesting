@@ -31,6 +31,7 @@ consistently. A variant that wins here still has to survive a real backtest.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from collections import Counter
@@ -43,12 +44,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from nn import feature_store, strategy_spec, walkforward_store
-from nn.labels import CLASS_SELL, NUM_CLASSES
+from nn import feature_store, lineage, strategy2, strategy_spec, walkforward_store
+from nn.labels import CLASS_BUY, CLASS_SELL, NUM_CLASSES
 from nn.model import ArchSpec, build
 from nn.standardise import fit as fit_scaler
 from nn.train_features import build_labels, load_closes
 
+#: Periods per year for every annualised figure here: the Sharpe, the parked
+#: return (an annual rate / 252 per bar) and, in `money_loss`, the losses.
+#: Correct for D1 only, which is why `main` refuses any other timeframe
+#: (DESIGN-GAPS I5); the matrix is keyed by date as well (I4).
 TRADING_DAYS = 252
 
 
@@ -95,6 +100,21 @@ class FoldResult:
     # when the run trained for a fixed number of epochs.
     best_epoch: int | None = None
     epochs_run: int | None = None
+    # The stored buy-and-hold row (`benchmarks`, Architecture §6.3) that
+    # `hold_return` was read from. None on a run that saved nothing.
+    benchmark_id: int | None = None
+    # Strategy 2 (G5), None under Strategy 1. Interest in negative points of
+    # starting capital, like the other cost terms; the rest are bar counts.
+    margin_interest: float | None = None
+    margin_calls: int | None = None
+    trims: int | None = None
+    days_long: int | None = None
+    days_hedged: int | None = None
+    core_at_risk: int | None = None
+    # G25: the same fold with every signal UP -- always long on margin, same
+    # dials, interest, costs and tax. What borrowing earned with no model, so a
+    # Strategy 2 excess can be split into leverage and timing. None under Strategy 1.
+    levered_return: float | None = None
 
     @property
     def excess(self) -> float:
@@ -346,6 +366,7 @@ def tax_train_problem(args) -> str | None:
 def train_money(
     x_tr: np.ndarray, r_tr: np.ndarray, args,
     stop: tuple[np.ndarray, np.ndarray] | None = None,
+    margin_tr=None, margin_stop=None,
 ) -> tuple[nn.Module, object, Stopper | None]:
     """Fit a position model by optimising the trade simulation directly.
 
@@ -377,7 +398,7 @@ def train_money(
         opt.zero_grad()
         pos = money_loss.positions_from_logits(model(xs))
         loss, _ = money_loss.objective(args.loss, pos, r, cost_bps=args.cost_bps,
-                                       tax_rate=tax)
+                                       tax_rate=tax, margin=margin_tr)
         loss.backward()
         opt.step()
         if stopper is not None:
@@ -386,7 +407,7 @@ def train_money(
             with torch.no_grad():
                 held, _ = money_loss.objective(
                     args.loss, money_loss.positions_from_logits(model(xs_stop)), r_stop,
-                    cost_bps=args.cost_bps, tax_rate=tax)
+                    cost_bps=args.cost_bps, tax_rate=tax, margin=margin_stop)
             if stopper.step(epoch, float(held), model):
                 break
     if stopper is not None:
@@ -450,10 +471,161 @@ def train_one(
     return model, scaler, stopper
 
 
+@dataclass(frozen=True)
+class MarginInputs:
+    """What Strategy 2 reads besides the signals, one value per matrix date.
+
+    `psq_returns[i]` runs from date i's close to the next, like `rets`; NaN
+    where PSQ has no close on either end (before its first bar, 2006-06-21).
+    `rates[i]` is Fed funds (DFF) on date i, carried forward over days it did
+    not print, as a fraction; `days[i]` the calendar days to the next date.
+    """
+    psq_returns: np.ndarray
+    rates: np.ndarray
+    days: np.ndarray
+    psq_first: date | None
+
+
+def align_margin(wdates: list[date], psq: dict[date, float],
+                 dff: dict[date, float]) -> MarginInputs:
+    """Line PSQ and Fed funds up against the matrix dates. Pure."""
+    n = len(wdates)
+    psq_r = np.full(n, np.nan)
+    rates = np.full(n, np.nan)
+    days = np.ones(n)
+    last = None
+    dff_dates = sorted(dff)
+    j = 0
+    for i, d in enumerate(wdates):
+        while j < len(dff_dates) and dff_dates[j] <= d:
+            last = dff[dff_dates[j]]
+            j += 1
+        if last is not None:
+            rates[i] = last / 100.0
+        if i + 1 < n:
+            nxt = wdates[i + 1]
+            days[i] = (nxt - d).days
+            if d in psq and nxt in psq and psq[d] > 0:
+                psq_r[i] = psq[nxt] / psq[d] - 1.0
+        elif d in psq:
+            psq_r[i] = 0.0  # the last date scores nothing, as `rets` does
+    return MarginInputs(psq_r, rates, days, min(psq) if psq else None)
+
+
+def load_margin(cur, wdates: list[date], source: str) -> MarginInputs:
+    """PSQ from the strategy's own price source, Fed funds from FRED."""
+    psq = load_closes(cur, "PSQ", source, "D1")
+    dff = load_closes(cur, "DFF", "fred", "D1")
+    missing = [what for what, s in (("PSQ (" + source + ", D1)", psq), ("DFF (fred, D1)", dff))
+               if not s]
+    if missing:
+        raise SystemExit(f"Strategy 2 needs {' and '.join(missing)} imported: "
+                         f"`python fetch_historical_data.py PSQ` / "
+                         f"`python fetch_fred_series.py DFF`, then POST /api/imports")
+    return align_margin(wdates, psq, dff)
+
+
+def margin_config(args) -> strategy2.MarginConfig:
+    return strategy2.MarginConfig(
+        leverage=args.leverage_pct / 100.0, hedge=args.hedge_pct / 100.0,
+        spread=args.margin_spread_pct / 100.0, maintenance=args.maintenance_pct / 100.0,
+        cost_bps=args.cost_bps, tax_rate=(getattr(args, "tax_rate", None) or 0.0) / 100.0,
+    )
+
+
+def margin_terms(margin: MarginInputs, idx: list[int], args):
+    """Strategy 2's series over `idx`, as the money loss takes them (G5 step 2)."""
+    from nn import money_loss
+
+    def t(a: np.ndarray) -> torch.Tensor:
+        return torch.from_numpy(a[idx].astype(np.float32))
+
+    return money_loss.MarginTerms(
+        psq=t(margin.psq_returns), rates=t(margin.rates), days=t(margin.days),
+        leverage=args.leverage_pct / 100.0, hedge=args.hedge_pct / 100.0,
+        spread=args.margin_spread_pct / 100.0, threshold=args.threshold,
+        long_threshold=args.long_threshold,
+    )
+
+
+def margin_refusals(args, folds, margin: MarginInputs) -> list[str]:
+    """Why this run cannot be scored under Strategy 2, or []."""
+    out = margin_config(args).refusals()
+    if args.symbol != "QQQ":
+        out.append(f"Strategy 2 holds a QQQ core and hedges with PSQ, the inverse of "
+                   f"QQQ; it cannot be run on {args.symbol}")
+    if args.loss != "ce" and not args.threshold < args.long_threshold:
+        out.append(f"the long threshold {args.long_threshold} must be above the "
+                   f"position threshold {args.threshold}")
+    if getattr(args, "margin_train", False):
+        if args.loss == "ce":
+            out.append("train with margin needs a money-trained loss, not ce")
+        if getattr(args, "tax_train", False):
+            out.append("train with margin and train with tax together are not supported yet")
+        for year, tr, _va in folds:
+            if np.isnan(margin.psq_returns[tr]).any() or np.isnan(margin.rates[tr]).any():
+                start = f"{margin.psq_first.year + 1}" if margin.psq_first else "after PSQ starts"
+                out.append(f"the training window of the fold scored in {year} starts before "
+                           f"PSQ's first bar ({margin.psq_first}); training with margin needs "
+                           f"PSQ on every training bar, so train from {start} or later")
+                break
+    for year, _tr, va in folds:
+        if np.isnan(margin.psq_returns[va]).any():
+            out.append(f"the window scored in {year} starts before PSQ's first bar "
+                       f"({margin.psq_first}); windows before it are refused, not modelled")
+            break
+        if np.isnan(margin.rates[va]).any():
+            out.append(f"no Fed funds rate for part of {year}")
+            break
+    return out
+
+
+@dataclass(frozen=True)
+class HoldWindow:
+    """The bars a fold's buy-and-hold covers, as the `benchmarks` row keys them.
+
+    Buy at the close of the first validation bar, sell at the close of the bar
+    the last validation day's return runs to: that is what `cumprod(1 + r)`
+    over the fold telescopes to, since `r[i]` is `close[i+1] / close[i] - 1`.
+    """
+    start: date
+    end: date
+    first_close: float
+    last_close: float
+    bar_count: int
+
+    @property
+    def return_pct(self) -> float:
+        """Same formula as Java's `Benchmark.returnPct`, so a row stored by
+        either side reads the same."""
+        if self.first_close <= 0:
+            return 0.0
+        return (self.last_close - self.first_close) / self.first_close * 100.0
+
+
+def hold_window(wdates: list[date], va: list[int],
+                closes: dict[date, float]) -> HoldWindow:
+    """The window `rets[va]` actually spans.
+
+    The exit is the next date after the last validation day, as `rets` defines
+    it; when there is none (the last labelled date), its return is 0.0 and the
+    window ends on that day. `bar_count` counts every stored close in the
+    window, not the matrix dates, so it is what the candles hold.
+    """
+    start = wdates[va[0]]
+    end = wdates[va[-1] + 1] if va[-1] + 1 < len(wdates) else wdates[va[-1]]
+    return HoldWindow(
+        start=start, end=end,
+        first_close=closes[start], last_close=closes[end],
+        bar_count=sum(1 for d in closes if start <= d <= end),
+    )
+
+
 def run_fold(
     fold_no: int, year: int, tr: list[int], va: list[int],
     x_all: np.ndarray, y_all: np.ndarray, rets: np.ndarray,
     dates: list[date], args, park: np.ndarray | None = None,
+    margin: MarginInputs | None = None,
 ) -> FoldResult:
     patience = getattr(args, "patience", None)
     stop_ix: list[int] = []
@@ -471,13 +643,17 @@ def run_fold(
     else:
         from nn import money_loss
 
+        train_m = margin is not None and getattr(args, "margin_train", False)
         model, scaler, stopper = train_money(
-            x_tr, rets[tr], args, stop=(x_all[stop_ix], rets[stop_ix]) if patience else None)
+            x_tr, rets[tr], args, stop=(x_all[stop_ix], rets[stop_ix]) if patience else None,
+            margin_tr=margin_terms(margin, tr, args) if train_m else None,
+            margin_stop=margin_terms(margin, stop_ix, args) if train_m and patience else None)
         model.eval()
         with torch.no_grad():
             pos = money_loss.positions_from_logits(
                 model(torch.from_numpy(scaler.transform(x_va)))
             ).numpy()
+        signal_pos = pos
         # The money model emits a continuous position; the evaluation rule is
         # binary, so cut it at the threshold and express the result in the same
         # SELL/not-SELL vocabulary the simulator already speaks. Evaluating the
@@ -486,10 +662,27 @@ def run_fold(
 
     r = rets[va]
     rate = (getattr(args, "tax_rate", None) or 0.0) / 100.0
-    equity, trades, gains_tax = simulate_taxed(
-        pred, r, cost_bps=args.cost_bps,
-        park_returns=None if park is None else park[va], tax_rate=rate,
-    )
+    m = None
+    if margin is not None:
+        # Strategy 2: the same signals, acted on with a margin position beside
+        # an untouched core. A classifier's BUY is the conviction to go long; a
+        # money model's position has to clear the long threshold.
+        if args.loss == "ce":
+            sig = strategy2.signals_from_classes(pred, CLASS_BUY, CLASS_SELL)
+        else:
+            sig = strategy2.signals_from_positions(signal_pos, args.threshold,
+                                                   args.long_threshold)
+        m = strategy2.simulate_margin(sig, r, margin.psq_returns[va], margin.rates[va],
+                                      margin.days[va], margin_config(args))
+        equity, trades, gains_tax = m.equity, m.trades, m.gains_tax
+        always = strategy2.simulate_margin(
+            np.full(len(va), strategy2.UP), r, margin.psq_returns[va], margin.rates[va],
+            margin.days[va], margin_config(args))
+    else:
+        equity, trades, gains_tax = simulate_taxed(
+            pred, r, cost_bps=args.cost_bps,
+            park_returns=None if park is None else park[va], tax_rate=rate,
+        )
     hold = np.cumprod(1.0 + r)
 
     strat_daily = np.diff(np.concatenate([[1.0], equity])) / np.concatenate([[1.0], equity[:-1]])
@@ -514,6 +707,10 @@ def run_fold(
     drift_tax = -days_out * mean_forgone * 100.0
     timing = (-(forgone[out_mask] - mean_forgone).sum() * 100.0) if days_out else 0.0
     commissions = -trades * (args.cost_bps / 10_000.0) * 100.0
+    if m is not None:
+        # The long/flat attribution describes days out of the market, and under
+        # Strategy 2 the core is never out: it would describe a different run.
+        days_out, drift_tax, timing, commissions = 0, 0.0, 0.0, m.commissions
 
     return FoldResult(
         fold=fold_no,
@@ -533,6 +730,11 @@ def run_fold(
         gains_tax=gains_tax,
         best_epoch=stopper.best_epoch if stopper else None,
         epochs_run=stopper.epochs_run if stopper else None,
+        **({} if m is None else dict(
+            margin_interest=m.interest, margin_calls=m.margin_calls, trims=m.trims,
+            days_long=m.days_long, days_hedged=m.days_hedged, core_at_risk=m.core_at_risk,
+            levered_return=float((always.equity[-1] - 1.0) * 100.0),
+        )),
     )
 
 
@@ -635,6 +837,31 @@ def build_parser() -> argparse.ArgumentParser:
                         "(DTB3); 'bonds' a 10-year constant-maturity total return built "
                         "from DGS10, which hedges in a flight to quality and does not in "
                         "a rate shock")
+    p.add_argument("--execution", choices=["signals", "margin"], default="signals",
+                   help="How the signals are acted on. 'signals' is Strategy 1: long unless "
+                        "SELL. 'margin' is Strategy 2: a QQQ core that is never sold, plus "
+                        "margin QQQ on an up signal or margin PSQ (the inverse) on a down "
+                        "one, charged Fed funds + --margin-spread-pct while open")
+    p.add_argument("--leverage-pct", type=float, default=20.0,
+                   help="Strategy 2: margin QQQ opened on an up signal, %% of the core "
+                        "(the design's settings to test: 10, 20, 30; at most 50)")
+    p.add_argument("--hedge-pct", type=float, default=20.0,
+                   help="Strategy 2: margin PSQ opened on a down signal, %% of the core "
+                        "(at most 50)")
+    p.add_argument("--margin-spread-pct", type=float, default=1.5,
+                   help="Strategy 2: points over Fed funds (DFF) the broker charges")
+    p.add_argument("--maintenance-pct", type=float, default=30.0,
+                   help="Strategy 2: equity / assets below this forces the margin "
+                        "position closed (FINRA's floor is 25; brokers commonly ask 30)")
+    p.add_argument("--margin-train", action="store_true",
+                   help="Strategy 2: train against its curve too (margin legs, PSQ, interest, "
+                        "commission), so the model learns to borrow only when a trade clears "
+                        "its cost. Needs --execution margin and a money loss; training windows "
+                        "must start on or after PSQ's first bar. Like --tax-train this CHANGES "
+                        "THE SIGNALS, so it does not belong on a strategy published as a signal")
+    p.add_argument("--long-threshold", type=float, default=0.75,
+                   help="Strategy 2, money-trained model: position at or above this is "
+                        "the conviction to go long on margin")
     p.add_argument("--lookback", type=int, default=20)
     p.add_argument("--forward", type=int, default=5)
     p.add_argument("--buy-threshold", type=float, default=0.02)
@@ -664,11 +891,135 @@ def build_parser() -> argparse.ArgumentParser:
                         "everything after it. A one-way door - tuning on the result "
                         "turns the test block into training data")
     p.add_argument("--label", default="", help="Name this variant in the output")
+    p.add_argument("--check-snapshot", type=int, metavar="RUN_ID",
+                   help="Recompute what run RUN_ID read from the store as it is now and "
+                        "say whether it still matches the run's input snapshot (G3). "
+                        "Trains nothing and writes nothing")
     p.add_argument("--no-save", action="store_true",
                    help="Score the folds but write nothing to walkforward_runs. For a "
                         "throwaway sweep; the default is to record the run, because a "
                         "fold result nobody can read afterwards is not an artifact")
     return p
+
+
+# ---------------------------------------------------------------------------
+# Input snapshot (G3)
+# ---------------------------------------------------------------------------
+
+
+def snapshot_parts(cur, fm: feature_store.FeatureMatrix, closes: dict[date, float],
+                   park_mode: str, margin_source: str | None = None) -> dict[str, str]:
+    """Hashes of the three things a run reads: the feature matrix, the closes
+    that make its labels and returns, and the parked return.
+
+    Each over the matrix's own dates, so the check can rebuild them from the
+    run's record alone without repeating the lookback and label alignment.
+    Kept as parts so a mismatch can say which one moved."""
+    park = park_series(cur, fm.dates, park_mode)
+    return {
+        "matrix": lineage.matrix_hash(fm.dates, fm.names, fm.values),
+        "closes": lineage.series_hash((d, closes[d]) for d in fm.dates if d in closes),
+        "park": lineage.series_hash(zip(fm.dates, park.tolist(), strict=True)),
+        # Strategy 2 also reads PSQ and Fed funds; a run without it has no part.
+        **({} if margin_source is None else {"margin": margin_hash(cur, fm.dates, margin_source)}),
+    }
+
+
+def margin_hash(cur, dates: list[date], source: str) -> str:
+    m = load_margin(cur, dates, source)
+    return lineage.series_hash(
+        (d, (p, q, n)) for d, p, q, n in
+        zip(dates, m.psq_returns.tolist(), m.rates.tolist(), m.days.tolist(), strict=True)
+    )
+
+
+def current_build(cur, set_id: int) -> int | None:
+    """The `feature_runs` build whose values the set holds now."""
+    cur.execute("SELECT current_run_id FROM feature_sets WHERE id = %s", (set_id,))
+    row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def run_lineage(cur, set_id: int, parts: dict[str, str]) -> dict[str, object]:
+    """The G3 columns for a new run."""
+    return {
+        "feature_run_id": current_build(cur, set_id),
+        "input_snapshot": lineage.combine(parts),
+        "snapshot_json": json.dumps(parts, sort_keys=True),
+        "code_hash": lineage.code_hash(),
+        "git_sha": lineage.git_sha(),
+        "lib_versions_json": json.dumps(lineage.lib_versions(), sort_keys=True),
+    }
+
+
+_RUN_FOR_CHECK = """
+SELECT r.feature_set_id, r.columns_json, r.park, r.input_snapshot, r.snapshot_json,
+       r.feature_run_id, r.code_hash, i.symbol, ds.name, r.timeframe
+  FROM walkforward_runs r
+  JOIN instruments i ON i.id = r.instrument_id
+  JOIN data_sources ds ON ds.id = r.source_id
+ WHERE r.id = %s
+"""
+
+
+def check_snapshot(cur, run_id: int) -> int:
+    """Does what run `run_id` read still match the store? 0 yes, 1 no, 2 cannot tell.
+
+    Rebuilds the run's matrix (its own set and column list), its closes and its
+    park series from the store as it is now, hashes them the same way the run
+    did, and compares. On a mismatch it names the part that moved and, when the
+    set has been rebuilt since, which input series changed between the build
+    the run read and the current one."""
+    cur.execute(_RUN_FOR_CHECK, (run_id,))
+    row = cur.fetchone()
+    if row is None:
+        print(f"no walkforward run with id {run_id}")
+        return 2
+    (set_id, columns_json, park_mode, snapshot, parts_json, built_from,
+     run_code, symbol, source, timeframe) = row
+    if snapshot is None:
+        print(f"run {run_id} has no input snapshot: it was recorded before G3, so "
+              f"there is nothing to compare against")
+        return 2
+    if set_id is None:
+        print(f"run {run_id}'s feature set has been deleted; its inputs cannot be rebuilt")
+        return 1
+    try:
+        fm = feature_store.read_matrix(
+            cur, set_id, columns=json.loads(columns_json) if columns_json else None,
+        )
+    except LookupError as exc:
+        print(f"run {run_id}: its matrix cannot be rebuilt: {exc}")
+        return 1
+    closes = load_closes(cur, symbol, source, timeframe)
+    then = json.loads(parts_json)
+    now = snapshot_parts(cur, fm, closes, park_mode,
+                         margin_source=source if "margin" in then else None)
+
+    print(f"run {run_id}  set {set_id}  {len(fm.names)} columns x {len(fm.dates)} rows")
+    if lineage.combine(now) == snapshot:
+        print(f"MATCH  the store still holds exactly what run {run_id} read "
+              f"(snapshot {snapshot[:12]})")
+        if run_code and run_code != lineage.code_hash():
+            print(f"       the code has changed since (run {run_code[:12]}, now "
+                  f"{lineage.code_hash()[:12]}), so a rerun may still differ")
+        return 0
+
+    print(f"DIFFERS  snapshot {snapshot[:12]} then, {lineage.combine(now)[:12]} now")
+    for part in now:
+        state = "same" if then.get(part) == now[part] else "CHANGED"
+        print(f"  {part:<7} {state}")
+    current = current_build(cur, set_id)
+    if then.get("matrix") != now["matrix"] and built_from is not None and current != built_from:
+        cur.execute("SELECT id, inputs_json FROM feature_runs WHERE id = ANY(%s)",
+                    ([built_from, current],))
+        inputs = {int(i): json.loads(j) for i, j in cur.fetchall()}
+        print(f"  set {set_id} was rebuilt since: build {built_from} then, {current} now")
+        for line in lineage.changed_inputs(inputs.get(built_from, []),
+                                           inputs.get(current, [])) or [
+                "no input series changed; the config, code or a computation did"]:
+            print(f"    {line}")
+    return 1
 
 
 def explicit_flags(argv: list[str] | None) -> set[str]:
@@ -723,12 +1074,25 @@ def strategy_setup(cur, args: argparse.Namespace, explicit: set[str]) -> Strateg
     bars = feature_store.window_bars(cur, set_id, since.isoformat(), until.isoformat())
     columns = strategy_spec.resolve_columns(
         s.features, feature_store.column_names(cur, set_id), counts, bars,
+        feature_store.data_columns(cur, set_id),
     )
     return StrategySetup(s, plan, settings, set_id, columns, since, until, bars)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.check_snapshot is not None:
+        conn = connect()
+        try:
+            return check_snapshot(conn.cursor(), args.check_snapshot)
+        finally:
+            conn.close()
+    # A strategy's timeframe is refused by `strategy_spec.fold_plan`, with its
+    # other reasons; this is the same rule for a run set up by flags.
+    if args.strategy_id is None and args.timeframe != "D1":
+        print(f"refused: timeframe {args.timeframe!r} cannot run yet: walk-forward is "
+              f"daily only (one row per date, {TRADING_DAYS} periods a year); use D1")
+        return 2
 
     conn = connect()
     cur = conn.cursor()
@@ -811,6 +1175,17 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     park = park_series(cur, wdates, args.park)
+    margin = None
+    if getattr(args, "margin_train", False) and args.execution != "margin":
+        print("refused: train with margin needs --execution margin")
+        return 2
+    if args.execution == "margin":
+        margin = load_margin(cur, wdates, args.source)
+        refused = margin_refusals(args, folds, margin)
+        if refused:
+            for why in refused:
+                print(f"refused: {why}")
+            return 2
     if not folds:
         print("no folds — check --train-start / --first-val / --last-val")
         return 1
@@ -826,8 +1201,18 @@ def main(argv: list[str] | None = None) -> int:
           + (f"early stopping, patience {args.patience}, on the last train year "
              f"(held out of fitting), at most {args.epochs} epochs"
              if args.patience else f"fixed {args.epochs} epochs"))
-    print(f"simulation   long unless SELL, {args.cost_bps:.0f} bps per change, "
-          f"signal acted on the next session")
+    if margin is not None:
+        print(f"simulation   Strategy 2: QQQ core never sold; margin QQQ "
+              f"{args.leverage_pct:g}% of the core on an up signal, margin PSQ "
+              f"{args.hedge_pct:g}% on a down one (cut back past 50%); interest Fed "
+              f"funds + {args.margin_spread_pct:g} pts; margin call below "
+              f"{args.maintenance_pct:g}% equity; {args.cost_bps:.0f} bps per trade; "
+              f"signal acted on the next session"
+              + ("; TRAINED on this curve too, so the signals differ from a run that "
+                 "was not" if getattr(args, "margin_train", False) else ""))
+    else:
+        print(f"simulation   long unless SELL, {args.cost_bps:.0f} bps per change, "
+              f"signal acted on the next session")
     print("tax          " + (f"{args.tax_rate:g}% on each realized gain, buy-and-hold taxed "
                              "the same way (it never sells); "
                              + ("TRAINED with it too, so the signals differ from an untaxed run"
@@ -842,14 +1227,37 @@ def main(argv: list[str] | None = None) -> int:
     # once it finishes is the silent wait the design is explicitly against.
     run_id = None
     if not args.no_save:
+        parts = snapshot_parts(cur, fm, closes, args.park,
+                               margin_source=args.source if margin is not None else None)
         run_id = walkforward_store.open_run(conn, args, set_id, x_all.shape[1],
-                                            fm.names, provenance)
+                                            fm.names, provenance,
+                                            run_lineage(cur, set_id, parts))
         print(f"recording    walkforward_runs id={run_id} "
               f"(folds committed as they finish)")
 
     results: list[FoldResult] = []
     for i, (year, tr, va) in enumerate(folds, 1):
-        r = run_fold(i, year, tr, va, x_all, y_all, rets, wdates, args, park)
+        r = run_fold(i, year, tr, va, x_all, y_all, rets, wdates, args, park, margin)
+        # Buy-and-hold is LOOKED UP, not computed (Design Notes, "Buy-and-hold
+        # is one fixed benchmark"; Architecture §6.3): the first run over a
+        # window stores it, every later one reads that row, the same rule the
+        # Java backtest follows. Unsaved runs write nothing, so they use the
+        # same formula directly. Sharpe and drawdown stay per fold: the row
+        # holds the return only.
+        window = hold_window(wdates, va, closes)
+        r.hold_return = window.return_pct
+        if run_id is not None:
+            bench = walkforward_store.find_or_create_benchmark(
+                conn, set_id, args.timeframe, window)
+            if bench.closes_differ(window):
+                print(f"WARN   fold {i}: the stored benchmark {bench.id} was made from "
+                      f"closes {bench.first_close:g}..{bench.last_close:g} "
+                      f"({bench.bar_count} bars); the candles now read "
+                      f"{window.first_close:g}..{window.last_close:g} "
+                      f"({window.bar_count}). Using the stored figure, as §6.3 says; "
+                      f"correcting it is a deliberate act")
+            r.hold_return = bench.return_pct
+            r.benchmark_id = bench.id
         results.append(r)
         if run_id is not None:
             walkforward_store.save_fold(conn, run_id, r)
@@ -858,9 +1266,20 @@ def main(argv: list[str] | None = None) -> int:
               f"{r.strat_maxdd:>7.2f} {r.trades:>4} │ {r.days_out:>4} "
               f"{r.drift_tax:>+7.2f} {r.commissions:>+6.2f} {r.gains_tax:>+6.2f} "
               f"{r.timing:>+7.2f}"
-              + (f"  ep {r.best_epoch}/{r.epochs_run}" if r.epochs_run else ""))
+              + (f"  ep {r.best_epoch}/{r.epochs_run}" if r.epochs_run else "")
+              + ("" if r.margin_interest is None else
+                 f"  │ vs always-long {r.strat_return - r.levered_return:+6.2f}"
+                 f"  long {r.days_long:>3} psq {r.days_hedged:>3} int {r.margin_interest:+.2f}"
+                 f" trims {r.trims} calls {r.margin_calls}"
+                 + (f" CORE AT RISK {r.core_at_risk}d" if r.core_at_risk else "")))
 
     won = sum(1 for r in results if r.excess > 0)
+    if margin is not None:
+        print(f"\nStrategy 2   interest {np.mean([r.margin_interest for r in results]):+.2f} pts "
+              f"per fold; {sum(r.margin_calls for r in results)} margin call(s), "
+              f"{sum(r.trims for r in results)} trim(s), "
+              f"{sum(r.core_at_risk for r in results)} day(s) with the core at risk. "
+              f"Columns out/drift/timing are Strategy 1's and read 0 here")
     mean_excess = float(np.mean([r.excess for r in results]))
     mean_return = float(np.mean([r.strat_return for r in results]))
     mean_hold_return = float(np.mean([r.hold_return for r in results]))
@@ -931,6 +1350,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\nobjective = {args.objective}: {detail}")
     print(f"VERDICT: {'BEATS buy-and-hold' if passed else 'does NOT beat buy-and-hold'}")
+    if margin is not None:
+        # G25. Buy-and-hold stays the benchmark; this says how much of a
+        # Strategy 2 excess the model earned, rather than the borrowing.
+        timing = [r.strat_return - r.levered_return for r in results]
+        mean_timing_m = float(np.mean(timing))
+        beat_l = sum(1 for t in timing if t > 0)
+        print(f"TIMING:  {'beats' if mean_timing_m > 0 else 'does NOT beat'} always long on "
+              f"margin ({mean_timing_m:+.2f} pp a fold, {beat_l}/{len(results)} folds)"
+              + ("  -- the excess over buy-and-hold is leverage, not the model"
+                 if passed and mean_timing_m <= 0 else ""))
     if total_trades == 0:
         print("         (it never left the market — this is buy-and-hold with extra steps)")
     print("=" * 72)

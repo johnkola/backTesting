@@ -190,6 +190,8 @@ postman collection run postman/backtest.postman_collection.json \
   -e postman/local.postman_environment.json
 ```
 
+**CI.** `.github/workflows/ci.yml` runs the same suites on every push and pull request, as four jobs: `python` (pytest against a TimescaleDB service, with `schema.sql` applied by `psql`), `java` (`gradle test` against its own TimescaleDB), `api` (lint + `node --test`) and `client` (lint, `tsc` + `vite build`, Vitest). The database starts empty and every test seeds its own data, so nothing is skipped. Not covered: the Postman suite, which needs the whole stack running, and `ruff`, which has errors that predate CI.
+
 Both `web/client/` and `web/api/` have the same gate: `npm run lint` fails on
 warnings too (`--max-warnings 0`), and `npm run lint:fix` applies what is fixable —
 which is nearly all of it. Beyond correctness rules each enforces the formatting its
@@ -251,6 +253,8 @@ Three binaries. `backtest` is the Java CLI (`./gradlew run --args="<command>"`, 
 | `run` | `-s STRATEGY` `-i SYMBOL` `[-t TF]` `[--source]` `[--from]` `[--to]` `[--capital]` `[-p k=v]` `[--model-version ID]` `[--no-aggregate]` | Runs a backtest and saves the result. Builds the requested timeframe from a finer one first if it has no candles (`--no-aggregate` opts out); fails if a model-backed strategy has no cached model |
 | `serve` | `[-p/--port]` | Serves the engine HTTP API (`$ENGINE_PORT`, default 8002). This is what the `engine` container runs |
 
+`--to` is inclusive. A bare date covers its whole day on every timeframe, so `--to 2025-12-31` keeps that day's M30 bars as well as its D1 bar; a value with a time (`2025-12-31 12:00:00`) is used exactly. `POST /api/run` and `GET /api/candles` read `to` the same way. Annualised figures (return, Sharpe, Sortino, Calmar) use 252 trading days, 52 weeks or 12 months a year, and on intraday 252 times the bars each day holds.
+
 ### `backtest-ingest` — batch CSV import
 
 `--inbox DIR` · `--dry-run` · `--force`. Scans an inbox (default `data/csv-inbox`, or `$CSV_INBOX_DIR`) for `*.csv` named `SYMBOL__TF.csv`, `SOURCE__SYMBOL__TF.csv` or `SOURCE__SYMBOL__TYPE__TF.csv`, imports each through the same pipeline as the upload endpoint, and moves files to `processed/` or `failed/`. Non-zero exit if any file failed.
@@ -274,7 +278,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
 | `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable |
 | `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries |
-| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve |
+| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve, plus `benchmark` (the stored buy-and-hold row it is measured against, or `null` on results saved before benchmarks were stored) and `holdEquity`: buy-and-hold equity, one value per equity point, rebuilt from that row's candles. `holdEquity` is `null`, with `holdEquityNote` saying why, when the candles no longer reproduce the row (bars added or a first or last close revised since) |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
 | `GET /api/docs/:slug` | `rev` | One doc as rendered HTML, headings anchored. Every fetch snapshots the file if its hash changed; `rev=N` returns a captured revision instead |
@@ -285,7 +289,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | Endpoint | Body / params | Does |
 |---|---|---|
 | `GET /api/walkforward/runs` | `timeframe` `includeTest` `limit` | `{items, timeframe, includeTest, limit}` — walk-forward runs, newest first, each with its folds summarised on read: `folds`, `foldsWon`, `meanExcess`, `worstStratDrawdown`, `totalTrades` and the cost attribution (`meanDriftTax`, `meanCommissions`, `meanTiming`). None of that is stored; it is aggregated from `walkforward_folds`, so it cannot disagree with the folds. A run with no folds yet reports `null` for each average rather than a zero that reads as a measurement, and `inProgress` is true until `finishedAt` is stamped. **Holdout runs are excluded** unless `includeTest=true` — spending the test block is a one-way door, and listing those runs beside the validation ones is how it becomes training data. `limit` defaults to 50, capped at 500 |
-| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax), `taxTrain` (true when the model was trained against the tax too, so its signals differ) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. `404` for an unknown id, `400` for a non-numeric one |
+| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax), `taxTrain` (true when the model was trained against the tax too, so its signals differ) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. Every run carries `execution`: `kind` is `signals` (Strategy 1) or `margin` (Strategy 2), with its dials (`leveragePct`, `hedgePct`, `marginSpreadPct`, `maintenancePct`, `longThreshold`) and margin summary (`meanMarginInterest`, `marginCalls`, `trims`, `coreAtRisk`, `meanDaysLong`, `meanDaysHedged`), all `null` under Strategy 1; a Strategy 2 fold carries `marginInterest`, `marginCalls`, `trims`, `daysLong`, `daysHedged`, `coreAtRisk` and `leveredReturn` (the same fold always long on margin, no model), and the run `execution.meanLeveredReturn`, `execution.foldsBeatLevered` and `beatsLeveredOnReturn` (false beside a win over buy-and-hold means the win is the borrowing, not the timing); each fold carries its `benchmarkId`, the stored buy-and-hold row its `holdReturn` was read from. `404` for an unknown id, `400` for a non-numeric one |
 | `GET /api/strategies` | — | `{items: [...]}` — every registered strategy with its description, default parameters, and `requiresTrainedModel`. What a strategy picker and parameter form are built from |
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing` | Runs a backtest, saves it, returns the full result. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range |
 | `DELETE /api/results/:id` | — | Deletes one saved result. `404` if it doesn't exist |
@@ -294,7 +298,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 
 | Endpoint | Body / params | Does |
 |---|---|---|
-| `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. Returns per-slice status (`created`/`extended`/`skipped`/`overwritten`/`conflict`, each changed year with a `diff` of added/changed/removed bars), a `file` object for the version it recorded (`changeKind`: `new`, `update`, `fix`, `update+fix` or `same`; `alreadyLoaded` when these exact bytes are what the database holds), and a `cohesion` report. A year that only gains later days is `extended` without `force`; a changed or dropped past bar is a `conflict` until `force`. `400` when the header is not `Date,Open,High,Low,Close,Volume` in that order (the drop-folder ingest moves such a file to `failed/`). `409` on conflict or a compressed chunk |
+| `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. Returns per-slice status (`created`/`extended`/`skipped`/`overwritten`/`conflict`, each changed year with a `diff` of added/changed/removed bars), a `file` object for the version it recorded (`changeKind`: `new`, `update`, `fix`, `update+fix` or `same`; `alreadyLoaded` when these exact bytes are what the database holds), a `cohesion` report, and `skipped` (`{count, examples: [{line, reason, text}]}`): rows that produced no candle, such as a footer line or a price that is not a number. Those rows are left out and the rest import; the Imports page lists them, and the drop-folder ingest prints them as `WARN`. A year that only gains later days is `extended` without `force`; a changed or dropped past bar is a `conflict` until `force`. `400` when the header is not `Date,Open,High,Low,Close,Volume` in that order (the drop-folder ingest moves such a file to `failed/`). `409` on conflict or a compressed chunk |
 | `DELETE /api/imports/:id` | `dry_run` | Undoes one import: deletes the candles in that slice's calendar year and the audit row. The archived CSV is **kept** — it's how you put the data back. `dry_run=true` reports what would go |
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
@@ -457,18 +461,24 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-*(nothing in flight. Last shipped: walk-forward folds kept in the database and shown on
-the Training tab, and the yield curve computed and checked against FRED's published
-spread.)*
+Strategy 2, margin long and inverse ([`DESIGN-GAPS.md`](DESIGN-GAPS.md) G5). Step 1, the
+scoring layer, is built: a saved strategy's `objective.execution` is `signals` (Strategy 1)
+or `margin` (Strategy 2: a QQQ core never sold, margin QQQ on an up signal, margin PSQ on a
+down one, interest at Fed funds + a spread, a 50% ceiling that refuses larger settings),
+set on the Strategy tab and shown on the Training tab. Needs `PSQ` (`yahoo-adj`) and `DFF`
+(`fred`) imported; windows before PSQ's first bar (2006-06-21) are refused. Step 2 is built
+too: `objective.marginTrain` (`--margin-train`) trains a money loss on Strategy 2's curve, and
+like train with tax it changes the signals; training must start in 2007 or later. Each
+Strategy 2 run is also scored against always long on margin with no model (G25), because
+borrowing in a bull market beats buy-and-hold on its own: the runner prints a `TIMING` line
+and the Training tab badges a win over buy-and-hold that is "leverage, not timing".
 
 ### Next
 
 *Ordered by what blocks the phase-one question. Full list: [`DESIGN-GAPS.md`](DESIGN-GAPS.md).*
 
-1. Make a saved strategy decide what gets trained.
-2. Charge tax inside the objective, and add the tax toggle.
-3. Record an input snapshot on every run, so it can be recomputed.
-4. Import fed funds, then build Strategy 2.
+1. Tax on the Java Backtest tab, which still reports gross returns (G20).
+2. The missing feature columns: investment-grade credit, Bank of Canada rate, earnings (G6-G8).
 
 ### Done
 

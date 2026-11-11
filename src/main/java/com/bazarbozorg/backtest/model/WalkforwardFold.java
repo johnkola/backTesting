@@ -46,6 +46,16 @@ import java.time.LocalDate;
  * @param bestEpoch    the epoch whose weights early stopping kept; null when the run
  *                     trained a fixed number of epochs
  * @param epochsRun    epochs actually trained before stopping; null likewise
+ * @param benchmarkId  the stored buy-and-hold row {@code holdReturn} was read from
+ *                     (Architecture §6.3); null on folds scored before folds used it
+ * @param marginInterest Strategy 2: interest charged, negative points of starting
+ *                     capital; this and the five below are null under Strategy 1
+ * @param marginCalls  Strategy 2: forced closes
+ * @param trims        Strategy 2: cuts back to the 50% ceiling
+ * @param daysLong     Strategy 2: bars held long on margin
+ * @param daysHedged   Strategy 2: bars held in PSQ
+ * @param coreAtRisk   Strategy 2: bars below maintenance with nothing left on margin
+ * @param leveredReturn G25: the fold always long on margin (no model), percent
  */
 public record WalkforwardFold(
         long runId,
@@ -70,7 +80,15 @@ public record WalkforwardFold(
         double timing,
         double gainsTax,
         Integer bestEpoch,
-        Integer epochsRun
+        Integer epochsRun,
+        Long benchmarkId,
+        Double marginInterest,
+        Integer marginCalls,
+        Integer trims,
+        Integer daysLong,
+        Integer daysHedged,
+        Integer coreAtRisk,
+        Double leveredReturn
 ) {
 
     /** The headline: did the model beat holding over this fold, in points. */

@@ -9,6 +9,8 @@ const featureCatalogue = require('./featureCatalogue');
 const docs = require('./docs');
 const strategies = require('./strategies');
 const importFiles = require('./importFiles');
+const { rangeEnd } = require('./dateRange');
+const { holdCurve } = require('./holdCurve');
 const { DOCS, DOC_BY_SLUG } = require('./docsRegistry');
 
 // CSV upload is owned by the Python loader. In docker-compose this is the
@@ -316,8 +318,10 @@ app.get('/api/candles', async (req, res) => {
       where += ` AND c.timestamp >= $${params.length}`;
     }
     if (req.query.to) {
-      params.push(req.query.to);
-      where += ` AND c.timestamp <= $${params.length}`;
+      // A bare date includes its whole day, so intraday keeps its last day (I6).
+      const end = rangeEnd(req.query.to);
+      params.push(end.value);
+      where += ` AND c.timestamp ${end.op} $${params.length}`;
     }
     const { rows } = await pool.query(
       `SELECT c.timestamp, c.open, c.high, c.low, c.close, c.volume
@@ -626,7 +630,7 @@ app.get('/api/results/:id', async (req, res) => {
              start_date, end_date, initial_capital, final_equity,
              total_return_pct, sharpe_ratio, max_drawdown_pct,
              total_trades, win_rate, model_cache_key, model_cache_hit,
-             model_version_id, result_json, created_at
+             model_version_id, result_json, created_at, benchmark_id
         FROM backtest_results
        WHERE id = $1`;
     const { rows } = await pool.query(sql, [id]);
@@ -647,6 +651,43 @@ app.get('/api/results/:id', async (req, res) => {
       }
     }
 
+    // The stored buy-and-hold row (§6.3) and the curve it summarises (G24).
+    // The curve is rebuilt from the row's own window of candles and drawn only
+    // while it still reproduces the row; see holdCurve.js.
+    let benchmark = null;
+    if (r.benchmark_id != null) {
+      const { rows: b } = await pool.query(
+        `SELECT id, instrument_id, source_id, timeframe, start_date, end_date,
+                initial_capital, return_pct, final_equity, first_close, last_close, bar_count
+           FROM benchmarks WHERE id = $1`,
+        [r.benchmark_id],
+      );
+      if (b.length) {
+        const row = b[0];
+        const { rows: candles } = await pool.query(
+          `SELECT close FROM candles
+            WHERE instrument_id = $1 AND source_id = $2 AND timeframe = $3
+              AND timestamp >= $4 AND timestamp <= $5
+            ORDER BY timestamp`,
+          [row.instrument_id, row.source_id, row.timeframe, row.start_date, row.end_date],
+        );
+        benchmark = {
+          id: row.id,
+          startDate: row.start_date,
+          endDate: row.end_date,
+          initialCapital: Number(row.initial_capital),
+          returnPct: Number(row.return_pct),
+          finalEquity: Number(row.final_equity),
+          firstClose: Number(row.first_close),
+          lastClose: Number(row.last_close),
+          barCount: row.bar_count,
+          closes: candles.map((c) => Number(c.close)),
+        };
+      }
+    }
+    const curve = holdCurve(benchmark, benchmark?.closes ?? [], result?.equityHistory?.length ?? 0);
+    if (benchmark) delete benchmark.closes;
+
     res.json({
       id: r.id,
       instrumentSymbol: r.instrument_symbol,
@@ -666,6 +707,11 @@ app.get('/api/results/:id', async (req, res) => {
       modelCacheHit: r.model_cache_hit,
       modelVersionId: r.model_version_id,
       createdAt: r.created_at,
+      benchmark,
+      // One value per equity history point, in the same order; null with
+      // holdEquityNote saying why when the stored row can't be reproduced.
+      holdEquity: curve.values,
+      holdEquityNote: curve.reason,
       result,
     });
   } catch (err) {
@@ -773,6 +819,13 @@ app.post('/api/strategies/saved', express.json({ limit: '256kb' }), async (req, 
     return res.status(422).json({ error: checked.errors.join('; '), errors: checked.errors });
   }
   try {
+    const dataOnly = await strategies.dataOnlyFeatures(checked.value.features);
+    if (dataOnly.length) {
+      const errors = dataOnly.map(
+        (n) => `${n} is data only: stored for charts and rules, kept out of the network`,
+      );
+      return res.status(422).json({ error: errors.join('; '), errors });
+    }
     res.status(201).json(await strategies.save(checked.value));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1040,7 +1093,7 @@ app.get('/api/features', async (req, res) => {
       [timeframe],
     );
     const specQ = pool.query(
-      `SELECT s.feature_set_id, s.feature_name, s.method, s.params_json, s.column_index
+      `SELECT s.feature_set_id, s.feature_name, s.method, s.params_json, s.column_index, s.role
          FROM feature_spec s
          JOIN feature_sets fs ON fs.id = s.feature_set_id
         WHERE ($1::text IS NULL OR fs.timeframe = $1)
@@ -1145,6 +1198,8 @@ app.get('/api/features', async (req, res) => {
         method: s.method,
         params: parseJsonOr(s.params_json, {}),
         columnIndex: s.column_index,
+        // `input` feeds the network; `data` is stored beside it and never does.
+        role: s.role,
       });
     }
     const statsBySet = new Map(stats.map((s) => [s.feature_set_id, s]));

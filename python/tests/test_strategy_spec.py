@@ -65,6 +65,12 @@ class TestFoldPlan:
             train_start=2003, first_val=2016, last_val=2021, test_end=date(2026, 6, 30),
         )
 
+    @pytest.mark.parametrize("tf", ["M30", "H1", "W1"])
+    def test_a_non_daily_timeframe_is_refused(self, tf):
+        # DESIGN-GAPS I4/I5: rows keyed by date and 252 periods a year.
+        with pytest.raises(ss.StrategyRefused, match=f"timeframe '{tf}'"):
+            ss.fold_plan(a_strategy(timeframe=tf))
+
     @pytest.mark.parametrize("scheme", ["single", "kfold_time"])
     def test_a_scheme_with_no_runner_is_refused_not_run_as_walkforward(self, scheme):
         with pytest.raises(ss.StrategyRefused, match=scheme):
@@ -108,6 +114,7 @@ class TestFoldPlan:
 
 DEFAULT_OBJECTIVE_ARGS = {
     "loss": "ce", "class_weights": False, "objective": "return", "cost_bps": 5, "park": "cash",
+    "execution": "signals",
 }
 
 
@@ -241,6 +248,14 @@ class TestResolveColumns:
         r = ss.resolve_columns(["a", "rsi_14"], ["a"], {"a": 10}, 10)
         assert r.dropped == (("rsi_14", "not in this feature set"),)
 
+    def test_a_data_only_column_is_dropped_as_data_only_even_with_values(self):
+        """It has values in the window, so without the data-only list it would
+        read as usable; the set holds it, so "not in this set" would be untrue."""
+        r = ss.resolve_columns(["a", "macd"], ["a"], {"a": 10, "macd": 10}, 10,
+                               data_only=["macd"])
+        assert r.kept == ("a",)
+        assert r.dropped == (("macd", "data only, kept out of the network"),)
+
     def test_a_column_selected_twice_is_used_and_reported_once(self):
         r = ss.resolve_columns(["a", "a", "zeta", "zeta"], ["a"], {"a": 10}, 10)
         assert r.kept == ("a",)
@@ -334,3 +349,57 @@ class TestProvenance:
 
     def test_the_first_fold_s_train_window_ends_where_validation_starts(self):
         assert ss.train_window(a_strategy()) == (date(2003, 1, 1), date(2016, 1, 1))
+
+
+class TestStrategy2Args:
+    """G5: Strategy 2's settings reach the runner, and a bad row is refused."""
+
+    MARGIN = {"execution": "margin", "leveragePct": 30, "hedgePct": 10,
+              "marginSpreadPct": 1.5, "maintenancePct": 30}
+
+    def test_a_strategy1_row_passes_execution_signals_and_no_dials(self):
+        out = ss.runner_args(a_strategy())
+        assert out["execution"] == "signals"
+        assert "leverage_pct" not in out and "long_threshold" not in out
+
+    def test_a_margin_row_passes_every_dial(self):
+        out = ss.runner_args(a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, **self.MARGIN}))
+        assert (out["execution"], out["leverage_pct"], out["hedge_pct"],
+                out["margin_spread_pct"], out["maintenance_pct"]) == ("margin", 30, 10, 1.5, 30)
+
+    def test_a_row_past_the_ceiling_is_refused(self):
+        with pytest.raises(ss.StrategyRefused, match="ceiling"):
+            ss.runner_args(a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, **self.MARGIN,
+                                                 "hedgePct": 60}))
+
+    def test_a_row_missing_a_dial_is_refused_not_run_on_defaults(self):
+        with pytest.raises(ss.StrategyRefused, match="maintenancePct"):
+            ss.runner_args(a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, **self.MARGIN,
+                                                 "maintenancePct": None}))
+
+    def test_a_money_loss_needs_a_long_threshold(self):
+        with pytest.raises(ss.StrategyRefused, match="longThreshold"):
+            ss.runner_args(a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, **self.MARGIN,
+                                                 "loss": "return", "positionThreshold": 0.5}))
+
+
+class TestMarginTrainArgs:
+    MARGIN = {"execution": "margin", "leveragePct": 20, "hedgePct": 20,
+              "marginSpreadPct": 1.5, "maintenancePct": 30}
+
+    def obj(self, **over):
+        return {**ss.OBJECTIVE_DEFAULTS, **self.MARGIN, **over}
+
+    def test_passes_margin_train_for_strategy2_with_a_money_loss(self):
+        out = ss.runner_args(a_strategy(objective=self.obj(
+            loss="return", positionThreshold=0.5, longThreshold=0.75, marginTrain=True)))
+        assert out["margin_train"] is True
+
+    def test_off_by_default(self):
+        assert "margin_train" not in ss.runner_args(a_strategy(objective=self.obj()))
+
+    def test_refused_under_strategy1_and_with_ce(self):
+        with pytest.raises(ss.StrategyRefused, match="execution 'margin'"):
+            ss.runner_args(a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "marginTrain": True}))
+        with pytest.raises(ss.StrategyRefused, match="money-trained"):
+            ss.runner_args(a_strategy(objective=self.obj(marginTrain=True)))

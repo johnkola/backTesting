@@ -130,6 +130,99 @@ export function designDefaultWindows(lastStoredDate?: string): Windows {
 }
 
 /**
+ * Windows proposed from the series' own stored range (DESIGN-GAPS G21).
+ *
+ * The design's split assumes QQQ's history. On a series stored from 2019 it
+ * leaves an empty train window, which saves without complaint and trains on
+ * nothing. This proposes a split of the series' own whole calendar years
+ * instead, in about the design's proportions (13 : 6 : 4.5 years, so roughly
+ * 55% train, 25% validation, 20% test), with any final partial year as the
+ * prediction window, which is how the design default treats its own last bars.
+ *
+ * Whole years, because the walk-forward runner refuses anything else
+ * (`nn/strategy_spec.fold_plan`): train and validation start on 1 January,
+ * validation ends on 31 December, and each window starts the day after the
+ * previous one ends. A proposal the runner would refuse is no proposal.
+ *
+ * Only the instrument's range is used, not the features'. A feature that
+ * starts later still shows up as partial coverage on the train window, and
+ * moves the real start of training, which the run records.
+ *
+ * Returns null when the series has fewer than three whole years, the minimum
+ * for one year in each window. Inventing a split from less would be a guess.
+ */
+export const MIN_FIT_YEARS = 3
+
+export function fitWindowsToSeries(fromDate: string, toDate: string): Windows | null {
+  const first = fromDate.slice(0, 10)
+  const last = toDate.slice(0, 10)
+  if (!isRealDate(first) || !isRealDate(last) || first > last) return null
+
+  // A year counts as whole if the series covers it from its first trading
+  // week to its last. 1 January is a holiday and the first bar can be the 2nd
+  // to the 4th, and the last bar can be the 29th to the 31st.
+  const y0 = Number(first.slice(0, 4))
+  const firstYear = first.slice(5) <= '01-07' ? y0 : y0 + 1
+  const yN = Number(last.slice(0, 4))
+  const lastYear = last.slice(5) >= '12-24' ? yN : yN - 1
+
+  const years = lastYear - firstYear + 1
+  if (years < MIN_FIT_YEARS) return null
+  const test = Math.max(1, Math.round(years * 0.2))
+  const validation = Math.max(1, Math.round(years * 0.25))
+  const train = years - test - validation
+  if (train < 1) return null
+
+  const valStart = firstYear + train
+  const testStart = valStart + validation
+  const windows: Windows = {
+    train: { from: `${firstYear}-01-01`, to: `${valStart - 1}-12-31` },
+    validation: { from: `${valStart}-01-01`, to: `${testStart - 1}-12-31` },
+    test: { from: `${testStart}-01-01`, to: `${lastYear}-12-31` },
+  }
+  if (last > `${lastYear}-12-31`) {
+    windows.prediction = { from: `${lastYear + 1}-01-01`, to: last }
+  }
+  return windows
+}
+
+/**
+ * The label horizon as market time on this timeframe (DESIGN-GAPS I8).
+ *
+ * `horizonBars` counts bars, so the same 5 is a week on D1 and two and a half
+ * hours on M30, and the form gave no sign of it. This says it in time. Intraday
+ * converts to trading days over a 6.5-hour NYSE session, the only session the
+ * design trades; a 24-hour market would hold more bars a day, so that part is
+ * stated as an assumption rather than hidden. Null for a horizon that is not a
+ * positive whole number or a timeframe this does not know.
+ */
+const INTRADAY_MINUTES: Record<string, number> = {
+  M1: 1, M5: 5, M15: 15, M30: 30, H1: 60, H4: 240,
+}
+
+function plural(n: number, unit: string): string {
+  const shown = Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, '')
+  return `${shown} ${unit}${shown === '1' ? '' : 's'}`
+}
+
+export function horizonSpan(bars: number, timeframe: string): string | null {
+  if (!Number.isInteger(bars) || bars < 1) return null
+  const lead = `${plural(bars, 'bar')} on ${timeframe} = `
+  if (timeframe === 'D1') return `${lead}${plural(bars, 'trading day')} ahead`
+  if (timeframe === 'W1') return `${lead}${plural(bars, 'week')} ahead`
+  if (timeframe === 'MN1') return `${lead}${plural(bars, 'month')} ahead`
+  const minutes = INTRADAY_MINUTES[timeframe]
+  if (!minutes) return null
+  const total = bars * minutes
+  const time = total < 60 ? plural(total, 'minute') : plural(total / 60, 'hour')
+  const days = total / 390
+  return days < 1
+    ? `${lead}${time} of trading ahead`
+    : `${lead}${time} of trading, about ${plural(Math.round(days * 10) / 10, 'trading day')} `
+      + 'on a 6.5-hour NYSE session'
+}
+
+/**
  * Coverage of one feature over one window: the share of bars that have a value.
  *
  * §8.1a: "A feature with no values in the train window is flagged and dropped
@@ -202,7 +295,16 @@ export type ObjectiveForm = {
   taxScore: boolean
   taxRatePct: string
   taxTrain: boolean
+  execution: StrategyObjective['execution']
+  leveragePct: string
+  hedgePct: string
+  marginSpreadPct: string
+  maintenancePct: string
+  longThreshold: string
+  marginTrain: boolean
 }
+
+const text = (v: number | null) => (v === null ? '' : String(v))
 
 /** A saved (or default) objective, as the form's starting values. */
 export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
@@ -216,6 +318,13 @@ export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
     taxScore: o.taxScore,
     taxRatePct: o.taxRatePct === null ? '' : String(o.taxRatePct),
     taxTrain: o.taxTrain,
+    execution: o.execution ?? 'signals',
+    leveragePct: text(o.leveragePct ?? null),
+    hedgePct: text(o.hedgePct ?? null),
+    marginSpreadPct: text(o.marginSpreadPct ?? null),
+    maintenancePct: text(o.maintenancePct ?? null),
+    longThreshold: text(o.longThreshold ?? null),
+    marginTrain: o.marginTrain ?? false,
   }
 }
 
@@ -244,5 +353,51 @@ export function objectiveFromForm(f: ObjectiveForm, spec: ObjectiveSpec): Strate
     taxScore: f.taxScore,
     taxRatePct: f.taxScore && f.taxRatePct.trim() !== '' ? Number(f.taxRatePct) : null,
     taxTrain: f.taxScore && money ? f.taxTrain : false,
+    ...executionFromForm(f, spec),
   }
+}
+
+/**
+ * Strategy 2's dials, as sent. Under Strategy 1 every dial is null (the server
+ * refuses one that would never apply); under Strategy 2 a blank dial takes its
+ * default, and the long threshold is sent only for a money-trained loss.
+ */
+function executionFromForm(f: ObjectiveForm, spec: ObjectiveSpec) {
+  const margin = f.execution === 'margin'
+  const dial = (v: string, def: number) => (!margin ? null : v.trim() === '' ? def : Number(v))
+  const d = spec.marginDefaults
+  return {
+    execution: f.execution,
+    leveragePct: dial(f.leveragePct, d.leveragePct),
+    hedgePct: dial(f.hedgePct, d.hedgePct),
+    marginSpreadPct: dial(f.marginSpreadPct, d.marginSpreadPct),
+    maintenancePct: dial(f.maintenancePct, d.maintenancePct),
+    longThreshold: margin && f.loss !== 'ce' ? dial(f.longThreshold, spec.defaultLongThreshold) : null,
+    // Shown, and so sent, only for Strategy 2 with a money loss and without
+    // train with tax, which the server refuses beside it.
+    marginTrain: margin && f.loss !== 'ce' && !f.taxTrain ? f.marginTrain : false,
+  }
+}
+
+/**
+ * What would make the server refuse a Strategy 2 setting, said before saving.
+ * The server is the authority; this only stops a round trip for the two rules
+ * the design states outright (the 50% ceiling, and PSQ being QQQ's inverse).
+ */
+export function marginProblems(f: ObjectiveForm, spec: ObjectiveSpec, instrument: string): string[] {
+  if (f.execution !== 'margin') return []
+  const out: string[] = []
+  const ceiling = spec.marginCeilingPct
+  for (const [name, v] of [['Leverage', f.leveragePct], ['Hedge', f.hedgePct]] as const) {
+    if (v.trim() === '') continue
+    const n = Number(v)
+    if (!Number.isFinite(n) || n <= 0 || n > ceiling) {
+      out.push(`${name} must be above 0 and at most ${ceiling}% of the holding: `
+        + 'the margin position never exceeds 50%.')
+    }
+  }
+  if (instrument && instrument !== 'QQQ') {
+    out.push(`Strategy 2 runs on QQQ only: its hedge is PSQ, the inverse of QQQ, not of ${instrument}.`)
+  }
+  return out
 }

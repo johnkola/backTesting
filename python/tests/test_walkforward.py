@@ -226,6 +226,15 @@ def test_the_runner_refuses_train_with_tax_on_ce_before_reading_data(monkeypatch
     assert wf.main(["--tax-train", "--tax-rate", "25"]) == 2
 
 
+@pytest.mark.parametrize("tf", ["M30", "H1", "W1"])
+def test_the_runner_refuses_a_non_daily_timeframe_before_touching_the_db(monkeypatch, tf):
+    # DESIGN-GAPS I5: 252 periods a year and date-keyed rows are daily only.
+    def no_db():
+        raise AssertionError("connected to the database")
+    monkeypatch.setattr(wf, "connect", no_db)
+    assert wf.main(["--timeframe", tf]) == 2
+
+
 def test_simulate_matches_the_money_loss_convention():
     """The trainer and the evaluator must shift identically. If they drift, a
     model is optimised against one timing and scored against another, and the
@@ -361,6 +370,7 @@ def test_strategy_setup_resolves_the_set_columns_and_settings():
         [("price_close", 3270), ("vix", 2500)],    # column_counts
         [(3270,)],                                 # window_bars
         [("price_close",), ("vix",), ("rsi",)],    # column_names
+        [],                                        # data_columns
     )
     st = wf.strategy_setup(cur, args, {"strategy_id"})
     assert st.set_id == 11
@@ -368,6 +378,24 @@ def test_strategy_setup_resolves_the_set_columns_and_settings():
     assert st.columns.partial == (("vix", 2500, 3270),)
     assert st.args.epochs == 9 and st.args.symbol == "QQQ"
     assert (st.args.first_val, st.args.last_val) == (2016, 2021)
+
+
+def test_strategy_setup_drops_a_data_only_column_and_says_why():
+    """A strategy saved before the API refused data-only names (or written past
+    it) must not train on one. It is dropped with its own reason: the set holds
+    the column, so "not in this feature set" would be untrue."""
+    args = wf.build_parser().parse_args(["--strategy-id", "7"])
+    cur = _QueueCursor(
+        [_strategy_row(("price_close", "rsi_14"))],
+        [(11,)],
+        [("price_close", 3270), ("rsi_14", 3270)],
+        [(3270,)],
+        [("price_close",)],                        # column_names: inputs only
+        [("rsi_14",)],                             # data_columns
+    )
+    st = wf.strategy_setup(cur, args, {"strategy_id"})
+    assert st.columns.kept == ("price_close",)
+    assert st.columns.dropped == (("rsi_14", "data only, kept out of the network"),)
 
 
 def test_strategy_setup_refuses_a_set_of_another_series():
@@ -477,3 +505,126 @@ def test_without_patience_training_runs_every_epoch_and_reports_none():
     y = rng.integers(0, 3, 60).astype(np.int64)
     _, _, stopper = wf.train_one(x, y, _stop_args(epochs=3, patience=None))
     assert stopper is None
+
+
+# --------------------------------------------------------------------------
+# hold_window: the bars a fold's buy-and-hold spans (G23)
+# --------------------------------------------------------------------------
+
+
+class TestHoldWindow:
+    DATES = [date(2020, 12, 30), date(2020, 12, 31), date(2021, 1, 4),
+             date(2021, 1, 5), date(2021, 12, 31), date(2022, 1, 3)]
+    CLOSES = dict(zip(DATES, [90.0, 100.0, 104.0, 102.0, 120.0, 125.0]))
+
+    def test_runs_from_the_first_validation_close_to_the_close_after_the_last(self):
+        # val = 2021 (indices 2..4); r[4] runs to 2022-01-03, so that is the exit.
+        w = wf.hold_window(self.DATES, [2, 3, 4], self.CLOSES)
+        assert (w.start, w.end) == (date(2021, 1, 4), date(2022, 1, 3))
+        assert (w.first_close, w.last_close, w.bar_count) == (104.0, 125.0, 4)
+
+    def test_equals_what_the_fold_compounds(self):
+        va = [2, 3, 4]
+        rets = np.array([self.CLOSES[self.DATES[i + 1]] / self.CLOSES[self.DATES[i]] - 1.0
+                         for i in va])
+        compounded = (np.cumprod(1.0 + rets)[-1] - 1.0) * 100.0
+        assert wf.hold_window(self.DATES, va, self.CLOSES).return_pct == pytest.approx(
+            compounded, abs=1e-10)
+
+    def test_the_last_labelled_date_ends_on_itself(self):
+        # rets for the final date is 0.0: nothing after it was scored.
+        w = wf.hold_window(self.DATES, [4, 5], self.CLOSES)
+        assert (w.start, w.end, w.bar_count) == (date(2021, 12, 31), date(2022, 1, 3), 2)
+        assert w.return_pct == pytest.approx((125.0 / 120.0 - 1.0) * 100.0)
+
+    def test_counts_stored_closes_not_matrix_dates(self):
+        # A day missing from the feature matrix is still a bar of the window.
+        closes = dict(self.CLOSES)
+        closes[date(2021, 6, 1)] = 110.0
+        assert wf.hold_window(self.DATES, [2, 3, 4], closes).bar_count == 5
+
+    def test_matches_the_java_formula(self):
+        # Benchmark.returnPct: (last - first) / first * 100; 0 for a non-positive first.
+        w = wf.HoldWindow(date(2021, 1, 4), date(2022, 1, 3), 0.0, 5.0, 2)
+        assert w.return_pct == 0.0
+
+
+# --------------------------------------------------------------------------
+# Strategy 2 inputs (G5)
+# --------------------------------------------------------------------------
+
+
+class TestAlignMargin:
+    D = [date(2006, 6, 20), date(2006, 6, 21), date(2006, 6, 22), date(2006, 6, 26)]
+    PSQ = {date(2006, 6, 21): 80.0, date(2006, 6, 22): 82.0, date(2006, 6, 26): 81.18}
+    DFF = {date(2006, 6, 20): 5.0, date(2006, 6, 24): 5.25}
+
+    def test_psq_returns_are_next_bar_and_nan_before_its_first_bar(self):
+        m = wf.align_margin(self.D, self.PSQ, self.DFF)
+        assert np.isnan(m.psq_returns[0])
+        assert m.psq_returns[1] == pytest.approx(0.025)
+        assert m.psq_returns[2] == pytest.approx(-0.01)
+        assert m.psq_returns[3] == 0.0
+        assert m.psq_first == date(2006, 6, 21)
+
+    def test_fed_funds_is_carried_forward_as_a_fraction(self):
+        m = wf.align_margin(self.D, self.PSQ, self.DFF)
+        assert m.rates.tolist() == pytest.approx([0.05, 0.05, 0.05, 0.0525])
+
+    def test_days_are_calendar_days_to_the_next_bar(self):
+        # Thursday to Monday is four days of interest.
+        assert wf.align_margin(self.D, self.PSQ, self.DFF).days.tolist() == [1, 1, 4, 1]
+
+
+class TestMarginRefusals:
+    def args(self, **over):
+        from argparse import Namespace
+        base = dict(symbol="QQQ", leverage_pct=20, hedge_pct=20, margin_spread_pct=1.5,
+                    maintenance_pct=30, cost_bps=5, tax_rate=None, loss="ce",
+                    threshold=0.5, long_threshold=0.75)
+        base.update(over)
+        return Namespace(**base)
+
+    M = wf.MarginInputs(np.array([np.nan, 0.01, 0.0]), np.array([0.05] * 3),
+                        np.ones(3), date(2006, 6, 21))
+
+    def test_a_fold_before_psq_is_refused(self):
+        out = wf.margin_refusals(self.args(), [(2006, [], [0, 1])], self.M)
+        assert any("before PSQ's first bar" in o for o in out)
+
+    def test_a_fold_after_psq_runs(self):
+        assert wf.margin_refusals(self.args(), [(2007, [], [1, 2])], self.M) == []
+
+    def test_only_qqq(self):
+        assert any("QQQ" in o for o in
+                   wf.margin_refusals(self.args(symbol="AAPL"), [(2007, [], [1])], self.M))
+
+    def test_past_the_ceiling(self):
+        assert any("50%" in o for o in
+                   wf.margin_refusals(self.args(hedge_pct=55), [(2007, [], [1])], self.M))
+
+
+class TestMarginTrainRefusals:
+    M = wf.MarginInputs(np.array([np.nan, 0.01, 0.0, 0.01]), np.array([0.05] * 4),
+                        np.ones(4), date(2006, 6, 21))
+
+    def args(self, **over):
+        from argparse import Namespace
+        base = dict(symbol="QQQ", leverage_pct=20, hedge_pct=20, margin_spread_pct=1.5,
+                    maintenance_pct=30, cost_bps=5, tax_rate=None, loss="return",
+                    threshold=0.5, long_threshold=0.75, margin_train=True, tax_train=False)
+        base.update(over)
+        return Namespace(**base)
+
+    def test_a_training_window_before_psq_is_refused(self):
+        out = wf.margin_refusals(self.args(), [(2008, [0, 1], [2, 3])], self.M)
+        assert any("train from 2007" in o for o in out)
+
+    def test_a_training_window_after_psq_runs(self):
+        assert wf.margin_refusals(self.args(), [(2008, [1], [2, 3])], self.M) == []
+
+    def test_ce_and_tax_train_are_refused(self):
+        assert any("money-trained" in o for o in
+                   wf.margin_refusals(self.args(loss="ce"), [(2008, [1], [2])], self.M))
+        assert any("not supported yet" in o for o in
+                   wf.margin_refusals(self.args(tax_train=True), [(2008, [1], [2])], self.M))

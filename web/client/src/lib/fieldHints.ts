@@ -52,6 +52,38 @@ export const fieldHints: Record<string, string> = {
     + 'the tax to be worth making. This changes the model and its signals: use it for '
     + 'your own taxable account, not for a strategy published as a signal. Money-trained '
     + 'losses only.',
+  'objective.execution':
+    'How the signals are acted on. Strategy 1 (signals): long unless the model says sell, '
+    + 'which also broadcasts as a plain signal. Strategy 2 (margin): the QQQ bought with your '
+    + 'own money is never sold, so it is never taxed; an up signal borrows to buy more QQQ, a '
+    + 'down signal borrows to buy PSQ (the one-to-one inverse of QQQ), and neutral holds the '
+    + 'core alone. Scoring only: the model and its signals are the same either way. QQQ only.',
+  'objective.leveragePct':
+    'Strategy 2: how much extra QQQ an up signal buys on margin, as a percent of the core on '
+    + 'the day it opens. The design suggests testing 10, 20 and 30. At most 50: the margin '
+    + 'position never exceeds half the holding, and a larger setting is refused.',
+  'objective.hedgePct':
+    'Strategy 2: how much PSQ a down signal buys on margin, as a percent of the core. PSQ '
+    + 'rises as QQQ falls, so this cushions a drop without selling the core. At most 50; a '
+    + 'hedge that drifts past 50% as prices move is cut back to 50.',
+  'objective.marginSpreadPct':
+    'Strategy 2: what the broker charges over the Fed funds rate, in points. Interest is Fed '
+    + 'funds on each day plus this, so it moves with each period\'s rates; 1.5 is roughly a '
+    + 'low-cost broker on a small balance, big retail brokers charge more.',
+  'objective.maintenancePct':
+    'Strategy 2: if equity falls below this percent of the account\'s assets, the broker '
+    + 'issues a margin call and the margin position is closed at that day\'s price. FINRA\'s '
+    + 'floor is 25; brokers commonly ask 30.',
+  'objective.marginTrain':
+    'Strategy 2: also train against its curve (the margin legs, PSQ, interest and '
+    + 'commission), so the model learns to borrow only when a trade clears its cost. This '
+    + 'changes the model and its signals: not for a strategy published as a signal. '
+    + 'Money-trained losses only, not together with train with tax yet, and every training '
+    + 'bar must have PSQ, so training starts in 2007 or later.',
+  'objective.longThreshold':
+    'Strategy 2 with a money-trained loss: the position the model must reach before it '
+    + 'borrows to go long. Below the position threshold it hedges with PSQ; between the two '
+    + 'it holds the core alone.',
   'objective.taxRatePct':
     'Your effective rate on realized gains, in percent. Every tax situation differs, so '
     + 'it is yours to enter (in Canada, for example, the inclusion rate times your '
@@ -153,7 +185,8 @@ export const fieldHints: Record<string, string> = {
   'strategy.labelHorizon':
     'Bars ahead the forward return is measured over to label each bar. The same '
     + 'horizon as Forward bars, and the thing the model is being asked to '
-    + 'predict.',
+    + 'predict. Counted in bars of the chosen timeframe, so 5 is a week on D1 '
+    + 'but two and a half hours on M30.',
   'strategy.features':
     'The exact columns the network sees. Recorded with the run, so two runs with '
     + 'different feature lists are two different experiments rather than one '
@@ -166,6 +199,10 @@ export const fieldHints: Record<string, string> = {
     + 'place in the table with the reason attached.',
   'features.active':
     'Usable now, and the only ones the strategy builder offers.',
+  'features.dataOnly':
+    'Computed and stored in every feature set for charts and rule-based strategies, '
+    + 'but never fed to the network (RSI, MACD, realized volatility). The model already '
+    + 'sees the bar they are derived from.',
   'features.undecided':
     'Defined but not fed to the model — a history too short to be worth it, or a '
     + 'decision deferred until the free columns are proven. Nothing about them is '
@@ -213,8 +250,9 @@ export const fieldHints: Record<string, string> = {
     + 'coarser feature forward from its publication timestamp, so no bar ever '
     + 'sees a value before it was knowable.',
   'features.col.status':
-    'active | undecided | blocked. Only active columns are offered when building '
-    + 'a strategy.',
+    'active | data-only | undecided | blocked. Only active columns are offered when '
+    + 'building a strategy. Data-only columns are stored for charts and rules but '
+    + 'never fed to the network.',
   'features.col.range':
     'The range this feature has on its OWN, read back from the stored values — not '
     + 'the overlap of the table. Features do not share one range, and the table is '

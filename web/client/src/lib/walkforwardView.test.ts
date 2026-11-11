@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { WalkforwardRun } from './api'
-import { newestFinished, num, pp, stageSummary, verdictOf } from './walkforwardView'
+import type { WalkforwardExecution, WalkforwardLineage, WalkforwardRun } from './api'
+import {
+  executionLine, isLeverageOnly, leveredTiming, lineageLine, newestFinished, num, pp, stageSummary, verdictOf,
+} from './walkforwardView'
 
 /**
  * What these tests defend is one rule: a run that measured nothing must never
@@ -8,6 +10,14 @@ import { newestFinished, num, pp, stageSummary, verdictOf } from './walkforwardV
  * an objective the browser does not decide all have to come back undecided —
  * because a green badge over an unmeasured run is worse than no badge at all.
  */
+
+const SIGNALS: WalkforwardExecution = {
+  kind: 'signals', leveragePct: null, hedgePct: null, marginSpreadPct: null,
+  maintenancePct: null, longThreshold: null, marginTrain: false, meanMarginInterest: null,
+  marginCalls: null,
+  trims: null, coreAtRisk: null, meanDaysLong: null, meanDaysHedged: null,
+  meanLeveredReturn: null, foldsBeatLevered: null,
+}
 
 function aRun(over: Partial<WalkforwardRun> = {}): WalkforwardRun {
   return {
@@ -34,6 +44,8 @@ function aRun(over: Partial<WalkforwardRun> = {}): WalkforwardRun {
     isTest: false,
     columns: null,
     strategy: null,
+    lineage: null,
+    execution: SIGNALS,
     startedAt: '2026-11-06T02:53:23Z',
     finishedAt: '2026-11-06T02:53:40Z',
     inProgress: false,
@@ -199,5 +211,104 @@ describe('stageSummary', () => {
   it('a single in-flight run reads in the singular', () => {
     expect(stageSummary([running()], 0, 'D1').summary)
       .toBe('1 run in progress, none finished')
+  })
+})
+
+describe('lineageLine (G3)', () => {
+  const base: WalkforwardLineage = {
+    featureRunId: 4, currentBuildId: 4, inputSnapshot: 'a'.repeat(64),
+    parts: { matrix: 'm', closes: 'c', park: 'p' }, codeHash: 'b'.repeat(64), gitSha: null,
+    libVersions: { torch: '2.5.1' }, setRebuiltSince: false, valuesChangedSince: false,
+  }
+
+  it('says a run from before G3 cannot be checked, never that it matches', () => {
+    const l = lineageLine(7, null)
+    expect(l.tone).toBe('muted')
+    expect(l.text).toMatch(/cannot be checked/)
+  })
+
+  it('shows the snapshot and code when nothing has been rebuilt', () => {
+    const l = lineageLine(7, base)
+    expect(l.tone).toBe('ok')
+    expect(l.text).toContain('aaaaaaaaaaaa')
+    expect(l.text).toContain('torch 2.5.1')
+    expect(l.text).toMatch(/not been rebuilt/)
+  })
+
+  it('does not warn about a rebuild that wrote the same values', () => {
+    const l = lineageLine(7, { ...base, currentBuildId: 5, setRebuiltSince: true })
+    expect(l.tone).toBe('ok')
+    expect(l.text).toMatch(/same values/)
+  })
+
+  it('warns when the values changed, and names the exact check', () => {
+    const l = lineageLine(7, {
+      ...base, currentBuildId: 5, setRebuiltSince: true, valuesChangedSince: true,
+    })
+    expect(l.tone).toBe('warn')
+    expect(l.text).toContain('build 4 then, 5 now')
+    expect(l.text).toContain('--check-snapshot 7')
+  })
+})
+
+describe('executionLine (G5)', () => {
+  const margin: WalkforwardExecution = {
+    ...SIGNALS, kind: 'margin', leveragePct: 20, hedgePct: 20, marginSpreadPct: 1.5,
+    maintenancePct: 30, meanMarginInterest: -0.19, marginCalls: 0, trims: 0, coreAtRisk: 0,
+    meanDaysLong: 60, meanDaysHedged: 34,
+  }
+
+  it('says nothing for a Strategy 1 run', () => {
+    expect(executionLine(aRun())).toBeNull()
+  })
+
+  it('states the dials and what they cost', () => {
+    expect(executionLine(aRun({ execution: margin }))).toBe(
+      'Strategy 2: long 20% / PSQ 20% of the core, Fed funds + 1.5, call below 30%'
+      + ' · interest -0.19 pts a fold, 0 margin calls, 0 trims',
+    )
+  })
+
+  it('names a margin call and a day with the core at risk', () => {
+    const line = executionLine(aRun({ execution: { ...margin, marginCalls: 1, coreAtRisk: 2 } }))
+    expect(line).toContain('1 margin call,')
+    expect(line).toContain('core at risk on 2 days')
+  })
+
+  it('says when the model was trained on the margin curve', () => {
+    expect(executionLine(aRun({ execution: { ...margin, marginTrain: true } })))
+      .toContain('call below 30%, trained on this curve ·')
+  })
+
+  it('gives a money model its long threshold, and no costs before a fold lands', () => {
+    const line = executionLine(aRun({ folds: 0, execution: { ...margin, longThreshold: 0.75 } }))
+    expect(line).toBe('Strategy 2: long 20% / PSQ 20% of the core, Fed funds + 1.5,'
+      + ' call below 30%, long at position >= 0.75')
+  })
+})
+
+describe('the always-long-on-margin baseline (G25)', () => {
+  const margin: WalkforwardExecution = {
+    ...SIGNALS, kind: 'margin', leveragePct: 20, hedgePct: 20, marginSpreadPct: 1.5,
+    maintenancePct: 30, meanMarginInterest: -0.5, marginCalls: 0, trims: 0, coreAtRisk: 0,
+    meanLeveredReturn: 30.0, foldsBeatLevered: 1,
+  }
+
+  it('is the strategy mean minus the baseline mean, and null without one', () => {
+    expect(leveredTiming(aRun({ meanStratReturn: 28.8, execution: margin }))).toBeCloseTo(-1.2)
+    expect(leveredTiming(aRun())).toBeNull()
+    expect(leveredTiming(aRun({ execution: { ...margin, meanLeveredReturn: null } }))).toBeNull()
+  })
+
+  it('appears in the run line', () => {
+    expect(executionLine(aRun({ meanStratReturn: 28.8, execution: margin })))
+      .toContain('vs always long on margin -1.20 pp a fold (1/6 folds)')
+  })
+
+  it('flags a win over buy-and-hold that the baseline also wins', () => {
+    expect(isLeverageOnly(aRun({ beatsHoldOnReturn: true, beatsLeveredOnReturn: false }))).toBe(true)
+    expect(isLeverageOnly(aRun({ beatsHoldOnReturn: true, beatsLeveredOnReturn: true }))).toBe(false)
+    expect(isLeverageOnly(aRun({ beatsHoldOnReturn: false, beatsLeveredOnReturn: false }))).toBe(false)
+    expect(isLeverageOnly(aRun({ beatsHoldOnReturn: true }))).toBe(false)
   })
 })

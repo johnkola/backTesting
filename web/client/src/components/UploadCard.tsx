@@ -3,6 +3,7 @@ import {
   api,
   type CohesionCategory,
   type CohesionReport,
+  type SkippedRows,
   type SliceOutcome,
   type SlicePreview,
   type UploadImportResponse,
@@ -234,6 +235,7 @@ function UploadFeedback({ state }: { state: UploadState }) {
             </div>
           )}
           <SliceList rows={result.imports} />
+          {result.skipped && result.skipped.count > 0 && <SkippedPanel skipped={result.skipped} />}
           {result.cohesion && <CohesionPanel report={result.cohesion} />}
         </div>
       </div>
@@ -334,6 +336,38 @@ function CohesionPanel({ report }: { report: CohesionReport }) {
         Advisory only — the data was imported. Re-check stored data anytime with{' '}
         <span className="font-mono">backtest-audit</span>.
       </div>
+    </div>
+  )
+}
+
+/** Rows the import could not read (R6). The rest imported; these produced no
+ *  bar, so a file that quietly lost most of its rows says so here. */
+function SkippedPanel({ skipped }: { skipped: SkippedRows }) {
+  return (
+    <div className="mt-3 rounded-box border border-warning bg-base-100 p-2 text-base-content">
+      <div className="text-xs font-medium text-warning">
+        ⚠ {skipped.count.toLocaleString()} {skipped.count === 1 ? 'row' : 'rows'} did not
+        parse and {skipped.count === 1 ? 'was' : 'were'} not imported
+      </div>
+      <table className="table table-xs mt-1">
+        <thead>
+          <tr><th>Line</th><th>Why</th><th>Row</th></tr>
+        </thead>
+        <tbody>
+          {skipped.examples.map((e) => (
+            <tr key={e.line}>
+              <td className="tabular-nums">{e.line}</td>
+              <td className="text-xs">{e.reason}</td>
+              <td className="font-mono text-xs break-all">{e.text}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {skipped.count > skipped.examples.length && (
+        <div className="mt-1 text-xs opacity-60">
+          First {skipped.examples.length} shown; line numbers count the header as line 1.
+        </div>
+      )}
     </div>
   )
 }

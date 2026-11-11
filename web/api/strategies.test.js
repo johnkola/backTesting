@@ -374,3 +374,118 @@ describe('removing a saved strategy', () => {
     assert.equal(mod.upsert, undefined);
   });
 });
+
+describe('dataOnlyFeatures (G9)', () => {
+  // The save route refuses a strategy naming a data-only column (Features.md B:
+  // stored for charts and rules, kept out of the network). The lookup is the
+  // catalogue; the pool is stubbed so this runs without Postgres.
+  const { pool } = require('./db');
+  const { dataOnlyFeatures } = require('./strategies');
+  const withQuery = async (fake, fn) => {
+    const real = pool.query;
+    pool.query = fake;
+    try { return await fn(); } finally { pool.query = real; }
+  };
+
+  it('returns the names the catalogue marks data-only', async () => {
+    let seen = null;
+    const out = await withQuery(async (sql, params) => {
+      seen = { sql, params };
+      return { rows: [{ name: 'rsi_14' }] };
+    }, () => dataOnlyFeatures(['price_close', 'rsi_14']));
+    assert.deepEqual(out, ['rsi_14']);
+    assert.match(seen.sql, /status = 'data-only'/);
+    assert.deepEqual(seen.params, [['price_close', 'rsi_14']]);
+  });
+
+  it('asks nothing for an empty list', async () => {
+    const out = await withQuery(async () => { throw new Error('queried'); },
+      () => dataOnlyFeatures([]));
+    assert.deepEqual(out, []);
+  });
+
+  it('refuses nothing before the catalogue table exists', async () => {
+    const out = await withQuery(async () => {
+      throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
+    }, () => dataOnlyFeatures(['rsi_14']));
+    assert.deepEqual(out, []);
+  });
+});
+
+describe('validateStrategy — Strategy 2 (G5)', () => {
+  const objective = (o, over = {}) => validateStrategy(body({ objective: o, ...over }));
+
+  it('defaults to Strategy 1 with every margin dial null', () => {
+    const o = objective({}).value.objective;
+    assert.equal(o.execution, 'signals');
+    for (const d of ['leveragePct', 'hedgePct', 'marginSpreadPct', 'maintenancePct', 'longThreshold']) {
+      assert.equal(o[d], null);
+    }
+  });
+
+  it('fills the margin defaults, and no long threshold for a classifier', () => {
+    const o = objective({ execution: 'margin' }).value.objective;
+    assert.deepEqual(
+      [o.leveragePct, o.hedgePct, o.marginSpreadPct, o.maintenancePct, o.longThreshold],
+      [20, 20, 1.5, 30, null],
+    );
+  });
+
+  it('gives a money-trained loss a long threshold above its position threshold', () => {
+    const o = objective({ execution: 'margin', loss: 'return' }).value.objective;
+    assert.equal(o.longThreshold, 0.75);
+    const bad = objective({ execution: 'margin', loss: 'return', positionThreshold: 0.8 });
+    assert.equal(bad.ok, false);
+    assert.match(bad.errors.join(' '), /longThreshold must be above the position threshold/);
+  });
+
+  it('refuses a leverage or hedge past 50% of the holding, and accepts exactly 50', () => {
+    for (const d of ['leveragePct', 'hedgePct']) {
+      const r = objective({ execution: 'margin', [d]: 51 });
+      assert.equal(r.ok, false);
+      assert.match(r.errors.join(' '), /never exceeds 50% of the holding/);
+      assert.equal(objective({ execution: 'margin', [d]: 50 }).ok, true);
+    }
+  });
+
+  it('refuses a margin dial on a Strategy 1 record', () => {
+    const r = objective({ leveragePct: 20 });
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join(' '), /only applies to execution 'margin'/);
+  });
+
+  it('runs on QQQ only, because the hedge is PSQ', () => {
+    const r = objective({ execution: 'margin' }, { instrument: 'AAPL' });
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join(' '), /QQQ only/);
+  });
+
+  it('refuses an unknown execution', () => {
+    assert.equal(objective({ execution: 'options' }).ok, false);
+  });
+});
+
+describe('validateStrategy — train with margin (G5 step 2)', () => {
+  const objective = (o) => validateStrategy(body({ objective: o }));
+
+  it('defaults off, and stays off under Strategy 1', () => {
+    assert.equal(objective({}).value.objective.marginTrain, false);
+    assert.equal(objective({ execution: 'margin', loss: 'return' }).value.objective.marginTrain, false);
+  });
+
+  it('is kept for Strategy 2 with a money loss', () => {
+    const o = objective({ execution: 'margin', loss: 'return', marginTrain: true }).value.objective;
+    assert.equal(o.marginTrain, true);
+  });
+
+  it('is refused under Strategy 1, with ce, and beside train with tax', () => {
+    assert.match(objective({ marginTrain: true }).errors.join(' '), /needs execution 'margin'/);
+    assert.match(objective({ execution: 'margin', marginTrain: true }).errors.join(' '),
+      /money-trained loss/);
+    const both = objective({
+      execution: 'margin', loss: 'return', marginTrain: true,
+      taxScore: true, taxRatePct: 25, taxTrain: true,
+    });
+    assert.match(both.errors.join(' '), /not supported yet/);
+  });
+});

@@ -79,6 +79,12 @@ OBJECTIVE_ARGS = {
     "verdict": "objective",
     "costBps": "cost_bps",
     "park": "park",
+    "execution": "execution",
+    "leveragePct": "leverage_pct",
+    "hedgePct": "hedge_pct",
+    "marginSpreadPct": "margin_spread_pct",
+    "maintenancePct": "maintenance_pct",
+    "longThreshold": "long_threshold",
 }
 
 #: What a row saved before `objective_json` existed ran with: walkforward.py's
@@ -96,7 +102,17 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
     "taxScore": False,
     "taxRatePct": None,
     "taxTrain": False,
+    "execution": "signals",
+    "leveragePct": None,
+    "hedgePct": None,
+    "marginSpreadPct": None,
+    "maintenancePct": None,
+    "longThreshold": None,
+    "marginTrain": False,
 })
+
+#: The design's hard rule for Strategy 2 (G5), as web/api/strategies.js holds it.
+MARGIN_CEILING_PCT = 50.0
 
 #: What the runner can execute. Mirrors MODEL_TYPES and the label check in
 #: web/api/strategies.js.
@@ -222,6 +238,15 @@ def _ends_a_year(d: date) -> bool:
 def fold_plan(s: Strategy) -> FoldPlan:
     """The strategy's windows as year folds, or `StrategyRefused`."""
     errors: list[str] = []
+    if s.timeframe != "D1":
+        # DESIGN-GAPS I4/I5: the feature table, the matrix and the scoring are
+        # daily by construction (rows keyed by date, 252 periods a year), so an
+        # intraday or weekly strategy would collapse to one row a day and be
+        # annualised as if each bar were a day. Refused until they are not.
+        errors.append(
+            f"timeframe {s.timeframe!r} cannot run yet: walk-forward is daily "
+            f"only (one row per date, 252 periods a year); use D1"
+        )
     if s.validation_scheme != "walkforward":
         errors.append(
             f"validation scheme {s.validation_scheme!r} has no runner yet; "
@@ -306,6 +331,32 @@ def runner_args(s: Strategy) -> dict[str, Any]:
         if out.get("loss", "ce") == "ce":
             raise StrategyRefused(["train with tax needs a money-trained loss, not ce"])
         out["tax_train"] = True
+    if out.get("execution", "signals") == "margin":
+        # Strategy 2. The API refuses saving any of these; this guards a row
+        # written any other way, which would otherwise run on flag defaults.
+        errors = []
+        if s.instrument != "QQQ":
+            errors.append(f"Strategy 2 runs on QQQ only (its hedge is PSQ), not {s.instrument}")
+        for key in ("leveragePct", "hedgePct", "marginSpreadPct", "maintenancePct"):
+            if s.objective.get(key) is None:
+                errors.append(f"Strategy 2 needs {key}")
+        for key in ("leveragePct", "hedgePct"):
+            v = s.objective.get(key)
+            if v is not None and not 0 < v <= MARGIN_CEILING_PCT:
+                errors.append(f"{key} {v:g} breaches the ceiling: the margin position "
+                              f"never exceeds {MARGIN_CEILING_PCT:g}% of the holding")
+        if out.get("loss", "ce") != "ce" and s.objective.get("longThreshold") is None:
+            errors.append("Strategy 2 with a money-trained loss needs longThreshold")
+        if s.objective.get("marginTrain"):
+            if out.get("loss", "ce") == "ce":
+                errors.append("train with margin needs a money-trained loss, not ce")
+            if s.objective.get("taxTrain"):
+                errors.append("train with margin and train with tax together are not supported yet")
+            out["margin_train"] = True
+        if errors:
+            raise StrategyRefused(errors)
+    elif s.objective.get("marginTrain"):
+        raise StrategyRefused(["train with margin needs execution 'margin' (Strategy 2)"])
     horizon = s.label.get("horizonBars")
     if horizon is not None:
         if "forward" in out and out["forward"] != horizon:
@@ -318,15 +369,19 @@ def runner_args(s: Strategy) -> dict[str, Any]:
 
 def resolve_columns(
     selected: Sequence[str], available: Sequence[str], train_counts: Mapping[str, int],
-    train_bars: int,
+    train_bars: int, data_only: Sequence[str] = (),
 ) -> ResolvedColumns:
     """Which selected columns a run can use. §8.1a's rule, applied.
 
-    `available` is the feature set's columns; `train_counts` the non-NULL values
-    per column inside the train window (`feature_store.column_counts`);
-    `train_bars` the bars in that window (`feature_store.window_bars`).
+    `available` is the feature set's input columns; `train_counts` the non-NULL
+    values per column inside the train window (`feature_store.column_counts`);
+    `train_bars` the bars in that window (`feature_store.window_bars`);
+    `data_only` the set's data-only columns (`feature_store.data_columns`), which
+    are dropped with their own reason rather than "not in this feature set": the
+    set does hold them, and the run should say they were kept out on purpose.
     """
     spec = set(available)
+    data = set(data_only)
     kept: list[str] = []
     dropped: list[tuple[str, str]] = []
     partial: list[tuple[str, int, int]] = []
@@ -338,7 +393,9 @@ def resolve_columns(
             continue
         seen.add(name)
         n = train_counts.get(name, 0)
-        if name not in spec:
+        if name in data:
+            dropped.append((name, "data only, kept out of the network"))
+        elif name not in spec:
             dropped.append((name, "not in this feature set"))
         elif n == 0:
             dropped.append((name, "no values in the train window"))

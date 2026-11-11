@@ -363,3 +363,69 @@ def test_the_taxed_curve_keeps_the_dtype_it_is_given():
     pos = torch.rand(10)
     r = torch.full((10,), 0.01)
     assert ml.portfolio_returns_taxed(pos, r, 5.0, 0.25).dtype == torch.float32
+
+
+# --------------------------------------------------------------------------
+# Strategy 2 inside the loss (G5 step 2)
+# --------------------------------------------------------------------------
+
+
+def _terms(n, *, psq=None, rate=0.0, days=1.0, leverage=0.2, hedge=0.2, spread=0.0,
+           threshold=0.5, long_threshold=0.75):
+    t = lambda v: torch.full((n,), float(v), dtype=torch.float64)  # noqa: E731
+    return ml.MarginTerms(
+        psq=t(0.0) if psq is None else torch.tensor(psq, dtype=torch.float64),
+        rates=t(rate), days=t(days), leverage=leverage, hedge=hedge, spread=spread,
+        threshold=threshold, long_threshold=long_threshold)
+
+
+class TestMarginReturns:
+    def test_fully_long_adds_leverage_times_the_move(self):
+        r = torch.tensor([0.01, 0.02, -0.01], dtype=torch.float64)
+        p = torch.ones(3, dtype=torch.float64)
+        daily = ml.margin_returns(p, r, 0.0, _terms(3))
+        up, _ = ml.margin_legs(p, _terms(3))
+        assert float(up[0]) > 0.99
+        torch.testing.assert_close(daily, r * (1 + 0.2 * up), rtol=0, atol=1e-12)
+
+    def test_fully_hedged_adds_psq(self):
+        r = torch.tensor([-0.02, -0.01], dtype=torch.float64)
+        p = torch.zeros(2, dtype=torch.float64)
+        m = _terms(2, psq=[0.02, 0.01])
+        up, down = ml.margin_legs(p, m)
+        assert float(down[0]) > 0.99
+        # The shut leg is not exactly zero under a smooth step (~1e-8 here).
+        torch.testing.assert_close(ml.margin_returns(p, r, 0.0, m),
+                                   r + 0.2 * up * r + 0.2 * down * m.psq, rtol=0, atol=1e-15)
+
+    def test_charges_interest_per_calendar_day_while_borrowed(self):
+        r = torch.zeros(2, dtype=torch.float64)
+        p = torch.ones(2, dtype=torch.float64)
+        m = _terms(2, rate=0.05, spread=0.015, days=3.0)
+        up, down = ml.margin_legs(p, m)
+        expected = -(0.2 * up + 0.2 * down) * 0.065 * 3 / 360
+        torch.testing.assert_close(ml.margin_returns(p, r, 0.0, m), expected,
+                                   rtol=0, atol=1e-15)
+
+    def test_a_position_is_acted_on_the_next_session(self):
+        # Long decided on day 0 only: held over day 1, not day 0... except the
+        # first bar, which holds its own signal (the runner's convention).
+        r = torch.tensor([0.0, 0.10, 0.10], dtype=torch.float64)
+        p = torch.tensor([0.6, 1.0, 0.6], dtype=torch.float64)
+        daily = ml.margin_returns(p, r, 0.0, _terms(3))
+        assert float(daily[2]) > float(daily[1])  # the long leg is open on day 2
+
+    def test_interest_pushes_the_gradient_away_from_borrowing(self):
+        r = torch.zeros(4, dtype=torch.float64)
+        p = torch.full((4,), 0.75, dtype=torch.float64, requires_grad=True)
+        loss, _ = ml.objective("return", p, r, cost_bps=0.0,
+                                       margin=_terms(4, rate=0.05, spread=0.015, days=1.0))
+        loss.backward()
+        # Raising the position opens the long leg further and costs more interest.
+        assert float(p.grad[:-1].sum()) > 0
+
+    def test_tax_and_margin_together_are_refused(self):
+        r = torch.zeros(2, dtype=torch.float64)
+        with pytest.raises(ValueError, match="not supported yet"):
+            ml.objective("return", torch.ones(2, dtype=torch.float64), r,
+                                 cost_bps=0.0, tax_rate=0.25, margin=_terms(2))

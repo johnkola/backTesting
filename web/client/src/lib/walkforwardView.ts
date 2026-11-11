@@ -1,4 +1,4 @@
-import type { WalkforwardRun } from './api'
+import type { WalkforwardLineage, WalkforwardRun } from './api'
 
 /**
  * The pure logic behind the Training tab's walk-forward tables.
@@ -75,6 +75,42 @@ export function verdictOf(run: WalkforwardRun): { state: Verdict, detail: string
  * letting it set the stage badge would flip the whole tab to "not recorded"
  * every time someone starts a job. Runs arrive newest first.
  */
+/**
+ * One line on whether a run's inputs are still what it read (G3).
+ *
+ * `warn` only when the store says the values changed: a rebuild that wrote
+ * the same values is not news. The values hash covers every column of the
+ * set, so "changed" can be a column the run did not use; the check command
+ * named here is the exact answer.
+ */
+export function lineageLine(
+  runId: number,
+  l: WalkforwardLineage | null,
+): { tone: 'muted' | 'ok' | 'warn', text: string } {
+  if (!l) {
+    return {
+      tone: 'muted',
+      text: 'No input snapshot: recorded before runs kept one, so it cannot be checked.',
+    }
+  }
+  const snap = `Input snapshot ${l.inputSnapshot.slice(0, 12)}`
+  const code = l.codeHash ? `, code ${l.codeHash.slice(0, 12)}` : ''
+  const libs = l.libVersions?.torch ? `, torch ${l.libVersions.torch}` : ''
+  const check = `python -m nn.walkforward --check-snapshot ${runId}`
+  if (l.valuesChangedSince) {
+    return {
+      tone: 'warn',
+      text: `${snap}${code}. The feature set was rebuilt with different values since `
+        + `(build ${l.featureRunId} then, ${l.currentBuildId} now), so a rerun may not `
+        + `reproduce it. Exact answer: ${check}`,
+    }
+  }
+  const state = l.setRebuiltSince
+    ? ' The set was rebuilt since, with the same values.'
+    : l.setRebuiltSince === false ? ' Its feature set has not been rebuilt since.' : ''
+  return { tone: 'ok', text: `${snap}${code}${libs}.${state}` }
+}
+
 export function newestFinished(runs: readonly WalkforwardRun[]): WalkforwardRun | undefined {
   return runs.find((r) => !r.inProgress && r.folds > 0)
 }
@@ -121,4 +157,58 @@ export function stageSummary(
     detail: 'A run is recorded from the moment it starts, so its folds appear as they '
       + 'are scored rather than only at the end.',
   }
+}
+
+/**
+ * Strategy 2's settings and what they cost, in one line, or null under
+ * Strategy 1 (G5). A margin call or a day with the core at risk is named,
+ * never folded into a total: those are the events the 50% ceiling exists to
+ * prevent.
+ */
+export function executionLine(run: WalkforwardRun): string | null {
+  const e = run.execution
+  if (!e || e.kind !== 'margin') return null
+  const parts = [
+    `long ${e.leveragePct}% / PSQ ${e.hedgePct}% of the core`,
+    `Fed funds + ${e.marginSpreadPct}`,
+    `call below ${e.maintenancePct}%`,
+  ]
+  if (e.longThreshold !== null) parts.push(`long at position >= ${e.longThreshold}`)
+  if (e.marginTrain) parts.push('trained on this curve')
+  let line = `Strategy 2: ${parts.join(', ')}`
+  if (run.folds > 0) {
+    line += ` · interest ${pp(e.meanMarginInterest)} pts a fold`
+      + `, ${e.marginCalls ?? 0} margin call${e.marginCalls === 1 ? '' : 's'}`
+      + `, ${e.trims ?? 0} trim${e.trims === 1 ? '' : 's'}`
+    if (e.coreAtRisk) line += `, core at risk on ${e.coreAtRisk} day${e.coreAtRisk === 1 ? '' : 's'}`
+    const timing = leveredTiming(run)
+    if (timing !== null) {
+      line += ` · vs always long on margin ${pp(timing)} pp a fold`
+        + ` (${e.foldsBeatLevered ?? 0}/${run.folds} folds)`
+    }
+  }
+  return line
+}
+
+/**
+ * G25: what the model's timing added over borrowing alone, in points a fold:
+ * mean strategy return minus mean always-long-on-margin return. Null when the
+ * run has no baseline (Strategy 1, or folds scored before G25).
+ */
+export function leveredTiming(run: WalkforwardRun): number | null {
+  const e = run.execution
+  if (!e || e.kind !== 'margin' || e.meanLeveredReturn == null || run.meanStratReturn == null) {
+    return null
+  }
+  return run.meanStratReturn - e.meanLeveredReturn
+}
+
+/**
+ * True when a Strategy 2 run beat buy-and-hold on return but not always long
+ * on margin: its excess is the borrowing, not the model. The badge that says
+ * so sits beside "beat hold" rather than replacing it, because buy-and-hold
+ * stays the design's benchmark.
+ */
+export function isLeverageOnly(run: WalkforwardRun): boolean {
+  return run.beatsHoldOnReturn === true && run.beatsLeveredOnReturn === false
 }

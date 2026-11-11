@@ -295,6 +295,18 @@ CREATE TABLE IF NOT EXISTS feature_spec (
     PRIMARY KEY (feature_set_id, feature_name)
 );
 
+-- `input` feeds the network; `data` is stored beside it and never does.
+-- Features.md B keeps RSI, MACD and realized volatility "computed and stored for
+-- charts and rule-based strategies, but kept out of the network", so a set holds
+-- both, and every reader that builds the network's matrix reads `input` only
+-- (`feature_store.read_matrix`, `column_names`). The default makes every set
+-- built before data-only columns existed read exactly as it did.
+ALTER TABLE feature_spec ADD COLUMN IF NOT EXISTS role VARCHAR(8) NOT NULL DEFAULT 'input';
+DO $feature_spec_role$ BEGIN
+    ALTER TABLE feature_spec ADD CONSTRAINT feature_spec_role_ck CHECK (role IN ('input', 'data'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $feature_spec_role$;
+
 -- Long format, not one column per feature: adding a feature is an INSERT rather
 -- than a migration, which is the whole point of the config-driven table. A
 -- cyclical column stores as two names (_sin and _cos), which a wide table could
@@ -485,6 +497,54 @@ ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS best_epoch INT;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS epochs_run INT;
 
 -- ---------------------------------------------------------------------------
+-- Lineage: which code and which inputs produced a feature build and a run (G3)
+-- ---------------------------------------------------------------------------
+-- Architecture.md §1: "A feature or model run is identified by code version
+-- plus input snapshot, so it can be recomputed and compared." §3.5 names
+-- feature_runs; §6.1 asks every run for an input snapshot id.
+--
+-- Why a table and not columns on feature_sets: a rebuild of a set DELETEs and
+-- rewrites its values under the same id (feature_build.store), so the set id
+-- alone cannot say which values a run saw. feature_runs is append-only, one row
+-- per build, never updated, and feature_sets.current_run_id names the build
+-- whose values are in feature_values now. A run that points at an older build
+-- than current_run_id was fed values that have since been replaced.
+--
+-- code_hash is a SHA-256 over the loader's nn/ and loader/ source files, which
+-- the containers have where they have no .git; git_sha is added when known.
+-- inputs_json lists every candle series the build read, each with its bar
+-- count, range, a hash of the values read and the newest import_files version
+-- of that series. values_hash is a hash of every value written.
+CREATE TABLE IF NOT EXISTS feature_runs (
+    id BIGSERIAL PRIMARY KEY,
+    feature_set_id BIGINT REFERENCES feature_sets(id) ON DELETE SET NULL,
+    schema_version INT NOT NULL,
+    config_hash VARCHAR(64) NOT NULL,
+    code_hash VARCHAR(64) NOT NULL,
+    git_sha VARCHAR(40),
+    lib_versions_json TEXT,
+    inputs_json TEXT NOT NULL,
+    values_hash VARCHAR(64) NOT NULL,
+    row_count INT NOT NULL,
+    column_count INT NOT NULL,
+    built_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_feature_runs_set ON feature_runs (feature_set_id, id DESC);
+ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS current_run_id BIGINT;
+
+-- On each walk-forward run: the build it read (feature_run_id), and a hash of
+-- exactly what it trained and scored on (input_snapshot), with the parts that
+-- make it up in snapshot_json (matrix, closes, park) so a mismatch can say
+-- which one moved. NULL on a run from before G3: nothing was recorded, and
+-- "no snapshot" must not read as "matches".
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS feature_run_id BIGINT;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS input_snapshot VARCHAR(64);
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS snapshot_json TEXT;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS code_hash VARCHAR(64);
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS git_sha VARCHAR(40);
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS lib_versions_json TEXT;
+
+-- ---------------------------------------------------------------------------
 -- The buy-and-hold benchmark, computed once per window
 -- ---------------------------------------------------------------------------
 -- DESIGN.md ("Buy-and-hold is one fixed benchmark"): "It is computed once for a
@@ -543,6 +603,45 @@ CREATE INDEX IF NOT EXISTS idx_benchmarks_window
 -- results pointing at it must not vanish underneath them.
 ALTER TABLE backtest_results
     ADD COLUMN IF NOT EXISTS benchmark_id BIGINT REFERENCES benchmarks(id);
+
+-- The same link for a walk-forward fold (DESIGN-GAPS G23): the fold's
+-- hold_return is read from this row, which the first run over the window
+-- stored. Keyed on a capital of 1, since a fold is scored as the growth of 1.
+-- NULL on folds scored before this, which computed buy-and-hold inline, and the
+-- same no-backfill reasoning applies.
+ALTER TABLE walkforward_folds
+    ADD COLUMN IF NOT EXISTS benchmark_id BIGINT REFERENCES benchmarks(id);
+
+-- Strategy 2, margin long and inverse (Design Notes, Trading Strategies; G5).
+-- How the run acted on its signals: 'signals' (Strategy 1, long unless SELL)
+-- or 'margin' (a QQQ core never sold, margin QQQ on an up signal, margin PSQ
+-- on a down one). The dials are percent of the core, NULL under Strategy 1 so
+-- a setting that did nothing never reads as one that did; long_threshold is
+-- NULL for a classifier. Existing rows are Strategy 1, which is what they ran.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS execution VARCHAR(16) NOT NULL DEFAULT 'signals';
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS leverage_pct DOUBLE PRECISION;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS hedge_pct DOUBLE PRECISION;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS margin_spread_pct DOUBLE PRECISION;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS maintenance_pct DOUBLE PRECISION;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS long_threshold DOUBLE PRECISION;
+-- G5 step 2: the money loss was Strategy 2's curve as well, so the model (and
+-- its signals) differ from a run that was only scored with it, like tax_train.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS margin_train BOOLEAN NOT NULL DEFAULT false;
+-- Per fold under Strategy 2: interest charged (negative points of starting
+-- capital, beside the other cost terms), forced closes, cuts back to the 50%
+-- ceiling, bars held long and hedged, and bars below maintenance with nothing
+-- left on margin (the core itself at risk). NULL on a Strategy 1 fold.
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS margin_interest DOUBLE PRECISION;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS margin_calls INT;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS trims INT;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS days_long INT;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS days_hedged INT;
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS core_at_risk INT;
+-- G25: the fold scored with every signal UP (always long on margin, same dials,
+-- interest, costs and tax), in percent like strat_return. Buy-and-hold stays the
+-- benchmark; strat_return - levered_return is what the model's timing added
+-- over borrowing alone. NULL under Strategy 1.
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS levered_return DOUBLE PRECISION;
 
 -- ---------------------------------------------------------------------------
 -- The feature catalogue
@@ -672,7 +771,7 @@ BEGIN
         'instruments', 'data_sources', 'data_imports', 'import_files',
         'backtest_results', 'feature_sets', 'feature_spec', 'feature_values',
         'walkforward_runs', 'walkforward_folds', 'benchmarks',
-        'feature_definitions'
+        'feature_definitions', 'feature_runs'
     ] LOOP
         EXECUTE format(
             'ALTER TABLE %I ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ', t);
@@ -766,7 +865,7 @@ BEGIN
         'instruments', 'data_sources', 'data_imports', 'import_files',
         'backtest_results', 'feature_sets', 'feature_spec', 'feature_values',
         'walkforward_runs', 'walkforward_folds', 'benchmarks',
-        'feature_definitions'
+        'feature_definitions', 'feature_runs'
     ] LOOP
         -- DROP then CREATE: CREATE TRIGGER has no IF NOT EXISTS before PG 14,
         -- and this keeps the definition authoritative if it ever changes.

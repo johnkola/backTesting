@@ -8,6 +8,12 @@ pivot between the two, and it is the only place that knows both shapes.
 Column order comes from `feature_spec.column_index`, not from whatever order
 the rows happen to come back in. A model's weights are positional, so a set
 read back with its columns permuted would score nonsense while looking fine.
+
+Only `role = 'input'` columns are ever read into a matrix. A set also stores
+data-only columns (RSI, MACD, realized volatility: Features.md B keeps them
+"computed and stored ... but kept out of the network"), and this module is the
+boundary that keeps them out. They are read by name from `feature_values` by
+whatever wants them for a chart or a rule; never through here.
 """
 
 from __future__ import annotations
@@ -78,16 +84,27 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     asked in, because weights are positional and a run must not depend on the
     order someone ticked boxes. A name the set does not hold is an error here;
     deciding what to drop, and saying so, is `strategy_spec.resolve_columns`.
+
+    Input columns only, with or without `columns`: asking for a data-only column
+    is an error, not a quiet inclusion.
     """
     cur.execute(
-        "SELECT feature_name FROM feature_spec WHERE feature_set_id = %s "
+        "SELECT feature_name, role FROM feature_spec WHERE feature_set_id = %s "
         "ORDER BY column_index",
         (set_id,),
     )
-    names = [r[0] for r in cur.fetchall()]
+    spec = cur.fetchall()
+    names = [n for n, role in spec if role == "input"]
+    data_only = {n for n, role in spec if role == "data"}
     if not names:
-        raise LookupError(f"feature set {set_id} has no feature_spec rows")
+        raise LookupError(f"feature set {set_id} has no feature_spec rows with role 'input'")
     if columns is not None:
+        data = sorted(set(columns) & data_only)
+        if data:
+            raise LookupError(
+                f"feature set {set_id}: {', '.join(data)} is data only, "
+                f"kept out of the network"
+            )
         missing = sorted(set(columns) - set(names))
         if missing:
             raise LookupError(f"feature set {set_id} has no column(s): {', '.join(missing)}")
@@ -115,7 +132,7 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     rows: dict[date, list[float | None]] = {}
     for day, name, value in cur.fetchall():
         pos = index.get(name)
-        if pos is None:  # outside the subset, or dropped from the spec but on disk
+        if pos is None:  # outside the subset, data only, or dropped from the spec
             continue
         rows.setdefault(day, [None] * len(names))[pos] = value
 
@@ -133,10 +150,22 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
 
 
 def column_names(cur, set_id: int) -> list[str]:
-    """The set's columns in `feature_spec` order: what a strategy may select."""
+    """The set's input columns in `feature_spec` order: what a strategy may
+    select, and what `read_matrix` reads."""
     cur.execute(
         "SELECT feature_name FROM feature_spec WHERE feature_set_id = %s "
-        "ORDER BY column_index",
+        "AND role = 'input' ORDER BY column_index",
+        (set_id,),
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
+def data_columns(cur, set_id: int) -> list[str]:
+    """The set's data-only columns: stored, never a network input. Named so a
+    run that selected one can say why it was dropped."""
+    cur.execute(
+        "SELECT feature_name FROM feature_spec WHERE feature_set_id = %s "
+        "AND role = 'data' ORDER BY column_index",
         (set_id,),
     )
     return [r[0] for r in cur.fetchall()]

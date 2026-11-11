@@ -2,6 +2,7 @@ package com.bazarbozorg.backtest.report;
 
 import com.bazarbozorg.backtest.model.EquityPoint;
 import com.bazarbozorg.backtest.model.enums.OrderSide;
+import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.Position;
 import com.bazarbozorg.backtest.model.Trade;
 import org.junit.jupiter.api.DisplayName;
@@ -226,5 +227,64 @@ class MetricsCalculatorTest {
 
         // avgLoss = -250 / 2 = -125.0
         assertEquals(-250.0 / 2.0, metrics.getAvgLoss(), 0.01);
+    }
+
+    // ---- DESIGN-GAPS I5: annualise per period, not per bar ------------------
+
+    @Test
+    @DisplayName("periodsPerYear is fixed for D1, W1 and MN1")
+    void testPeriodsPerYearDailyAndUp() {
+        assertEquals(252, MetricsCalculator.periodsPerYear(Timeframe.D1, 500, 500), 1e-9);
+        assertEquals(52, MetricsCalculator.periodsPerYear(Timeframe.W1, 100, 100), 1e-9);
+        assertEquals(12, MetricsCalculator.periodsPerYear(Timeframe.MN1, 24, 24), 1e-9);
+    }
+
+    @Test
+    @DisplayName("periodsPerYear for intraday is 252 times the measured bars per day")
+    void testPeriodsPerYearIntraday() {
+        // NYSE M30: 13 bars a day; NYSE H1: 7 (the last one short); 24h H1: 24.
+        assertEquals(252 * 13, MetricsCalculator.periodsPerYear(Timeframe.M30, 6500, 500), 1e-9);
+        assertEquals(252 * 7, MetricsCalculator.periodsPerYear(Timeframe.H1, 3500, 500), 1e-9);
+        assertEquals(252 * 24, MetricsCalculator.periodsPerYear(Timeframe.H1, 12000, 500), 1e-9);
+        // Nothing to measure from: the bar length over a 6.5-hour session.
+        assertEquals(252 * 13, MetricsCalculator.periodsPerYear(Timeframe.M30, 0, 0), 1e-9);
+    }
+
+    @Test
+    @DisplayName("two years of M30 annualise as two years, not as 26")
+    void testIntradayAnnualisedReturn() {
+        // +21% over 2 x 252 days of 13 bars: 10% a year. Read as 252 bars a
+        // year, the old calculation, it came out at about 0.73%.
+        long days = 2 * 252;
+        long bars = days * 13;
+        double ppy = MetricsCalculator.periodsPerYear(Timeframe.M30, bars, days);
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, bars, days, ppy);
+        assertEquals(10.0, m.getAnnualizedReturnPct(), 1e-9);
+        assertEquals(days, m.getTradingDays());
+    }
+
+    @Test
+    @DisplayName("the daily overload is unchanged: 252 bars a year")
+    void testDailyOverloadUnchanged() {
+        PerformanceMetrics oldWay = MetricsCalculator.calculate(
+                List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, 504);
+        PerformanceMetrics newWay = MetricsCalculator.calculate(
+                List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, 504, 504,
+                MetricsCalculator.periodsPerYear(Timeframe.D1, 504, 504));
+        assertEquals(10.0, oldWay.getAnnualizedReturnPct(), 1e-9);
+        assertEquals(oldWay.getAnnualizedReturnPct(), newWay.getAnnualizedReturnPct(), 1e-12);
+        assertEquals(oldWay.getSharpeRatio(), newWay.getSharpeRatio(), 1e-12);
+        assertEquals(oldWay.getSortinoRatio(), newWay.getSortinoRatio(), 1e-12);
+    }
+
+    @Test
+    @DisplayName("Sharpe scales with the square root of the periods per year")
+    void testSharpeScalesWithPeriods() {
+        PerformanceMetrics daily = MetricsCalculator.calculate(
+                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 4, 252);
+        PerformanceMetrics m30 = MetricsCalculator.calculate(
+                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 1, 252 * 13);
+        assertEquals(daily.getSharpeRatio() * Math.sqrt(13), m30.getSharpeRatio(), 1e-9);
     }
 }

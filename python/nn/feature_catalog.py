@@ -44,6 +44,12 @@ from nn import feature_config
 # free at full history and nothing about it is impossible, it simply is not in
 # the store yet. Calling it `blocked` would claim a dead end that does not
 # exist, and `active` would offer the builder a column with no values behind it.
+#
+# `data-only` is a fourth value, a deliberate departure from §8.2a's three
+# (DESIGN-GAPS D4). None of the three is true of RSI, MACD and realized
+# volatility: they are decided (not `undecided`), have values (not `blocked`),
+# and must not be offered to the builder (not `active`). Design Notes' "In the
+# model" column gives them their own value, "No - data only", and so does this.
 _STATUS_MAP = {
     None: "active",
     "": "active",
@@ -52,6 +58,7 @@ _STATUS_MAP = {
     "later-paid": "undecided",
     "short-history": "undecided",
     "not-imported": "undecided",
+    feature_config.DATA_ONLY: "data-only",
 }
 
 
@@ -148,6 +155,21 @@ UPDATE feature_definitions d
    AND (d.range_start IS DISTINCT FROM r.lo OR d.range_end IS DISTINCT FROM r.hi)
 """
 
+# The other half: a feature whose stored values are all gone (its feature sets
+# deleted) goes back to NULL, "not yet known". The inner join above cannot see
+# such a feature, so without this it kept the range of values that no longer
+# exist -- which surfaced when old feature sets were cleaned out (2026-11-10).
+_CLEAR_RANGES = """
+UPDATE feature_definitions d
+   SET range_start = NULL, range_end = NULL
+ WHERE (d.range_start IS NOT NULL OR d.range_end IS NOT NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM feature_values v
+        WHERE ((d.width = 1 AND v.feature_name = d.name)
+            OR (d.width > 1 AND v.feature_name IN (d.name || '_sin', d.name || '_cos')))
+          AND v.value IS NOT NULL)
+"""
+
 # A feature the file no longer defines is removed, so the catalogue cannot show
 # a column that nothing can produce. Deliberately a delete rather than a
 # tombstone: the TOML is the record of what was ever considered, and it keeps
@@ -174,6 +196,8 @@ def sync(conn, cfg: feature_config.FeatureConfig | None = None) -> dict[str, int
 
         cur.execute(_REFRESH_RANGES)
         ranged = cur.rowcount
+        cur.execute(_CLEAR_RANGES)
+        ranged += cur.rowcount
     conn.commit()
     return {"upserted": upserted, "pruned": pruned, "rangesUpdated": ranged}
 

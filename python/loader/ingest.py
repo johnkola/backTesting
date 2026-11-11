@@ -43,6 +43,7 @@ from loader.cohesion import check_import
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
+    SkippedRows,
     SourceFile,
     check_header,
     commit_file,
@@ -160,10 +161,16 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
             return "imported"
 
     with open(path, "rb") as stream:
-        header, rows_by_year = scan_and_bucket(stream)
+        skipped = SkippedRows()
+        header, rows_by_year = scan_and_bucket(stream, skipped)
     if not header or not rows_by_year:
         print(f"  SKIP  {path.name}: no parseable data rows")
         return "empty"
+    # R6: say which rows produced no candle; the rest still import.
+    if skipped.count:
+        print(f"  WARN  {path.name}: {skipped.summary()}")
+        for ex in skipped.examples:
+            print(f"          line {ex['line']}: {ex['reason']}: {ex['text']}")
 
     # Read-only cohesiveness advisory — never changes whether the file imports.
     report = check_import(header, rows_by_year, timeframe)

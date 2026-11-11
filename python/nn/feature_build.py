@@ -1,7 +1,8 @@
 """Builds the normalized feature table described by `features.toml` and writes
 it to `feature_values`.
 
-The flow for every enabled column is the same four steps:
+The flow for every built column (the network's inputs, plus the data-only
+columns stored beside them) is the same four steps:
 
     resolve  ->  align  ->  normalize  ->  store
 
@@ -35,8 +36,8 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from nn import data_checks
-from nn import feature_config
+
+from nn import data_checks, feature_config, lineage
 from nn import normalize as nz
 from nn.feature_config import Feature, FeatureConfig
 from nn.indicators import macd as macd_series
@@ -51,6 +52,13 @@ Observed = dict[date, float]
 
 class BuildError(RuntimeError):
     """Raised with the offending feature named."""
+
+
+#: The build in progress records every candle series it reads here (G3), so
+#: `store` can say exactly which inputs produced the values it writes. Set by
+#: `main` for the length of one build; None means nothing is recording (a dry
+#: run, or a caller that only wants columns).
+_INPUT_LOG: lineage.InputLog | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +80,10 @@ def _fetch_field(cur, symbol: str, source: str, timeframe: str, field: str) -> O
     rows = cur.fetchall()
     if not rows:
         raise BuildError(f"no candles for {symbol} ({source}, {timeframe})")
-    return {d: float(v) for d, v in rows if v is not None}
+    obs = {d: float(v) for d, v in rows if v is not None}
+    if _INPUT_LOG is not None:
+        _INPUT_LOG.record(symbol, source, timeframe, field, obs)
+    return obs
 
 
 def _fetch_ohlcv(cur, symbol: str, source: str, timeframe: str) -> dict[str, Observed]:
@@ -93,6 +104,10 @@ def _fetch_ohlcv(cur, symbol: str, source: str, timeframe: str) -> dict[str, Obs
                 out[name][d] = float(v)
     if not out["close"]:
         raise BuildError(f"no candles for {symbol} ({source}, {timeframe})")
+    if _INPUT_LOG is not None:
+        _INPUT_LOG.record(symbol, source, timeframe, "ohlcv", {
+            d: tuple(out[f].get(d) for f in fields) for d in out["close"]
+        })
     return out
 
 
@@ -252,13 +267,19 @@ class BuiltColumn:
     def non_null(self) -> int:
         return sum(1 for v in self.values if v is not None)
 
+    @property
+    def role(self) -> str:
+        """`feature_spec.role`: `input` feeds the network, `data` never does."""
+        return "data" if self.feature.data_only else "input"
+
 
 def build_columns(
     cur, cfg: FeatureConfig, calendar: list[date], prev_close: list[float | None]
 ) -> list[BuiltColumn]:
-    """Resolve, align and normalize every enabled column."""
+    """Resolve, align and normalize every built column: inputs first, then the
+    data-only ones (`FeatureConfig.built`)."""
     built: list[BuiltColumn] = []
-    for feat in cfg.enabled:
+    for feat in cfg.built:
         try:
             raw = resolve_aligned(cur, feat.series, cfg, calendar)
             outputs = nz.apply(
@@ -322,18 +343,64 @@ def load_calendar(cur, cfg: FeatureConfig) -> tuple[int, int, list[date], list]:
     return inst_id, src_id, days, prev
 
 
+def values_hash(calendar: list[date], columns: list[BuiltColumn]) -> str:
+    """Hash of every value a build writes: per column, then combined by name."""
+    return lineage.combine({
+        c.name: lineage.series_hash(zip(calendar, c.values, strict=True)) for c in columns
+    })
+
+
+def newest_import_file(cur, entry: dict[str, Any]) -> int | None:
+    """The latest `import_files` version of an input series, or None (a roll-up
+    or a series loaded before R7 has none)."""
+    cur.execute(
+        "SELECT max(f.id) FROM import_files f "
+        "JOIN instruments i ON i.id = f.instrument_id "
+        "JOIN data_sources ds ON ds.id = f.source_id "
+        "WHERE i.symbol = %s AND ds.name = %s AND f.timeframe = %s",
+        (entry["symbol"], entry["source"], entry["timeframe"]),
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def record_run(cur, set_id: int, cfg: FeatureConfig, cfg_hash: str,
+               calendar: list[date], columns: list[BuiltColumn],
+               inputs: lineage.InputLog | None) -> int:
+    """Append this build to `feature_runs` and make it the set's current build."""
+    entries = inputs.to_list() if inputs is not None else []
+    for e in entries:
+        e["import_file_id"] = newest_import_file(cur, e)
+    cur.execute(
+        "INSERT INTO feature_runs (feature_set_id, schema_version, config_hash, code_hash, "
+        "git_sha, lib_versions_json, inputs_json, values_hash, row_count, column_count) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        (set_id, cfg.schema_version, cfg_hash, lineage.code_hash(), lineage.git_sha(),
+         json.dumps(lineage.lib_versions(), sort_keys=True), json.dumps(entries),
+         values_hash(calendar, columns), len(calendar), len(columns)),
+    )
+    run_id = int(cur.fetchone()[0])
+    cur.execute("UPDATE feature_sets SET current_run_id = %s WHERE id = %s", (run_id, set_id))
+    return run_id
+
+
 def store(
     conn, cur, cfg: FeatureConfig, cfg_path: Path, inst_id: int, src_id: int,
     calendar: list[date], columns: list[BuiltColumn],
-) -> int:
+    inputs: lineage.InputLog | None = None,
+) -> tuple[int, int]:
+    """Write the set and its values, and record the build. Returns (set id, build id)."""
     cfg_hash = hashlib.sha256(cfg_path.read_bytes()).hexdigest()
     a = cfg.alignment
 
-    # The first day every column can speak to. Rows before it hold NULLs and are
-    # useless for training, so recording it saves the reader working it out.
+    # The first day every INPUT column can speak to. Rows before it hold NULLs
+    # and are useless for training, so recording it saves the reader working it
+    # out. Data-only columns are left out: the network never reads them, so a
+    # late one must not move the date training can start from.
+    inputs_only = [c for c in columns if c.role == "input"]
     first_complete = None
     for i in range(len(calendar)):
-        if all(c.values[i] is not None for c in columns):
+        if all(c.values[i] is not None for c in inputs_only):
             first_complete = calendar[i]
             break
 
@@ -354,12 +421,15 @@ def store(
     cur.execute("DELETE FROM feature_values WHERE feature_set_id = %s", (set_id,))
     cur.execute("DELETE FROM feature_spec WHERE feature_set_id = %s", (set_id,))
 
+    # `columns` holds the inputs first (`FeatureConfig.built`), so the inputs
+    # take positions 0..n-1 exactly as they would with no data-only column in
+    # the file, and the data-only ones follow.
     for idx, col in enumerate(columns):
         cur.execute(
             "INSERT INTO feature_spec (feature_set_id, feature_name, method, params_json, "
-            "series_json, column_index) VALUES (%s,%s,%s,%s,%s,%s)",
+            "series_json, column_index, role) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (set_id, col.name, col.feature.method, json.dumps(col.feature.params),
-             json.dumps(col.feature.series), idx),
+             json.dumps(col.feature.series), idx, col.role),
         )
 
     with cur.copy(
@@ -368,8 +438,11 @@ def store(
         for col in columns:
             for day, v in zip(calendar, col.values, strict=True):
                 cp.write_row((set_id, col.name, day, v))
+    # Same transaction as the values: a build is recorded exactly when its
+    # values are the ones in the table.
+    run_id = record_run(cur, set_id, cfg, cfg_hash, calendar, columns, inputs)
     conn.commit()
-    return set_id
+    return set_id, run_id
 
 
 def connect():
@@ -393,10 +466,15 @@ def main() -> int:
     cfg_path = Path(args.config)
     cfg = feature_config.load(cfg_path)
     print(f"config    schema_version={cfg.schema_version}  "
-          f"{len(cfg.enabled)} columns -> {cfg.input_width} values/bar")
+          f"{len(cfg.enabled)} columns -> {cfg.input_width} values/bar, "
+          f"plus {len(cfg.data_only)} data only")
 
     conn = connect()
     cur = conn.cursor()
+
+    # Record every series this build reads, for `feature_runs` (G3).
+    global _INPUT_LOG
+    _INPUT_LOG = lineage.InputLog()
 
     inst_id, src_id, calendar, prev_close = load_calendar(cur, cfg)
     print(f"calendar  {cfg.alignment.calendar_symbol} ({cfg.alignment.calendar_source}) "
@@ -404,6 +482,9 @@ def main() -> int:
 
     # Normalize over everything, then trim — see trim()'s docstring.
     columns = build_columns(cur, cfg, calendar, prev_close)
+    # Stop recording here: the data checks below read published series to
+    # compare against, and those never change a stored value.
+    build_inputs, _INPUT_LOG = _INPUT_LOG, None
 
     # Data checks run on the UNTRIMMED calendar and before the trim rebinds it:
     # they are a reading about the source series, not about the output window,
@@ -420,11 +501,12 @@ def main() -> int:
     print(f"\n{'COLUMN':<24} {'METHOD':<22} {'NON-NULL':>9}  {'MIN':>8} {'MAX':>8} {'MEAN':>8}")
     for col in columns:
         vals = [v for v in col.values if v is not None]
+        tag = "  (data only)" if col.role == "data" else ""
         if vals:
             print(f"{col.name:<24} {col.feature.method:<22} {col.non_null:>9}  "
-                  f"{min(vals):>8.2f} {max(vals):>8.2f} {sum(vals)/len(vals):>8.2f}")
+                  f"{min(vals):>8.2f} {max(vals):>8.2f} {sum(vals)/len(vals):>8.2f}{tag}")
         else:
-            print(f"{col.name:<24} {col.feature.method:<22} {0:>9}  {'ALL NULL':>26}")
+            print(f"{col.name:<24} {col.feature.method:<22} {0:>9}  {'ALL NULL':>26}{tag}")
 
     if checks:
         print(data_checks.report(checks))
@@ -438,7 +520,8 @@ def main() -> int:
         print("\n--dry-run: nothing written")
         return 0
 
-    set_id = store(conn, cur, cfg, cfg_path, inst_id, src_id, calendar, columns)
+    set_id, build_id = store(conn, cur, cfg, cfg_path, inst_id, src_id, calendar, columns,
+                             build_inputs)
     cur.execute(
         "SELECT row_count, first_complete_date::date FROM feature_sets WHERE id=%s", (set_id,)
     )
@@ -448,6 +531,8 @@ def main() -> int:
     print(f"\nwrote feature_set id={set_id}: {len(columns)} columns x {rows} rows "
           f"= {stored} values")
     print(f"first fully-populated date: {first_complete}")
+    print(f"recorded  feature_runs id={build_id} ({len(build_inputs.entries)} input series, "
+          f"code {lineage.code_hash()[:12]})")
     conn.close()
     return 0
 

@@ -41,8 +41,10 @@ class FakeCursor:
 D1, D2, D3 = date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)
 
 
-def spec_rows(*names):
-    return [(n,) for n in names]
+def spec_rows(*names, data=()):
+    """`feature_spec` rows as read_matrix reads them: (name, role), the input
+    columns in order, then any data-only ones."""
+    return [(n, "input") for n in names] + [(n, "data") for n in data]
 
 
 # --------------------------------------------------------------------------
@@ -145,6 +147,49 @@ def test_an_empty_subset_is_an_error():
     cur = FakeCursor(spec_rows("alpha"))
     with pytest.raises(LookupError, match="empty subset"):
         fs.read_matrix(cur, 1, columns=[])
+
+
+# --------------------------------------------------------------------------
+# data-only columns (Features.md B: stored, kept out of the network)
+# --------------------------------------------------------------------------
+
+
+def test_a_data_only_column_never_reaches_the_matrix():
+    """The set stores rsi_14 beside the inputs. A read of the whole set is the
+    network's input, so it must come back without it -- and a NULL in it (RSI
+    has none, but MACD's z-score warms up) must not cost an input row either."""
+    cur = FakeCursor(
+        spec_rows("alpha", "beta", data=("rsi_14",)),
+        [(D1, "alpha", 1.0), (D1, "beta", 2.0), (D1, "rsi_14", None),
+         (D2, "alpha", 3.0), (D2, "beta", 4.0), (D2, "rsi_14", 0.7)],
+    )
+    fm = fs.read_matrix(cur, 1)
+    assert fm.names == ["alpha", "beta"]
+    assert fm.dates == [D1, D2]
+    assert fm.values.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+
+
+def test_asking_for_a_data_only_column_is_an_error_not_an_inclusion():
+    cur = FakeCursor(spec_rows("alpha", data=("macd",)))
+    with pytest.raises(LookupError, match="macd is data only"):
+        fs.read_matrix(cur, 1, columns=["alpha", "macd"])
+
+
+def test_a_set_of_data_only_columns_has_nothing_to_train_on():
+    cur = FakeCursor(spec_rows(data=("rsi_14",)))
+    with pytest.raises(LookupError, match="no feature_spec rows with role 'input'"):
+        fs.read_matrix(cur, 1)
+
+
+def test_column_names_and_data_columns_split_on_role():
+    """What a strategy may select is the inputs; the data-only names are read
+    separately so a run can say why it dropped one."""
+    cur = FakeCursor([("alpha",)])
+    assert fs.column_names(cur, 1) == ["alpha"]
+    assert "role = 'input'" in cur.last_sql
+    cur = FakeCursor([("rsi_14",)])
+    assert fs.data_columns(cur, 1) == ["rsi_14"]
+    assert "role = 'data'" in cur.last_sql
 
 
 def test_column_counts_reads_the_half_open_window():

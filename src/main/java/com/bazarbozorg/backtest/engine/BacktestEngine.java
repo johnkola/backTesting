@@ -269,7 +269,16 @@ public class BacktestEngine {
         // Same reasoning for annualisation: the strategy's equity curve only
         // spans the post-warmup bars, so dividing by the whole series understated
         // its rate. Both sides now annualise over the bars actually traded.
-        long tradingDays = series.getBarCount() - benchmarkStart;
+        //
+        // Bars are not days below D1 (DESIGN-GAPS I5): an M30 day holds 13 of
+        // them. So the bar count drives the exponent, the distinct days are
+        // what gets reported as trading days, and the bars a year comes from
+        // the timeframe and the bars each day was measured to hold.
+        long tradedBars = series.getBarCount() - benchmarkStart;
+        long tradingDays = java.util.stream.IntStream.range(benchmarkStart, series.getBarCount())
+                .mapToObj(i -> barDate(series.getBar(i)).toLocalDate())
+                .distinct().count();
+        double periodsPerYear = MetricsCalculator.periodsPerYear(timeframe, tradedBars, tradingDays);
 
         double finalEquity = portfolioManager.getEquity(lastClose);
 
@@ -279,7 +288,9 @@ public class BacktestEngine {
                 initialCapital,
                 finalEquity,
                 buyAndHoldReturnPct,
-                tradingDays);
+                tradedBars,
+                tradingDays,
+                periodsPerYear);
 
         String modelCacheKey = null;
         Boolean modelCacheHit = null;

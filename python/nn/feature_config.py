@@ -73,6 +73,18 @@ _CADENCES = {"daily", "weekly", "monthly", "quarterly"}
 _COSTS = {"free", "paid"}
 _UNITS = {"percent", "level", "count", "ratio"}
 
+#: The one status that changes what the build does. Features.md B: RSI, MACD and
+#: realized volatility are "computed and stored for charts and rule-based
+#: strategies, but kept out of the network". So a data-only column is built,
+#: normalized and stored like any other, and is never a network input. Every
+#: other status on a disabled column means "not built".
+#:
+#: Written out rather than implied by a missing status. It used to be implied,
+#: and nothing was built at all: `enabled = false` meant "not built" while the
+#: Features tab read the absent status as "data only", so the tab claimed three
+#: stored columns that did not exist (G9).
+DATA_ONLY = "data-only"
+
 
 @dataclass(frozen=True)
 class Feature:
@@ -116,6 +128,11 @@ class Feature:
         return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
     @property
+    def data_only(self) -> bool:
+        """Built and stored, never a network input. See DATA_ONLY."""
+        return not self.enabled and self.status == DATA_ONLY
+
+    @property
     def is_derived(self) -> bool:
         """True when the series is computed rather than read straight from a
         stored column — a binary op on two series, or a named computation."""
@@ -153,7 +170,21 @@ class FeatureConfig:
 
     @property
     def enabled(self) -> tuple[Feature, ...]:
+        """The network's inputs."""
         return tuple(f for f in self.features if f.enabled)
+
+    @property
+    def data_only(self) -> tuple[Feature, ...]:
+        """Stored beside the inputs, never fed to the network."""
+        return tuple(f for f in self.features if f.data_only)
+
+    @property
+    def built(self) -> tuple[Feature, ...]:
+        """Everything the build computes and stores: the inputs first, in file
+        order, then the data-only columns. Inputs first so their positions in
+        `feature_spec` are the same with or without data-only columns beside
+        them."""
+        return self.enabled + self.data_only
 
     @property
     def input_width(self) -> int:
@@ -169,8 +200,8 @@ class FeatureConfig:
         raise KeyError(name)
 
     def required_series(self) -> set[tuple[str, str]]:
-        """Every (symbol, source) pair that has to be loadable for the enabled
-        features to build. What the data layer should check before training,
+        """Every (symbol, source) pair that has to be loadable for the built
+        features (inputs and data-only). What the data layer should check before training,
         so a missing import fails up front."""
         out: set[tuple[str, str]] = set()
 
@@ -181,7 +212,7 @@ class FeatureConfig:
             elif "symbol" in spec and "source" in spec:
                 out.add((spec["symbol"], spec["source"]))
 
-        for f in self.enabled:
+        for f in self.built:
             walk(f.series)
 
         # The published side of every check whose feature is actually built.
@@ -195,9 +226,10 @@ class FeatureConfig:
 
     @property
     def live_checks(self) -> tuple[Check, ...]:
-        """Checks whose feature is enabled. A disabled column is not built, so
-        there is nothing to compare and its published series is not needed."""
-        on = {f.name for f in self.enabled}
+        """Checks whose feature is built, as an input or data only. Any other
+        disabled column is not built, so there is nothing to compare and its
+        published series is not needed."""
+        on = {f.name for f in self.built}
         return tuple(c for c in self.checks if c.feature in on)
 
 
@@ -263,13 +295,23 @@ def _build_feature(raw: dict[str, Any], defaults: dict[str, Any]) -> Feature:
                 f"{name}: unknown {key} {value!r}; expected one of {sorted(allowed)}"
             )
 
+    enabled = bool(raw.get("enabled", True))
+    status = raw.get("status")
+    if status == DATA_ONLY and enabled:
+        # Contradictory, and either reading is a silent mistake: training on a
+        # column the file says is kept out, or keeping out one it says is in.
+        raise FeatureConfigError(
+            f"{name}: status {DATA_ONLY!r} means kept out of the network, "
+            f"so it needs `enabled = false`"
+        )
+
     return Feature(
         name=name,
         series=raw["series"],
         method=method,
         params=params,
-        enabled=bool(raw.get("enabled", True)),
-        status=raw.get("status"),
+        enabled=enabled,
+        status=status,
         note=raw.get("note"),
         scope=raw["scope"],
         cadence=raw["cadence"],
@@ -388,7 +430,7 @@ def describe(cfg: FeatureConfig) -> str:
         f"fill            {cfg.alignment.fill}, max {cfg.alignment.max_fill_days} days",
         "",
         f"{len(cfg.features)} columns defined, {len(cfg.enabled)} enabled, "
-        f"{cfg.input_width} values per bar",
+        f"{len(cfg.data_only)} data only, {cfg.input_width} values per bar",
         f"× lookback {cfg.defaults.get('lookback_window', '?')} "
         f"= {cfg.input_width * int(cfg.defaults.get('lookback_window', 0))} network inputs",
         "",
@@ -403,7 +445,7 @@ def describe(cfg: FeatureConfig) -> str:
         live = {c.name for c in cfg.live_checks}
         lines += ["", f"{'CHECK':<26} {'FEATURE':<22} {'TOL':>8}  STATE"]
         for c in cfg.checks:
-            state = "live" if c.name in live else "skipped (feature off)"
+            state = "live" if c.name in live else "skipped (feature not built)"
             lines.append(f"{c.name:<26} {c.feature:<22} {c.tolerance:>8.4g}  {state}")
 
     lines += ["", "Series that must be loadable:"]

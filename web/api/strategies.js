@@ -73,7 +73,26 @@ const OBJECTIVE_DEFAULTS = {
   taxScore: false,
   taxRatePct: null,
   taxTrain: false,
+  execution: 'signals',
+  leveragePct: null,
+  hedgePct: null,
+  marginSpreadPct: null,
+  maintenancePct: null,
+  longThreshold: null,
+  marginTrain: false,
 };
+/**
+ * How the signals are acted on (Design Notes, Trading Strategies; G5).
+ * 'signals' is Strategy 1 (long unless SELL); 'margin' is Strategy 2: a QQQ
+ * core never sold, margin QQQ on an up signal, margin PSQ on a down one.
+ */
+const EXECUTIONS = new Set(['signals', 'margin']);
+/** Strategy 2's dials, filled when absent. Percent of the core; spread in points over Fed funds. */
+const MARGIN_DEFAULTS = { leveragePct: 20, hedgePct: 20, marginSpreadPct: 1.5, maintenancePct: 30 };
+/** A money model's position at or above this is the conviction to go long on margin. */
+const DEFAULT_LONG_THRESHOLD = 0.75;
+/** The design's hard rule: the margin position never exceeds 50% of the holding. */
+const MARGIN_CEILING_PCT = 50;
 /** Loss → what it trains. `ce` is the 3-class label; the rest a position head. */
 const LOSSES = new Set(['ce', 'return', 'sharpe', 'calmar']);
 /** The metric that decides whether a run beat holding. */
@@ -159,12 +178,84 @@ function validateObjective(raw, errors) {
     if (threshold === null) threshold = DEFAULT_POSITION_THRESHOLD;
   }
 
+  const margin = validateExecution(o, threshold, errors);
+
   if (errors.length > before) return null;
   return {
     loss: o.loss, classWeights: o.classWeights, positionThreshold: threshold,
     verdict: o.verdict, costBps: cost, park: o.park,
     taxScore: o.taxScore, taxRatePct: taxRate, taxTrain: o.taxTrain,
+    ...margin,
   };
+}
+
+/**
+ * Strategy 1 or 2, and Strategy 2's dials. Under Strategy 1 every dial must be
+ * null: a leverage saved on a run that never borrowed would read as one that
+ * did. Under Strategy 2 absent dials take their defaults, and a leverage or
+ * hedge past 50% of the holding is refused, not clipped -- "the backtest
+ * should refuse any configuration that breaches it".
+ */
+function validateExecution(o, threshold, errors) {
+  const dials = ['leveragePct', 'hedgePct', 'marginSpreadPct', 'maintenancePct', 'longThreshold'];
+  // Train with margin changes the model and so its signals, like train with
+  // tax: its own switch, Strategy 2 and a money loss only.
+  if (typeof o.marginTrain !== 'boolean') {
+    errors.push('objective.marginTrain must be true or false');
+    return {};
+  }
+  const num = (v) => (v === '' || v === undefined ? null
+    : typeof v === 'string' ? Number(v) : v);
+  if (!EXECUTIONS.has(o.execution)) {
+    errors.push(`objective.execution must be one of ${[...EXECUTIONS].join(', ')}`);
+    return {};
+  }
+  if (o.execution === 'signals') {
+    for (const d of dials) {
+      if (num(o[d]) !== null) errors.push(`objective.${d} only applies to execution 'margin'`);
+    }
+    if (o.marginTrain) errors.push("train with margin needs execution 'margin' (Strategy 2)");
+    return {
+      ...Object.fromEntries([['execution', 'signals'], ...dials.map((d) => [d, null])]),
+      marginTrain: false,
+    };
+  }
+  const out = { execution: 'margin', marginTrain: o.marginTrain };
+  if (o.marginTrain && o.loss === 'ce') errors.push('train with margin needs a money-trained loss, not ce');
+  if (o.marginTrain && o.taxTrain) {
+    errors.push('train with margin and train with tax together are not supported yet');
+  }
+  for (const [d, def] of Object.entries(MARGIN_DEFAULTS)) {
+    const v = num(o[d]) ?? def;
+    out[d] = v;
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      errors.push(`objective.${d} must be a number`);
+    }
+  }
+  for (const d of ['leveragePct', 'hedgePct']) {
+    if (Number.isFinite(out[d]) && (out[d] <= 0 || out[d] > MARGIN_CEILING_PCT)) {
+      errors.push(`objective.${d} must be above 0 and at most ${MARGIN_CEILING_PCT}: `
+        + 'the margin position never exceeds 50% of the holding');
+    }
+  }
+  if (Number.isFinite(out.marginSpreadPct) && (out.marginSpreadPct < 0 || out.marginSpreadPct > 20)) {
+    errors.push('objective.marginSpreadPct must be between 0 and 20 points over Fed funds');
+  }
+  if (Number.isFinite(out.maintenancePct) && (out.maintenancePct <= 0 || out.maintenancePct >= 100)) {
+    errors.push('objective.maintenancePct must be between 0 and 100, exclusive');
+  }
+  const long = num(o.longThreshold);
+  if (o.loss === 'ce') {
+    if (long !== null) errors.push('a long threshold only applies to a money-trained loss, not ce');
+    out.longThreshold = null;
+  } else {
+    out.longThreshold = long ?? DEFAULT_LONG_THRESHOLD;
+    if (typeof out.longThreshold !== 'number' || !Number.isFinite(out.longThreshold)
+        || out.longThreshold >= 1 || (threshold !== null && out.longThreshold <= threshold)) {
+      errors.push('objective.longThreshold must be above the position threshold and below 1');
+    }
+  }
+  return out;
 }
 
 /** §8.2a: single split, k-fold by time, or walk-forward. */
@@ -362,6 +453,11 @@ function validateStrategy(body) {
   }
 
   const objective = validateObjective(b.objective, errors);
+  // Strategy 2 holds a QQQ core and hedges with PSQ, QQQ's inverse.
+  if (objective?.execution === 'margin' && instrument && instrument !== 'QQQ') {
+    errors.push(`execution 'margin' (Strategy 2) runs on QQQ only, not ${instrument}: `
+      + 'its hedge is PSQ, the inverse of QQQ');
+  }
 
   let notes = null;
   if (b.notes !== undefined && b.notes !== null && b.notes !== '') {
@@ -506,6 +602,34 @@ async function save(v) {
 }
 
 /**
+ * Which of `names` are data-only columns: stored for charts and rules, never a
+ * network input (Features.md B; `feature_definitions.status = 'data-only'`).
+ *
+ * A strategy that names one is refused on save rather than having it dropped
+ * at run time: the strategy's feature list is a claim about what the model
+ * trains on, and the design has already decided these stay out. To test that
+ * decision the column is enabled in features.toml, not ticked here.
+ *
+ * Read from the catalogue the loader syncs, so a database that has never been
+ * synced has no table yet and refuses nothing; the runner drops the column with
+ * a reason all the same.
+ */
+async function dataOnlyFeatures(names) {
+  if (!names.length) return [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT name FROM feature_definitions
+        WHERE status = 'data-only' AND name = ANY($1::text[]) ORDER BY name`,
+      [names],
+    );
+    return rows.map((r) => r.name);
+  } catch (err) {
+    if (err.code === '42P01') return []; // undefined_table: catalogue not synced yet
+    throw err;
+  }
+}
+
+/**
  * Removes one saved version, unless a run was trained from it.
  *
  * Deleting is not the same as the overwrite §8.2a forbids. That rule exists so
@@ -587,6 +711,10 @@ const OBJECTIVE_SPEC = {
   maxCostBps: MAX_COST_BPS,
   maxTaxRatePct: MAX_TAX_RATE_PCT,
   defaultPositionThreshold: DEFAULT_POSITION_THRESHOLD,
+  executions: [...EXECUTIONS],
+  marginDefaults: MARGIN_DEFAULTS,
+  defaultLongThreshold: DEFAULT_LONG_THRESHOLD,
+  marginCeilingPct: MARGIN_CEILING_PCT,
 };
 
 module.exports = {
@@ -604,6 +732,7 @@ module.exports = {
   ensureSchema,
   list,
   save,
+  dataOnlyFeatures,
   remove,
   removeByName,
   getById,

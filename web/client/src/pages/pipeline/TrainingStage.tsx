@@ -7,7 +7,9 @@ import {
 } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
-import { newestFinished, num, pp, stageSummary } from '../../lib/walkforwardView'
+import {
+  executionLine, isLeverageOnly, lineageLine, newestFinished, num, pp, stageSummary,
+} from '../../lib/walkforwardView'
 import StartWalkforward from '../../components/StartWalkforward'
 import StageShell, { NotWired } from './StageShell'
 
@@ -49,6 +51,8 @@ export default function TrainingStage() {
       : api.walkforwardRun(openRun, signal)),
     [openRun],
   )
+  // Strategy 2 (G5): the fold table swaps Strategy 1's attribution for margin figures.
+  const margin = detail?.run.execution?.kind === 'margin'
 
   const { data, error } = useApiData<Loaded>((signal) => api.models(tf, signal), [tf])
 
@@ -157,6 +161,14 @@ export default function TrainingStage() {
                       holdout
                     </span>
                   )}
+                  {r.execution?.kind === 'margin' && (
+                    <span
+                      className="badge badge-xs badge-secondary ml-2 tooltip tooltip-right"
+                      data-tip={executionLine(r) ?? ''}
+                    >
+                      Strategy 2
+                    </span>
+                  )}
                 </td>
                 <td className="font-mono text-xs">{r.symbol}</td>
                 <td className="text-xs">
@@ -180,7 +192,9 @@ export default function TrainingStage() {
                 </td>
                 <td className="text-right font-mono">{num(r.worstStratDrawdown, 1)}</td>
                 <td className="text-right">{r.folds === 0 ? '—' : r.totalTrades}</td>
-                <td className="text-right font-mono text-xs">{pp(r.meanDriftTax)}</td>
+                <td className="text-right font-mono text-xs">
+                  {r.execution?.kind === 'margin' ? <NotStrategy1 /> : pp(r.meanDriftTax)}
+                </td>
                 <td className="text-right font-mono text-xs">{pp(r.meanCommissions)}</td>
                 <td
                   className="text-right font-mono text-xs"
@@ -193,15 +207,28 @@ export default function TrainingStage() {
                   {r.taxTrain && <span className="badge badge-xs badge-warning ml-1">trained</span>}
                 </td>
                 <td className={`text-right font-mono text-xs ${
-                  r.meanTiming == null ? '' : r.meanTiming > 0 ? 'text-success' : 'text-error'}`}
+                  r.execution?.kind === 'margin' || r.meanTiming == null ? ''
+                    : r.meanTiming > 0 ? 'text-success' : 'text-error'}`}
                 >
-                  {pp(r.meanTiming)}
+                  {r.execution?.kind === 'margin' ? <NotStrategy1 /> : pp(r.meanTiming)}
                 </td>
                 <td>
                   {r.inProgress
                     ? <span className="badge badge-sm badge-info">running</span>
                     : r.beatsHoldOnReturn === true
-                      ? <span className="badge badge-sm badge-success">beat hold</span>
+                      ? (
+                        <>
+                          <span className="badge badge-sm badge-success">beat hold</span>
+                          {isLeverageOnly(r) && (
+                            <span
+                              className="badge badge-sm badge-warning ml-1 tooltip tooltip-left"
+                              data-tip="Always long on margin, with no model, earned more: the excess is the borrowing, not the timing"
+                            >
+                              leverage, not timing
+                            </span>
+                          )}
+                        </>
+                      )
                       : r.beatsHoldOnReturn === false
                         ? <span className="badge badge-sm badge-error">lost to hold</span>
                         : <span className="badge badge-sm badge-ghost">not decided</span>}
@@ -235,6 +262,8 @@ export default function TrainingStage() {
         with the folds they came from. <strong>Only <span className="font-mono">Timing</span> is
           the model:</strong> drift is the price of being out of the market at all and
         commissions are mechanical, so a run can lose heavily with its timing term near zero.
+        Drift and timing describe Strategy 1&apos;s long-or-out rule; a Strategy 2 run is never
+        out of the market, so it shows its margin interest and calls in its folds instead.
       </p>
 
       {openRun !== null && (
@@ -265,6 +294,29 @@ export default function TrainingStage() {
                       <th className="text-right">Comm</th>
                       <th className="text-right">Tax</th>
                       <th className="text-right">Timing</th>
+                      {margin && (
+                        <>
+                          <th
+                            className="text-right tooltip tooltip-left"
+                            data-tip="Bars held long on margin / in PSQ"
+                          >
+                            Long / PSQ
+                          </th>
+                          <th
+                            className="text-right tooltip tooltip-left"
+                            data-tip="Strategy return minus the same fold always long on margin, with no model: what the timing added over borrowing alone"
+                          >
+                            vs always long
+                          </th>
+                          <th className="text-right">Interest</th>
+                          <th
+                            className="text-right tooltip tooltip-left"
+                            data-tip="Margin calls / cuts back to the 50% ceiling"
+                          >
+                            Calls / trims
+                          </th>
+                        </>
+                      )}
                       <th className="text-right">Accuracy</th>
                       <th
                         className="text-right tooltip tooltip-left"
@@ -303,17 +355,45 @@ export default function TrainingStage() {
                             <span className="opacity-60">{` / ${num(f.holdMaxdd, 1)}`}</span>
                           </td>
                           <td className="text-right">{f.trades}</td>
-                          <td className="text-right">{f.daysOut}</td>
-                          <td className="text-right font-mono text-xs">{pp(f.driftTax)}</td>
+                          <td className="text-right">{margin ? <NotStrategy1 /> : f.daysOut}</td>
+                          <td className="text-right font-mono text-xs">
+                            {margin ? <NotStrategy1 /> : pp(f.driftTax)}
+                          </td>
                           <td className="text-right font-mono text-xs">{pp(f.commissions)}</td>
                           <td className="text-right font-mono text-xs">
                             {detail.run.taxRate === null ? 'off' : pp(f.gainsTax)}
                           </td>
                           <td className={`text-right font-mono text-xs ${
-                            f.timing > 0 ? 'text-success' : 'text-error'}`}
+                            margin ? '' : f.timing > 0 ? 'text-success' : 'text-error'}`}
                           >
-                            {pp(f.timing)}
+                            {margin ? <NotStrategy1 /> : pp(f.timing)}
                           </td>
+                          {margin && (
+                            <>
+                              <td className="text-right text-xs">
+                                {f.daysLong} / {f.daysHedged}
+                              </td>
+                              <td
+                                className={`text-right font-mono text-xs ${
+                                  f.leveredReturn == null ? ''
+                                    : f.stratReturn > f.leveredReturn ? 'text-success' : 'text-error'}`}
+                                title={f.leveredReturn == null
+                                  ? undefined
+                                  : `Always long on margin: ${num(f.leveredReturn)}%`}
+                              >
+                                {f.leveredReturn == null ? '—' : pp(f.stratReturn - f.leveredReturn)}
+                              </td>
+                              <td className="text-right font-mono text-xs">{pp(f.marginInterest)}</td>
+                              <td
+                                className={`text-right text-xs ${
+                                  f.marginCalls || f.coreAtRisk ? 'text-error' : ''}`}
+                                title={f.coreAtRisk ? `Core at risk on ${f.coreAtRisk} day(s)` : undefined}
+                              >
+                                {f.marginCalls} / {f.trims}
+                                {!!f.coreAtRisk && ' · core at risk'}
+                              </td>
+                            </>
+                          )}
                           <td className="text-right text-xs">
                             {f.accuracy == null
                               ? <span className="opacity-60" title="Money-trained: no class to be right about">—</span>
@@ -426,6 +506,15 @@ export default function TrainingStage() {
  * the train window those columns really covered. A partial column is kept but
  * moves the first train bar, which is easy to miss from the fold table alone.
  */
+/** A Strategy 1 attribution term on a Strategy 2 run, where it does not apply. */
+function NotStrategy1() {
+  return (
+    <span className="opacity-50" title="Strategy 1's long-or-out attribution; a Strategy 2 run is never out">
+      —
+    </span>
+  )
+}
+
 function RunProvenance({ run }: { run: WalkforwardRun }) {
   const s = run.strategy
   if (!s && !run.columns) {
@@ -456,6 +545,7 @@ function RunProvenance({ run }: { run: WalkforwardRun }) {
           </p>
         )
         : <p>Launched from flags, not a saved strategy.</p>}
+      {executionLine(run) && <p>{executionLine(run)}</p>}
       <p className={run.purgeBars === null ? 'text-warning' : ''}>
         {run.purgeBars === null
           ? 'Trained before the purge: the last training bars, whose targets look into the '
@@ -479,6 +569,14 @@ function RunProvenance({ run }: { run: WalkforwardRun }) {
           Partial: {s.partial.map((p) => `${p.name} ${p.values} of ${p.bars} bars`).join('; ')}
         </p>
       )}
+      <RunLineage run={run} />
     </div>
   )
+}
+
+/** G3: which inputs and code produced the run, and whether they still hold. */
+function RunLineage({ run }: { run: WalkforwardRun }) {
+  const { tone, text } = lineageLine(run.id, run.lineage)
+  const cls = tone === 'warn' ? 'text-warning' : tone === 'muted' ? 'text-base-content/60' : ''
+  return <p className={`${cls} break-words`}>{text}</p>
 }

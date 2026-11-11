@@ -108,4 +108,28 @@ class DateTimeUtilsTest {
     void testFormatDateNull() {
         assertEquals("", DateTimeUtils.formatDate(null));
     }
+
+    // ---- DESIGN-GAPS I6: a bare end date covers its whole day ----------------
+
+    @Test
+    @DisplayName("parseEnd reads a bare date as the last microsecond of that day")
+    void testParseEndBareDate() {
+        ZonedDateTime end = DateTimeUtils.parseEnd("2025-12-31");
+        assertEquals(ZonedDateTime.of(2025, 12, 31, 23, 59, 59, 999_999_000, ZoneOffset.UTC), end);
+        // The 15:30 M30 bar of the 31st is inside it; the next midnight is not.
+        assertTrue(ZonedDateTime.of(2025, 12, 31, 15, 30, 0, 0, ZoneOffset.UTC).isBefore(end));
+        assertTrue(end.isBefore(ZonedDateTime.of(2026, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC)));
+        // And so is the D1 bar, which sits at midnight.
+        assertTrue(DateTimeUtils.parse("2025-12-31").isBefore(end));
+    }
+
+    @Test
+    @DisplayName("parseEnd keeps a value with a time exactly")
+    void testParseEndWithTime() {
+        assertEquals(DateTimeUtils.parse("2025-12-31 15:30:00"),
+                DateTimeUtils.parseEnd("2025-12-31 15:30:00"));
+        assertEquals(DateTimeUtils.parseEnd("12/31/2025"), DateTimeUtils.parseEnd("2025-12-31"));
+        assertNull(DateTimeUtils.parseEnd("not a date"));
+        assertNull(DateTimeUtils.parseEnd(" "));
+    }
 }

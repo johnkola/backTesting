@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, types only
@@ -73,7 +75,10 @@ INSERT INTO walkforward_runs
      objective, loss, cost_bps, park, threshold, tax_rate, tax_train, purge_bars,
      train_start, first_val, last_val, is_test, hyperparams_json, columns_json,
      strategy_id, strategy_name, strategy_version, dropped_json, partial_json,
-     train_first, train_bars_used, train_bars, test_end)
+     train_first, train_bars_used, train_bars, test_end,
+     feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
+     execution, leverage_pct, hedge_pct, margin_spread_pct, maintenance_pct, long_threshold,
+     margin_train)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
@@ -83,7 +88,11 @@ VALUES
      %(hyperparams_json)s, %(columns_json)s,
      %(strategy_id)s, %(strategy_name)s, %(strategy_version)s,
      %(dropped_json)s, %(partial_json)s,
-     %(train_first)s, %(train_bars_used)s, %(train_bars)s, %(test_end)s)
+     %(train_first)s, %(train_bars_used)s, %(train_bars)s, %(test_end)s,
+     %(feature_run_id)s, %(input_snapshot)s, %(snapshot_json)s, %(code_hash)s,
+     %(git_sha)s, %(lib_versions_json)s,
+     %(execution)s, %(leverage_pct)s, %(hedge_pct)s, %(margin_spread_pct)s,
+     %(maintenance_pct)s, %(long_threshold)s, %(margin_train)s)
 RETURNING id
 """
 
@@ -92,14 +101,18 @@ INSERT INTO walkforward_folds
     (run_id, fold, val_year, train_from, train_to, n_train, n_val,
      strat_return, hold_return, strat_sharpe, hold_sharpe,
      strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
-     days_out, drift_tax, commissions, timing, gains_tax, best_epoch, epochs_run)
+     days_out, drift_tax, commissions, timing, gains_tax, best_epoch, epochs_run,
+     benchmark_id, margin_interest, margin_calls, trims, days_long, days_hedged, core_at_risk,
+     levered_return)
 VALUES
     (%(run_id)s, %(fold)s, %(val_year)s, %(train_from)s, %(train_to)s,
      %(n_train)s, %(n_val)s,
      %(strat_return)s, %(hold_return)s, %(strat_sharpe)s, %(hold_sharpe)s,
      %(strat_maxdd)s, %(hold_maxdd)s, %(trades)s, %(accuracy)s, %(baseline_acc)s,
      %(days_out)s, %(drift_tax)s, %(commissions)s, %(timing)s, %(gains_tax)s,
-     %(best_epoch)s, %(epochs_run)s)
+     %(best_epoch)s, %(epochs_run)s, %(benchmark_id)s,
+     %(margin_interest)s, %(margin_calls)s, %(trims)s, %(days_long)s, %(days_hedged)s,
+     %(core_at_risk)s, %(levered_return)s)
 ON CONFLICT (run_id, fold) DO UPDATE SET
     val_year = EXCLUDED.val_year,
     train_from = EXCLUDED.train_from,
@@ -122,6 +135,14 @@ ON CONFLICT (run_id, fold) DO UPDATE SET
     gains_tax = EXCLUDED.gains_tax,
     best_epoch = EXCLUDED.best_epoch,
     epochs_run = EXCLUDED.epochs_run,
+    benchmark_id = EXCLUDED.benchmark_id,
+    margin_interest = EXCLUDED.margin_interest,
+    margin_calls = EXCLUDED.margin_calls,
+    trims = EXCLUDED.trims,
+    days_long = EXCLUDED.days_long,
+    days_hedged = EXCLUDED.days_hedged,
+    core_at_risk = EXCLUDED.core_at_risk,
+    levered_return = EXCLUDED.levered_return,
     updated_at = now(),
     updated_by = audit_actor()
 """
@@ -163,7 +184,8 @@ def owner_of_set(cur, set_id: int) -> tuple[int, int]:
 
 def run_row(args: Any, set_id: int, input_width: int,
             instrument_id: int, source_id: int, columns: list[str] | None = None,
-            provenance: dict[str, Any] | None = None) -> dict[str, Any]:
+            provenance: dict[str, Any] | None = None,
+            lineage: dict[str, Any] | None = None) -> dict[str, Any]:
     """The run's own record, as column values. Pure — no database.
 
     `first_val`/`last_val` are stored as configured, even on a `--test` run
@@ -204,7 +226,33 @@ def run_row(args: Any, set_id: int, input_width: int,
         "is_test": bool(getattr(args, "test", False)),
         "hyperparams_json": json.dumps(hyperparams(args), sort_keys=True),
         "columns_json": json.dumps(list(columns)) if columns is not None else None,
+        **execution_columns(args),
         **{**NO_PROVENANCE, **(provenance or {})},
+        **{**NO_LINEAGE, **(lineage or {})},
+    }
+
+
+def execution_columns(args: Any) -> dict[str, Any]:
+    """How the signals were acted on (G5). Strategy 2's dials are NULL under
+    Strategy 1, so a setting that did nothing never reads as one that did; the
+    long threshold is NULL for a classifier, which has no position to cut."""
+    execution = getattr(args, "execution", "signals")
+    margin = execution == "margin"
+
+    def dial(name: str) -> float | None:
+        return float(getattr(args, name)) if margin else None
+
+    return {
+        "execution": execution,
+        "leverage_pct": dial("leverage_pct"),
+        "hedge_pct": dial("hedge_pct"),
+        "margin_spread_pct": dial("margin_spread_pct"),
+        "maintenance_pct": dial("maintenance_pct"),
+        "long_threshold": (float(args.long_threshold)
+                           if margin and getattr(args, "loss", "ce") != "ce" else None),
+        # True when the loss was Strategy 2's curve too, so the signals differ
+        # from a run of the same strategy that was only scored with it.
+        "margin_train": bool(margin and getattr(args, "margin_train", False)),
     }
 
 
@@ -234,7 +282,14 @@ def fold_row(run_id: int, r: FoldResult) -> dict[str, Any]:
         "gains_tax": r.gains_tax,
         "best_epoch": getattr(r, "best_epoch", None),
         "epochs_run": getattr(r, "epochs_run", None),
+        "benchmark_id": getattr(r, "benchmark_id", None),
+        **{k: getattr(r, k, None) for k in MARGIN_FOLD_FIELDS},
     }
+
+
+#: Strategy 2's per-fold figures (G5); NULL on a Strategy 1 fold.
+MARGIN_FOLD_FIELDS = ("margin_interest", "margin_calls", "trims", "days_long",
+                      "days_hedged", "core_at_risk", "levered_return")
 
 
 #: A run from flags alone records no strategy and no coverage.
@@ -245,9 +300,18 @@ NO_PROVENANCE: dict[str, Any] = {
 }
 
 
+#: A run recorded without lineage (a caller from before G3) stores NULLs, which
+#: the check reads as "no snapshot", never as a match.
+NO_LINEAGE: dict[str, Any] = {
+    "feature_run_id": None, "input_snapshot": None, "snapshot_json": None,
+    "code_hash": None, "git_sha": None, "lib_versions_json": None,
+}
+
+
 def open_run(conn, args: Any, set_id: int, input_width: int,
              columns: list[str] | None = None,
-             provenance: dict[str, Any] | None = None) -> int:
+             provenance: dict[str, Any] | None = None,
+             lineage: dict[str, Any] | None = None) -> int:
     """Insert the run and return its id, committed, before any fold is scored.
 
     Committed immediately on purpose: the row is what the Training tab reads to
@@ -258,10 +322,87 @@ def open_run(conn, args: Any, set_id: int, input_width: int,
         set_actor(cur)
         instrument_id, source_id = owner_of_set(cur, set_id)
         cur.execute(_INSERT_RUN, run_row(args, set_id, input_width, instrument_id,
-                                         source_id, columns, provenance))
+                                         source_id, columns, provenance, lineage))
         run_id = int(cur.fetchone()[0])
     conn.commit()
     return run_id
+
+
+#: A walk-forward fold is scored as the growth of 1, not of an account, so its
+#: benchmark rows are keyed on a capital of 1. The return is the same at any
+#: capital; the key keeps these rows apart from the Java backtest's, which are
+#: keyed on the account it ran with.
+FOLD_CAPITAL = 1.0
+
+
+@dataclass(frozen=True)
+class StoredBenchmark:
+    id: int
+    return_pct: float
+    first_close: float
+    last_close: float
+    bar_count: int
+
+    def closes_differ(self, w: Any) -> bool:
+        """Do today's candles still reproduce this row? A stored row is never
+        recalculated, so a revised close shows up here and nowhere else."""
+        return (abs(self.first_close - w.first_close) > 1e-9 * max(1.0, abs(w.first_close))
+                or abs(self.last_close - w.last_close) > 1e-9 * max(1.0, abs(w.last_close))
+                or self.bar_count != w.bar_count)
+
+
+_FIND_BENCHMARK = """
+SELECT id, return_pct, first_close, last_close, bar_count FROM benchmarks
+ WHERE instrument_id = %s AND source_id = %s AND timeframe = %s
+   AND start_date = %s AND end_date = %s AND initial_capital = %s
+"""
+
+
+def day_start(d: date) -> datetime:
+    """A D1 bar's timestamp: its date at 00:00 UTC, which is how candles and the
+    Java engine's benchmark rows store it."""
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+
+def find_or_create_benchmark(conn, set_id: int, timeframe: str, w: Any,
+                             capital: float = FOLD_CAPITAL) -> StoredBenchmark:
+    """The stored buy-and-hold row for this window, storing it only on a miss.
+
+    The same shape as Java's `BenchmarkRepository.findOrCreate`, and for the
+    same reasons: read first; insert with ON CONFLICT DO NOTHING; re-read when a
+    concurrent run won. An existing row is never recalculated -- it is the fixed
+    yardstick, and moving it would invalidate every comparison drawn against it.
+    Instrument and source come from the feature set, as the run's own do.
+    """
+    if timeframe != "D1":
+        # Walk-forward is D1-only (strategy_spec); a bar's key would need its
+        # real timestamp otherwise, not its date.
+        raise ValueError(f"benchmark keys are built for D1 bars, not {timeframe}")
+    start, end = day_start(w.start), day_start(w.end)
+    with conn.cursor() as cur:
+        set_actor(cur)
+        instrument_id, source_id = owner_of_set(cur, set_id)
+        key = (instrument_id, source_id, timeframe, start, end, capital)
+        cur.execute(_FIND_BENCHMARK, key)
+        row = cur.fetchone()
+        if row is None:
+            ret = w.return_pct
+            cur.execute(
+                "INSERT INTO benchmarks (instrument_id, source_id, timeframe, start_date, "
+                "end_date, initial_capital, return_pct, final_equity, first_close, "
+                "last_close, bar_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (instrument_id, source_id, timeframe, start_date, end_date, "
+                "initial_capital) DO NOTHING",
+                (*key, ret, capital * (1.0 + ret / 100.0),
+                 w.first_close, w.last_close, w.bar_count),
+            )
+            cur.execute(_FIND_BENCHMARK, key)
+            row = cur.fetchone()
+    conn.commit()
+    if row is None:
+        raise RuntimeError(f"benchmark insert for {key} left no row")
+    return StoredBenchmark(int(row[0]), float(row[1]), float(row[2]), float(row[3]),
+                           int(row[4]))
 
 
 def save_fold(conn, run_id: int, r: FoldResult) -> None:

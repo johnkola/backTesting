@@ -172,7 +172,8 @@ public class EngineApi {
         }
 
         ZonedDateTime from = parseDate(body, "from");
-        ZonedDateTime to = parseDate(body, "to");
+        // The end of a range: a bare date covers the whole day (DESIGN-GAPS I6).
+        ZonedDateTime to = parseDate(body, "to", true);
 
         AppConfig config = AppConfig.getInstance();
         Double capital = optDouble(body, "capital");
@@ -339,6 +340,9 @@ public class EngineApi {
         out.put("isTest", run.isTest());
         out.put("columns", jsonArray(run.columnsJson(), run.id(), "columns_json"));
         out.put("strategy", strategyPayload(run));
+        out.put("lineage", lineagePayload(run));
+        out.put("execution", run.execution());
+        out.put("beatsLeveredOnReturn", run.execution().beatsLeveredOnReturn(run.meanStratReturn()));
         out.put("startedAt", run.startedAt());
         out.put("finishedAt", run.finishedAt());
         out.put("inProgress", run.inProgress());
@@ -405,6 +409,45 @@ public class EngineApi {
         out.put("trainBars", p.trainBars());
         out.put("testEnd", p.testEnd());
         return out;
+    }
+
+    /**
+     * The run's input snapshot and code version (G3), or null for a run from
+     * before G3. The stored JSON objects are parsed so the client reads
+     * {@code lineage.parts.matrix}, not a string.
+     */
+    private static Map<String, Object> lineagePayload(WalkforwardRun run) {
+        WalkforwardRun.Lineage l = run.lineage();
+        if (l == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("featureRunId", l.featureRunId());
+        out.put("currentBuildId", l.currentBuildId());
+        out.put("inputSnapshot", l.inputSnapshot());
+        out.put("parts", jsonObject(l.snapshotJson(), run.id(), "snapshot_json"));
+        out.put("codeHash", l.codeHash());
+        out.put("gitSha", l.gitSha());
+        out.put("libVersions", jsonObject(l.libVersionsJson(), run.id(), "lib_versions_json"));
+        out.put("setRebuiltSince", l.setRebuiltSince());
+        out.put("valuesChangedSince", l.valuesChangedSince());
+        return out;
+    }
+
+    /** Stored JSON text as an object, or null when absent or not an object. */
+    private static JsonObject jsonObject(String raw, long runId, String column) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            JsonElement el = JsonParser.parseString(raw);
+            if (el.isJsonObject()) {
+                return el.getAsJsonObject();
+            }
+        } catch (RuntimeException e) {
+            logger.warn("walkforward_runs.{} for run {} is not JSON", column, runId, e);
+        }
+        return null;
     }
 
     /** Stored JSON text as an array, or null when absent or not an array. */
@@ -486,12 +529,16 @@ public class EngineApi {
     // ---- helpers -------------------------------------------------------------
 
     private static ZonedDateTime parseDate(JsonObject body, String field) {
+        return parseDate(body, field, false);
+    }
+
+    private static ZonedDateTime parseDate(JsonObject body, String field, boolean rangeEnd) {
         String raw = optString(body, field);
         if (raw == null || raw.isBlank()) {
             return null;
         }
         try {
-            return DateTimeUtils.parse(raw);
+            return rangeEnd ? DateTimeUtils.parseEnd(raw) : DateTimeUtils.parse(raw);
         } catch (RuntimeException e) {
             throw badRequest("'" + field + "' is not a date this server understands "
                     + "(yyyy-MM-dd or yyyy-MM-dd HH:mm:ss): " + raw);

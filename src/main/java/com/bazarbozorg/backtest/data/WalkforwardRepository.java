@@ -71,6 +71,21 @@ public class WalkforwardRepository {
                    r.strategy_id, r.strategy_name, r.strategy_version,
                    r.dropped_json, r.partial_json,
                    r.train_first, r.train_bars_used, r.train_bars, r.test_end,
+                   r.feature_run_id, fs.current_run_id, r.input_snapshot, r.snapshot_json,
+                   r.code_hash, r.git_sha, r.lib_versions_json,
+                   r.execution, r.leverage_pct, r.hedge_pct, r.margin_spread_pct,
+                   r.maintenance_pct, r.long_threshold, r.margin_train,
+                   avg(f.margin_interest) AS mean_margin_interest,
+                   sum(f.margin_calls) AS margin_calls,
+                   sum(f.trims) AS trims,
+                   sum(f.core_at_risk) AS core_at_risk,
+                   avg(f.days_long) AS mean_days_long,
+                   avg(f.days_hedged) AS mean_days_hedged,
+                   avg(f.levered_return) AS mean_levered_return,
+                   count(f.fold) FILTER (WHERE f.strat_return > f.levered_return)
+                       AS folds_beat_levered,
+                   fr_then.values_hash AS then_values_hash,
+                   fr_now.values_hash AS now_values_hash,
                    r.started_at, r.finished_at,
                    count(f.fold) AS folds,
                    count(f.fold) FILTER (WHERE f.strat_return > f.hold_return) AS folds_won,
@@ -91,9 +106,14 @@ public class WalkforwardRepository {
               JOIN instruments i ON i.id = r.instrument_id
               JOIN data_sources ds ON ds.id = r.source_id
               LEFT JOIN walkforward_folds f ON f.run_id = r.id
+              LEFT JOIN feature_sets fs ON fs.id = r.feature_set_id
+              LEFT JOIN feature_runs fr_then ON fr_then.id = r.feature_run_id
+              LEFT JOIN feature_runs fr_now ON fr_now.id = fs.current_run_id
             """;
 
-    private static final String GROUP_BY = " GROUP BY r.id, i.symbol, ds.name ";
+    private static final String GROUP_BY =
+            " GROUP BY r.id, i.symbol, ds.name, fs.current_run_id, "
+            + "fr_then.values_hash, fr_now.values_hash ";
 
     /**
      * Runs newest first.
@@ -164,7 +184,9 @@ public class WalkforwardRepository {
                        strat_return, hold_return, strat_sharpe, hold_sharpe,
                        strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
                        days_out, drift_tax, commissions, timing, gains_tax,
-                       best_epoch, epochs_run
+                       best_epoch, epochs_run, benchmark_id,
+                       margin_interest, margin_calls, trims, days_long, days_hedged, core_at_risk,
+                       levered_return
                   FROM walkforward_folds
                  WHERE run_id = ?
                  ORDER BY fold
@@ -240,6 +262,43 @@ public class WalkforwardRepository {
                 nullableDate(rs, "test_end"));
     }
 
+    /** Null for a run from before G3, which recorded no snapshot. */
+    private static WalkforwardRun.Lineage mapLineage(ResultSet rs) throws SQLException {
+        String snapshot = rs.getString("input_snapshot");
+        if (snapshot == null) {
+            return null;
+        }
+        return new WalkforwardRun.Lineage(
+                nullableLong(rs, "feature_run_id"),
+                nullableLong(rs, "current_run_id"),
+                snapshot,
+                rs.getString("snapshot_json"),
+                rs.getString("code_hash"),
+                rs.getString("git_sha"),
+                rs.getString("lib_versions_json"),
+                rs.getString("then_values_hash"),
+                rs.getString("now_values_hash"));
+    }
+
+    private static WalkforwardRun.Execution mapExecution(ResultSet rs) throws SQLException {
+        return new WalkforwardRun.Execution(
+                rs.getString("execution"),
+                nullableDouble(rs, "leverage_pct"),
+                nullableDouble(rs, "hedge_pct"),
+                nullableDouble(rs, "margin_spread_pct"),
+                nullableDouble(rs, "maintenance_pct"),
+                nullableDouble(rs, "long_threshold"),
+                rs.getBoolean("margin_train"),
+                nullableDouble(rs, "mean_margin_interest"),
+                nullableInt(rs, "margin_calls"),
+                nullableInt(rs, "trims"),
+                nullableInt(rs, "core_at_risk"),
+                nullableDouble(rs, "mean_days_long"),
+                nullableDouble(rs, "mean_days_hedged"),
+                nullableDouble(rs, "mean_levered_return"),
+                rs.getString("execution").equals("margin") ? rs.getInt("folds_beat_levered") : null);
+    }
+
     private static WalkforwardRun mapRun(ResultSet rs) throws SQLException {
         return new WalkforwardRun(
                 rs.getLong("id"),
@@ -266,6 +325,8 @@ public class WalkforwardRepository {
                 rs.getString("hyperparams_json"),
                 rs.getString("columns_json"),
                 mapProvenance(rs),
+                mapLineage(rs),
+                mapExecution(rs),
                 nullableTimestamp(rs, "started_at"),
                 nullableTimestamp(rs, "finished_at"),
                 rs.getInt("folds"),
@@ -309,6 +370,14 @@ public class WalkforwardRepository {
                 rs.getDouble("timing"),
                 rs.getDouble("gains_tax"),
                 nullableInt(rs, "best_epoch"),
-                nullableInt(rs, "epochs_run"));
+                nullableInt(rs, "epochs_run"),
+                rs.getObject("benchmark_id", Long.class),
+                nullableDouble(rs, "margin_interest"),
+                nullableInt(rs, "margin_calls"),
+                nullableInt(rs, "trims"),
+                nullableInt(rs, "days_long"),
+                nullableInt(rs, "days_hedged"),
+                nullableInt(rs, "core_at_risk"),
+                nullableDouble(rs, "levered_return"));
     }
 }

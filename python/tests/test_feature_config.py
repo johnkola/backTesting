@@ -111,15 +111,28 @@ def test_every_committed_design_column_is_defined():
 
 
 def test_every_committed_column_is_enabled_unless_its_data_is_blocked():
-    """One exception is allowed and it is named. credit_spread_ig is off
-    because FRED capped the ICE BofA series at three years in April 2026, which
-    cannot cover a 2003 training start. Any OTHER committed column being off is
-    a regression, not a decision."""
+    """credit_spread_ig was the one named exception, while FRED's three-year cap
+    on the ICE BofA series blocked it. It now reads BAA10Y, the fallback
+    Features.md names (G6), so it is on. breakeven_inflation stays off by
+    decision (D1, its 2003 start). Any OTHER committed column being off is a
+    regression, not a decision."""
     cfg = fc.load()
     off = {f.name for f in cfg.features if not f.enabled}
-    assert off & {"credit_spread_ig"} == {"credit_spread_ig"}
-    assert cfg.by_name("credit_spread_ig").status == "blocked"
+    assert "credit_spread_ig" not in off
+    assert cfg.by_name("credit_spread_ig").series["symbol"] == "BAA10Y"
+    assert cfg.by_name("credit_spread_ig").status is None
     assert "treasury_2y" not in off
+
+
+def test_the_two_policy_rates_share_one_declared_band():
+    """G8. boc_policy_rate reads CORRA from the Bank of Canada, rescaled on
+    fed_funds' declared 0..25 band, so the two columns are on one scale."""
+    cfg = fc.load()
+    boc, ff = cfg.by_name("boc_policy_rate"), cfg.by_name("fed_funds")
+    assert boc.enabled
+    assert boc.series == {"symbol": "CORRA", "source": "boc", "field": "close"}
+    assert boc.method == ff.method == "rescale"
+    assert (boc.params["min"], boc.params["max"]) == (ff.params["min"], ff.params["max"])
 
 
 def test_vix_and_gold_are_columns_in_their_own_right():
@@ -154,7 +167,7 @@ def test_blocked_and_paid_columns_demand_no_data():
     fails up front on an import nobody intends to make."""
     cfg = fc.load()
     pairs = cfg.required_series()
-    for symbol in ("BAMLH0A0HYM2", "BAMLC0A0CM", "VIX3M"):
+    for symbol in ("BAMLH0A0HYM2", "VIX3M"):
         assert not any(s == symbol for s, _ in pairs), symbol
 
 
@@ -459,3 +472,67 @@ tolerance = 0.01
     assert len(cfg.checks) == 1
     assert cfg.live_checks == (), "a column that is not built has nothing to compare"
     assert ("DFF", "othervendor") not in cfg.required_series()
+
+
+# --------------------------------------------------------------------------
+# data-only columns (Features.md B, G9): built and stored, never an input
+# --------------------------------------------------------------------------
+
+DATA_ONLY_RSI = """
+[[feature]]
+name = "rsi_14"
+series = { computed = "rsi", symbol = "QQQ", source = "yahoo-adj", period = 14 }
+method = "rescale"
+min = 0.0
+max = 100.0
+scope = "instrument"
+cadence = "daily"
+cost = "free"
+units = "percent"
+enabled = false
+status = "data-only"
+"""
+
+
+def test_a_data_only_column_is_built_but_is_not_an_input(tmp_path):
+    cfg = fc.load(write(tmp_path, MINIMAL + DATA_ONLY_RSI))
+    rsi = cfg.by_name("rsi_14")
+    assert rsi.data_only
+    assert rsi not in cfg.enabled
+    assert cfg.data_only == (rsi,)
+    assert cfg.built[-1] is rsi, "inputs first, so their positions do not move"
+    assert cfg.input_width == sum(f.width for f in cfg.enabled)
+    assert ("QQQ", "yahoo-adj") in cfg.required_series()
+
+
+def test_a_check_on_a_data_only_column_is_live(tmp_path):
+    """The design's MACD/RSI vendor check is on two data-only columns; skipping
+    it as "not built" would leave the check permanently dead."""
+    p = write(tmp_path, MINIMAL + DATA_ONLY_RSI + """
+[[check]]
+name = "rsi_vs_vendor"
+feature = "rsi_14"
+published = { symbol = "QQQ-RSI14", source = "twelvedata", field = "close" }
+tolerance = 0.5
+""")
+    cfg = fc.load(p)
+    assert [c.name for c in cfg.live_checks] == ["rsi_vs_vendor"]
+    assert ("QQQ-RSI14", "twelvedata") in cfg.required_series()
+
+
+def test_data_only_and_enabled_together_is_refused(tmp_path):
+    p = write(tmp_path, MINIMAL + DATA_ONLY_RSI.replace("enabled = false", "enabled = true"))
+    with pytest.raises(fc.FeatureConfigError, match="needs `enabled = false`"):
+        fc.load(p)
+
+
+def test_any_other_disabled_column_is_still_not_built(tmp_path):
+    p = write(tmp_path, MINIMAL + DATA_ONLY_RSI.replace('"data-only"', '"undecided"'))
+    cfg = fc.load(p)
+    assert cfg.data_only == ()
+    assert cfg.by_name("rsi_14") not in cfg.built
+
+
+def test_the_shipped_config_stores_rsi_macd_and_realized_vol_as_data_only():
+    cfg = fc.load()
+    assert {f.name for f in cfg.data_only} == {"rsi_14", "macd", "realized_vol"}

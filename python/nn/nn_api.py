@@ -681,7 +681,7 @@ def get_features_config() -> JSONResponse:
 
     Every column is reported, disabled ones included. A column that is off is a
     recorded decision, not an absence, so the UI has to be able to show *why*
-    rsi_14 and credit_spread_ig are out.
+    rsi_14 and breakeven_inflation are out.
     """
     try:
         cfg = feature_config.load()

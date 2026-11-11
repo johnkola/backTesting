@@ -61,6 +61,11 @@ class WalkforwardRepositoryTest {
     private static long strategyRunId;
     /** A run scored after tax, with tax paid on one of its two folds. */
     private static long taxedRunId;
+    private static long lineageRunId;
+    /** Strategy 2 (G5): a margin run, two folds, one margin call. */
+    private static long marginRunId;
+    private static long buildThen;
+    private static long buildNow;
 
     @BeforeAll
     static void setUp() {
@@ -108,6 +113,45 @@ class WalkforwardRepositoryTest {
         exec("UPDATE walkforward_folds SET gains_tax = -2.0, best_epoch = 7, epochs_run = 12"
              + " WHERE run_id = " + taxedRunId + " AND fold = 1");
         exec("UPDATE walkforward_runs SET purge_bars = 5 WHERE id = " + taxedRunId);
+
+        // G3: a run that read build `then`; the set has since been rebuilt as
+        // `now` with different values.
+        long setId = insertReturningId(
+                "INSERT INTO feature_sets (instrument_id, source_id, timeframe, schema_version,"
+                + " config_hash) VALUES (" + instrumentId + ", " + sourceId
+                + ", 'D1', 5, 'zz-cfg') RETURNING id");
+        buildThen = insertBuild(setId, "values-then");
+        buildNow = insertBuild(setId, "values-now");
+        exec("UPDATE feature_sets SET current_run_id = " + buildNow + " WHERE id = " + setId);
+        lineageRunId = insertRun(LABEL, false, "return", "ce", null);
+        exec("UPDATE walkforward_runs SET feature_set_id = " + setId + ","
+             + " feature_run_id = " + buildThen + ", input_snapshot = 'snap',"
+             + " snapshot_json = '{\"matrix\": \"m\", \"closes\": \"c\", \"park\": \"p\"}',"
+             + " code_hash = 'code', lib_versions_json = '{\"numpy\": \"2.0\"}'"
+             + " WHERE id = " + lineageRunId);
+
+        marginRunId = insertRun(LABEL, false, "return", "ce", null);
+        exec("UPDATE walkforward_runs SET execution = 'margin', leverage_pct = 30,"
+             + " hedge_pct = 10, margin_spread_pct = 1.5, maintenance_pct = 30"
+             + " WHERE id = " + marginRunId);
+        insertFold(marginRunId, 1, 2016, 3.0, 7.0, 0.5, 0.6, 9.0, 11.0, 4, 0, -0.2, 0);
+        insertFold(marginRunId, 2, 2017, 2.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, 0, -0.5, 0);
+        exec("UPDATE walkforward_folds SET margin_interest = -0.4, margin_calls = 1,"
+             + " trims = 2, days_long = 100, days_hedged = 20, core_at_risk = 0,"
+             + " levered_return = 5.0"
+             + " WHERE run_id = " + marginRunId + " AND fold = 1");
+        exec("UPDATE walkforward_folds SET margin_interest = -0.2, margin_calls = 0,"
+             + " trims = 0, days_long = 50, days_hedged = 40, core_at_risk = 0,"
+             + " levered_return = 1.0"
+             + " WHERE run_id = " + marginRunId + " AND fold = 2");
+    }
+
+    private static long insertBuild(long setId, String valuesHash) {
+        return insertReturningId(
+                "INSERT INTO feature_runs (feature_set_id, schema_version, config_hash,"
+                + " code_hash, inputs_json, values_hash, row_count, column_count) VALUES ("
+                + setId + ", 5, 'zz-cfg', 'code', '[]', '" + valuesHash + "', 10, 2)"
+                + " RETURNING id");
     }
 
     @AfterAll
@@ -123,6 +167,11 @@ class WalkforwardRepositoryTest {
              + "(SELECT id FROM walkforward_runs WHERE instrument_id IN "
              + "(SELECT id FROM instruments WHERE symbol = '" + TEST_SYMBOL + "'))");
         exec("DELETE FROM walkforward_runs WHERE instrument_id IN "
+             + "(SELECT id FROM instruments WHERE symbol = '" + TEST_SYMBOL + "')");
+        exec("DELETE FROM feature_runs WHERE feature_set_id IN (SELECT id FROM feature_sets"
+             + " WHERE instrument_id IN (SELECT id FROM instruments WHERE symbol = '"
+             + TEST_SYMBOL + "'))");
+        exec("DELETE FROM feature_sets WHERE instrument_id IN "
              + "(SELECT id FROM instruments WHERE symbol = '" + TEST_SYMBOL + "')");
         exec("DELETE FROM instruments WHERE symbol = '" + TEST_SYMBOL + "'");
         exec("DELETE FROM data_sources WHERE name = '" + TEST_SOURCE + "'");
@@ -390,6 +439,45 @@ class WalkforwardRepositoryTest {
     }
 
     @Test
+    @DisplayName("a Strategy 1 run says so, with no margin dials or figures")
+    void strategy1RunHasNoMarginFields() {
+        WalkforwardRun.Execution e = theRun(runId).execution();
+        assertEquals("signals", e.kind());
+        assertNull(e.leveragePct());
+        assertNull(e.meanMarginInterest());
+        assertNull(e.marginCalls());
+        assertNull(repo.findFolds(runId).get(0).marginInterest());
+    }
+
+    @Test
+    @DisplayName("a Strategy 2 run carries its dials and sums its folds' margin figures")
+    void strategy2RunCarriesItsDialsAndSummary() {
+        WalkforwardRun.Execution e = theRun(marginRunId).execution();
+        assertEquals("margin", e.kind());
+        assertEquals(30.0, e.leveragePct());
+        assertEquals(10.0, e.hedgePct());
+        assertEquals(1.5, e.marginSpreadPct());
+        assertEquals(30.0, e.maintenancePct());
+        assertNull(e.longThreshold());
+        assertFalse(e.marginTrain());
+        assertEquals(-0.3, e.meanMarginInterest(), 1e-12);
+        assertEquals(1, e.marginCalls());
+        assertEquals(2, e.trims());
+        assertEquals(75.0, e.meanDaysLong(), 1e-12);
+        assertEquals(30.0, e.meanDaysHedged(), 1e-12);
+        // Folds return 3 and 2 against always-long 5 and 1: one beat, and the
+        // mean (2.5) is below the baseline's (3.0), so leverage, not timing.
+        assertEquals(3.0, e.meanLeveredReturn(), 1e-12);
+        assertEquals(1, e.foldsBeatLevered());
+        assertFalse(e.beatsLeveredOnReturn(theRun(marginRunId).meanStratReturn()));
+        assertNull(theRun(runId).execution().beatsLeveredOnReturn(2.0));
+        WalkforwardFold first = repo.findFolds(marginRunId).get(0);
+        assertEquals(-0.4, first.marginInterest(), 1e-12);
+        assertEquals(5.0, first.leveredReturn(), 1e-12);
+        assertEquals(100, first.daysLong());
+    }
+
+    @Test
     @DisplayName("an unknown id is empty, not an exception")
     void unknownIdIsEmpty() {
         assertTrue(repo.findRun(Long.MAX_VALUE).isEmpty());
@@ -434,5 +522,41 @@ class WalkforwardRepositoryTest {
     void noFoldsIsAnEmptyList() {
         assertTrue(repo.findFolds(emptyRunId).isEmpty());
         assertTrue(repo.findFolds(Long.MAX_VALUE).isEmpty());
+    }
+
+    // ---- G3: lineage ---------------------------------------------------------
+
+    @Test
+    @DisplayName("a run from before G3 has no lineage, which is not a match")
+    void runWithoutSnapshotHasNoLineage() {
+        assumeTrue(repo != null);
+        assertNull(theRun(runId).lineage());
+    }
+
+    @Test
+    @DisplayName("a run's lineage says the set was rebuilt with different values since")
+    void lineageReportsARebuild() {
+        assumeTrue(repo != null);
+        WalkforwardRun.Lineage l = theRun(lineageRunId).lineage();
+        assertNotNull(l);
+        assertEquals(buildThen, l.featureRunId());
+        assertEquals(buildNow, l.currentBuildId());
+        assertEquals("snap", l.inputSnapshot());
+        assertEquals("code", l.codeHash());
+        assertTrue(l.setRebuiltSince());
+        assertTrue(l.valuesChangedSince());
+    }
+
+    @Test
+    @DisplayName("a rebuild that wrote the same values is a rebuild, not a change")
+    void sameValuesAreNotAChange() {
+        WalkforwardRun.Lineage l = new WalkforwardRun.Lineage(
+                1L, 2L, "s", "{}", "c", null, "{}", "same", "same");
+        assertTrue(l.setRebuiltSince());
+        assertFalse(l.valuesChangedSince());
+        WalkforwardRun.Lineage unknown = new WalkforwardRun.Lineage(
+                null, 2L, "s", "{}", "c", null, "{}", null, "same");
+        assertNull(unknown.setRebuiltSince());
+        assertNull(unknown.valuesChangedSince());
     }
 }

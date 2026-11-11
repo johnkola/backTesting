@@ -81,6 +81,7 @@ export default function FeaturesPage() {
     return {
       total: all.length,
       active: all.filter((f) => f.status === 'active').length,
+      dataOnly: all.filter((f) => f.status === 'data-only').length,
       undecided: all.filter((f) => f.status === 'undecided').length,
       blocked: all.filter((f) => f.status === 'blocked').length,
       paid: all.filter((f) => f.cost === 'paid').length,
@@ -109,6 +110,7 @@ export default function FeaturesPage() {
       <div className="stats stats-horizontal shadow mb-5 text-sm">
         <Stat label="Catalogue" value={counts.total} hint="features.catalogueCount" />
         <Stat label="Active" value={counts.active} hint="features.active" />
+        <Stat label="Data only" value={counts.dataOnly} hint="features.dataOnly" />
         <Stat label="Undecided" value={counts.undecided} hint="features.undecided" />
         <Stat label="Blocked" value={counts.blocked} hint="features.blocked" />
         <Stat label="Input width" value={counts.inputWidth} hint="features.inputWidth" />
@@ -170,6 +172,7 @@ export default function FeaturesPage() {
         >
           <option value="">all statuses</option>
           <option value="active">active</option>
+          <option value="data-only">data only</option>
           <option value="undecided">undecided</option>
           <option value="blocked">blocked</option>
         </select>
@@ -256,6 +259,7 @@ function Th({ label, hint }: { label: string, hint: string }) {
 
 const STATUS_STYLE: Record<string, string> = {
   active: 'badge-success',
+  'data-only': 'badge-info',
   undecided: 'badge-warning',
   blocked: 'badge-error',
 }

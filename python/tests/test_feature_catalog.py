@@ -120,6 +120,13 @@ class TestStatusMapping:
             if not f.enabled:
                 assert feature_catalog.status_of(f) != "active", f.name
 
+    def test_data_only_is_its_own_status(self, cfg):
+        # Not undecided (it is decided), not blocked (it has values), not active
+        # (the builder must not offer it): Design Notes' "No - data only".
+        by_name = {f.name: f for f in cfg.features}
+        for name in ("rsi_14", "macd", "realized_vol"):
+            assert feature_catalog.status_of(by_name[name]) == "data-only", name
+
     def test_an_unrecognised_status_is_reported_not_guessed(self, cfg):
         import dataclasses
         bad = dataclasses.replace(cfg.features[0], status="probably-fine")

@@ -7,17 +7,18 @@ import StageShell, { type StageState } from './StageShell'
 /** A disabled column is a recorded decision, not an absence — the badge says
  *  which decision, straight from features.toml.
  *
- *  `status: null` is its own decision and the only one that means "data only":
- *  the design keeps RSI, MACD and realized volatility computed but out of the
- *  network, because the model already sees the bar they are derived from. An
- *  unrecognised status is NOT that, so it shows itself rather than borrowing
- *  that label — `short-history` spent a release reading "data only", which
- *  stated the opposite of the truth about a column the design commits to and
- *  that was dropped only because its series starts too late. */
+ *  "data only" is `status = "data-only"`, written out: the design keeps RSI,
+ *  MACD and realized volatility computed and stored but out of the network,
+ *  because the model already sees the bar they are derived from. It used to be
+ *  read from a MISSING status, and that was wrong twice: `short-history` spent a
+ *  release falling through to "data only", and the three real ones were never
+ *  built at all while this badge said they were stored (G9). A disabled column
+ *  with no status now says just that, "off". */
 function stateBadge(col: FeatureColumn) {
   if (col.enabled) return { label: 'in the model', cls: 'badge-success' }
-  if (!col.status) return { label: 'data only', cls: 'badge-ghost' }
+  if (!col.status) return { label: 'off', cls: 'badge-ghost' }
   switch (col.status) {
+    case 'data-only': return { label: 'data only', cls: 'badge-info' }
     case 'blocked': return { label: 'blocked', cls: 'badge-error' }
     case 'not-imported': return { label: 'not imported', cls: 'badge-warning' }
     case 'later-paid': return { label: 'later — paid', cls: 'badge-info' }
@@ -62,6 +63,7 @@ export default function FeaturesStage() {
 
   const enabled = config.columns.filter((c) => c.enabled)
   const off = config.columns.filter((c) => !c.enabled)
+  const dataOnly = off.filter((c) => c.status === 'data-only')
   const newest = data.sets[0] ?? null
   const stale = newest ? newest.schemaVersion !== config.schemaVersion : false
 
@@ -80,7 +82,8 @@ export default function FeaturesStage() {
           ? `No set built for ${tf}`
           : stale
             ? `Newest set is schema v${newest.schemaVersion}, config declares v${config.schemaVersion}`
-            : `${enabled.length} columns built, ${config.inputWidth} values per bar`
+            : `${enabled.length} input columns built, ${config.inputWidth} values per bar`
+              + (dataOnly.length ? `, plus ${dataOnly.length} data only` : '')
       }
       detail={
         newest === null
@@ -93,7 +96,9 @@ export default function FeaturesStage() {
                 ({config.alignment.calendarSource}, {config.alignment.calendarTimeframe}), fill{' '}
                 <span className="font-mono">{config.alignment.fill}</span> to a maximum of{' '}
                 {config.alignment.maxFillDays} days. {off.length} further columns are defined
-                but out of the model.
+                but out of the model{dataOnly.length
+                  ? `; ${dataOnly.length} of them are stored as data only`
+                  : ''}.
               </>
             )
       }

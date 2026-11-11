@@ -102,6 +102,23 @@ class TestRunRow:
         # is how it quietly becomes training data.
         assert ws.run_row(an_args(test=True), 6, 580, 47, 2)["is_test"] is True
 
+    def test_a_run_without_lineage_records_no_snapshot(self):
+        # G3: NULL, so the check says "no snapshot" rather than "matches".
+        row = ws.run_row(an_args(), 6, 580, 47, 2)
+        assert {k: row[k] for k in ws.NO_LINEAGE} == ws.NO_LINEAGE
+
+    def test_lineage_is_carried_into_the_row(self):
+        lin = {"feature_run_id": 12, "input_snapshot": "s" * 64, "snapshot_json": "{}",
+               "code_hash": "c" * 64, "git_sha": None, "lib_versions_json": "{}"}
+        row = ws.run_row(an_args(), 6, 580, 47, 2, lineage=lin)
+        assert {k: row[k] for k in lin} == lin
+
+    def test_every_row_key_is_a_column_of_the_insert(self):
+        # A key the INSERT does not name would be silently dropped by psycopg.
+        row = ws.run_row(an_args(), 6, 580, 47, 2)
+        for key in row:
+            assert f"%({key})s" in ws._INSERT_RUN, key
+
     def test_the_ids_come_from_the_set_not_the_symbol_flag(self):
         row = ws.run_row(an_args(symbol="NOT-QQQ"), 6, 580,
                          instrument_id=47, source_id=2)
@@ -207,11 +224,79 @@ class TestFoldRow:
         assert row["n_train"] == 3200
         assert row["n_val"] == 252
 
+    def test_carries_the_benchmark_row_it_read_hold_return_from(self):
+        # G23: absent on a fold that never looked one up (an unsaved run's shape).
+        assert ws.fold_row(99, FakeFold())["benchmark_id"] is None
+        fold = FakeFold()
+        fold.benchmark_id = 146
+        assert ws.fold_row(99, fold)["benchmark_id"] == 146
+
+    def test_every_fold_row_key_is_a_column_of_the_insert(self):
+        for key in ws.fold_row(99, FakeFold()):
+            assert f"%({key})s" in ws._INSERT_FOLD
+
     def test_does_not_store_excess_because_it_is_derivable(self):
         # strat_return - hold_return. A stored copy goes stale the moment
         # either side is corrected.
         assert "excess" not in ws.fold_row(99, FakeFold())
         assert "attributed" not in ws.fold_row(99, FakeFold())
+
+
+class Window:
+    """A HoldWindow's shape without importing walkforward (torch)."""
+
+    def __init__(self, start, end, first_close, last_close, bar_count):
+        self.start, self.end = start, end
+        self.first_close, self.last_close, self.bar_count = first_close, last_close, bar_count
+
+    @property
+    def return_pct(self):
+        return (self.last_close - self.first_close) / self.first_close * 100.0
+
+
+class TestExecutionColumns:
+    def test_strategy1_records_signals_and_null_dials(self):
+        cols = ws.execution_columns(an_args())
+        assert cols["execution"] == "signals"
+        assert cols["margin_train"] is False
+        assert all(v is None for k, v in cols.items() if k not in ("execution", "margin_train"))
+
+    def test_strategy2_records_every_dial_and_no_long_threshold_for_ce(self):
+        cols = ws.execution_columns(an_args(execution="margin", leverage_pct=30,
+                                            hedge_pct=10, margin_spread_pct=1.5,
+                                            maintenance_pct=30, long_threshold=0.75))
+        assert (cols["execution"], cols["leverage_pct"], cols["hedge_pct"]) == ("margin", 30, 10)
+        assert cols["long_threshold"] is None
+        cols = ws.execution_columns(an_args(execution="margin", loss="return", leverage_pct=30,
+                                            hedge_pct=10, margin_spread_pct=1.5,
+                                            maintenance_pct=30, long_threshold=0.75))
+        assert cols["long_threshold"] == 0.75
+
+    def test_a_strategy1_fold_stores_null_margin_figures(self):
+        row = ws.fold_row(1, FakeFold())
+        assert all(row[k] is None for k in ws.MARGIN_FOLD_FIELDS)
+
+
+class TestStoredBenchmark:
+    def test_reproduced_closes_do_not_differ(self):
+        b = ws.StoredBenchmark(1, 25.0, 200.0, 250.0, 253)
+        assert not b.closes_differ(Window(None, None, 200.0, 250.0, 253))
+        assert not b.closes_differ(Window(None, None, 200.0 + 1e-12, 250.0, 253))
+
+    def test_a_revised_close_or_an_extra_bar_differs(self):
+        b = ws.StoredBenchmark(1, 25.0, 200.0, 250.0, 253)
+        assert b.closes_differ(Window(None, None, 200.01, 250.0, 253))
+        assert b.closes_differ(Window(None, None, 200.0, 249.99, 253))
+        assert b.closes_differ(Window(None, None, 200.0, 250.0, 254))
+
+    def test_a_d1_key_is_midnight_utc_like_the_candles(self):
+        t = ws.day_start(date(2022, 4, 13))
+        assert t.isoformat() == "2022-04-13T00:00:00+00:00"
+
+    def test_refuses_a_timeframe_it_cannot_key(self):
+        with pytest.raises(ValueError, match="D1"):
+            ws.find_or_create_benchmark(None, 1, "H1", Window(date(2020, 1, 2),
+                                        date(2020, 1, 3), 1.0, 1.0, 2))
 
 
 # --------------------------------------------------------------------------
@@ -242,15 +327,85 @@ def db():
     conn.close()
 
 
+#: The instrument and source a seeded set is created under, on a database with none.
+_SEED_SYMBOL, _SEED_SOURCE = "ZZPYSET", "zz-py-set"
+
+
 @pytest.fixture
 def a_set(db):
-    """Any existing feature set, so the run's FK and owner lookup are real."""
+    """A feature set, so the run's FK and owner lookup are real.
+
+    The newest existing one on a developer's database. On an empty one (CI)
+    a throwaway set is created and removed afterwards, rather than skipping:
+    a green run that skipped the round trip would say nothing about it."""
     with db.cursor() as cur:
         cur.execute("SELECT id FROM feature_sets ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
-    if row is None:
-        pytest.skip("no feature_sets in this database")
-    return int(row[0])
+    if row is not None:
+        yield int(row[0])
+        return
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO instruments (symbol, name, type) VALUES (%s, 'pytest set', "
+                    "'STOCK') RETURNING id", (_SEED_SYMBOL,))
+        inst = cur.fetchone()[0]
+        cur.execute("INSERT INTO data_sources (name) VALUES (%s) RETURNING id", (_SEED_SOURCE,))
+        src = cur.fetchone()[0]
+        cur.execute("INSERT INTO feature_sets (instrument_id, source_id, timeframe, "
+                    "schema_version, config_hash) VALUES (%s, %s, 'D1', 0, 'pytest') "
+                    "RETURNING id", (inst, src))
+        set_id = int(cur.fetchone()[0])
+    db.commit()
+    try:
+        yield set_id
+    finally:
+        db.rollback()
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM walkforward_folds WHERE run_id IN "
+                        "(SELECT id FROM walkforward_runs WHERE feature_set_id = %s)", (set_id,))
+            cur.execute("DELETE FROM walkforward_runs WHERE feature_set_id = %s", (set_id,))
+            cur.execute("DELETE FROM feature_sets WHERE id = %s", (set_id,))
+            cur.execute("DELETE FROM instruments WHERE id = %s", (inst,))
+            cur.execute("DELETE FROM data_sources WHERE id = %s", (src,))
+        db.commit()
+
+
+class TestBenchmarkRoundTrip:
+    """Needs Postgres: one stored row per window, shared and never moved (§6.3)."""
+
+    # A window no real run will ever key on, so the test owns its rows.
+    START, END = date(2099, 1, 2), date(2099, 12, 31)
+
+    def _cleanup(self, conn, set_id):
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM benchmarks WHERE start_date = %s AND end_date = %s "
+                        "AND initial_capital = %s",
+                        (ws.day_start(self.START), ws.day_start(self.END), ws.FOLD_CAPITAL))
+        conn.commit()
+
+    def test_the_first_run_stores_it_and_later_runs_read_the_same_row(self, db, a_set):
+        self._cleanup(db, a_set)
+        try:
+            first = ws.find_or_create_benchmark(
+                db, a_set, "D1", Window(self.START, self.END, 200.0, 250.0, 251))
+            assert first.return_pct == pytest.approx(25.0)
+            # Same window, revised closes: the stored row is the yardstick and
+            # is not recalculated. The caller sees the difference and warns.
+            again = ws.find_or_create_benchmark(
+                db, a_set, "D1", Window(self.START, self.END, 200.0, 260.0, 251))
+            assert again.id == first.id
+            assert again.return_pct == pytest.approx(25.0)
+            assert again.closes_differ(Window(self.START, self.END, 200.0, 260.0, 251))
+            with db.cursor() as cur:
+                cur.execute("SELECT count(*), max(final_equity) FROM benchmarks "
+                            "WHERE start_date = %s AND end_date = %s AND initial_capital = %s",
+                            (ws.day_start(self.START), ws.day_start(self.END),
+                             ws.FOLD_CAPITAL))
+                count, final = cur.fetchone()
+            assert count == 1
+            assert final == pytest.approx(1.25)  # the growth of 1
+        finally:
+            self._cleanup(db, a_set)
 
 
 class TestRoundTrip:
@@ -404,3 +559,22 @@ class TestRunProvenance:
         import re
         wanted = set(re.findall(r"%\((\w+)\)s", ws._INSERT_RUN))
         assert wanted == set(ws.run_row(an_args(), 6, 580, 47, 2, columns=["a"]))
+
+
+def test_margin_train_is_recorded_only_under_strategy2():
+    assert ws.execution_columns(an_args())["margin_train"] is False
+    assert ws.execution_columns(an_args(margin_train=True))["margin_train"] is False
+    cols = ws.execution_columns(an_args(execution="margin", loss="return", leverage_pct=20,
+                                        hedge_pct=20, margin_spread_pct=1.5,
+                                        maintenance_pct=30, long_threshold=0.75,
+                                        margin_train=True))
+    assert cols["margin_train"] is True
+
+
+def test_a_strategy2_fold_carries_its_always_long_baseline():
+    fold = FakeFold()
+    fold.levered_return = 12.06
+    row = ws.fold_row(1, fold)
+    assert row["levered_return"] == 12.06
+    assert "%(levered_return)s" in ws._INSERT_FOLD
+    assert ws.fold_row(1, FakeFold())["levered_return"] is None

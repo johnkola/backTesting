@@ -239,7 +239,13 @@ blind to whether the whole market is calm or terrified, which this restores."""
 # feeding it in again adds dimensions and overfitting room without adding
 # information. The dividing line is the lookback window: a raw bar is an
 # observation and goes in, anything averaged over trailing days is a derivation
-# and stays out. Flip `enabled` to true to test that belief.
+# and stays out. To test that belief, set `enabled = true` and remove the status.
+#
+# `status = "data-only"` is what keeps them built: Features.md B has them
+# "computed and stored for charts and rule-based strategies, but kept out of the
+# network". So the build stores them in every feature set, with role `data` in
+# `feature_spec`, and nothing that feeds the network reads that role. Any other
+# disabled column is not built at all.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[feature]]
@@ -253,6 +259,7 @@ method = "rescale"
 min = 0.0
 max = 100.0
 enabled = false
+status = "data-only"
 
 [[feature]]
 name = "macd"
@@ -264,6 +271,7 @@ series = { computed = "macd", symbol = "QQQ", source = "yahoo-adj", short = 12, 
 method = "rolling_zscore"
 window = 60
 enabled = false
+status = "data-only"
 
 [[feature]]
 name = "realized_vol"
@@ -275,6 +283,7 @@ series = { computed = "realized_vol", symbol = "QQQ", source = "yahoo-adj", peri
 method = "rolling_zscore"
 window = 60
 enabled = false
+status = "data-only"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -315,9 +324,8 @@ units = "percent"
 series = { symbol = "DFF", source = "fred", field = "close" }
 method = "rescale"
 min = 0.0
-max = 20.0
-enabled = false
-status = "not-imported"
+max = 25.0
+enabled = true
 note = """Features.md 41. The Fed's overnight policy rate: the realized cost of
 short-term money, where treasury_2y is the market's GUESS at where it goes next.
 Both earn a place only because they differ -- DGS2 moves daily on expectations,
@@ -336,17 +344,20 @@ rate is a staircase: flat for months, then a 25-75bp step. daily_change would be
 rolling z-score is worse than it looks -- across a long hold the window is flat,
 which rolling_zscore reports as 0.0 ("not unusual"), so the column says nothing
 for months and then spikes on a single step. The level is the signal the doc
-describes, and 0..20 is a genuinely declared band, not a fitted one: the series
-has run between 0.04 and 19.10 since 1954, so nothing in the training window
-lands outside it. rescale does not clip, so a breach would show up as a value
-outside 0..1 rather than hide.
+describes, and 0..25 is a genuinely declared band, not a fitted one: daily DFF
+has run between 0.04 and 22.36 since 1954 (above 20 on 27 days, 1980-12-11 to
+1981-07-23; 19.10 is the high of the MONTHLY FEDFUNDS, a different series, which
+is what the old 0..20 band was sized on). Since 2003 it has not passed 5.41, so
+the column sits in the bottom quarter of the band. rescale does not clip, so a
+breach would show up as a value outside 0..1 rather than hide.
 
-DISABLED because the series is not in the store yet. Enabling a column before
-its data exists would build it all-NULL, and read_matrix drops every date where
-any column is NULL -- the whole table would vanish. That is the trap
-breakeven_inflation documents below, and the reason this ships off.
+Enabled 2026-11-10, once DFF was in the store (1954-07-01 to 2026-11-06,
+26,427 daily bars, INDEX, source fred). It shipped off until then because a
+column enabled before its data exists builds all-NULL, and read_matrix drops
+every date where any column is NULL -- the whole table would vanish. That is the
+trap breakeven_inflation documents below.
 
-To turn it on, two steps, then set enabled = true:
+To refresh it:
 
     python fetch_fred_series.py DFF
     curl -F file=@test-data/DFF_daily.csv -F symbol=DFF -F type=INDEX          -F timeframe=D1 -F source=fred http://localhost:8001/api/imports
@@ -355,6 +366,48 @@ No API key needed: DFF is Fed-published, not one of the licensed ICE BofA
 series the free graph endpoint truncates. INDEX, not STOCK, so the engine
 cannot open a position in a policy rate. DFF reaches back to 1954-07-01, so
 unlike breakeven_inflation it cannot move the training floor."""
+
+[[feature]]
+name = "boc_policy_rate"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
+series = { symbol = "CORRA", source = "boc", field = "close" }
+method = "rescale"
+min = 0.0
+max = 25.0
+enabled = true
+note = """Features.md 42. Canada's overnight rate: Canadian monetary conditions and
+the CAD side of borrowing costs for a Canadian account.
+
+CORRA, the Canadian Overnight Repo Rate Average (Bank of Canada Valet series
+AVG.INTWO), daily from 1997-08-12. Features.md asks for the overnight TARGET; this
+is the realised overnight rate the target steers, the Canadian counterpart of
+fed_funds (DFF), and it tracks the target within a few basis points. The target
+itself is daily only from 2009-04-21 (Valet V39079); before that the Bank publishes
+it monthly. Enabling a 2009 column would set the training floor for the whole
+table (the trap breakeven_inflation documents), and stitching month-end values in
+front of it would either look ahead or lag a change by up to a month. CORRA's
+methodology was enhanced in June 2020; the level moved by basis points, which
+this rescale cannot see.
+
+RESCALE on the same declared 0..25 band as fed_funds, for the same reasons -- a
+policy rate is a staircase, so the level is the signal, and daily_change or a
+rolling z-score would read 0 for months and spike on a step -- and so that the two
+policy rates sit on one scale, where their difference is the US-Canada rate gap.
+Since 1997 it has run between 0.05 (2021-12-10) and 6.02 (1998-10-30), so the
+column stays in the bottom quarter of the band; rescale does not clip, so a breach
+would show outside 0..1.
+
+It does not print on Canadian holidays (Thanksgiving, Remembrance Day, ...), which
+the NYSE calendar trades through, so those gaps are expected and the build carries
+the last value forward.
+
+To refresh it:
+
+    python fetch_boc_series.py AVG.INTWO --out test-data/CORRA_daily.csv
+    curl -F file=@test-data/CORRA_daily.csv -F symbol=CORRA -F type=INDEX          -F timeframe=D1 -F source=boc http://localhost:8001/api/imports"""
 
 [[feature]]
 name = "breakeven_inflation"
@@ -584,28 +637,36 @@ scope = "market"
 cadence = "daily"
 cost = "free"
 units = "percent"
-series = { symbol = "BAMLC0A0CM", source = "fred", field = "close" }
+series = { symbol = "BAA10Y", source = "fred", field = "close" }
 method = "rolling_zscore"
 window = 60
-enabled = false
-status = "blocked"
-note = """Extra yield demanded on high-rated corporates over Treasuries.
+enabled = true
+note = """Features.md 25. Extra yield demanded on high-rated corporates over Treasuries:
+when it widens, lenders are getting nervous about corporate health in general.
 
-BLOCKED, and not for want of an API key — the restriction is on the series.
-The design expected full history from 1996-12-31, with only the high-yield
-sibling truncated. That is no longer true. Checked 2026-10-12 against the REST
-API with a key: FRED reports observation_start 2023-10-10 and carries the note
-"Starting in April 2026, this series will only include 3 years of
-observations. For more data, go to the source." 785 bars, all 2023-10 on.
+BAA10Y, Moody's seasoned Baa corporate yield minus the 10-year Treasury, which
+Features.md names as the free fallback. The design's first choice, ICE BofA
+BAMLC0A0CM, is BLOCKED at the series, not for want of a key: checked 2026-10-12
+against the REST API with one, FRED carries it from 2023-10-10 only, with the note
+"Starting in April 2026, this series will only include 3 years of observations".
+Three years cannot cover a training window that starts in 2003.
 
-Three years cannot cover a training window that starts in 2003, so this sits
-with credit_spread_hy rather than in the model. Reviving it needs the data from
-ICE directly, or another vendor — not a different FRED endpoint."""
+Not the same measure. Baa is the lowest investment-grade rating, so this reads
+higher and moves more than an all-grades IG index; and it is a yield difference
+against the 10-year, not an option-adjusted spread. The direction it carries --
+corporate credit tightening or easing against Treasuries -- is what the column is
+for, and a rolling z-score reads direction and surprise, not level.
 
+Daily from 1986-01-02 (10,214 bars, imported 2026-11-10 from FRED's table page for
+BAA10Y; the graph CSV endpoint is blocked on the build network). It does not print
+on US bond-market holidays (Columbus Day, Veterans Day), which the NYSE calendar
+does not close for, so those gaps are expected and the build carries the last
+value forward. Already a difference, so never daily_return.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Not in the model. Kept here so the decision is recorded rather than forgotten.
-# ─────────────────────────────────────────────────────────────────────────────
+To refresh it:
+
+    python fetch_fred_series.py BAA10Y
+    curl -F file=@test-data/BAA10Y_daily.csv -F symbol=BAA10Y -F type=INDEX          -F timeframe=D1 -F source=fred http://localhost:8001/api/imports"""
 
 [[feature]]
 name = "put_call_ndx"

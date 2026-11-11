@@ -18,6 +18,7 @@ from loader.cohesion import check_import
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
+    SkippedRows,
     SourceFile,
     check_header,
     commit_file,
@@ -98,7 +99,8 @@ async def post_imports(
             return JSONResponse(status_code=200, content={"status": "completed", **loaded})
 
         with open(tmp_path, "rb") as stream:
-            header, rows_by_year = scan_and_bucket(stream)
+            skipped = SkippedRows()
+            header, rows_by_year = scan_and_bucket(stream, skipped)
         if not header or not rows_by_year:
             return _bad("CSV contains no parseable data rows")
 
@@ -202,6 +204,8 @@ async def post_imports(
         # Read-only cohesiveness advisory over the uploaded bars. Never blocks
         # the import; the client surfaces it if it cares.
         payload["cohesion"] = check_import(header, rows_by_year, timeframe).to_dict()
+        # R6: rows that produced no candle, said rather than silently dropped.
+        payload["skipped"] = skipped.to_dict()
         return JSONResponse(status_code=200, content=payload)
     finally:
         try:

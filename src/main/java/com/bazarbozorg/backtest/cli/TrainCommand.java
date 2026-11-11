@@ -86,7 +86,7 @@ public class TrainCommand implements Runnable {
 
             Timeframe timeframe = Timeframe.fromCode(timeframeCode);
             ZonedDateTime from = fromDate != null ? DateTimeUtils.parse(fromDate) : null;
-            ZonedDateTime to = toDate != null ? DateTimeUtils.parse(toDate) : null;
+            ZonedDateTime to = toDate != null ? DateTimeUtils.parseEnd(toDate) : null;
             Map<String, String> strategyParams = params != null ? params : new HashMap<>();
             ModelLoadPolicy policy = force ? ModelLoadPolicy.TRAIN_FRESH : ModelLoadPolicy.LOAD_OR_TRAIN;
 

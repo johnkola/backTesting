@@ -113,6 +113,8 @@ public record WalkforwardRun(
         String hyperparamsJson,
         String columnsJson,
         StrategyProvenance strategy,
+        Lineage lineage,
+        Execution execution,
         ZonedDateTime startedAt,
         ZonedDateTime finishedAt,
         int folds,
@@ -163,6 +165,111 @@ public record WalkforwardRun(
             Integer trainBars,
             LocalDate testEnd
     ) {
+    }
+
+    /**
+     * What produced the run's inputs, and whether they are still what it read
+     * (DESIGN-GAPS G3). Null for a run from before G3, which recorded none.
+     *
+     * <p>{@code setRebuiltSince} and {@code valuesChangedSince} are a cheap
+     * signal from the stored builds alone: the set's current build is not the
+     * one the run read, and that build's values hash differs. The values hash
+     * covers every column, so a change to a column the run did not use also
+     * sets it; {@code python -m nn.walkforward --check-snapshot ID} is the
+     * exact answer.
+     *
+     * @param featureRunId    the {@code feature_runs} build the run read
+     * @param currentBuildId  the set's build now ({@code feature_sets.current_run_id})
+     * @param inputSnapshot   hash of the matrix, closes and park the run read
+     * @param snapshotJson    the three part hashes, as stored JSON text
+     * @param codeHash        hash of the loader's source when the run started
+     * @param gitSha          the commit, when the run knew it
+     * @param libVersionsJson Python, numpy, torch versions, as stored JSON text
+     * @param thenValuesHash  values hash of the build the run read
+     * @param nowValuesHash   values hash of the set's current build
+     */
+    public record Lineage(
+            Long featureRunId,
+            Long currentBuildId,
+            String inputSnapshot,
+            String snapshotJson,
+            String codeHash,
+            String gitSha,
+            String libVersionsJson,
+            String thenValuesHash,
+            String nowValuesHash
+    ) {
+        /** The set has been rebuilt since the run, or null when that cannot be told. */
+        public Boolean setRebuiltSince() {
+            if (featureRunId == null || currentBuildId == null) {
+                return null;
+            }
+            return !featureRunId.equals(currentBuildId);
+        }
+
+        /** The rebuild changed the stored values, or null when that cannot be told. */
+        public Boolean valuesChangedSince() {
+            if (thenValuesHash == null || nowValuesHash == null) {
+                return null;
+            }
+            return !thenValuesHash.equals(nowValuesHash);
+        }
+    }
+
+    /**
+     * How the run acted on its signals (Design Notes, Trading Strategies; G5).
+     * {@code kind} is {@code signals} (Strategy 1, long unless SELL) or
+     * {@code margin} (Strategy 2: a QQQ core never sold, margin QQQ on an up
+     * signal, margin PSQ on a down one). The dials and the margin summary are
+     * null under Strategy 1.
+     *
+     * @param kind               {@code signals} or {@code margin}
+     * @param leveragePct        margin QQQ opened on an up signal, % of the core
+     * @param hedgePct           margin PSQ opened on a down signal, % of the core
+     * @param marginSpreadPct    points over Fed funds the margin rate charges
+     * @param maintenancePct     equity / assets below which the margin position is closed
+     * @param longThreshold      a money model's position needed to go long; null for ce
+     * @param marginTrain        the loss was Strategy 2's curve too, so the signals differ
+     *                           from a run only scored with it (G5 step 2)
+     * @param meanMarginInterest interest per fold, negative points of starting capital
+     * @param marginCalls        forced closes across the folds
+     * @param trims              cuts back to the 50% ceiling across the folds
+     * @param coreAtRisk         bars below maintenance with nothing left on margin
+     * @param meanDaysLong       bars per fold held long on margin
+     * @param meanDaysHedged     bars per fold held in PSQ
+     * @param meanLeveredReturn  G25: mean fold return always long on margin (same dials,
+     *                           interest and costs, no model); null on folds before G25
+     * @param foldsBeatLevered   folds where the model beat that; null under Strategy 1
+     */
+    public record Execution(
+            String kind,
+            Double leveragePct,
+            Double hedgePct,
+            Double marginSpreadPct,
+            Double maintenancePct,
+            Double longThreshold,
+            boolean marginTrain,
+            Double meanMarginInterest,
+            Integer marginCalls,
+            Integer trims,
+            Integer coreAtRisk,
+            Double meanDaysLong,
+            Double meanDaysHedged,
+            Double meanLeveredReturn,
+            Integer foldsBeatLevered
+    ) {
+        /**
+         * Did the model's timing add anything over borrowing alone? Null when
+         * there is no baseline to compare with (Strategy 1, or folds from before
+         * G25). Buy-and-hold stays the benchmark; this says whether a Strategy 2
+         * excess over it is the model or the leverage.
+         */
+        public Boolean beatsLeveredOnReturn(Double meanStratReturn) {
+            if (!"margin".equals(kind) || meanLeveredReturn == null || meanStratReturn == null) {
+                return null;
+            }
+            return meanStratReturn > meanLeveredReturn;
+        }
     }
 
     /** True while the run has not stamped {@code finishedAt}. */
