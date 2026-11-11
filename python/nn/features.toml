@@ -627,6 +627,82 @@ drives more position-squaring than a midweek one."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Earnings (Features.md 39-40). Built by build_ndx_earnings.py from SEC EDGAR:
+# release dates from 8-K Items 12 / 2.02 (so from late 2003), and net income from
+# XBRL facts at the value and date first filed (so from 2011). Today's members
+# over the whole history, like breadth: survivorship-biased. Foreign filers
+# (ASML, ARM and a few others: 6-K, 20-F, IFRS) are in neither.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[feature]]
+name = "earnings_season_share"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "percent"
+series = { symbol = "NDXERN5D", source = "computed", field = "close" }
+method = "rescale"
+min = 0.0
+max = 100.0
+enabled = true
+note = """Percent of members releasing earnings in the 5 trading days starting
+today (8-K Item 12 / 2.02 filing dates). Mean 8.4%, peak 44.6%. Release dates
+are announced weeks ahead, so this is knowable; the date used is when the 8-K
+was filed, a small lookahead accepted. From 2003-10-28, the first day 45
+members are covered. Not buildable for the last 5 trading days before a fetch:
+releases not yet filed are invisible, so live use needs an earnings calendar."""
+
+[[feature]]
+name = "earnings_season_flag"
+scope = "market"
+cadence = "daily"
+cost = "free"
+units = "count"
+series = { symbol = "NDXERNSEASON", source = "computed", field = "close" }
+method = "flag"
+enabled = true
+note = """1 when earnings_season_share is at least 5% (the author's rule). On for
+about half of all days, and it flickers within a season (230 runs in 23 years)
+rather than marking four clean blocks a year."""
+
+[[feature]]
+name = "ndx_net_income_qoq"
+scope = "market"
+cadence = "quarterly"
+cost = "free"
+units = "percent"
+series = { symbol = "NDXNIQOQ", source = "computed", field = "close" }
+method = "rescale"
+min = -25.0
+max = 25.0
+enabled = true
+note = """Quarter-over-quarter change of the members' summed trailing
+twelve-month NET INCOME, not EPS (DESIGN-GAPS D5: summed EPS falls at every
+split). Matched: a member counts only with both quarters, so one starting to
+file is not growth. Each figure from the date first filed. Measured -15.4% (the
+2017 tax-reform charges) to +21.0% (their roll-off in 2019), so +-25 holds all
+of it; a value outside comes back outside 0..1, loudly. From 2011-03-01, so a
+strategy that ticks it trains from 2011. The level is imported as NDXNITTM
+(USD bn) to check this against."""
+
+[[feature]]
+name = "ndx_eps_forward"
+scope = "market"
+cadence = "quarterly"
+cost = "paid"
+units = "level"
+series = { computed = "ndx_eps_forward" }
+method = "rescale"
+min = -25.0
+max = 25.0
+enabled = false
+status = "later-paid"
+note = """The forward half of Features.md 40: consensus estimates summed across
+members. No free source keeps their history (Yahoo shows current estimates
+only), so it waits for a paid one (Zacks, FactSet, I/B/E/S)."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Credit. The calmer cousin of the high-yield spread, which is blocked below:
 # it moves less, but FRED serves its full history instead of three years.
 # ─────────────────────────────────────────────────────────────────────────────

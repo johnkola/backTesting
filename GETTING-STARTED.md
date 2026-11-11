@@ -93,6 +93,16 @@ series. It caches each name's closes under `data/ndx-constituents/`, so `--offli
 recomputes at a different window without re-downloading. Read the survivorship-bias
 warning in its docstring before a backtest leans on the output.
 
+**Nasdaq-100 earnings.** `build_ndx_earnings.py` reads the same member list and pulls each
+company's filings from SEC EDGAR: release dates from its earnings 8-Ks (from late 2003) and
+net income from its XBRL facts (from 2011). It writes four `INDEX` series, `NDXERN5D`,
+`NDXERNSEASON`, `NDXNIQOQ` and `NDXNITTM`, imported with source `computed` like breadth.
+Set `SEC_USER_AGENT` in `.env` to name yourself to SEC (see `.env.example`).
+
+**Vendor indicators.** `fetch_twelvedata_indicator.py rsi` (and `macd`) downloads Twelve
+Data's own RSI and MACD for QQQ, which the feature build compares ours against. It needs
+`TWELVEDATA_API_KEY` in `.env`.
+
 **Intraday bars.** Every source above gives you daily candles. If you need `M30` or
 `H1` and have no intraday feed, `tools/datagen/` invents them from a daily file — the
 generated bars aggregate back to exactly the daily ones, so a D1 and an M30 backtest see
@@ -244,12 +254,13 @@ writes — gitignored, and safe to delete if you accept losing what's in it.
 
 | Path | In git | Written by | Holds |
 |---|---|---|---|
-| `test-data/` | yes | `./gradlew generateTestData`, the three fetch scripts | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history; `DGS10`, `T10YIE` and `DCOILWTICO` are FRED macro series; `NDXBREADTH` is computed, and ships with the `.members.txt` naming the constituents it used |
+| `test-data/` | yes | `./gradlew generateTestData`, the three fetch scripts | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history; `DGS10`, `T10YIE` and `DCOILWTICO` are FRED macro series; `NDXBREADTH` is computed, and ships with the `.members.txt` naming the constituents it used; the four `NDXERN*` / `NDXNI*` earnings series likewise, beside `NDXEARNINGS_daily.members.txt` |
 | `data/csv-inbox/` | no | you | Files waiting for the batch importer (`backtest-ingest`), named `SOURCE__SYMBOL__TYPE__TF.csv` |
 | `data/csv-archive/` | no | the loader | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
 | `data/models/` | no | the loader | Trained NN models, one directory per cache key. The **Models** page reads this |
 | `data/features/` | no | nobody | Vestigial — the Java feature store it belonged to was removed in the Python port |
 | `data/ndx-constituents/` | no | `build_ndx_breadth.py` | One JSON of daily closes per Nasdaq-100 member, so breadth recomputes at another window without re-downloading 101 symbols |
+| `data/ndx-earnings/` | no | `build_ndx_earnings.py` | One JSON per member company of its 8-K dates and net income facts from SEC EDGAR, so `--offline` recomputes without re-downloading |
 
 Every CSV in either tree has the same header, whichever path it came in by:
 

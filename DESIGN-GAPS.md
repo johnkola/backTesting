@@ -154,6 +154,7 @@ feature set was built from, which is what G3 (an input snapshot id) needs.
 | # | What differs | Why it was done | Status |
 |---|---|---|---|
 | D3 | Folds always train from the start date and step one year. The design's example uses a fixed window that slides forward by a chosen step ("train 2013–2018, test 2019, then roll") | Expanding folds give later folds more data; there was never a step setting | decision |
+| D5 | Column 40 sums the members' net income, not their EPS | Summed point in time, EPS falls 4x or 20x at a split (AAPL 2020, NVDA 2021 and 2024, AMZN and GOOGL 2022), which the change column would read as collapses. Summed net income is the aggregate E the design means ("the E in the P/E") with no per-share mixing. Chosen by the author, 2026-11-11 (G7) | decision |
 | D4 | The catalogue has a fourth status, `data-only`, beside §8.2a's active, undecided and blocked | None of the three is true of RSI, MACD and realized volatility: decided, with values, and not to be offered to the builder. Design Notes' "In the model" column already gives them their own value, "No - data only" (G9a) | decision |
 
 ---
@@ -369,7 +370,7 @@ from the Train tab.
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
 | G6 | Investment-grade credit (25) is "Yes" in the design but blocked here, because FRED restricts the series. `Features.md` names `BAA10Y` as a free fallback from 1986 | Design Notes row 25; Features.md table | `features.toml`: `credit_spread_ig` is `blocked` | S | done, uncommitted: author chose BAA10Y. `credit_spread_ig` reads it (FRED, daily from 1986-01-02, 10,214 bars, import file 286, made from FRED's table page as DFF was), rolling z-score 60 as designed, enabled. Not the same measure as ICE's all-grades OAS (Baa is the lowest IG rating, and a yield gap to the 10-year, not an option-adjusted spread); the note says so. Its gaps are US bond-market holidays |
-| G7 | Earnings season (39) and aggregate EPS (40) are absent. Both are committed columns | Design Notes rows 39-40 | no `earnings` anywhere in the code | L | open (see G7 plan) |
+| G7 | Earnings season (39) and aggregate EPS (40) are absent. Both are committed columns | Design Notes rows 39-40 | no `earnings` anywhere in the code | L | done, uncommitted (see G7 plan): columns 39 and 40 built from SEC EDGAR; forward EPS `later-paid` |
 | G8 | Bank of Canada rate (42) is absent | Features.md 42 | no row in `features.toml` | S | done, uncommitted: `boc_policy_rate` reads CORRA (Bank of Canada Valet `AVG.INTWO`, the realised overnight rate the target steers, daily from 1997-08-12, source `boc`, import file 287) via the new `fetch_boc_series.py`. The target itself (`V39079`) is daily only from 2009-04-21, which would set the training floor; monthly before. Rescaled on fed_funds' 0..25 band so the two policy rates share a scale. Built with G6 as feature set 16: set 10 value for value plus the two columns, first complete date still 2001-04-18. Python 585 |
 | G9 | MACD and RSI have no vendor cross-check; only the yield curve has one. Also unconfirmed: whether the three data-only columns are stored when `enabled = false` | Features.md 7-8 | one `[[check]]` block in `features.toml` | S | partial: G9a done, uncommitted; G9b waits for a Twelve Data key (see G9 plan; now M) |
 
@@ -434,19 +435,41 @@ income with the date each was filed, starting with filings from 2009-07. Free co
 (survivorship-biased, same caveat). Foreign filers (ASML, ARM and a few others file 6-K
 and 20-F, with no Item 2.02 and IFRS facts) drop out of both columns.
 
-- [ ] `build_ndx_earnings.py` beside `build_ndx_breadth.py`: ticker to CIK from SEC's
+- [x] `build_ndx_earnings.py` beside `build_ndx_breadth.py` (12 offline tests in
+      `tests/test_ndx_earnings.py`): ticker to CIK from SEC's
       ticker file, each member's submissions (with the older pages) and companyfacts,
       cached; written as degenerate bars, imported as INDEX, source `computed`
-- [ ] Column 39, two series. The share of members reporting in the next 5 trading days,
-      out of members with a known release date that quarter, from the first quarter at
-      least half the members have one (about 2004). Plus a 0/1 in-season flag (rule:
-      decision below). A release date is announced weeks ahead, so knowing it 5 days
+- [x] Column 39, two series. The share of members releasing in the 5 trading days
+      starting today, out of members covered (first release to 130 days after the last),
+      on days covering at least 45 members. Plus a 0/1 in-season flag: 1 when that share
+      is at least 5% (author's choice, 2026-11-11). A release date is announced weeks ahead, so knowing it 5 days
       out is not lookahead; using the date it actually happened is a small one, noted
-- [ ] Column 40, the trailing aggregate as of each filing date (no lookahead), carried
+- [x] Column 40, summed trailing twelve-month NET INCOME, not EPS (author's choice,
+      D5), as of each filing date at the value first filed (no lookahead), carried
       forward daily; quarter-over-quarter change over the members present in both
       quarters, so a company starting to file XBRL is not read as earnings growth.
-      Forward EPS: a row with status `later-paid`, not built
-- [ ] `features.toml` rows, tests, build, catalogue, live check
+      Enabled although it starts about 2010 (author's choice): strategies decide whether
+      to include it. Forward EPS: a row with status `later-paid`, not built
+- [x] `features.toml` rows, tests, build, catalogue, live check
+
+*Live, 2026-11-11.* 101 tickers, about 97 companies by CIK (GOOG/GOOGL one). No earnings 8-K:
+ARM, ASML, CCEP, FER, NBIS, PDD, TRI. No net income facts: ASML, CCEP, FER, TRI, plus HONA
+and SPCX (too new). Imported as `computed`: `NDXERN5D` and `NDXERNSEASON` (5,797 days from
+2003-10-28), `NDXNIQOQ` (3,954 from 2011-03-01), `NDXNITTM` (the level, not a feature).
+Share: mean 8.4%, peak 44.6%. The 5% flag is on 49.5% of days and flickers inside a season
+(230 runs in 23 years). Change: -15.4% (2018, the 2017 tax-reform charges) to +21.0% (2019,
+their roll-off), median +4.0%, so `rescale` -25..25. Level: $128 bn (2011) to $1.1 tn
+(2026); its largest daily jump, 2016-02-11, is Alphabet's first 10-K under its new CIK, a
+member joining the sum that the matched change ignores. Feature set 18: 35 inputs plus the
+3 data-only columns, the 35 carried over equal to set 17 value for value; first complete
+date now 2011-03-01, as chosen. Catalogue: the three are `active`, `ndx_eps_forward`
+`undecided` (`later-paid`). Strategy 23 reproduces -2.21 pp on set 18 (it selects none of
+them). A whole-set run (`--no-save`) trains on 700 inputs, 10 folds 2012-2021; its header
+still says "train from 2003", a wart of that path. Tests: Python 617.
+
+Found: the earnings share cannot be built for the last 5 trading days before a fetch,
+because releases not yet filed are not in EDGAR. Fine for backtests; live signals need an
+earnings calendar (announced dates), which matters if the app is a signal provider.
 
 ### C. Pipeline and verification
 

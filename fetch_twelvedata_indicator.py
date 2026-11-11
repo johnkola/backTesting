@@ -40,7 +40,8 @@ the importer requires. Import as INDEX, source `twelvedata`:
     curl -F file=@test-data/QQQ-RSI14_daily.csv -F symbol=QQQ-RSI14 -F type=INDEX \\
          -F timeframe=D1 -F source=twelvedata http://localhost:8001/api/imports
 
-Needs a key: --api-key or $TWELVEDATA_API_KEY (free Basic plan: 8 requests a
+Needs a key: --api-key, $TWELVEDATA_API_KEY, or that line in the repo's .env
+(free Basic plan: 8 requests a
 minute, 800 a day, one credit per request). Requests are spaced to stay under
 the per-minute limit.
 """
@@ -56,6 +57,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 API_URL = "https://api.twelvedata.com/{endpoint}"
 
@@ -78,6 +80,19 @@ OVERLAP_DAYS = 366
 REQUEST_GAP_S = 8.0
 
 HEADER = ["Date", "Open", "High", "Low", "Close", "Volume"]
+
+
+def load_dotenv(path: Path) -> None:
+    """Fill unset variables from a KEY=VALUE file, so the key can live in the
+    gitignored .env. Anything already in the environment wins."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def windows(start: dt.date, end: dt.date, years: int = WINDOW_YEARS,
@@ -165,6 +180,7 @@ def fetch_window(indicator: str, symbol: str, lo: dt.date, hi: dt.date,
 
 
 def main() -> None:
+    load_dotenv(Path(__file__).resolve().parent / ".env")
     p = argparse.ArgumentParser(
         description="Fetch Twelve Data's RSI(14) or MACD(12,26) line as app-format CSV.")
     p.add_argument("indicator", choices=sorted(INDICATORS))
