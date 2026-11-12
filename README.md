@@ -331,7 +331,7 @@ Each file runs through the **same pipeline as `POST /api/imports`** — sliced i
 
 ## Data feeds
 
-The series the feature table reads, plus SPY, PSQ and XIU (the iShares S&P/TSX 60 ETF, in CAD), refresh straight from their providers, with no CSV in between: Yahoo's chart API for prices, indexes and futures (raw and dividend-adjusted), FRED's API for rates and spreads, the Bank of Canada's Valet API for CORRA, and the four Nasdaq-100 breadth series computed from the members' closes. `python -m loader.feeds list` prints every series with the provider ticker behind it.
+The series the feature table reads, plus SPY, PSQ, and three Toronto-listed ETFs in CAD (XIU, the iShares S&P/TSX 60; BTCC-B, Purpose's unhedged bitcoin fund; ETHX-B, CI Galaxy's ether fund), refresh straight from their providers, with no CSV in between: Yahoo's chart API for prices, indexes and futures (raw and dividend-adjusted), FRED's API for rates and spreads, the Bank of Canada's Valet API for CORRA, and the four Nasdaq-100 breadth series computed from the members' closes. `python -m loader.feeds list` prints every series with the provider ticker behind it.
 
 **Where a series comes from**, in order of preference: (1) history and current days both from the provider's API, which is what adding a feed does: its first refresh loads the full history; (2) history from a CSV upload and current days from the API, when the API's history is short or missing: upload once, then the feed extends it (and holds if the provider disagrees with the CSV where they overlap); (3) everything from CSV, for what no API serves, such as the SEC earnings series. Adding a series to the feeds is one entry in `python/loader/feeds/registry.py`.
 

@@ -56,6 +56,14 @@ FEEDS: tuple[Feed, ...] = (
     # (1999-10-04), so it never went through a CSV.
     Feed("XIU", "yahoo-adj", "STOCK", "yahoo-adj", "XIU.TO", "prices"),
     Feed("XIU", "yahoo", "STOCK", "yahoo", "XIU.TO", "prices"),
+    # Canadian crypto ETFs (Toronto, CAD), for backtests; not feature inputs.
+    # The two the author chose on 2026-11-12: the longest-running large bitcoin
+    # fund (Purpose, unhedged units, from 2021-02-18) and the most-traded ether
+    # fund (CI Galaxy, from 2021-04-20).
+    Feed("BTCC-B", "yahoo-adj", "STOCK", "yahoo-adj", "BTCC-B.TO", "prices"),
+    Feed("BTCC-B", "yahoo", "STOCK", "yahoo", "BTCC-B.TO", "prices"),
+    Feed("ETHX-B", "yahoo-adj", "STOCK", "yahoo-adj", "ETHX-B.TO", "prices"),
+    Feed("ETHX-B", "yahoo", "STOCK", "yahoo", "ETHX-B.TO", "prices"),
     Feed("VIX", "yahoo", "INDEX", "yahoo", "^VIX", "prices"),
     Feed("VXN", "yahoo", "INDEX", "yahoo", "^VXN", "prices"),
     Feed("DXY", "yahoo", "INDEX", "yahoo", "DX-Y.NYB", "prices"),
