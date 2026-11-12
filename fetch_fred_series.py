@@ -4,7 +4,8 @@
 Two sources, tried in that order:
 
   1. The REST API (api.stlouisfed.org), when an API key is available from
-     --api-key or $FRED_API_KEY. Returns JSON; a no-print day carries "."
+     --api-key, $FRED_API_KEY, or that line in the repo's gitignored .env.
+     Returns JSON; a no-print day carries "."
      rather than a blank. Keys are free: https://fredaccount.stlouisfed.org/apikeys
   2. The public graph endpoint (fredgraph.csv) — no key, returns
      `observation_date,<SERIES_ID>` with an empty value on days the series
@@ -62,6 +63,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 GRAPH_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
 API_URL = "https://api.stlouisfed.org/fred/series/observations"
@@ -156,7 +158,22 @@ def to_rows(lines: list[str], series: str,
     return rows, skipped
 
 
+def load_dotenv(path: Path) -> None:
+    """Fill unset variables from a KEY=VALUE file, so the key can live in the
+    gitignored .env. Anything already in the environment wins."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def main() -> None:
+    # Before the parser: --api-key takes its default from the environment.
+    load_dotenv(Path(__file__).resolve().parent / ".env")
     p = argparse.ArgumentParser(description="Fetch a daily FRED series as app-format CSV.")
     p.add_argument("series", help="FRED series id, e.g. DGS10, T10YIE, DCOILWTICO")
     p.add_argument("--from", dest="start", metavar="YYYY-MM-DD",
