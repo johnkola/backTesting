@@ -514,7 +514,38 @@ earnings calendar (announced dates), which matters if the app is a signal provid
 |---|---|---|---|---|---|
 | G10 | No Verify tab and no way to follow a number back to its raw row. This is the design's governing principle | Architecture §1, §8.1 | no route in `Layout.tsx`, no endpoint | L | open |
 | G11 | Training shows folds as they land, but not epoch, loss curve or time remaining | Design Notes, Web Monitoring App | `TrainingStage.tsx:21`, `:78-81` | M | partial |
-| G12 | Stage gates and staleness are thin. Only the Features stage can report `stale`, and a changed parameter does not mark later stages | Design Notes, Staged Pipeline | `StageShell.tsx:5-9` | L | partial |
+| G12 | Stage gates and staleness are thin. Only the Features stage can report `stale`, and a changed parameter does not mark later stages | Design Notes, Staged Pipeline | `StageShell.tsx:5-9` | L | done, uncommitted (see G12 plan) |
+
+**G12 plan, 2026-11-12.** The design's rule (Design Notes, Staged Pipeline): when a
+parameter or input changes, the stage that owns it and every stage after it are marked
+stale; a stage whose inputs and parameters are unchanged is not. With the data feeds the
+feature table now gains a day every weekday, so "anything newer than the run" would mark
+everything stale every evening. The question asked instead, per stage, is the design's
+own: would a rerun now read different inputs or parameters?
+
+- **Data**: stale when a series the feature table reads is held by the feeds, failed on
+  its last refresh, or further behind than its provider's normal lag (prices 1 session,
+  FRED and the Bank of Canada 3); running while a feeds run is going.
+- **Features**: stale when `features.toml` no longer matches the newest build (any edit,
+  not only `schema_version`, as today), or an input series has a newer stored version than
+  the one the build read (`feature_runs.inputs_json` records it), naming the series.
+  Normalization and Split show the same build, so they inherit it.
+- **Training**: per strategy, its newest run is stale when the strategy has a newer saved
+  version; when the inputs inside the dates that run read have changed (a rerun reads the
+  current config's set with the run's columns: matrix, closes, park, margin, each named); when
+  its window has gained days it never saw (a validation year still in progress, an open
+  holdout); or when Features is stale. A code change since is a note, not stale. Exact
+  because each run now records the dates it read and a snapshot over just those; the ten
+  runs from before this are backfilled once from their own set, which still holds the
+  build they read (set 10, build 5).
+- **Backtest**: a stored result is stale when an import changed stored bars (a fix, not
+  later days) inside its window after it was computed.
+
+- [x] Runs record `span_from`, `span_to`, `last_used`, `window_end` and a snapshot over that span (`span_snapshot`, `span_parts_json`); `python -m nn.staleness --backfill` gave the ten older runs theirs. Checked: a fresh run of postman-smoke v10 on set 18 recorded the same span and the same span snapshot, hash for hash, as the backfill computed for its run 259 on set 10 (then deleted)
+- [x] `nn/staleness.py`: each stage's state with its reasons; the rules tested offline (the span against the runner's own `make_folds`). A fix is checked by day where its diff lists every changed day, by year otherwise: by year, QQQ results ending 2026-06-30 were flagged by a fix to 2026-09-25
+- [x] `GET /api/nn/pipeline/status` (Node already proxies `/api/nn`), kept a minute (2.8 s cold, 0.01 s warm); a Postman request
+- [x] Each pipeline tab merges its own verdict with it (running, then failed, then stale; a failed tab that is also stale shows both) and lists the reasons; the tab strip carries each stage's badge; the Training and Backtest rows carry a stale badge with the reasons. Not yet looked at in a browser
+- [x] Docs (README route and a Pipeline stage states section), tests (Python 694, client 119, API 114), live check: Data, Features, Normalization and Split passed; Training stale on one strategy (phase1-full has v4 saved since its newest run used v2), the other four strategies' newest runs fresh even though they read set 10 (the config changes since did not touch their columns over their dates); Backtest: 23 of 34 stored results stale, each naming the fix (e.g. AAPL re-imported 2026-11-08 settling 2026-09-18, inside results that ran to it)
 
 ### D. UI components
 

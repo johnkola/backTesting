@@ -1,6 +1,15 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { StateBadge } from './pipeline/StageShell'
+import { api } from '../lib/api'
+import { PipelineStatusContext } from '../lib/pipelineStatusContext'
+import { tabState } from '../lib/stageStatus'
 import { STAGES } from '../lib/stages'
+import { useApiData } from '../lib/useApiData'
 import { useTimeframe } from '../lib/useTimeframe'
+
+/** How often the stage states are re-read while the page is open. */
+const STATUS_REFRESH_MS = 60_000
 
 /**
  * The pipeline, one tab per stage, in the order the stages run.
@@ -14,6 +23,9 @@ import { useTimeframe } from '../lib/useTimeframe'
  * showing a green tick it cannot justify — an unearned "passed" is worse than
  * an honest gap, because it is the one thing a monitoring view must never get
  * wrong.
+ *
+ * The stage states (G12) are read once here and shared with every tab, and the
+ * tab strip shows each one, so a stale stage is visible without opening it.
  */
 
 export default function PipelinePage() {
@@ -25,6 +37,17 @@ export default function PipelinePage() {
   // rendering for a moment before its index redirect lands.
   const slug = pathname.split('/').filter(Boolean)[1]
   const current = STAGES.find((s) => s.slug === slug) ?? STAGES[0]
+
+  const [tick, setTick] = useState(0)
+  const reload = useCallback(() => setTick((n) => n + 1), [])
+  useEffect(() => {
+    const timer = setInterval(reload, STATUS_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [reload])
+  const { data: status, error } = useApiData(
+    (signal) => api.pipelineStatus(tf, signal), [tf, tick],
+  )
+  const ctx = useMemo(() => ({ status, error, reload }), [status, error, reload])
 
   return (
     <section>
@@ -48,11 +71,16 @@ export default function PipelinePage() {
           >
             <span className="opacity-50 mr-1">{s.n}</span>
             {s.label}
+            {tabState(status, s.slug) && (
+              <span className="ml-2"><StateBadge state={tabState(status, s.slug)!} small /></span>
+            )}
           </NavLink>
         ))}
       </div>
 
-      <Outlet />
+      <PipelineStatusContext.Provider value={ctx}>
+        <Outlet />
+      </PipelineStatusContext.Provider>
     </section>
   )
 }

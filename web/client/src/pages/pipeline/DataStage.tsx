@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react'
 import FeedsPanel from '../../components/FeedsPanel'
 import { api, type FeaturesReport, type Instrument } from '../../lib/api'
+import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { mergeState } from '../../lib/stageStatus'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import StageShell from './StageShell'
@@ -20,9 +22,13 @@ type Loaded = { instruments: Instrument[], features: FeaturesReport }
  */
 export default function DataStage() {
   const [tf] = useTimeframe()
+  const { status, reload: reloadStatus } = usePipelineStatus()
   // Bumped when a feeds run finishes, so the stored ranges below refetch.
   const [reload, setReload] = useState(0)
-  const onFeedsChanged = useCallback(() => setReload((n) => n + 1), [])
+  const onFeedsChanged = useCallback(() => {
+    setReload((n) => n + 1)
+    reloadStatus()
+  }, [reloadStatus])
   const { data, error } = useApiData<Loaded>(
     (signal) => Promise.all([
       api.instruments(tf, signal).then((r) => r.items),
@@ -50,9 +56,16 @@ export default function DataStage() {
     ? 'unknown'
     : missing.length === 0 ? 'passed' : 'failed'
 
+  // Missing series are listed below already; the rest (held, failed, behind)
+  // come from the pipeline's check of the feeds.
+  const merged = mergeState(state, status?.data)
+  const reasons = (status?.data.reasons ?? []).filter((r) => r.kind !== 'missing')
+
   return (
     <StageShell
-      state={state}
+      state={merged.state}
+      alsoStale={merged.alsoStale}
+      reasons={reasons}
       summary={
         required.length === 0
           ? 'No required series declared'

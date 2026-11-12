@@ -44,7 +44,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from nn import feature_store, lineage, strategy2, strategy_spec, walkforward_store
+from nn import feature_store, lineage, staleness, strategy2, strategy_spec, walkforward_store
 from nn.labels import CLASS_BUY, CLASS_SELL, NUM_CLASSES
 from nn.model import ArchSpec, build
 from nn.standardise import fit as fit_scaler
@@ -1227,11 +1227,21 @@ def main(argv: list[str] | None = None) -> int:
     # once it finishes is the silent wait the design is explicitly against.
     run_id = None
     if not args.no_save:
-        parts = snapshot_parts(cur, fm, closes, args.park,
-                               margin_source=args.source if margin is not None else None)
+        margin_source = args.source if margin is not None else None
+        parts = snapshot_parts(cur, fm, closes, args.park, margin_source=margin_source)
+        # G12: the dates this run reads and a snapshot over just those, so a
+        # later check can tell new days after them (no effect) from a change
+        # inside them (stale).
+        span = staleness.run_span(
+            fm.dates, folds, args.lookback, args.forward,
+            staleness.window_end_of(args.last_val, bool(args.test),
+                                    setup.plan.test_end if setup is not None else None))
+        span_cols = {} if span is None else staleness.span_columns(span, snapshot_parts(
+            cur, staleness.restrict(fm, span.start, span.end), closes, args.park,
+            margin_source=margin_source))
         run_id = walkforward_store.open_run(conn, args, set_id, x_all.shape[1],
                                             fm.names, provenance,
-                                            run_lineage(cur, set_id, parts))
+                                            {**run_lineage(cur, set_id, parts), **span_cols})
         print(f"recording    walkforward_runs id={run_id} "
               f"(folds committed as they finish)")
 

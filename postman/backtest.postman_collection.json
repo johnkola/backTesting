@@ -2414,6 +2414,55 @@
               }
             }
           ]
+        },
+        {
+          "name": "Pipeline stage states",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/pipeline/status?timeframe={{timeframe}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "pipeline",
+                "status?timeframe={{timeframe}}"
+              ]
+            },
+            "description": "Each stage's state (passed, failed, stale, empty, unknown, running) with the reasons; per strategy, whether its newest walk-forward run would read the same inputs if rerun (G12)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('reports all six stages with a known state', function () {",
+                  "    const d = pm.response.json();",
+                  "    const states = ['passed', 'failed', 'stale', 'empty', 'unknown', 'running'];",
+                  "    for (const k of ['data', 'features', 'normalization', 'split', 'training', 'backtest']) {",
+                  "        pm.expect(d).to.have.property(k);",
+                  "        pm.expect(states).to.include(d[k].state);",
+                  "        pm.expect(d[k].reasons).to.be.an('array');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('checks each newest run', function () {",
+                  "    const runs = pm.response.json().training.runs;",
+                  "    pm.expect(runs).to.be.an('array');",
+                  "    runs.forEach(r => pm.expect(['fresh', 'stale', 'unknown']).to.include(r.state));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

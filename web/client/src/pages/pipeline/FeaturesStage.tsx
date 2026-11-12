@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { api, type FeatureCheck, type FeatureColumn, type FeaturesReport } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
+import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { mergeState } from '../../lib/stageStatus'
 import StageShell, { type StageState } from './StageShell'
 
 /** A disabled column is a recorded decision, not an absence — the badge says
@@ -44,6 +46,7 @@ export default function FeaturesStage() {
   const [tf] = useTimeframe()
   const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf])
   const [openNote, setOpenNote] = useState<string | null>(null)
+  const { status } = usePipelineStatus()
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!data) return <span className="loading loading-spinner" />
@@ -72,11 +75,16 @@ export default function FeaturesStage() {
   const checks = config.checks ?? []
   const checkByFeature = new Map(checks.filter((c) => c.live).map((c) => [c.feature, c]))
 
-  const state: StageState = newest === null ? 'empty' : stale ? 'stale' : 'passed'
+  const own: StageState = newest === null ? 'empty' : stale ? 'stale' : 'passed'
+  // The pipeline's check adds what a schema comparison cannot see: any edit to
+  // features.toml, and input series stored since the build read them.
+  const merged = mergeState(own, status?.features)
 
   return (
     <StageShell
-      state={state}
+      state={merged.state}
+      alsoStale={merged.alsoStale}
+      reasons={status?.features.reasons}
       summary={
         newest === null
           ? `No set built for ${tf}`

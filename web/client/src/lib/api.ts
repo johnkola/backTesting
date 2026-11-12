@@ -1400,6 +1400,50 @@ export type FeedsReport = {
   warning: string | null
 }
 
+// ---------------------------------------------------------------------------
+// Pipeline stage states (G12): what is stale, and why
+// ---------------------------------------------------------------------------
+
+export type StageReason = {
+  kind: string
+  text: string
+  series?: string
+  part?: string
+  days?: number
+  version?: number
+}
+
+export type StageStatus = {
+  state: 'passed' | 'failed' | 'stale' | 'empty' | 'unknown' | 'running'
+  reasons: StageReason[]
+}
+
+/** Whether a stored walk-forward run would read the same inputs if rerun now. */
+export type RunStaleness = {
+  runId: number
+  strategy: string | null
+  version: number | null
+  isTest: boolean
+  state: 'fresh' | 'stale' | 'unknown'
+  reasons: StageReason[]
+  /** Not reasons to rerun: e.g. the code has changed since. */
+  notes: string[]
+}
+
+export type PipelineStatus = {
+  timeframe: string
+  checkedAt: string
+  data: StageStatus & { cutoff?: string, required?: number }
+  features: StageStatus & { setId?: number, buildId?: number | null }
+  normalization: StageStatus
+  split: StageStatus
+  training: StageStatus & { runs: RunStaleness[], inProgress: number }
+  backtest: StageStatus & {
+    results: { id: number, state: 'fresh' | 'stale', reasons: StageReason[] }[]
+    stale: number
+  }
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthReport>('/api/health', signal),
   sources: (signal?: AbortSignal) =>
@@ -1409,6 +1453,8 @@ export const api = {
       `/api/instruments${timeframe ? `?${qs({ timeframe })}` : ''}`, signal,
     ),
   feeds: (signal?: AbortSignal) => getJson<FeedsReport>('/api/feeds', signal),
+  pipelineStatus: (timeframe: string, signal?: AbortSignal) =>
+    getJson<PipelineStatus>(`/api/nn/pipeline/status?${qs({ timeframe })}`, signal),
   feedRun: (id: number, signal?: AbortSignal) =>
     getJson<FeedRunDetail>(`/api/feeds/runs/${id}`, signal),
   refreshFeeds: (body: { feeds?: string[], rebuild?: boolean } = {}) =>

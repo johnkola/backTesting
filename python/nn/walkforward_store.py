@@ -78,7 +78,8 @@ INSERT INTO walkforward_runs
      train_first, train_bars_used, train_bars, test_end,
      feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
      execution, leverage_pct, hedge_pct, margin_spread_pct, maintenance_pct, long_threshold,
-     margin_train)
+     margin_train, span_from, span_to, last_used, window_end, span_snapshot, span_parts_json,
+     span_backfilled)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
@@ -92,7 +93,9 @@ VALUES
      %(feature_run_id)s, %(input_snapshot)s, %(snapshot_json)s, %(code_hash)s,
      %(git_sha)s, %(lib_versions_json)s,
      %(execution)s, %(leverage_pct)s, %(hedge_pct)s, %(margin_spread_pct)s,
-     %(maintenance_pct)s, %(long_threshold)s, %(margin_train)s)
+     %(maintenance_pct)s, %(long_threshold)s, %(margin_train)s,
+     %(span_from)s, %(span_to)s, %(last_used)s, %(window_end)s, %(span_snapshot)s,
+     %(span_parts_json)s, %(span_backfilled)s)
 RETURNING id
 """
 
@@ -305,6 +308,9 @@ NO_PROVENANCE: dict[str, Any] = {
 NO_LINEAGE: dict[str, Any] = {
     "feature_run_id": None, "input_snapshot": None, "snapshot_json": None,
     "code_hash": None, "git_sha": None, "lib_versions_json": None,
+    # G12: the dates the run read and a snapshot over just them (nn/staleness.py).
+    "span_from": None, "span_to": None, "last_used": None, "window_end": None,
+    "span_snapshot": None, "span_parts_json": None, "span_backfilled": False,
 }
 
 

@@ -1,6 +1,8 @@
 import { api, type FeatureColumnStats, type FeaturesReport } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
+import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { mergeState } from '../../lib/stageStatus'
 import StageShell, { type StageState } from './StageShell'
 
 /**
@@ -38,6 +40,7 @@ function checkColumn(method: string, s: FeatureColumnStats): string | null {
  *  output distribution actually looks like that method's output. */
 export default function NormalizationStage() {
   const [tf] = useTimeframe()
+  const { status } = usePipelineStatus()
   const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf])
 
   if (error) return <div className="alert alert-error">{error}</div>
@@ -64,11 +67,14 @@ export default function NormalizationStage() {
     return { stats: s, method, problem: checkColumn(method, s) }
   })
   const problems = rows.filter((r) => r.problem)
-  const state: StageState = problems.length === 0 ? 'passed' : 'failed'
+  const own: StageState = problems.length === 0 ? 'passed' : 'failed'
+  const merged = mergeState(own, status?.normalization)
 
   return (
     <StageShell
-      state={state}
+      state={merged.state}
+      alsoStale={merged.alsoStale}
+      reasons={status?.normalization.reasons}
       summary={
         problems.length === 0
           ? `All ${rows.length} columns are shaped as their method promises`

@@ -307,6 +307,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `DELETE /api/imports/:id` | `dry_run` | Undoes one import: deletes the candles in that slice's calendar year and the audit row. The archived CSV is **kept** — it's how you put the data back. `dry_run=true` reports what would go |
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
+| `GET /api/nn/pipeline/status` | `timeframe` (default `D1`), `fresh` | Each pipeline stage's state (`passed`, `failed`, `stale`, `empty`, `unknown`, `running`) with the reasons, as the pipeline tabs show them; per strategy, whether its newest walk-forward run would read the same inputs if rerun (`fresh`, `stale`, `unknown`), and which stored backtest results a later fix has touched. Kept for a minute; `fresh=1` recomputes. See [Pipeline stage states](#pipeline-stage-states) |
 | `POST /api/nn/train` | `symbol`, `source`, `timeframe`, `mode`, hyperparameters | Trains and caches a model. `mode` is `auto` / `force` / `load_only`; `404` on a `load_only` miss |
 | `POST /api/nn/predict_range` | `symbol`, `source`, `timeframe`, `cache_key`, `version_id`, `since`, `until` | Predicts every bar in a range in one call. This is what the engine uses |
 | `POST /api/nn/predict` | `cache_key`, `version_id`, feature rows | Single-shot scoring against a stored model, for callers that already have features |
@@ -356,6 +357,19 @@ docker exec backtest-loader python -m loader.feeds apply PSQ/yahoo        # acce
 - The SEC earnings series are not in the daily run; refresh them with `build_ndx_earnings.py`.
 - The breadth members are the 101-name list the series were built from. A delisted member keeps its cached history and stops counting after its last close; a provider re-download shorter than the cache is refused.
 - `FRED_API_KEY` in `.env` makes FRED use its API host. Without it, the keyless graph CSV is used, which some networks block.
+
+## Pipeline stage states
+
+Each tab of the pipeline page, and the tab strip, shows its stage's state: **passed**, **failed**, **stale**, **running**, **nothing built** or **not recorded**. A stage's own check decides passed or failed; *stale* means a rerun now would read different inputs or parameters than its output was made from, with the reasons listed on the tab. A new day after the dates a result used does not make it stale, or every evening's feeds run would mark everything.
+
+| Stage | Stale when |
+|---|---|
+| Data | A series the feature table reads is held by the [data feeds](#data-feeds), failed its last refresh, or trails the last finished session by more than its provider's usual lag (prices 1 session, FRED and the Bank of Canada 3, WTI 8, the SEC earnings series 10) |
+| Features, Normalization, Split | `features.toml` has changed since the newest build, or a series the build read has a newer stored version |
+| Training | For each strategy's newest run: the strategy has a newer saved version; inputs inside the dates the run read have changed (feature values, closes, parked return, PSQ and Fed funds); its window has gained days it never scored; or Features is stale. Changed code is shown as a note, not as stale |
+| Backtest | An import has since changed stored bars inside a result's window |
+
+Walk-forward runs record the dates they read and a snapshot over just those. Runs recorded before that have none; give them one from their own feature set with `docker exec backtest-loader python -m nn.staleness --backfill` (`--dry-run` first). It is exact while that set still holds the build the run read, and leaves a run alone otherwise.
 
 ## Data cohesiveness checks
 

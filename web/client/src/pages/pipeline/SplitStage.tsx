@@ -1,6 +1,8 @@
 import { api, type FeaturesReport } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
+import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { mergeState } from '../../lib/stageStatus'
 import StageShell, { type StageState } from './StageShell'
 
 const BLOCK_PURPOSE: Record<string, string> = {
@@ -25,6 +27,7 @@ const BLOCK_CLS: Record<string, string> = {
  */
 export default function SplitStage() {
   const [tf] = useTimeframe()
+  const { status } = usePipelineStatus()
   const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf])
 
   if (error) return <div className="alert alert-error">{error}</div>
@@ -51,11 +54,14 @@ export default function SplitStage() {
     if (dated[i].fromDate! <= dated[i - 1].toDate!) overlap = true
   }
 
-  const state: StageState = empty.length > 0 || overlap ? 'failed' : 'passed'
+  const own: StageState = empty.length > 0 || overlap ? 'failed' : 'passed'
+  const merged = mergeState(own, status?.split)
 
   return (
     <StageShell
-      state={state}
+      state={merged.state}
+      alsoStale={merged.alsoStale}
+      reasons={status?.split.reasons}
       summary={
         overlap
           ? 'Blocks overlap — the future is leaking backwards'

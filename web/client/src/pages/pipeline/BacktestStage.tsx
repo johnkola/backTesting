@@ -7,6 +7,8 @@ import {
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import DeleteResultRowButton from '../../components/DeleteResultRowButton'
+import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { mergeState } from '../../lib/stageStatus'
 import StageShell, { NotWired, type StageState } from './StageShell'
 
 const LIMIT = 25
@@ -40,6 +42,7 @@ function pct(v: number | null | undefined) {
  */
 export default function BacktestStage() {
   const [tf] = useTimeframe()
+  const { status } = usePipelineStatus()
   const [sort, setSort] = useState<ResultSortKey>('created')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
   const [offset, setOffset] = useState(0)
@@ -74,15 +77,25 @@ export default function BacktestStage() {
   const comparable = rows.filter((r) => beatBuyAndHold(r) !== null)
   const beating = comparable.filter((r) => beatBuyAndHold(r) === true)
   const unscored = rows.length - comparable.length
-  const state: StageState = rows.length === 0 ? 'empty' : 'unknown'
+  const own: StageState = rows.length === 0 ? 'empty' : 'unknown'
+  // A stored result is stale when an import changed bars inside its window
+  // after it ran (G12); the stage is, when the newest result is.
+  // Result ids are strings on this page and numbers in the status: key by text.
+  const staleById = new Map((status?.backtest.results ?? [])
+    .filter((r) => r.state === 'stale').map((r) => [String(r.id), r]))
+  const staleHere = rows.filter((r) => staleById.has(String(r.id))).length
+  const merged = mergeState(own, status?.backtest)
 
   return (
     <StageShell
-      state={state}
+      state={merged.state}
+      alsoStale={merged.alsoStale}
+      reasons={status?.backtest.state === 'stale' ? staleById.get(String(rows[0]?.id))?.reasons : undefined}
       summary={
         rows.length === 0
           ? `No runs scored at ${tf}`
           : `${beating.length} of ${comparable.length} runs on this page beat buy-and-hold`
+            + (staleHere ? `; ${staleHere} stale` : '')
       }
       detail={
         rows.length === 0
@@ -134,6 +147,14 @@ export default function BacktestStage() {
                   <td>
                     <div className="flex items-center gap-1">
                       <Link to={`/results/${r.id}`} className="btn btn-xs btn-outline">open</Link>
+                      {staleById.has(String(r.id)) && (
+                        <span
+                          className="badge badge-xs badge-warning tooltip tooltip-right"
+                          data-tip={staleById.get(String(r.id))!.reasons.map((x) => x.text).join('; ')}
+                        >
+                          stale
+                        </span>
+                      )}
                       <DeleteResultRowButton
                         id={String(r.id)}
                         onDeleted={() => setReloadKey((k) => k + 1)}

@@ -560,6 +560,21 @@ ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS code_hash VARCHAR(64);
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS git_sha VARCHAR(40);
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS lib_versions_json TEXT;
 
+-- G12: the dates a run read (its first training input, lookback included, to
+-- its last scored day plus the label horizon), where its window ends by
+-- configuration (NULL for a holdout open to the end), and a snapshot over just
+-- that span. Days added after the span cannot change the run, so they do not
+-- make it stale; a change inside it does. nn/staleness.py reads these, and its
+-- --backfill gives runs from before them a span from their own feature set
+-- (span_backfilled).
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_from DATE;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_to DATE;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS last_used DATE;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS window_end DATE;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_snapshot VARCHAR(64);
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_parts_json TEXT;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_backfilled BOOLEAN NOT NULL DEFAULT false;
+
 -- ---------------------------------------------------------------------------
 -- The buy-and-hold benchmark, computed once per window
 -- ---------------------------------------------------------------------------

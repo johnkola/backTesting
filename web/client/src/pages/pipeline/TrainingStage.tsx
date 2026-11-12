@@ -11,6 +11,8 @@ import {
   executionLine, isLeverageOnly, lineageLine, newestFinished, num, pp, stageSummary,
 } from '../../lib/walkforwardView'
 import StartWalkforward from '../../components/StartWalkforward'
+import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { mergeState } from '../../lib/stageStatus'
 import StageShell, { NotWired } from './StageShell'
 
 type Loaded = { items: TrainedModel[], modelsDir: string }
@@ -34,6 +36,7 @@ type Loaded = { items: TrainedModel[], modelsDir: string }
  */
 export default function TrainingStage() {
   const [tf] = useTimeframe()
+  const { status } = usePipelineStatus()
   const [includeTest, setIncludeTest] = useState(false)
   const [openRun, setOpenRun] = useState<number | null>(null)
   // Bumped when a run started here opens its row or ends, so the table re-reads.
@@ -64,10 +67,24 @@ export default function TrainingStage() {
 
   const newest = newestFinished(runs)
   const header = stageSummary(runs, models.length, tf)
+  // Each strategy's newest run, checked for whether a rerun would read the same
+  // inputs and parameters (G12); older runs of a strategy are superseded.
+  const staleness = new Map((status?.training.runs ?? []).map((r) => [r.runId, r]))
+  const merged = mergeState(header.state, status?.training)
+  const reasons = [
+    ...(status?.training.reasons ?? []),
+    ...(status?.training.runs ?? []).filter((r) => r.state === 'stale').flatMap((r) =>
+      r.reasons.map((x) => ({
+        ...x,
+        text: `run #${r.runId}${r.strategy ? ` (${r.strategy} v${r.version})` : ''}: ${x.text}`,
+      }))),
+  ]
 
   return (
     <StageShell
-      state={header.state}
+      state={merged.state}
+      alsoStale={merged.alsoStale}
+      reasons={reasons}
       summary={header.summary}
       detail={
         <>
@@ -232,6 +249,14 @@ export default function TrainingStage() {
                       : r.beatsHoldOnReturn === false
                         ? <span className="badge badge-sm badge-error">lost to hold</span>
                         : <span className="badge badge-sm badge-ghost">not decided</span>}
+                  {staleness.get(r.id)?.state === 'stale' && (
+                    <span
+                      className="badge badge-sm badge-warning ml-1 tooltip tooltip-left"
+                      data-tip={staleness.get(r.id)!.reasons.map((x) => x.text).join('; ')}
+                    >
+                      stale
+                    </span>
+                  )}
                 </td>
                 <td>
                   <button
