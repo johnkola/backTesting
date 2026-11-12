@@ -39,15 +39,27 @@ import re
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
-from collections import deque
+from pathlib import Path
+
+# The breadth math and the Yahoo client live in the loader package, shared with
+# the data feeds (loader/feeds), so this script and a scheduled refresh compute
+# the same series. Neither imports anything outside the standard library.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+from loader.feeds.breadth import (  # noqa: E402,F401  (re-exported: tests load this file)
+    METRICS,
+    above_ma_flags,
+    daily_returns,
+    new_high_low_flags,
+    tally_advance_decline,
+    tally_breadth,
+    tally_dispersion,
+    tally_new_highs_lows,
+)
+from loader.feeds.core import ProviderError  # noqa: E402
+from loader.feeds.yahoo import fetch_closes as _yahoo_closes  # noqa: E402
 
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
-CHART_URL = (
-    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-    "?period1={period1}&period2={period2}&interval=1d"
-)
 UA = {"User-Agent": "Mozilla/5.0"}
 
 
@@ -81,163 +93,10 @@ def fetch_members() -> list[str]:
 
 def fetch_closes(symbol: str, period2: int) -> dict[str, float]:
     """Date -> close for one symbol, full available history."""
-    url = CHART_URL.format(symbol=urllib.parse.quote(symbol), period1=0, period2=period2)
-    payload = json.loads(_get(url).decode("utf-8"))
-    chart = payload.get("chart", {})
-    if chart.get("error"):
-        raise RuntimeError(chart["error"].get("description") or chart["error"])
-    results = chart.get("result") or []
-    if not results:
-        raise RuntimeError("no result")
-    result = results[0]
-    stamps = result.get("timestamp") or []
-    closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close", [])
-    out: dict[str, float] = {}
-    for i, ts in enumerate(stamps):
-        c = closes[i] if i < len(closes) else None
-        if c is None:
-            continue
-        out[dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%d")] = float(c)
-    return out
-
-
-def above_ma_flags(closes: dict[str, float], window: int) -> dict[str, bool]:
-    """Date -> whether the close sat above its own trailing `window` average.
-
-    Only dates with a full window behind them get an entry; a partial average
-    is not a 200-day average and would let young names vote early."""
-    dates = sorted(closes)
-    values = [closes[d] for d in dates]
-    flags: dict[str, bool] = {}
-    running = 0.0
-    for i, v in enumerate(values):
-        running += v
-        if i >= window:
-            running -= values[i - window]
-        if i >= window - 1:
-            flags[dates[i]] = v > running / window
-    return flags
-
-
-def daily_returns(closes: dict[str, float]) -> dict[str, float]:
-    """Date -> that day's percent change for one name. The first date has no
-    predecessor and is omitted rather than reported as zero."""
-    dates = sorted(closes)
-    out: dict[str, float] = {}
-    for i in range(1, len(dates)):
-        prev, cur = closes[dates[i - 1]], closes[dates[i]]
-        if prev:
-            out[dates[i]] = cur / prev - 1.0
-    return out
-
-
-def new_high_low_flags(closes: dict[str, float], window: int) -> dict[str, int]:
-    """Date -> +1 if the close was a `window`-bar high, -1 if a low, else 0.
-
-    Monotonic deques keep the trailing max and min in O(1) amortised per bar;
-    rescanning the window per bar would be 100 names x 6,000 bars x 252 and
-    far too slow to be worth it. Like above_ma_flags, a name only votes once
-    it holds a full window, so a 2012 listing cannot set a 2008 high."""
-    dates = sorted(closes)
-    values = [closes[d] for d in dates]
-    flags: dict[str, int] = {}
-    highs: deque[int] = deque()
-    lows: deque[int] = deque()
-    for i, v in enumerate(values):
-        while highs and values[highs[-1]] <= v:
-            highs.pop()
-        highs.append(i)
-        while lows and values[lows[-1]] >= v:
-            lows.pop()
-        lows.append(i)
-        oldest = i - window + 1
-        while highs[0] < oldest:
-            highs.popleft()
-        while lows[0] < oldest:
-            lows.popleft()
-        if i >= window - 1:
-            # Ties count: equalling the window high IS a new high, and the
-            # pops above leave the current index at the front when it ties.
-            if v >= values[highs[0]]:
-                flags[dates[i]] = 1
-            elif v <= values[lows[0]]:
-                flags[dates[i]] = -1
-            else:
-                flags[dates[i]] = 0
-    return flags
-
-
-def tally_breadth(per_symbol: dict[str, dict], _args) -> dict[str, tuple[float, int]]:
-    """Percent of members above their own trailing moving average."""
-    acc: dict[str, list[int]] = {}
-    for flags in per_symbol.values():
-        for date, above in flags.items():
-            slot = acc.setdefault(date, [0, 0])
-            slot[0] += 1 if above else 0
-            slot[1] += 1
-    return {d: (100.0 * a / n, n) for d, (a, n) in acc.items()}
-
-
-def tally_advance_decline(per_symbol: dict[str, dict], _args) -> dict[str, tuple[float, int]]:
-    """Percent of members that closed up on the day.
-
-    Fast breadth: where the 200-day measure says how many names are in an
-    uptrend, this says how many participated today. A rally carried by ten
-    names shows up here long before it shows up there."""
-    acc: dict[str, list[int]] = {}
-    for rets in per_symbol.values():
-        for date, r in rets.items():
-            slot = acc.setdefault(date, [0, 0])
-            slot[0] += 1 if r > 0 else 0
-            slot[1] += 1
-    return {d: (100.0 * a / n, n) for d, (a, n) in acc.items()}
-
-
-def tally_dispersion(per_symbol: dict[str, dict], _args) -> dict[str, tuple[float, int]]:
-    """Cross-sectional standard deviation of member returns, in percent.
-
-    Separates a macro day from a stock-picking day: when everything moves
-    together dispersion collapses, and when the index is flat because winners
-    and losers cancel, it spikes. Neither is visible in the index price."""
-    acc: dict[str, list[float]] = {}
-    for rets in per_symbol.values():
-        for date, r in rets.items():
-            acc.setdefault(date, []).append(r)
-    out: dict[str, tuple[float, int]] = {}
-    for date, rs in acc.items():
-        n = len(rs)
-        mean = sum(rs) / n
-        var = sum((r - mean) ** 2 for r in rs) / n
-        out[date] = (100.0 * var**0.5, n)
-    return out
-
-
-def tally_new_highs_lows(per_symbol: dict[str, dict], _args) -> dict[str, tuple[float, int]]:
-    """Net percent at a new high minus net percent at a new low.
-
-    Signed on purpose: +40 means two fifths of the index broke out, -40 means
-    two fifths broke down, and 0 means either a quiet day or an evenly split
-    one. Reporting highs alone would make those last two indistinguishable."""
-    acc: dict[str, list[int]] = {}
-    for flags in per_symbol.values():
-        for date, flag in flags.items():
-            slot = acc.setdefault(date, [0, 0, 0])
-            if flag > 0:
-                slot[0] += 1
-            elif flag < 0:
-                slot[1] += 1
-            slot[2] += 1
-    return {d: (100.0 * (h - low) / n, n) for d, (h, low, n) in acc.items()}
-
-
-#: metric -> (per-symbol transform, per-day tally, default output stem)
-METRICS = {
-    "breadth": (lambda c, a: above_ma_flags(c, a.ma), tally_breadth, "NDXBREADTH"),
-    "advance-decline": (lambda c, _a: daily_returns(c), tally_advance_decline, "NDXAD"),
-    "dispersion": (lambda c, _a: daily_returns(c), tally_dispersion, "NDXDISP"),
-    "new-highs-lows": (lambda c, a: new_high_low_flags(c, a.nhnl_window),
-                       tally_new_highs_lows, "NDXNHNL"),
-}
+    try:
+        return _yahoo_closes(symbol, 0, period2)
+    except ProviderError as e:
+        raise RuntimeError(str(e)) from e
 
 
 def load_members(args: argparse.Namespace) -> list[str]:

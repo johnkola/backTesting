@@ -24,45 +24,25 @@ Series this project uses:
 import argparse
 import csv
 import datetime as dt
-import json
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
+from pathlib import Path
 
-VALET_URL = "https://www.bankofcanada.ca/valet/observations/{series}/json"
-
-
-def fetch(series: str) -> dict:
-    url = VALET_URL.format(series=urllib.parse.quote(series))
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+# The Valet client lives in the loader package, shared with the data feeds.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+from loader.feeds.boc import VALET_URL, fetch, to_bars  # noqa: E402,F401
+from loader.feeds.core import HEADER_ROW, ProviderError  # noqa: E402
 
 
 def to_rows(payload: dict, series: str,
             start: str | None, end: str | None) -> tuple[list[list], int]:
-    """Valet observations as Date,Open,High,Low,Close,Volume rows, plus the
-    number of blank observations skipped (a blank is no print, not a zero)."""
-    rows: list[list] = [["Date", "Open", "High", "Low", "Close", "Volume"]]
-    skipped = 0
-    for obs in payload.get("observations", []):
-        date = obs.get("d")
-        raw = (obs.get(series) or {}).get("v")
-        if raw in (None, ""):
-            skipped += 1
-            continue
-        if (start and date < start) or (end and date > end):
-            continue
-        try:
-            value = float(raw)
-        except ValueError:
-            skipped += 1
-            continue
-        rows.append([date, value, value, value, value, 0])
-    if len(rows) == 1:
-        raise SystemExit(f"No observations for '{series}' in the requested range.")
-    return rows, skipped
+    """Valet observations as Date,Open,High,Low,Close,Volume rows (header
+    first), plus the number of blank observations skipped."""
+    try:
+        bars, skipped = to_bars(payload, series, start, end)
+    except ProviderError as e:
+        raise SystemExit(str(e))
+    return [HEADER_ROW, *(list(b) for b in bars)], skipped
 
 
 def main() -> None:

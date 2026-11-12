@@ -57,16 +57,22 @@ cannot cover the training window. It needs an API key or another source.
 import argparse
 import csv
 import datetime as dt
-import json
 import os
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
-GRAPH_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
-API_URL = "https://api.stlouisfed.org/fred/series/observations"
+# The FRED client lives in the loader package, shared with the data feeds.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+from loader.feeds.core import HEADER_ROW, ProviderError  # noqa: E402
+from loader.feeds.fred import (  # noqa: E402,F401  (re-exported for callers)
+    API_URL,
+    GRAPH_URL,
+    api_to_bars,
+    fetch_graph,
+    graph_to_bars,
+)
+from loader.feeds.fred import fetch_api as _fetch_api_bars  # noqa: E402
 
 # Kept under the old name: the graph endpoint was the only source originally.
 FRED_URL = GRAPH_URL
@@ -74,88 +80,29 @@ FRED_URL = GRAPH_URL
 
 def fetch(series: str) -> list[str]:
     """The graph endpoint, as two-column CSV lines."""
-    req = urllib.request.Request(GRAPH_URL.format(series=series),
-                                 headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return resp.read().decode("utf-8").splitlines()
+    return fetch_graph(series)
 
 
 def fetch_api(series: str, api_key: str,
-              start: str | None, end: str | None) -> list[list]:
-    """The REST API, reshaped into the same Date,O,H,L,C,V rows as to_rows.
-
-    The API filters by date server-side, so --from/--to are passed through
-    rather than applied after the fact. A no-print day arrives as "." here,
-    not as a blank, and is dropped for the same reason: it is an absence of
-    an observation, not a zero."""
-    params = {
-        "series_id": series,
-        "api_key": api_key,
-        "file_type": "json",
-    }
-    if start:
-        params["observation_start"] = start
-    if end:
-        params["observation_end"] = end
-    url = f"{API_URL}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-
-    rows: list[list] = [["Date", "Open", "High", "Low", "Close", "Volume"]]
-    skipped = 0
-    for obs in payload.get("observations", []):
-        raw = (obs.get("value") or "").strip()
-        if not raw or raw == ".":
-            skipped += 1
-            continue
-        try:
-            value = float(raw)
-        except ValueError:
-            skipped += 1
-            continue
-        rows.append([obs["date"], value, value, value, value, 0])
-
-    if len(rows) == 1:
-        raise SystemExit(f"No observations for '{series}' in the requested range.")
-    return rows, skipped
+              start: str | None, end: str | None) -> tuple[list[list], int]:
+    """The REST API as Date,O,H,L,C,V rows (header first), plus the no-print
+    days skipped. See `loader.feeds.fred.fetch_api`."""
+    try:
+        bars, skipped = _fetch_api_bars(series, api_key, start, end)
+    except ProviderError as e:
+        raise SystemExit(str(e))
+    return [HEADER_ROW, *(list(b) for b in bars)], skipped
 
 
 def to_rows(lines: list[str], series: str,
             start: str | None, end: str | None) -> tuple[list[list], int]:
-    """Reshape FRED's two-column CSV into Date,Open,High,Low,Close,Volume.
-
-    Returns the rows and the number of no-print days skipped. A blank value
-    is FRED's way of saying the series had no observation that day; it is
-    not a zero, so the day is dropped rather than carried forward — the
-    feature pipeline decides how to align these against QQQ's calendar."""
-    if not lines or not lines[0].lower().startswith("observation_date"):
-        raise SystemExit(f"Unexpected response for '{series}' — is that a real series id?")
-
-    rows: list[list] = [["Date", "Open", "High", "Low", "Close", "Volume"]]
-    skipped = 0
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        date, _, raw = line.partition(",")
-        raw = raw.strip()
-        if not raw:
-            skipped += 1
-            continue
-        if start and date < start:
-            continue
-        if end and date > end:
-            continue
-        try:
-            value = float(raw)
-        except ValueError:
-            skipped += 1
-            continue
-        rows.append([date, value, value, value, value, 0])
-
-    if len(rows) == 1:
-        raise SystemExit(f"No observations for '{series}' in the requested range.")
-    return rows, skipped
+    """FRED's graph CSV as Date,O,H,L,C,V rows (header first), plus the
+    no-print days skipped. See `loader.feeds.fred.graph_to_bars`."""
+    try:
+        bars, skipped = graph_to_bars(lines, series, start, end)
+    except ProviderError as e:
+        raise SystemExit(str(e))
+    return [HEADER_ROW, *(list(b) for b in bars)], skipped
 
 
 def load_dotenv(path: Path) -> None:

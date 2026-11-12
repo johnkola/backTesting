@@ -73,6 +73,12 @@ python fetch_historical_data.py QQQ --from 2015-01-01    # `py` instead of `pyth
 python fetch_historical_data.py PSQ --adjusted            # Strategy 2's hedge; import as STOCK, source yahoo-adj
 ```
 
+**Keeping it current.** Once a series is stored, you don't need to download it again: the
+[data feeds](/docs/readme#data-feeds) refresh every series the feature table reads, every
+weekday at 18:30 New York and whenever you press **Refresh now** on the Data stage, and
+rebuild the feature table when one changed. The scripts below are for a first load, or for
+a series the daily run does not cover.
+
 **Macro series.** Rates, inflation expectations and commodity prices come from FRED, also
 without a key. A FRED series is one number per day, so it lands as a degenerate bar
 (`open = high = low = close`, volume 0) and imports as `INDEX` — real data, but not a

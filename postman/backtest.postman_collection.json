@@ -605,6 +605,224 @@
       ]
     },
     {
+      "name": "Data feeds",
+      "description": "Series refreshed straight from their providers (G26). A real refresh or Apply writes candles and rebuilds the feature table, so only the reads and the rejection paths are asserted. To refresh for real: POST /api/feeds/refresh with {} (every series) or {\"feeds\": [\"QQQ/yahoo-adj\"]}.",
+      "item": [
+        {
+          "name": "Feeds and the daily run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/feeds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feeds"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('lists every fed series with its last stored day', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.feeds).to.be.an('array').that.is.not.empty;",
+                  "    pm.expect(d.feeds[0]).to.include.keys('key', 'provider', 'ref', 'lastDate', 'result');",
+                  "    pm.expect(d.feeds.map(f => f.key)).to.include('QQQ/yahoo-adj');",
+                  "});",
+                  "",
+                  "pm.test('says whether a run is going and when the next one fires', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.running).to.be.a('boolean');",
+                  "    pm.expect(d.schedule).to.have.property('enabled');",
+                  "    pm.expect(d.runs).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recent feeds runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/feeds/runs?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feeds",
+                "runs?limit=5"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('returns an items array, newest first', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "    for (let i = 1; i < d.items.length; i++) {",
+                  "        pm.expect(d.items[i - 1].id).to.be.above(d.items[i].id);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A feeds run that does not exist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/feeds/runs/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feeds",
+                "runs",
+                "999999999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which run', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('999999999');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refreshing an unknown series is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/feeds/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feeds",
+                "refresh"
+              ]
+            },
+            "description": "Rejected before anything is fetched, so it is safe to run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feeds\": [\n    \"NOPE/nowhere\"\n  ],\n  \"rebuild\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('names the unknown series', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('NOPE/nowhere');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Applying an unknown series is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/feeds/apply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feeds",
+                "apply"
+              ]
+            },
+            "description": "Apply replaces a series' stored history with a full download, so only the rejection is asserted.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feed\": \"NOPE/nowhere\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('names the unknown series', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('NOPE/nowhere');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Engine (Java)",
       "description": "What only the Java engine can answer: the strategy registry and running a backtest.",
       "item": [

@@ -17,103 +17,34 @@ Then import it (the API must be running; it proxies the upload to the loader):
 import argparse
 import csv
 import datetime as dt
-import json
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
+from pathlib import Path
 
-CHART_URL = (
-    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-    "?period1={period1}&period2={period2}&interval={interval}"
+# The Yahoo client lives in the loader package, shared with the data feeds
+# (loader/feeds), so a download here and a scheduled refresh store the same
+# numbers. It imports nothing outside the standard library.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+from loader.feeds.core import HEADER_ROW, ProviderError  # noqa: E402
+from loader.feeds.yahoo import (  # noqa: E402,F401  (re-exported for callers)
+    CHART_URL,
+    KNOWN_INDICES,
+    fetch,
+    to_bars,
+    yahoo_symbol,
 )
-
-# Bare volatility/index tickers need a caret on Yahoo (^VIX, ^VXN, ^GSPC …).
-KNOWN_INDICES = {"VIX", "VXN", "VVIX", "GSPC", "IXIC", "DJI", "RUT", "NDX"}
-
-
-def yahoo_symbol(symbol: str) -> str:
-    """Prefix known index tickers with a caret; leave ETFs/stocks untouched."""
-    s = symbol.upper().lstrip("^")
-    return f"^{s}" if s in KNOWN_INDICES else s
-
-
-def fetch(symbol: str, period1: int, period2: int, interval: str) -> dict:
-    # Explicit epoch bounds (not range=max) — range=max silently downsamples a
-    # multi-decade daily request to monthly bars; period1/period2 stays daily.
-    # urlencode the symbol so the caret in index tickers (^VIX) survives.
-    url = CHART_URL.format(symbol=urllib.parse.quote(yahoo_symbol(symbol)),
-                           period1=period1, period2=period2, interval=interval)
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
 
 
 def to_rows(payload: dict, symbol: str, adjusted: bool = False) -> list[list]:
-    """Reshape Yahoo's columnar JSON into Date,Open,High,Low,Close,Volume rows.
-
-    With `adjusted`, emit the dividend-adjusted (total-return) series instead
-    of the raw prints. Yahoo's `close` is already split-adjusted; `adjclose`
-    is split *and* dividend adjusted, so `adjclose / close` is the dividend
-    factor for that bar. We scale all four prices by it — the same positive
-    factor on each, so OHLC stays internally consistent — and leave volume
-    alone, since it is already split-adjusted.
-
-    Why it matters: on raw prices, buy-and-hold looks worse than it was,
-    because the cash paid out as dividends simply vanishes from the series.
-    On SPY that is roughly 1.7 points of annual return, which is the
-    difference between a strategy beating the index and losing to it.
-    """
-    chart = payload.get("chart", {})
-    if chart.get("error"):
-        raise SystemExit(f"Yahoo error for '{symbol}': {chart['error']}")
-    results = chart.get("result") or []
-    if not results:
-        raise SystemExit(f"No data returned for '{symbol}'.")
-
-    result = results[0]
-    timestamps = result.get("timestamp") or []
-    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
-    opens, highs = quote.get("open", []), quote.get("high", [])
-    lows, closes = quote.get("low", []), quote.get("close", [])
-    volumes = quote.get("volume", [])
-    if not timestamps:
-        raise SystemExit(f"No candles for '{symbol}' (check symbol / range).")
-
-    adjcloses = []
-    if adjusted:
-        adjcloses = (result.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose", [])
-        if not adjcloses:
-            raise SystemExit(
-                f"'{symbol}' returned no adjclose series — Yahoo has no "
-                f"dividend-adjusted data for it (indices don't pay dividends)."
-            )
-
-    rows: list[list] = [["Date", "Open", "High", "Low", "Close", "Volume"]]
-    dropped = 0
-    for i, ts in enumerate(timestamps):
-        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
-        v = volumes[i] if i < len(volumes) else None
-        # Yahoo emits nulls for gaps and an in-progress current bar — skip them.
-        if None in (o, h, l, c):
-            dropped += 1
-            continue
-        if adjusted:
-            adj = adjcloses[i] if i < len(adjcloses) else None
-            if adj is None or not c:
-                dropped += 1
-                continue
-            factor = adj / c
-            o, h, l, c = o * factor, h * factor, l * factor, adj
-        date = dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%d")
-        rows.append([date, round(o, 6), round(h, 6), round(l, 6),
-                     round(c, 6), int(v) if v is not None else 0])
-
-    if len(rows) == 1:
-        raise SystemExit(f"All bars for '{symbol}' were empty/null.")
+    """Date,Open,High,Low,Close,Volume rows (header first). See
+    `loader.feeds.yahoo.to_bars` for what `adjusted` does and why."""
+    try:
+        bars, dropped = to_bars(payload, symbol, adjusted=adjusted)
+    except ProviderError as e:
+        raise SystemExit(str(e))
     if dropped:
         print(f"(skipped {dropped} incomplete bar(s))", file=sys.stderr)
-    return rows
+    return [HEADER_ROW, *(list(b) for b in bars)]
 
 
 def main() -> None:

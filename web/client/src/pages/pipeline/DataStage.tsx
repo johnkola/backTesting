@@ -1,3 +1,5 @@
+import { useCallback, useState } from 'react'
+import FeedsPanel from '../../components/FeedsPanel'
 import { api, type FeaturesReport, type Instrument } from '../../lib/api'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
@@ -8,6 +10,9 @@ type Loaded = { instruments: Instrument[], features: FeaturesReport }
 /**
  * Stage 1 — data gathering and storage.
  *
+ * The feeds panel on top keeps the series current from their providers and
+ * shows each one's last refresh, which the design's Data tab lists.
+ *
  * The validation gate the design asks for is "every expected series is
  * present". That is answerable here without a new table: the feature config
  * already declares exactly which (symbol, source) pairs the enabled columns
@@ -15,12 +20,15 @@ type Loaded = { instruments: Instrument[], features: FeaturesReport }
  */
 export default function DataStage() {
   const [tf] = useTimeframe()
+  // Bumped when a feeds run finishes, so the stored ranges below refetch.
+  const [reload, setReload] = useState(0)
+  const onFeedsChanged = useCallback(() => setReload((n) => n + 1), [])
   const { data, error } = useApiData<Loaded>(
     (signal) => Promise.all([
       api.instruments(tf, signal).then((r) => r.items),
       api.features(tf, signal),
     ]).then(([instruments, features]) => ({ instruments, features })),
-    [tf],
+    [tf, reload],
   )
 
   if (error) return <div className="alert alert-error">{error}</div>
@@ -70,6 +78,7 @@ export default function DataStage() {
           : 'Every (symbol, source) pair the enabled columns name is loadable.'
       }
     >
+      <FeedsPanel onChanged={onFeedsChanged} />
       <div className="overflow-x-auto bg-base-200 rounded-box">
         <table className="table table-sm">
           <thead>

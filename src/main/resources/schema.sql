@@ -530,6 +530,22 @@ CREATE TABLE IF NOT EXISTS feature_runs (
     built_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_feature_runs_set ON feature_runs (feature_set_id, id DESC);
+
+-- G26: one row per data-feeds run (the daily schedule, the Refresh button, an
+-- Apply, or `python -m loader.feeds`). Each fed series' outcome is in
+-- result_json; GET /api/feeds reads the newest one per series from here. A
+-- run still 'running' when the loader starts is marked 'interrupted'.
+CREATE TABLE IF NOT EXISTS feed_runs (
+    id BIGSERIAL PRIMARY KEY,
+    trigger VARCHAR(16) NOT NULL,
+    feeds_json TEXT,
+    apply_feed VARCHAR(64),
+    status VARCHAR(20) NOT NULL DEFAULT 'running',
+    result_json TEXT,
+    error TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMPTZ
+);
 ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS current_run_id BIGINT;
 
 -- On each walk-forward run: the build it read (feature_run_id), and a hash of

@@ -498,6 +498,8 @@ app.delete('/api/imports/:id', proxyToLoader);
 app.post('/api/aggregate', proxyToLoader);
 app.post('/api/audit', proxyToLoader);
 app.use('/api/nn', proxyToLoader);
+// Data feeds (G26): refresh series from their providers, the daily run's state.
+app.use('/api/feeds', proxyToLoader);
 
 // Strategy listing and backtest execution live in Java — nothing else can read
 // StrategyRegistry or drive BacktestEngine.

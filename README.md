@@ -144,7 +144,7 @@ is the reference each of its steps links into:
 
 | Step | Reference |
 |---|---|
-| Get candles in | [Bulk CSV import](#bulk-csv-import-drop-folder) · [`POST /api/imports`](#loader--python-proxied) · [Data cohesiveness checks](#data-cohesiveness-checks) |
+| Get candles in | [Data feeds](#data-feeds) · [Bulk CSV import](#bulk-csv-import-drop-folder) · [`POST /api/imports`](#loader--python-proxied) · [Data cohesiveness checks](#data-cohesiveness-checks) |
 | Check what you have | [`backtest` — inspect](#backtest--inspect) · [`backtest-audit`](#backtest-audit--cohesion-audit) |
 | Build higher timeframes | [Multi-timeframe aggregation](#multi-timeframe-aggregation) |
 | Train a model | [Model cache](#model-cache) |
@@ -299,6 +299,11 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | Endpoint | Body / params | Does |
 |---|---|---|
 | `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. Returns per-slice status (`created`/`extended`/`skipped`/`overwritten`/`conflict`, each changed year with a `diff` of added/changed/removed bars), a `file` object for the version it recorded (`changeKind`: `new`, `update`, `fix`, `update+fix` or `same`; `alreadyLoaded` when these exact bytes are what the database holds), a `cohesion` report, and `skipped` (`{count, examples: [{line, reason, text}]}`): rows that produced no candle, such as a footer line or a price that is not a number. Those rows are left out and the rest import; the Imports page lists them, and the drop-folder ingest prints them as `WARN`. A year that only gains later days is `extended` without `force`; a changed or dropped past bar is a `conflict` until `force`. `400` when the header is not `Date,Open,High,Low,Close,Volume` in that order (the drop-folder ingest moves such a file to `failed/`). `409` on conflict or a compressed chunk |
+| `GET /api/feeds` | — | Every series the feeds refresh, with its source, its last stored day and its latest result (`extended`, `fixed`, `up-to-date`, `held` with what differs, `error`), the ten most recent runs, whether one is going, and the schedule with its next run. See [Data feeds](#data-feeds) |
+| `POST /api/feeds/refresh` | JSON `{feeds?: ["SYMBOL/source"], rebuild?: true}` | Starts a refresh in the background (every series when `feeds` is omitted) and returns `202 {runId}`; the feature table is rebuilt afterwards when an input changed, unless `rebuild` is false. `400` for an unknown series, `409` while a run is going |
+| `POST /api/feeds/apply` | JSON `{feed: "SYMBOL/source"}` | Accepts a held series: re-downloads its full history and imports it with `force`, recorded as a `fix` version. `202 {runId}`; `404` for an unknown series, `409` while a run is going |
+| `GET /api/feeds/runs` | `limit` (default 20, max 100) | `{items, running}`: runs newest first, each with its trigger, status, counts per outcome and the feature rebuild |
+| `GET /api/feeds/runs/:id` | — | One run with every series' result and the breadth members' outcomes. `404` if there is no such run |
 | `DELETE /api/imports/:id` | `dry_run` | Undoes one import: deletes the candles in that slice's calendar year and the audit row. The archived CSV is **kept** — it's how you put the data back. `dry_run=true` reports what would go |
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
@@ -323,6 +328,34 @@ cd python && python -m loader.ingest            # --dry-run to preview, --force 
 ```
 
 Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / extend / overwrite / conflict), and upserted into `candles` in one transaction. Every distinct file is recorded as a version in `import_files` and labelled `new`, `update` (later days only), `fix` (past bars changed or dropped) or `update+fix`. An identical file prints `SAME` and is not parsed, and a changed year prints its diff with the first changed dates. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
+
+## Data feeds
+
+The series the feature table reads, plus SPY, PSQ and XIU (the iShares S&P/TSX 60 ETF, in CAD), refresh straight from their providers, with no CSV in between: Yahoo's chart API for prices, indexes and futures (raw and dividend-adjusted), FRED's API for rates and spreads, the Bank of Canada's Valet API for CORRA, and the four Nasdaq-100 breadth series computed from the members' closes. `python -m loader.feeds list` prints every series with the provider ticker behind it.
+
+**Where a series comes from**, in order of preference: (1) history and current days both from the provider's API, which is what adding a feed does: its first refresh loads the full history; (2) history from a CSV upload and current days from the API, when the API's history is short or missing: upload once, then the feed extends it (and holds if the provider disagrees with the CSV where they overlap); (3) everything from CSV, for what no API serves, such as the SEC earnings series. Adding a series to the feeds is one entry in `python/loader/feeds/registry.py`.
+
+**When it runs.** Monday to Friday at 18:30 New York (`FEEDS_SCHEDULE`), after the equity close at 16:00 and the futures close at 17:00, and whenever you press **Refresh now** on the pipeline's Data stage or `POST /api/feeds/refresh`. One run at a time; a second request gets `409`. A full run takes about a minute, most of it the 101 breadth members. When a series the feature table reads gained days, the table is rebuilt afterwards and the run records where it now ends and what its data checks said.
+
+**What a run may change on its own.** It asks each provider for the two weeks before the newest stored day onward, and drops any session not finished yet (before 18:00 New York). New days are added. The newest stored day may be replaced, because that bar is often preliminary when first fetched (a settling volume). Anything further back is **held**: nothing is written for that series, and the Data stage shows what differs, naming a uniform rescale as the dividend re-adjustment or split it almost always is. **Apply** re-downloads the full history and imports it with `force`, as re-uploading a fresh download would. Expect QQQ, SPY and PSQ adjusted to hold once a quarter, on each ex-dividend date. Every write goes through the CSV importer's slices, hashes and archive, so each refresh is a version on the Imports page with its diff.
+
+**From the command line**, in the loader container:
+
+```bash
+docker exec backtest-loader python -m loader.feeds refresh --dry-run      # fetch and compare, write nothing
+docker exec backtest-loader python -m loader.feeds refresh                # every series, then rebuild features
+docker exec backtest-loader python -m loader.feeds refresh --feed VIX/yahoo --no-rebuild
+docker exec backtest-loader python -m loader.feeds apply PSQ/yahoo        # accept a held series
+```
+
+**Limits.**
+
+- Yahoo's chart API is unofficial: free and keyless, but it can rate-limit or change without notice.
+- Yahoo fills a futures day's close (copper, gold) late, so those two can trail the equities by a day; forward-fill covers it in the feature table.
+- FRED publishes a day's yields the next afternoon, so they always trail by a day.
+- The SEC earnings series are not in the daily run; refresh them with `build_ndx_earnings.py`.
+- The breadth members are the 101-name list the series were built from. A delisted member keeps its cached history and stops counting after its last close; a provider re-download shorter than the cache is refused.
+- `FRED_API_KEY` in `.env` makes FRED use its API host. Without it, the keyless graph CSV is used, which some networks block.
 
 ## Data cohesiveness checks
 
@@ -743,6 +776,9 @@ The Python loader is configured via environment variables (set in `docker-compos
 | `CSV_ARCHIVE_DIR`   | `data/csv-archive`     | Root for archived CSV slices                                 |
 | `MODELS_DIR`        | `data/models`          | Root for the on-disk model registry                          |
 | `MODEL_KEEP_LAST_N` | `0`                    | NN model retention; `0` disables pruning                     |
+| `FEEDS_SCHEDULE`    | unset (compose: `18:30`) | New York times of the daily [data feeds](#data-feeds) run, Monday to Friday, comma-separated; unset or `off` for none |
+| `FRED_API_KEY`      | unset                  | FRED API key for the feeds and `fetch_fred_series.py`; compose passes it from `.env`. Without one the keyless graph CSV is used |
+| `NDX_CONSTITUENTS_DIR` | `data/ndx-constituents` | The breadth members' cached closes (mounted into the loader) |
 | `LOADER_URL`        | `http://localhost:8003`| Where the Java CLI reaches the loader — the host-published port, since the CLI runs on your machine. Callers inside compose set `http://loader:8001` explicitly; host `:8001` belongs to the API |
 
 ## Strategies

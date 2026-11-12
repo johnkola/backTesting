@@ -1303,6 +1303,103 @@ export type WalkforwardRunDetail = {
   folds: WalkforwardFold[]
 }
 
+// ---------------------------------------------------------------------------
+// Data feeds (G26): series refreshed straight from their providers
+// ---------------------------------------------------------------------------
+
+/** Stored days a provider now reports differently; the series waits for Apply. */
+export type FeedHeld = {
+  days: number
+  from: string
+  to: string
+  /** Stored days the provider no longer has at all. */
+  dropped: number
+  /** Largest relative difference among them (1 for a dropped day). */
+  largest: number
+  /** Set when every change is one rescale of all prices: a dividend re-adjustment or a split. */
+  factor: number | null
+  /** New days the provider has that the held series is not taking. */
+  waiting: number
+  examples: { date: string, old: number[], new: number[] | null }[]
+}
+
+/** One series' outcome in one feeds run. */
+export type FeedResult = {
+  feed: string
+  status: 'extended' | 'fixed' | 'extended+fixed' | 'up-to-date' | 'held' | 'loaded' | 'applied' | 'error'
+  added?: number
+  /** The last stored day, when its bar settled and was replaced. */
+  fixed?: string | null
+  held?: FeedHeld
+  lastBefore?: string
+  lastAfter?: string
+  error?: string
+  version?: { id: number, changeKind: string }
+  runId?: number
+  at?: string | null
+}
+
+export type FeedRow = {
+  key: string
+  symbol: string
+  source: string
+  type: string
+  provider: 'yahoo' | 'yahoo-adj' | 'fred' | 'boc' | 'breadth'
+  ref: string
+  group: 'prices' | 'macro' | 'breadth'
+  lastDate: string | null
+  /** The newest non-dry-run result for this series, if any run has touched it. */
+  result: FeedResult | null
+}
+
+export type FeatureRebuild = {
+  ok: boolean
+  rows?: number
+  first?: string
+  last?: string
+  setId?: number
+  columns?: number
+  firstComplete?: string
+  buildId?: number
+  checks?: string[]
+  error?: string
+}
+
+export type FeedRunSummary = {
+  id: number
+  trigger: 'schedule' | 'button' | 'apply' | 'cli'
+  status: 'running' | 'done' | 'done-with-errors' | 'failed' | 'interrupted'
+  feeds: string[] | null
+  applyFeed: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  error: string | null
+  counts: Record<string, number>
+  rebuild: FeatureRebuild | null
+}
+
+export type FeedRunDetail = FeedRunSummary & {
+  result: { feeds: FeedResult[], members: { symbol: string, status: string, note: string }[] } | null
+}
+
+export type FeedSchedule = {
+  enabled: boolean
+  times?: string[]
+  timezone?: string
+  days?: string
+  nextRun?: string
+  error?: string
+}
+
+export type FeedsReport = {
+  feeds: FeedRow[]
+  manual: { symbol: string, source: string, how: string }[]
+  running: boolean
+  runs: FeedRunSummary[]
+  schedule: FeedSchedule
+  warning: string | null
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthReport>('/api/health', signal),
   sources: (signal?: AbortSignal) =>
@@ -1311,6 +1408,13 @@ export const api = {
     getJson<{ items: Instrument[], timeframe: string | null }>(
       `/api/instruments${timeframe ? `?${qs({ timeframe })}` : ''}`, signal,
     ),
+  feeds: (signal?: AbortSignal) => getJson<FeedsReport>('/api/feeds', signal),
+  feedRun: (id: number, signal?: AbortSignal) =>
+    getJson<FeedRunDetail>(`/api/feeds/runs/${id}`, signal),
+  refreshFeeds: (body: { feeds?: string[], rebuild?: boolean } = {}) =>
+    sendJson<{ runId: number }>('/api/feeds/refresh', 'POST', body),
+  applyFeed: (feed: string) =>
+    sendJson<{ runId: number }>('/api/feeds/apply', 'POST', { feed }),
   imports: (
     params: {
       limit?: number; offset?: number; source?: string; instrument?: string; timeframe?: string;

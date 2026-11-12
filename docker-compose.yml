@@ -140,6 +140,13 @@ services:
       # Keep-last-N retention for trained NN models. 0 disables retention,
       # matching the Java side's default when --keep-last-N isn't passed.
       MODEL_KEEP_LAST_N: "0"
+      # Data feeds (loader/feeds, README "Data feeds"). The daily refresh runs
+      # Monday to Friday at these New York times; `off` disables it. The FRED
+      # key comes from the gitignored .env; without one, FRED's keyless CSV
+      # endpoint is used.
+      FEEDS_SCHEDULE: ${FEEDS_SCHEDULE:-18:30}
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      NDX_CONSTITUENTS_DIR: /data/ndx-constituents
     volumes:
       # CSV archive — owned by the loader, read by anyone who needs the on-disk
       # slices (the host-side gradle path also writes here through the same mount).
@@ -147,6 +154,9 @@ services:
       # Trained NN models. RW because the loader writes new versions; the
       # web service mounts the same host dir read-only above.
       - ./data/models:/data/models
+      # Breadth members' daily closes, kept current by the feeds and read by
+      # build_ndx_breadth.py on the host.
+      - ./data/ndx-constituents:/data/ndx-constituents
 
   # Database UI. Not part of the default stack — it sits behind the `tools`
   # profile, so `docker compose up -d` is unchanged and you ask for this one
