@@ -34,12 +34,19 @@ export const CHANGE_KIND_HINT: Record<ChangeKind, string> = {
   same: 'The bytes differ (line endings, spacing, number formatting) but every bar is identical.',
 }
 
-/** "+3 added · 2 changed · 1 removed", or '' when nothing differs. */
+/** "+3 added · 2 changed · 1 removed", or '' when nothing differs. A change
+ *  that moved only volumes says so: "1 changed (volume only)". */
 export function diffSummary(diff: SliceDiff | null | undefined): string {
   if (!diff) return ''
   const parts: string[] = []
   if (diff.added) parts.push(`+${diff.added} added`)
-  if (diff.changed) parts.push(`${diff.changed} changed`)
+  if (diff.changed) {
+    const prices = diff.priceChanged
+    let note = ''
+    if (prices === 0) note = ' (volume only)'
+    else if (prices !== undefined && prices < diff.changed) note = ` (${prices} in prices)`
+    parts.push(`${diff.changed} changed${note}`)
+  }
   if (diff.removed) parts.push(`${diff.removed} removed`)
   return parts.join(' · ')
 }

@@ -45,6 +45,20 @@ def test_a_changed_past_value_is_a_fix_and_names_the_day():
     assert d.examples == ("2024-01-02T00:00:00Z",)
 
 
+def test_a_settled_volume_is_a_change_but_not_a_price_change():
+    d = ci.diff_slices(OLD, [OLD[0], "2024-01-03,2,3,1,2.5,250"])
+    assert (d.changed, d.price_changed) == (1, 0)
+    assert d.examples == ("2024-01-03T00:00:00Z",)
+    assert d.price_examples == ()
+    assert d.to_dict()["priceChanged"] == 0 and d.to_dict()["priceExamples"] == []
+
+
+def test_a_price_change_and_a_dropped_day_are_both_price_changes():
+    d = ci.diff_slices(OLD, ["2024-01-02,1,2,0,1.6,100"])
+    assert (d.changed, d.price_changed, d.removed) == (1, 1, 1)
+    assert d.price_examples == ("2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z")
+
+
 def test_a_dropped_day_is_a_fix():
     d = ci.diff_slices(OLD, OLD[:1])
     assert d.removed == 1

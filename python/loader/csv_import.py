@@ -135,6 +135,13 @@ class SliceDiff:
     later_only: bool
     #: Up to five timestamps that changed or were removed, for the reader.
     examples: tuple[str, ...]
+    #: Of `changed`, the bars whose open, high, low or close moved; the rest
+    #: changed their volume only. A settling volume on the newest day is the
+    #: usual fix, and a strategy that reads prices alone is not touched by it
+    #: (`nn.staleness.PRICE_ONLY_STRATEGIES`).
+    price_changed: int = 0
+    #: Up to five timestamps whose prices changed or that were removed.
+    price_examples: tuple[str, ...] = ()
 
     @property
     def is_extension(self) -> bool:
@@ -142,7 +149,8 @@ class SliceDiff:
 
     def to_dict(self) -> dict[str, object]:
         return {"added": self.added, "changed": self.changed, "removed": self.removed,
-                "laterOnly": self.later_only, "examples": list(self.examples)}
+                "laterOnly": self.later_only, "examples": list(self.examples),
+                "priceChanged": self.price_changed, "priceExamples": list(self.price_examples)}
 
 
 def diff_slices(old_rows: Iterable[str], new_rows: Iterable[str]) -> SliceDiff:
@@ -154,6 +162,8 @@ def diff_slices(old_rows: Iterable[str], new_rows: Iterable[str]) -> SliceDiff:
     old = {t[0]: t[1:] for t in parse_rows_to_tuples(old_rows)}
     new = {t[0]: t[1:] for t in parse_rows_to_tuples(new_rows)}
     changed = sorted(ts for ts in old.keys() & new.keys() if old[ts] != new[ts])
+    # The values are (open, high, low, close, volume).
+    price_changed = [ts for ts in changed if old[ts][:4] != new[ts][:4]]
     removed = sorted(old.keys() - new.keys())
     added = sorted(new.keys() - old.keys())
     last_old = max(old) if old else None
@@ -161,6 +171,8 @@ def diff_slices(old_rows: Iterable[str], new_rows: Iterable[str]) -> SliceDiff:
     return SliceDiff(
         added=len(added), changed=len(changed), removed=len(removed),
         later_only=later_only, examples=tuple((changed + removed)[:5]),
+        price_changed=len(price_changed),
+        price_examples=tuple(sorted(price_changed + removed)[:5]),
     )
 
 

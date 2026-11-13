@@ -34,7 +34,8 @@ function toVersion(r) {
     lastDate: r.last_date,
     changeKind: r.change_kind,
     years: parseJson(r.slices_json, []).map((s) => s.year),
-    /** Per year: { added, changed, removed, laterOnly, examples }. */
+    /** Per year: { added, changed, removed, laterOnly, examples, priceChanged,
+     *  priceExamples } (the last two absent on imports from before they were kept). */
     diff: parseJson(r.diff_json, {}),
     importedAt: r.imported_at,
     lastSeenAt: r.last_seen_at,

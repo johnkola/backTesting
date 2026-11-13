@@ -13,6 +13,11 @@ describe('diffSummary', () => {
     expect(diffSummary(null)).toBe('')
     expect(diffSummary(diff())).toBe('')
   })
+  it('says when only volumes changed', () => {
+    expect(diffSummary(diff({ added: 32, changed: 1, priceChanged: 0 }))).toBe('+32 added · 1 changed (volume only)')
+    expect(diffSummary(diff({ changed: 3, priceChanged: 1 }))).toBe('3 changed (1 in prices)')
+    expect(diffSummary(diff({ changed: 3, priceChanged: 3 }))).toBe('3 changed')
+  })
 })
 
 describe('isFix', () => {

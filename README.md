@@ -367,7 +367,7 @@ Each tab of the pipeline page, and the tab strip, shows its stage's state: **pas
 | Data | A series the feature table reads is held by the [data feeds](#data-feeds), failed its last refresh, or trails the last finished session by more than its provider's usual lag (prices 1 session, FRED and the Bank of Canada 3, WTI 8, the SEC earnings series 10) |
 | Features, Normalization, Split | `features.toml` has changed since the newest build, or a series the build read has a newer stored version |
 | Training | For each strategy's newest run: the strategy has a newer saved version; inputs inside the dates the run read have changed (feature values, closes, parked return, PSQ and Fed funds); its window has gained days it never scored; or Features is stale. Changed code is shown as a note, not as stale |
-| Backtest | An import has since changed stored bars inside a result's window |
+| Backtest | An import has since changed stored bars inside a result's window. For a strategy that reads prices only (sma-crossover, rsi, macd, bollinger, ema-triple), a change to volumes alone does not count; the nn strategies read volume, so it does for them. Imports recorded before the diff kept this do not say which kind of change they were, so for them every change counts |
 
 Walk-forward runs record the dates they read and a snapshot over just those. Runs recorded before that have none; give them one from their own feature set with `docker exec backtest-loader python -m nn.staleness --backfill` (`--dry-run` first). It is exact while that set still holds the build the run read, and leaves a run alone otherwise.
 

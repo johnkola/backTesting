@@ -153,6 +153,11 @@ export type SliceDiff = {
   laterOnly: boolean
   /** Up to five timestamps that changed or were removed. */
   examples: string[]
+  /** Of `changed`, the bars whose open, high, low or close moved; the rest
+   *  changed their volume only. Absent on imports from before it was kept. */
+  priceChanged?: number
+  /** Up to five timestamps whose prices changed or that were removed. */
+  priceExamples?: string[]
 }
 
 /** What kind of change a file version was, against the one before it. */

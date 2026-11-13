@@ -22,7 +22,9 @@ rerun now read different inputs or parameters?
                    commit to nn/ or loader/ changes the hash, and most cannot move
                    a number.
     Backtest       a stored result is stale when an import changed stored bars
-                   (a fix, not later days) inside its window after it ran.
+                   (a fix, not later days) inside its window after it ran. For
+                   a strategy that reads prices only, a change to volumes alone
+                   does not count (PRICE_ONLY_STRATEGIES).
 
 SPANS. A walk-forward run reads the feature rows from its first training day,
 less the lookback, to its last scored day, plus `forward` rows after it for the
@@ -58,6 +60,17 @@ LAG_SESSIONS = {"yahoo": 1, "yahoo-adj": 1, "breadth": 1, "fred": 3, "boc": 3, "
 #: Series whose provider publishes on its own slower schedule. FRED takes WTI
 #: spot from the EIA, which publishes a week at a time.
 SERIES_LAG = {"DCOILWTICO/fred": 8}
+
+#: Backtest strategies (`backtest_results.strategy_name`) that never read a
+#: bar's volume: the ta4j ones build every indicator on ClosePriceIndicator, and
+#: the engine fills on prices. A fix that changed only volumes inside such a
+#: result's window cannot move it, so it does not make it stale. The two nn
+#: strategies are left out on purpose: nn-feedforward has a volume / SMA(volume)
+#: input, and nn-feature-store reads the feature table, which has QQQ volume.
+#: `tests/test_staleness.py` fails if one of these strategies' sources mentions
+#: volume. A strategy missing here is checked against every change, which is
+#: the safe side.
+PRICE_ONLY_STRATEGIES = frozenset({"sma-crossover", "rsi", "macd", "bollinger", "ema-triple"})
 
 
 def allowed_lag(key: str, provider: str) -> int:
@@ -136,19 +149,25 @@ def new_days_in_window(dates: Sequence[dt.date], last_used: dt.date,
             if d > last_used and (window_end is None or d <= window_end) and i + forward <= n - 1]
 
 
-def fix_days(diff_json: str | None) -> tuple[set[dt.date], set[int]]:
+def fix_days(diff_json: str | None, prices_only: bool = False) -> tuple[set[dt.date], set[int]]:
     """Which stored days an import changed or removed (`import_files.diff_json`):
     exact days where the diff lists every one of a year's changes (it keeps up
-    to five), and otherwise the whole year, since which days is not recorded."""
+    to five), and otherwise the whole year, since which days is not recorded.
+
+    `prices_only` leaves out bars whose volume alone changed, for a reader that
+    never looks at volume. Imports from before the diff told the two apart
+    (no `priceChanged`) count every change, since which kind it was is unknown."""
     days: set[dt.date] = set()
     years: set[int] = set()
     if not diff_json:
         return days, years
     for year, d in json.loads(diff_json).items():
-        n = (d.get("changed") or 0) + (d.get("removed") or 0)
+        split = prices_only and "priceChanged" in d
+        changed = d.get("priceChanged") if split else d.get("changed")
+        n = (changed or 0) + (d.get("removed") or 0)
         if not n:
             continue
-        examples = d.get("examples") or []
+        examples = (d.get("priceExamples") if split else d.get("examples")) or []
         if len(examples) >= n:
             days.update(dt.date.fromisoformat(e[:10]) for e in examples)
         else:
@@ -156,9 +175,10 @@ def fix_days(diff_json: str | None) -> tuple[set[dt.date], set[int]]:
     return days, years
 
 
-def fix_hits(diff_json: str | None, start: dt.date, end: dt.date) -> list[str]:
+def fix_hits(diff_json: str | None, start: dt.date, end: dt.date,
+             prices_only: bool = False) -> list[str]:
     """The changed days (or years) of an import that fall inside [start, end]."""
-    days, years = fix_days(diff_json)
+    days, years = fix_days(diff_json, prices_only)
     hit = [d.isoformat() for d in sorted(days) if start <= d <= end]
     hit += [str(y) for y in sorted(years) if start.year <= y <= end.year]
     return hit
@@ -508,8 +528,8 @@ def training_stage(ctx: Context, features: dict[str, Any]) -> dict[str, Any]:
 
 def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
     ctx.cur.execute(
-        "SELECT id, instrument_symbol, data_source, timeframe, start_date, end_date, created_at "
-        "FROM backtest_results WHERE timeframe = %s ORDER BY id DESC LIMIT %s",
+        "SELECT id, instrument_symbol, data_source, timeframe, start_date, end_date, created_at, "
+        "strategy_name FROM backtest_results WHERE timeframe = %s ORDER BY id DESC LIMIT %s",
         (ctx.timeframe, limit))
     results = ctx.cur.fetchall()
     ctx.cur.execute(
@@ -520,14 +540,15 @@ def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
     for sym, src, tf, fid, at, kind, diff in ctx.cur.fetchall():
         fixes.setdefault((sym, src), []).append((tf, fid, at, kind, diff))
     out = []
-    for rid, sym, src, tf, start, end, created in results:
+    for rid, sym, src, tf, start, end, created, strategy in results:
         reasons = []
+        prices_only = strategy in PRICE_ONLY_STRATEGIES
         if start is not None and end is not None and created is not None:
             for ftf, fid, at, kind, diff in fixes.get((sym, src), []):
                 # W1 and MN1 bars are rolled up from D1, so a D1 fix moves them too.
                 if ftf not in (tf, "D1") or at is None or at <= created:
                     continue
-                hit = fix_hits(diff, start.date(), end.date())
+                hit = fix_hits(diff, start.date(), end.date(), prices_only)
                 if hit:
                     reasons.append(reason(
                         "inputs", f"{sym}/{src} version #{fid} ({kind}, {at:%Y-%m-%d}) changed "

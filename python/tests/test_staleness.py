@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -142,6 +144,63 @@ def test_a_fix_after_a_results_window_does_not_touch_it():
     assert staleness.fix_hits(diff, dt.date(2020, 1, 2), dt.date(2026, 9, 30)) == ["2026-09-25"]
     many = json.dumps({"2025": {"changed": 9, "removed": 0, "examples": []}})
     assert staleness.fix_hits(many, dt.date(2025, 6, 1), dt.date(2025, 6, 2)) == ["2025"]
+
+
+def test_a_volume_only_fix_is_no_fix_to_a_reader_of_prices():
+    """AAPL 2026-09-18 and QQQ 2026-09-25 settled their volumes the day after
+    they were first stored; that flagged 23 rsi, sma and nn results, none of
+    which reran any differently (G12, acted on 2026-11-12)."""
+    diff = json.dumps({"2026": {"added": 32, "changed": 1, "removed": 0,
+                                "examples": ["2026-09-25T00:00:00Z"],
+                                "priceChanged": 0, "priceExamples": []}})
+    start, end = dt.date(2020, 1, 2), dt.date(2026, 9, 30)
+    assert staleness.fix_hits(diff, start, end) == ["2026-09-25"]
+    assert staleness.fix_hits(diff, start, end, prices_only=True) == []
+
+
+def test_a_reader_of_prices_still_sees_price_changes_and_dropped_days():
+    diff = json.dumps({
+        "2026": {"changed": 3, "removed": 1, "examples": ["2026-09-21T00:00:00Z",
+                 "2026-09-22T00:00:00Z", "2026-09-23T00:00:00Z", "2026-09-24T00:00:00Z"],
+                 "priceChanged": 1, "priceExamples": ["2026-09-22T00:00:00Z",
+                                                      "2026-09-24T00:00:00Z"]},
+        "2025": {"changed": 9, "removed": 0, "examples": [], "priceChanged": 6,
+                 "priceExamples": ["2025-01-02T00:00:00Z"] * 5},
+    })
+    days, years = staleness.fix_days(diff, prices_only=True)
+    assert days == {dt.date(2026, 9, 22), dt.date(2026, 9, 24)}
+    assert years == {2025}
+
+
+def test_an_import_from_before_the_split_counts_every_change():
+    """Which bars moved only their volume was not recorded before; unknown is
+    treated as a price change."""
+    diff = json.dumps({"2026": {"changed": 1, "removed": 0,
+                                "examples": ["2026-09-25T00:00:00Z"]}})
+    assert staleness.fix_hits(diff, dt.date(2026, 1, 2), dt.date(2026, 9, 30),
+                              prices_only=True) == ["2026-09-25"]
+
+
+JAVA = (Path(__file__).resolve().parents[2] / "src" / "main" / "java"
+        / "com" / "bazarbozorg" / "backtest")
+
+
+def test_the_price_only_strategies_never_read_volume():
+    """PRICE_ONLY_STRATEGIES is a claim about Java code; hold it to the source."""
+    by_name = {}
+    for f in (JAVA / "strategy").rglob("*.java"):
+        m = re.search(r'getName\(\)\s*\{\s*return\s+"([^"]+)"', f.read_text())
+        if m:
+            by_name[m.group(1)] = f
+    for name in sorted(staleness.PRICE_ONLY_STRATEGIES):
+        assert name in by_name, f"no strategy named {name!r} under {JAVA / 'strategy'}"
+        assert "volume" not in by_name[name].read_text().lower(), by_name[name]
+    shared = [JAVA / "strategy" / "AbstractTa4jStrategy.java", *(JAVA / "engine").rglob("*.java")]
+    for f in shared:
+        assert "volume" not in f.read_text().lower(), f
+    # The nn strategies do read volume, directly or through the feature table.
+    assert {"nn-feedforward", "nn-feature-store"} <= by_name.keys()
+    assert not {"nn-feedforward", "nn-feature-store"} & staleness.PRICE_ONLY_STRATEGIES
 
 
 def test_sessions_behind_counts_trading_days_only():
