@@ -10,4 +10,6 @@ Standalone tools keep their own README beside the code rather than a section in 
 
 `DOC-REVIEW.md` and `UI-REVIEW.md` are rolling review trackers, not project docs: they are deliberately absent from the `DOCS` registry in `docsRegistry.js` and do not render at `/docs`.
 
+`AGENTS.md` is the step-by-step review list: the app's steps from a running stack to the held-out test, what has to be true for each to count as done, and a review table we fill in one step at a time. It also holds the author's working rules for agents. It owns the definitions of done and nothing else: how to run a step stays in `README.md` and `GETTING-STARTED.md`, and it links there. Like the trackers, it is not in the `DOCS` registry.
+
 Note: the `/architecture` and `/claude` routes on the API are 301 redirects to the client's `/docs/qqq-architecture` — the only Architecture document left, and there is no separate Claude-facing doc page. Those targets are checked against the registry in `docsRegistry.test.js`, because a redirect to a slug the registry does not know is a 301 into a 404. The docs render inside the React client at `/docs`; the API serves them as JSON from `/api/docs`.
