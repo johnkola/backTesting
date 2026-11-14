@@ -316,8 +316,8 @@ starts, the plan checklist. This section holds only what has to be true before t
 is marked done.
 
 Four of the rows quote a requirement that is not in `read-only-doc/` yet: see the note
-at the top of Pass 3. B6 and B7 wait for the author's decisions D6, D7 and D8. Do not
-start them until the answer is written in `DESIGN-GAPS.md`.
+at the top of Pass 3. B7 waits for the author's decision D7. Do not start it until the
+answer is written in `DESIGN-GAPS.md`. D6 and D8 are decided, and B6 states them.
 
 **Every build step, before it is done**
 
@@ -398,18 +398,21 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 ### B6. Buy-and-hold pays what the strategy pays (G32)
 
-Waits for D6 and D8.
-
 **Done when**
 
 - [ ] Buy-and-hold is one buy at the window's first open (B1) and one sale at its end,
   charged the same enabled commission, slippage and tax as the strategy it stands
   beside, in the engine's results and in walk-forward folds.
-- [ ] Its figure is stored with the cost and tax settings it was computed under. Two
-  runs with the same window and settings report the same figure. Two runs that differ
-  in a setting never share one.
-- [ ] Rows are kept the way D6 decides, and the sale at the end of the window follows
-  D8.
+- [ ] It is recalculated on every run, before training starts, under that run's cost
+  and tax settings, and stored with the run (D6). Two runs with the same window and
+  settings report the same figure.
+- [ ] No run reads another run's benchmark. The shared `benchmarks` rows and their
+  lookups (`BenchmarkRepository.findOrCreate`,
+  `walkforward_store.find_or_create_benchmark`) are gone, and the hold curve on the
+  result page is drawn from the run's own benchmark.
+- [ ] With tax on, a position still open at the end of the window is sold and taxed,
+  for the strategy and for buy-and-hold alike (D8). In walk-forward the window is the
+  fold.
 
 ### B7. Faber and dual momentum beside every run (G33)
 
@@ -496,7 +499,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B3. Engine metrics | G29 | | not started | |
 | B4. In-sample flag | G30 | | not started | |
 | B5. Trainer purge | G31 | | not started | |
-| B6. Buy-and-hold costs | G32 | D6, D8 | waiting | |
+| B6. Buy-and-hold costs | G32 | | not started | |
 | B7. Faber and dual momentum | G33 | D7, B6 | waiting | |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
