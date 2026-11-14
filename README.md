@@ -416,8 +416,12 @@ Friday off Easter — so it knows every **scheduled** closure and no
 | `~2 missing bar(s) since 2012-10-26` | Hurricane Sandy, 29–30 October 2012 |
 | `~1 missing bar since 2006-12-29` | National day of mourning for Gerald Ford, 2 January 2007 |
 | `~1 missing bar since 2004-06-10` | National day of mourning for Ronald Reagan, 11 June 2004 |
+| `~1 missing bar since 2018-12-04` | National day of mourning for George H. W. Bush, 5 December 2018 |
+| `~1 missing bar since 2025-01-08` | National day of mourning for Jimmy Carter, 9 January 2025 |
+| `~1 missing bar since 1994-04-26` | National day of mourning for Richard Nixon, 27 April 1994 (series before 1999) |
+| `~1 missing bar since 1985-09-26` | Hurricane Gloria, 27 September 1985 (series before 1999) |
 
-A daily QQQ history back to 1999 reports exactly these six bars and is complete.
+A daily QQQ history back to 1999 reports exactly the first six of these findings and is complete. VIX, back to 1990, adds Nixon; the Nasdaq-100 breadth series, back to 1983, add Gloria too.
 Two further sources of false gaps: the calendar is **US-equity only**, so non-US
 symbols and 24-7 crypto flag every US holiday, and intraday **half-days** (the
 1pm closes around Thanksgiving and Christmas) are not modelled.

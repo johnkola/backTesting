@@ -260,6 +260,10 @@ min = 0.0
 max = 100.0
 enabled = false
 status = "data-only"
+note = """Data only: stored for charts and rule-based strategies, kept out of the network. A
+14-day RSI is a windowed transform of the QQQ bar the network already sees, so it
+would add dimensions and room to overfit without adding information (Features.md B).
+To test that, set enabled = true and remove the status."""
 
 [[feature]]
 name = "macd"
@@ -272,6 +276,10 @@ method = "rolling_zscore"
 window = 60
 enabled = false
 status = "data-only"
+note = """Data only: stored for charts and rule-based strategies, kept out of the network.
+MACD is a difference of two moving averages of the QQQ close the network already
+sees, so it would add dimensions and room to overfit without adding information
+(Features.md B). To test that, set enabled = true and remove the status."""
 
 [[feature]]
 name = "realized_vol"
@@ -284,6 +292,10 @@ method = "rolling_zscore"
 window = 60
 enabled = false
 status = "data-only"
+note = """Data only: stored for charts and rule-based strategies, kept out of the network.
+20-day realized volatility is a windowed transform of the QQQ bar the network
+already sees, so it would add dimensions and room to overfit without adding
+information (Features.md B). To test that, set enabled = true and remove the status."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
