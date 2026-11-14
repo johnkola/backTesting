@@ -352,7 +352,7 @@ docker exec backtest-loader python -m loader.feeds apply PSQ/yahoo        # acce
 **Limits.**
 
 - Yahoo's chart API is unofficial: free and keyless, but it can rate-limit or change without notice.
-- Yahoo fills a futures day's close (copper, gold) late, so those two can trail the equities by a day; forward-fill covers it in the feature table.
+- Gold, copper and the dollar index trade into the evening (CME reopens at 18:00 New York), and Yahoo fills today's bar from whatever session is trading, so the evening run would store a few minutes of tomorrow's session as today. Those three are taken only up to the previous day: they trail the equities by a day, and forward-fill covers it in the feature table. Their volumes also settle late (Yahoo shows the previous day's volume until then), so for them a change to the volume alone of the day before the last stored one is written too, not held.
 - FRED publishes a day's yields the next afternoon, so they always trail by a day.
 - The SEC earnings series come from `data.sec.gov`: each run reads every member company's newest filings, and its net income facts only after a new 10-Q or 10-K. `NDXERN5D` and `NDXERNSEASON` end 4 sessions before the last finished one, because a day's value counts releases over the next four. A company whose refresh fails holds all four series at the last day every company is complete for, so a failure never writes a value a later run would change.
 - SEC's ticker list (on `www.sec.gov`) refuses a generic User-Agent, so a new Nasdaq-100 member is only found with `SEC_USER_AGENT` set in `.env`. Everything else works without it.

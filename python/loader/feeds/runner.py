@@ -35,6 +35,9 @@ from loader.feeds.registry import Feed
 TIMEFRAME = "D1"
 #: Advisory-lock key for "a feeds run is in progress" (arbitrary, fixed).
 LOCK_KEY = 726_575_647_301
+#: For a feed that trades overnight, how many stored days before the last one
+#: may still settle their volume (`core.plan_update`).
+VOLUME_WINDOW = 1
 #: Statuses that changed stored data.
 WROTE = {"extended", "fixed", "extended+fixed", "loaded", "applied"}
 
@@ -62,6 +65,9 @@ class RunContext:
     filings: sec.Refreshed | None = None
     #: Why the filings could not be loaded; their series then fail, not the run.
     earnings_error: str | None = None
+
+    def cutoff_for(self, feed: Feed) -> dt.date:
+        return core.feed_cutoff(self.now, feed.overnight)
 
     @classmethod
     def at(cls, now: dt.datetime, dry_run: bool = False) -> RunContext:
@@ -100,7 +106,7 @@ def fetch_bars(feed: Feed, start: dt.date | None, ctx: RunContext) -> list[core.
         bars = ctx.earnings[feed.ref]
     else:
         raise FeedError(f"unknown provider {feed.provider!r}")
-    return core.cut(bars, ctx.cutoff, start)
+    return core.cut(bars, ctx.cutoff_for(feed), start)
 
 
 def earnings_members() -> list[str]:
@@ -221,31 +227,31 @@ def _source_file(feed: Feed, rows_by_year: dict[int, list[str]], ctx: RunContext
                       name=f"feed {feed.provider}:{feed.ref} {ctx.stamp}")
 
 
-def _guard(slices, fix_day: str | None) -> None:
-    """A refresh may overwrite only the year holding a fixed last day, and in
-    it only that day. Anything else means the slices were not built the way
+def _guard(slices, fix_days: list[str]) -> None:
+    """A refresh may overwrite only the years holding a settled day, and in
+    them only those days. Anything else means the slices were not built the way
     `core.build_slices` promises, and nothing is written."""
     for s in slices:
         if s.plan == "conflict":
             raise FeedError(f"{s.year} conflicts with the stored slice")
         if s.plan == "overwrite":
             d = s.diff
-            if (fix_day is None or s.year != core.year_of(fix_day) or d is None
-                    or d.changed != 1 or d.removed or not d.examples
-                    or d.examples[0][:10] != fix_day):
+            mine = {day for day in fix_days if core.year_of(day) == s.year}
+            if (not mine or d is None or d.removed or d.changed != len(mine)
+                    or {e[:10] for e in d.examples} != mine):
                 raise FeedError(f"refusing to overwrite {s.year}: it changes more than "
-                                f"the last stored day")
+                                f"the settled day(s) {', '.join(sorted(mine)) or '(none)'}")
 
 
 def _import(conn, feed: Feed, ctx: RunContext, rows_by_year: dict[int, list[str]], *,
-            force: bool, fix_day: str | None, guarded: bool, out: dict) -> dict:
+            force: bool, fix_days: list[str], guarded: bool, out: dict) -> dict:
     from loader.cohesion import check_import
     from loader.csv_import import commit_file, plan_slices, write_archive_files
 
     slices = plan_slices(conn, core.HEADER, rows_by_year, source_name=feed.source,
                          symbol=feed.symbol, timeframe=TIMEFRAME, force=force)
     if guarded:
-        _guard(slices, fix_day)
+        _guard(slices, fix_days)
     out["years"] = [{"year": s.year, "plan": s.plan,
                      "diff": s.diff.to_dict() if s.diff is not None else None}
                     for s in slices if s.plan != "skip"]
@@ -286,7 +292,8 @@ def refresh_feed(conn, feed: Feed, ctx: RunContext) -> dict:
         raise FeedError(f"the archived {last.year} slice ends {tail} but the candles end {last}")
 
     stored = {ln[:10]: ln for rows in stored_by_year.values() for ln in rows}
-    update = core.plan_update(stored, bars, last.isoformat(), start.isoformat())
+    update = core.plan_update(stored, bars, last.isoformat(), start.isoformat(),
+                              volume_window=VOLUME_WINDOW if feed.overnight else 0)
     out: dict = {"feed": feed.key, "lastBefore": last.isoformat(), **update.summary()}
     if update.status in ("held", "up-to-date"):
         out["lastAfter"] = last.isoformat()
@@ -296,13 +303,13 @@ def refresh_feed(conn, feed: Feed, ctx: RunContext) -> dict:
         return out
 
     rows_by_year = core.build_slices(stored_by_year, update, last.isoformat())
-    fix_day = last.isoformat() if update.fix is not None else None
-    _import(conn, feed, ctx, rows_by_year, force=fix_day is not None, fix_day=fix_day,
+    fix_days = update.fixed_days
+    _import(conn, feed, ctx, rows_by_year, force=bool(fix_days), fix_days=fix_days,
             guarded=True, out=out)
     newest = max(ln[:10] for rows in rows_by_year.values() for ln in rows)
     out["lastAfter"] = newest
     if not ctx.dry_run and out.get("status") != "up-to-date":
-        first = fix_day or update.new_lines[0][:10]
+        first = fix_days[0] if fix_days else update.new_lines[0][:10]
         out["rollups"] = rollups(conn, feed, dt.date.fromisoformat(first),
                                  dt.date.fromisoformat(newest))
         conn.commit()
@@ -318,7 +325,7 @@ def load_full(conn, feed: Feed, ctx: RunContext, *, apply: bool) -> dict:
     rows_by_year = core.bucket_by_year(bars)
     out: dict = {"feed": feed.key, "status": "applied" if apply else "loaded",
                  "added": len(bars), "fixed": None}
-    _import(conn, feed, ctx, rows_by_year, force=apply, fix_day=None, guarded=False, out=out)
+    _import(conn, feed, ctx, rows_by_year, force=apply, fix_days=[], guarded=False, out=out)
     out["lastAfter"] = bars[-1][0]
     if not ctx.dry_run and out.get("status") != "up-to-date":
         changed = [y["year"] for y in out["years"]]
@@ -390,7 +397,8 @@ def _line(res: dict) -> str:
         f = f", one rescale x{h['factor']:.6g}" if h.get("factor") else ""
         return (f"  HELD  {res['feed']}: {h.get('days')} stored day(s) differ "
                 f"{h.get('from')}..{h.get('to')}{f}; {h.get('waiting', 0)} new day(s) waiting")
-    extra = f", fixed {res['fixed']}" if res.get("fixed") else ""
+    fixed = res.get("fixedDays") or ([res["fixed"]] if res.get("fixed") else [])
+    extra = f", fixed {', '.join(fixed)}" if fixed else ""
     return (f"  {s.upper():9} {res['feed']}: +{res.get('added', 0)}{extra}"
             f"  -> {res.get('lastAfter', '?')}")
 

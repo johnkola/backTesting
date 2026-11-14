@@ -32,6 +32,11 @@ class Feed:
     provider: str    # a PROVIDERS key
     ref: str         # the provider's name for it
     group: str       # prices | macro | breadth | earnings, for the panel
+    #: Trades into the evening (CME metals from 18:00 New York, the dollar index
+    #: around the clock), so Yahoo's bar for today is not today's session at
+    #: the evening run: taken up to yesterday only, with a volume that may
+    #: settle one day later than usual (`core.feed_cutoff`, `core.plan_update`).
+    overnight: bool = False
 
     @property
     def key(self) -> str:
@@ -40,7 +45,7 @@ class Feed:
     def to_dict(self) -> dict[str, str]:
         return {"key": self.key, "symbol": self.symbol, "source": self.source,
                 "type": self.type, "provider": self.provider, "ref": self.ref,
-                "group": self.group}
+                "group": self.group, "overnight": self.overnight}
 
 
 FEEDS: tuple[Feed, ...] = (
@@ -67,9 +72,9 @@ FEEDS: tuple[Feed, ...] = (
     Feed("ETHX-B", "yahoo", "STOCK", "yahoo", "ETHX-B.TO", "prices"),
     Feed("VIX", "yahoo", "INDEX", "yahoo", "^VIX", "prices"),
     Feed("VXN", "yahoo", "INDEX", "yahoo", "^VXN", "prices"),
-    Feed("DXY", "yahoo", "INDEX", "yahoo", "DX-Y.NYB", "prices"),
-    Feed("COPPER", "yahoo", "COMMODITY", "yahoo", "HG=F", "prices"),
-    Feed("GOLD", "yahoo", "COMMODITY", "yahoo", "GC=F", "prices"),
+    Feed("DXY", "yahoo", "INDEX", "yahoo", "DX-Y.NYB", "prices", overnight=True),
+    Feed("COPPER", "yahoo", "COMMODITY", "yahoo", "HG=F", "prices", overnight=True),
+    Feed("GOLD", "yahoo", "COMMODITY", "yahoo", "GC=F", "prices", overnight=True),
     Feed("DGS10", "fred", "INDEX", "fred", "DGS10", "macro"),
     Feed("DGS2", "fred", "INDEX", "fred", "DGS2", "macro"),
     Feed("DTB3", "fred", "INDEX", "fred", "DTB3", "macro"),

@@ -21,7 +21,9 @@ from CSV, for what no API serves.
 WHAT A FEED MAY CHANGE ON ITS OWN. New days after the last stored one, and the
 last stored day itself: that bar is often preliminary when it is first fetched
 (a settling volume, a futures bar caught mid-roll), and the author chose to let
-it settle automatically. Anything further back is HELD: nothing is written for
+it settle automatically. For a market that trades into the evening
+(`Feed.overnight`) the volume of the day before it may settle too, and nothing
+newer than yesterday is taken. Anything further back is HELD: nothing is written for
 that series, and the run reports what differs until someone applies it. A
 held series stays where it is rather than taking the new days alone, because
 the new days come from a provider that no longer agrees with the stored

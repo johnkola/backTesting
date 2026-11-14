@@ -17,6 +17,8 @@ describe('resultBadge', () => {
     expect(resultBadge({ feed: 'x', status: 'extended', added: 3 }).label).toBe('+3 days')
     expect(resultBadge({ feed: 'x', status: 'extended+fixed', added: 1 }).label)
       .toBe('+1, last day settled')
+    expect(resultBadge({ feed: 'x', status: 'extended+fixed', added: 1,
+      fixedDays: ['2026-11-10', '2026-11-11'] }).label).toBe('+1, last 2 days settled')
   })
   it('flags a held series as needing Apply', () => {
     expect(resultBadge(held())).toEqual({ label: 'held: needs Apply', tone: 'warning' })

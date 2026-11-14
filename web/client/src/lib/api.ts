@@ -1335,6 +1335,9 @@ export type FeedResult = {
   added?: number
   /** The last stored day, when its bar settled and was replaced. */
   fixed?: string | null
+  /** Every settled day, when more than one did: gold, copper and the dollar
+   *  index may also settle the volume of the day before the last. */
+  fixedDays?: string[]
   held?: FeedHeld
   lastBefore?: string
   lastAfter?: string
@@ -1352,6 +1355,8 @@ export type FeedRow = {
   provider: 'yahoo' | 'yahoo-adj' | 'fred' | 'boc' | 'breadth' | 'sec'
   ref: string
   group: 'prices' | 'macro' | 'breadth' | 'earnings'
+  /** Trades into the evening, so taken up to the previous day only. */
+  overnight?: boolean
   lastDate: string | null
   /** The newest non-dry-run result for this series, if any run has touched it. */
   result: FeedResult | null

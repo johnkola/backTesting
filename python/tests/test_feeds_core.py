@@ -79,7 +79,7 @@ def test_new_days_after_the_last_stored_one_are_added():
     up = core.plan_update(STORED, bars, LAST, START)
     assert up.status == "extended"
     assert [ln[:10] for ln in up.new_lines] == ["2026-11-09", "2026-11-10"]
-    assert up.fix is None and not up.held
+    assert up.fixes == [] and not up.held
 
 
 def test_nothing_new_is_up_to_date():
@@ -94,7 +94,7 @@ def test_a_settled_volume_on_the_last_stored_day_is_fixed():
     bars = [bar("2026-11-05", 12.0), bar("2026-11-06", 13.0, volume=150), bar("2026-11-09", 14.0)]
     up = core.plan_update(STORED, bars, LAST, "2026-11-05")
     assert up.status == "extended+fixed"
-    assert up.fix == line("2026-11-06", 13.0, volume=150)
+    assert up.fixes == [line("2026-11-06", 13.0, volume=150)]
     assert up.summary()["fixed"] == "2026-11-06"
 
 
@@ -103,7 +103,7 @@ def test_a_change_further_back_holds_the_whole_series():
             bar("2026-11-09", 14.0)]
     up = core.plan_update(STORED, bars, LAST, "2026-11-04")
     assert up.status == "held"
-    assert not up.new_lines and up.fix is None
+    assert not up.new_lines and up.fixes == []
     assert up.waiting == 1
     held = up.summary()["held"]
     assert held["days"] == 1 and held["from"] == held["to"] == "2026-11-04"
@@ -113,7 +113,7 @@ def test_a_held_series_does_not_take_its_last_day_fix_either():
     """Fixing the last day while older days disagree would mix the two bases."""
     bars = [bar("2026-11-05", 12.5), bar("2026-11-06", 13.0, volume=150)]
     up = core.plan_update(STORED, bars, LAST, "2026-11-05")
-    assert up.status == "held" and up.fix is None
+    assert up.status == "held" and up.fixes == []
     assert {c.date for c in up.held} == {"2026-11-05", "2026-11-06"}
 
 
@@ -169,7 +169,7 @@ def test_slices_keep_stored_text_byte_for_byte_and_append():
 def test_a_fix_replaces_only_the_last_stored_day():
     stored = {2026: [line("2026-11-05", 12.0), line("2026-11-06", 13.0)]}
     fix = line("2026-11-06", 13.0, volume=150)
-    out = core.build_slices(stored, core.Update(fix=fix), "2026-11-06")
+    out = core.build_slices(stored, core.Update(fixes=[fix]), "2026-11-06")
     assert out == {2026: [line("2026-11-05", 12.0), fix]}
 
 
@@ -177,6 +177,14 @@ def test_new_days_in_a_new_year_start_their_own_slice_and_leave_the_old_one_alon
     stored = {2025: [line("2025-12-31", 13.0)]}
     up = core.Update(new_lines=[line("2026-01-02", 14.0)])
     assert core.build_slices(stored, up, "2025-12-31") == {2026: [line("2026-01-02", 14.0)]}
+
+
+def test_two_settled_days_across_new_year_replace_one_line_each():
+    stored = {2025: [line("2025-12-30", 11.0), line("2025-12-31", 12.0)],
+              2026: [line("2026-01-02", 13.0)]}
+    fixes = [line("2025-12-31", 12.0, volume=90), line("2026-01-02", 13.0, volume=80)]
+    out = core.build_slices(stored, core.Update(fixes=fixes), "2026-01-02")
+    assert out == {2025: [line("2025-12-30", 11.0), fixes[0]], 2026: [fixes[1]]}
 
 
 def test_a_held_update_builds_no_slices():
@@ -188,3 +196,51 @@ def test_bucket_by_year_sorts_and_splits_whole_history():
     out = core.bucket_by_year([bar("2026-01-02", 2.0), bar("2025-12-31", 1.0)])
     assert list(out) == [2025, 2026]
     assert out[2025] == [line("2025-12-31", 1.0)]
+
+
+# --------------------------------------------------------------------------
+# Markets that trade into the evening (gold, copper, the dollar index)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("hour, plain, overnight", [
+    (13, "2026-11-11", "2026-11-11"),     # mid-session: yesterday for both
+    (18, "2026-11-12", "2026-11-11"),     # CME has just reopened on tomorrow's session
+    (23, "2026-11-12", "2026-11-11"),
+])
+def test_an_overnight_market_is_taken_up_to_yesterday_at_any_hour(hour, plain, overnight):
+    now = dt.datetime(2026, 11, 12, hour, 30, tzinfo=core.NEW_YORK)
+    assert core.feed_cutoff(now).isoformat() == plain
+    assert core.feed_cutoff(now, overnight=True).isoformat() == overnight
+
+
+WINDOWED = {d: line(d, c, volume=v) for d, c, v in [
+    ("2026-11-09", 10.0, 1639), ("2026-11-10", 11.0, 864), ("2026-11-11", 12.0, 864)]}
+
+
+def test_with_a_volume_window_the_day_before_the_last_may_settle_its_volume():
+    """Copper on 2026-11-12: the 11-11 bar carried 11-10's volume (864) until it
+    settled at 427. With bars taken a day later, that settling can land one run
+    after 11-11 stopped being the last stored day."""
+    bars = [bar("2026-11-09", 10.0, 1639), bar("2026-11-10", 11.0, 427),
+            bar("2026-11-11", 12.0, 1119), bar("2026-11-12", 13.0, 1119)]
+    held = core.plan_update(WINDOWED, bars, "2026-11-11", "2026-11-09")
+    assert held.status == "held"
+    up = core.plan_update(WINDOWED, bars, "2026-11-11", "2026-11-09", volume_window=1)
+    assert up.status == "extended+fixed"
+    assert up.fixed_days == ["2026-11-10", "2026-11-11"]
+    assert up.summary()["fixed"] == "2026-11-11"
+    assert up.summary()["fixedDays"] == ["2026-11-10", "2026-11-11"]
+
+
+def test_the_volume_window_never_lets_a_price_or_an_older_day_through():
+    price = [bar("2026-11-10", 11.5, 864), bar("2026-11-11", 12.0, 864)]
+    assert core.plan_update(WINDOWED, price, "2026-11-11", "2026-11-09",
+                            volume_window=1).status == "held"
+    older = [bar("2026-11-09", 10.0, 1700), bar("2026-11-10", 11.0, 864),
+             bar("2026-11-11", 12.0, 864)]
+    assert core.plan_update(WINDOWED, older, "2026-11-11", "2026-11-09",
+                            volume_window=1).status == "held"
+    dropped = [bar("2026-11-09", 10.0, 1639), bar("2026-11-11", 12.0, 864)]
+    assert core.plan_update(WINDOWED, dropped, "2026-11-11", "2026-11-09",
+                            volume_window=1).status == "held"

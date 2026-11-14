@@ -114,18 +114,32 @@ class _Slice:
         self.year, self.plan, self.diff = year, plan, diff
 
 
-def test_the_guard_allows_only_the_fixed_last_day_to_be_overwritten():
+def test_the_guard_allows_only_the_settled_days_to_be_overwritten():
     ok = _Slice(2026, "overwrite", _Diff(changed=1, examples=("2026-11-06T00:00:00Z",)))
-    runner._guard([_Slice(2025, "skip"), ok], "2026-11-06")
-    runner._guard([_Slice(2026, "extend")], None)
-    def over(year, changed, day):
-        return _Slice(year, "overwrite", _Diff(changed=changed, examples=(f"{day}T00:00:00Z",)))
+    runner._guard([_Slice(2025, "skip"), ok], ["2026-11-06"])
+    runner._guard([_Slice(2026, "extend")], [])
+    two = _Slice(2026, "overwrite", _Diff(changed=2, examples=("2026-11-05T00:00:00Z",
+                                                               "2026-11-06T00:00:00Z")))
+    runner._guard([two], ["2026-11-05", "2026-11-06"])
 
-    for bad, fix in [
-        (over(2026, 2, "2026-11-05"), "2026-11-06"),   # more than the last day
-        (over(2025, 1, "2025-12-31"), "2026-11-06"),   # another year
-        (over(2026, 1, "2026-11-06"), None),           # no fix was planned
-        (_Slice(2026, "conflict"), "2026-11-06"),
+    def over(year, changed, *days):
+        return _Slice(year, "overwrite",
+                      _Diff(changed=changed, examples=tuple(f"{d}T00:00:00Z" for d in days)))
+
+    for bad, fixes in [
+        (over(2026, 2, "2026-11-05", "2026-11-06"), ["2026-11-06"]),   # more than planned
+        (over(2026, 1, "2026-11-05"), ["2026-11-06"]),                 # another day
+        (over(2025, 1, "2025-12-31"), ["2026-11-06"]),                 # another year
+        (over(2026, 1, "2026-11-06"), []),                             # no fix was planned
+        (_Slice(2026, "conflict"), ["2026-11-06"]),
     ]:
         with pytest.raises(runner.FeedError):
-            runner._guard([bad], fix)
+            runner._guard([bad], fixes)
+
+
+def test_the_markets_that_trade_into_the_evening_are_marked():
+    assert {f.key for f in registry.FEEDS if f.overnight} == {
+        "DXY/yahoo", "COPPER/yahoo", "GOLD/yahoo"}
+    ctx = runner.RunContext.at(dt.datetime(2026, 11, 12, 23, 30, tzinfo=dt.UTC))  # 18:30 NY
+    assert ctx.cutoff_for(registry.BY_KEY["GOLD/yahoo"]) == dt.date(2026, 11, 11)
+    assert ctx.cutoff_for(registry.BY_KEY["QQQ/yahoo"]) == dt.date(2026, 11, 12)

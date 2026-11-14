@@ -10,10 +10,12 @@ export type Tone = 'success' | 'info' | 'warning' | 'error' | 'ghost'
 /** The badge for one series' latest result. */
 export function resultBadge(r: FeedResult | null): { label: string, tone: Tone } {
   if (!r) return { label: 'not run yet', tone: 'ghost' }
+  const n = r.fixedDays?.length ?? 0
+  const settled = n > 1 ? `last ${n} days settled` : 'last day settled'
   switch (r.status) {
     case 'extended': return { label: `+${r.added ?? 0} day${r.added === 1 ? '' : 's'}`, tone: 'success' }
-    case 'extended+fixed': return { label: `+${r.added ?? 0}, last day settled`, tone: 'success' }
-    case 'fixed': return { label: 'last day settled', tone: 'success' }
+    case 'extended+fixed': return { label: `+${r.added ?? 0}, ${settled}`, tone: 'success' }
+    case 'fixed': return { label: settled, tone: 'success' }
     case 'loaded': return { label: 'first load', tone: 'success' }
     case 'applied': return { label: 'applied', tone: 'info' }
     case 'up-to-date': return { label: 'up to date', tone: 'ghost' }

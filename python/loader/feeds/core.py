@@ -49,6 +49,21 @@ def session_cutoff(now: dt.datetime) -> dt.date:
     return local.date() - dt.timedelta(days=1)
 
 
+def feed_cutoff(now: dt.datetime, overnight: bool = False) -> dt.date:
+    """`session_cutoff`, or for a market that trades into the evening the day
+    before today, whatever the hour.
+
+    Yahoo dates gold and copper futures (and the dollar index) by calendar day
+    and fills today's bar from whatever session is trading. CME reopens at
+    18:00 New York, so the 18:30 run on 2026-11-12 stored gold's 11-12 bar as
+    the first half hour of the next session: a $5 range on volume 710, where the
+    day's real bar had a $149 range on 229,442. The dollar index's 18:30 bar
+    was later corrected in price too. Yesterday's bar is final by then."""
+    if not overnight:
+        return session_cutoff(now)
+    return now.astimezone(NEW_YORK).date() - dt.timedelta(days=1)
+
+
 def format_row(bar: Sequence) -> str:
     """The CSV line for one bar, as `csv.writer` writes the same values."""
     return ",".join(str(v) for v in bar)
@@ -84,8 +99,10 @@ class Update:
 
     #: Lines for the days after the last stored one, oldest first.
     new_lines: list[str] = field(default_factory=list)
-    #: The replacement line for the last stored day, when only it changed.
-    fix: str | None = None
+    #: Replacement lines for stored days that settled, oldest first: the last
+    #: stored day, and for a feed with a volume window the days before it
+    #: whose volume alone changed.
+    fixes: list[str] = field(default_factory=list)
     #: Changes further back. Non-empty means nothing is written.
     held: list[Change] = field(default_factory=list)
     #: When every held change is one rescale of all four prices with volume
@@ -95,20 +112,27 @@ class Update:
     waiting: int = 0
 
     @property
+    def fixed_days(self) -> list[str]:
+        return [ln[:10] for ln in self.fixes]
+
+    @property
     def status(self) -> str:
         if self.held:
             return "held"
-        if self.fix is not None and self.new_lines:
+        if self.fixes and self.new_lines:
             return "extended+fixed"
-        if self.fix is not None:
+        if self.fixes:
             return "fixed"
         if self.new_lines:
             return "extended"
         return "up-to-date"
 
     def summary(self) -> dict[str, object]:
+        days = self.fixed_days
         out: dict[str, object] = {"status": self.status, "added": len(self.new_lines),
-                                  "fixed": self.fix.split(",", 1)[0] if self.fix else None}
+                                  "fixed": days[-1] if days else None}
+        if len(days) > 1:
+            out["fixedDays"] = days
         if self.held:
             dates = [c.date for c in self.held]
             out["held"] = {
@@ -161,14 +185,26 @@ def uniform_factor(changes: Iterable[Change], tol: float = 1e-6) -> float | None
     return factor
 
 
+def volume_only(c: Change, tol: float = PRICE_REL_TOL) -> bool:
+    """A change where every price agrees and only the volume moved."""
+    return c.new is not None and all(_rel(o, n) <= tol
+                                     for o, n in zip(c.old[:4], c.new[:4], strict=True))
+
+
 def plan_update(stored: dict[str, str], bars: Iterable[Bar], last_stored: str,
-                start: str) -> Update:
+                start: str, volume_window: int = 0) -> Update:
     """Compare a fetch with the stored days it overlaps and decide what to write.
 
     `stored` maps date -> stored line for at least [start, last_stored];
     `bars` are the provider's bars from `start` on, already cut at the session
     cutoff. Days before `start` are ignored on both sides: the fetch did not
     ask for them, so their absence from it says nothing.
+
+    The last stored day may change in any way. `volume_window` more stored
+    days before it may change their volume alone: Yahoo shows a futures bar
+    with the previous day's volume until it settles, which can take longer than
+    one evening run (copper's 11-11 still showed 11-10's 864 at 18:30 on 11-12).
+    Any other change holds the series.
     """
     fetched = {b[0]: b for b in bars}
     changes: list[Change] = []
@@ -185,34 +221,37 @@ def plan_update(stored: dict[str, str], bars: Iterable[Bar], last_stored: str,
             changes.append(Change(date, old, new))
 
     new_lines = [format_row(fetched[d]) for d in sorted(fetched) if d > last_stored]
-    deeper = [c for c in changes if c.date != last_stored]
-    last = [c for c in changes if c.date == last_stored]
-    if deeper or any(c.new is None for c in last):
-        # The provider disagrees with stored history (or dropped the last
-        # stored day, which a refresh cannot undo on its own): write nothing.
+    before = sorted(d for d in stored if start <= d < last_stored)
+    settling = set(before[-volume_window:]) if volume_window else set()
+    allowed = [c for c in changes if c.new is not None and (
+        c.date == last_stored or (c.date in settling and volume_only(c)))]
+    if len(allowed) < len(changes):
+        # The provider disagrees with stored history (or dropped a stored day,
+        # which a refresh cannot undo on its own): write nothing.
         return Update(held=changes, factor=uniform_factor(changes), waiting=len(new_lines))
-    fix = format_row(fetched[last_stored]) if last else None
-    return Update(new_lines=new_lines, fix=fix)
+    return Update(new_lines=new_lines, fixes=[format_row(fetched[c.date]) for c in allowed])
 
 
 def build_slices(stored_rows_by_year: dict[int, list[str]], update: Update,
                  last_stored: str | None) -> dict[int, list[str]]:
     """The year slices to import: each touched year is its stored lines, with
-    the last stored day replaced when it is fixed, plus the new lines. Years
-    the update does not touch are left out, so the importer leaves them alone."""
+    each settled day replaced, plus the new lines. Years the update does not
+    touch are left out, so the importer leaves them alone."""
     if update.held:
         return {}
     touched: dict[int, list[str]] = {}
-    if update.fix is not None and last_stored is not None:
-        y = year_of(last_stored)
-        rows = list(stored_rows_by_year.get(y, []))
+    for fix in update.fixes:
+        day = fix[:10]
+        if last_stored is None or day > last_stored:
+            raise ValueError(f"settled day {day} is after the last stored day {last_stored}")
+        y = year_of(day)
+        rows = touched.setdefault(y, list(stored_rows_by_year.get(y, [])))
         for i, line in enumerate(rows):
-            if line[:10] == last_stored:
-                rows[i] = update.fix
+            if line[:10] == day:
+                rows[i] = fix
                 break
         else:
-            raise ValueError(f"last stored day {last_stored} is not in its stored slice")
-        touched[y] = rows
+            raise ValueError(f"settled day {day} is not in its stored slice")
     for line in update.new_lines:
         y = year_of(line)
         if y not in touched:
