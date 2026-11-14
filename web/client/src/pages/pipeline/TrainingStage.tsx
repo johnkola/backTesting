@@ -8,7 +8,7 @@ import {
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import {
-  executionLine, isLeverageOnly, lineageLine, newestFinished, num, pp, stageSummary,
+  accuracyMeaning, executionLine, isLeverageOnly, lineageLine, newestFinished, num, pp, stageSummary,
 } from '../../lib/walkforwardView'
 import StartWalkforward from '../../components/StartWalkforward'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
@@ -342,7 +342,12 @@ export default function TrainingStage() {
                           </th>
                         </>
                       )}
-                      <th className="text-right">Accuracy</th>
+                      <th
+                        className="text-right tooltip tooltip-left"
+                        data-tip={accuracyMeaning(detail.run.loss).header}
+                      >
+                        Accuracy
+                      </th>
                       <th
                         className="text-right tooltip tooltip-left"
                         data-tip="Early stopping: the epoch kept / epochs trained"
@@ -424,7 +429,7 @@ export default function TrainingStage() {
                               ? <span className="opacity-60" title="Money-trained: no class to be right about">—</span>
                               : `${(f.accuracy * 100).toFixed(1)}%`}
                             {f.baselineAcc != null && (
-                              <span className="opacity-60" title="Always predicting the training majority class">
+                              <span className="opacity-60" title={accuracyMeaning(detail.run.loss).baseline}>
                                 {` / ${(f.baselineAcc * 100).toFixed(1)}%`}
                               </span>
                             )}

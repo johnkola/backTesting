@@ -212,3 +212,23 @@ export function leveredTiming(run: WalkforwardRun): number | null {
 export function isLeverageOnly(run: WalkforwardRun): boolean {
   return run.beatsHoldOnReturn === true && run.beatsLeveredOnReturn === false
 }
+
+/**
+ * What a fold's accuracy and baseline measure (G43). A classifier calls BUY,
+ * HOLD or SELL, so it is scored on three classes against always predicting the
+ * training majority class. A money-trained model makes one call, out or long,
+ * so it is scored on that against always long. The two are not comparable,
+ * so the column says which one it shows.
+ */
+export function accuracyMeaning(loss: string): { header: string, baseline: string } {
+  if (loss === 'ce') {
+    return {
+      header: 'BUY, HOLD or SELL against the label',
+      baseline: 'Always predicting the training majority class',
+    }
+  }
+  return {
+    header: 'Out (a SELL label) or long (any other) against the label: the only call a money-trained model makes',
+    baseline: 'Always long: the share of days not labelled SELL',
+  }
+}

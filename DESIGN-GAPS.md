@@ -90,6 +90,14 @@ wrong today.
 | G44 | The Training tab says the runner prints per-epoch loss to its terminal. The walk-forward runner prints nothing per epoch; only `nn/train_features.py` does | step 6 | `TrainingStage.tsx` near line 106 | none | S | open |
 | G45 | `git_sha` is never recorded on the stack. Lineage reads `$GIT_SHA`, but no Dockerfile or compose file sets it and the image has no `.git`, so no run can be tied to a commit (`code_hash` still is) | step 6 | `nn/lineage.py`; `python/Dockerfile`; `docker-compose.yml` | `git_sha` NULL on all 9 runs and 13 feature builds | S | open |
 
+**G36 and G43 plan, 2026-11-14.** The author's order: these two first, then step 3.
+
+- [x] G36: `resolve_columns` expands a selected feature to its stored columns, using the suffixes `normalize.MULTI_OUTPUT` writes (`_sin`, `_cos`), and only when the bare name is not a column and every suffixed one is. Coverage, partial and dropped are judged per stored column. Test: a cyclical selection keeps both columns; a lookalike (`x_sin` alone) does not count
+- [x] G43: a money-trained fold's accuracy and baseline are measured on the decision it makes, out (SELL) or long (anything else), and its baseline is the majority of that split in the training labels, which is "always long". A classifier keeps 3-class accuracy against the majority class. The rule is one pure function, with a test
+- [x] Training tab: the fold accuracy says which measure it is
+- [ ] Checkpoint: list the stored runs each fix makes wrong. G36: runs 300, 301, 348. G43: every fold of the `loss = return` runs. The author confirms before anything is backed up, deleted and rerun under the stale-records rule
+- [ ] Tests, CI suites, README where the operator sees a difference; the G36 and G43 rows say done
+
 ### G1 review: fix before `--strategy-id` lands
 
 These cause no harm yet, because no runner calls `strategy_spec`. Once one does, each

@@ -621,6 +621,31 @@ def hold_window(wdates: list[date], va: list[int],
     )
 
 
+def fold_accuracy(pred: np.ndarray, y_va: np.ndarray, y_tr: np.ndarray,
+                  loss: str) -> tuple[float, float]:
+    """(accuracy, naive baseline) of one fold, each on the decision the model
+    actually makes.
+
+    A classifier (`ce`) predicts BUY, HOLD or SELL, so it is scored against the
+    3-class label, and its baseline always predicts the training majority class.
+
+    A money-trained model makes one decision, out or long, and its `pred` holds
+    only SELL or "not SELL". Until 2026-11-14 that "not SELL" was the BUY class
+    compared with the 3-class label, so a long day counted only when labelled
+    BUY and never when labelled HOLD, the majority: runs 300, 301 and 348 showed
+    the same accuracy in four years whatever they traded (G43). Both sides are
+    now cut to out (a SELL label) or long (anything else), and the baseline is
+    the majority of that split in the training labels, which is "always long".
+    """
+    if loss == "ce":
+        majority = Counter(y_tr.tolist()).most_common(1)[0][0]
+        return float((pred == y_va).mean()), float((y_va == majority).mean())
+    out_pred = pred == CLASS_SELL
+    out_true = y_va == CLASS_SELL
+    majority_out = bool((y_tr == CLASS_SELL).mean() > 0.5)
+    return float((out_pred == out_true).mean()), float((out_true == majority_out).mean())
+
+
 def run_fold(
     fold_no: int, year: int, tr: list[int], va: list[int],
     x_all: np.ndarray, y_all: np.ndarray, rets: np.ndarray,
@@ -686,7 +711,7 @@ def run_fold(
     hold = np.cumprod(1.0 + r)
 
     strat_daily = np.diff(np.concatenate([[1.0], equity])) / np.concatenate([[1.0], equity[:-1]])
-    baseline_cls = Counter(y_tr.tolist()).most_common(1)[0][0]
+    accuracy, baseline_acc = fold_accuracy(pred, y_va, y_tr, args.loss)
 
     # Which days the fold actually spent out, under the same next-session shift
     # the simulator uses — recomputed here rather than returned from simulate()
@@ -721,8 +746,8 @@ def run_fold(
         strat_sharpe=sharpe(strat_daily), hold_sharpe=sharpe(r),
         strat_maxdd=max_drawdown(equity), hold_maxdd=max_drawdown(hold),
         trades=trades,
-        accuracy=float((pred == y_va).mean()),
-        baseline_acc=float((y_va == baseline_cls).mean()),
+        accuracy=accuracy,
+        baseline_acc=baseline_acc,
         days_out=days_out,
         drift_tax=drift_tax,
         commissions=commissions,

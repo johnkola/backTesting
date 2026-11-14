@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { WalkforwardExecution, WalkforwardLineage, WalkforwardRun } from './api'
 import {
-  executionLine, isLeverageOnly, leveredTiming, lineageLine, newestFinished, num, pp, stageSummary, verdictOf,
+  accuracyMeaning, executionLine, isLeverageOnly, leveredTiming, lineageLine, newestFinished, num, pp,
+  stageSummary, verdictOf,
 } from './walkforwardView'
 
 /**
@@ -310,5 +311,17 @@ describe('the always-long-on-margin baseline (G25)', () => {
     expect(isLeverageOnly(aRun({ beatsHoldOnReturn: true, beatsLeveredOnReturn: true }))).toBe(false)
     expect(isLeverageOnly(aRun({ beatsHoldOnReturn: false, beatsLeveredOnReturn: false }))).toBe(false)
     expect(isLeverageOnly(aRun({ beatsHoldOnReturn: true }))).toBe(false)
+  })
+})
+
+describe('accuracyMeaning (G43)', () => {
+  it('scores a classifier on three classes against the majority class', () => {
+    expect(accuracyMeaning('ce').baseline).toMatch(/majority class/)
+  })
+  it('scores a money-trained model on out or long against always long', () => {
+    for (const loss of ['return', 'sharpe', 'calmar']) {
+      expect(accuracyMeaning(loss).header).toMatch(/Out .* or long/)
+      expect(accuracyMeaning(loss).baseline).toMatch(/^Always long/)
+    }
   })
 })

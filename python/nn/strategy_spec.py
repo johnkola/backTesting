@@ -33,6 +33,14 @@ starting in 2006 moves a 2003 train start to 2006. `train_coverage` measures the
 window the matrix really holds, so the run can record it instead of the one it
 asked for.
 
+A FEATURE IS NOT ALWAYS ONE COLUMN. A strategy selects catalogue features
+(`day_of_week`), and a cyclical feature is stored as two columns
+(`day_of_week_sin`, `day_of_week_cos`, `normalize.MULTI_OUTPUT`). Until
+2026-11-14 the names were compared as they were, so every selected cyclical
+feature was dropped as "not in this feature set" while the builder's coverage
+grid, which does map the names, showed it kept (G36). `feature_columns` is the
+one mapping, and everything after it is judged per stored column.
+
 THE OBJECTIVE IS THE STRATEGY'S, TOO. Loss, class weights, position threshold,
 the verdict metric, cost and park decide whether a run beat holding, so they
 are saved on the strategy (`objective_json`) rather than left to runner flags.
@@ -367,6 +375,23 @@ def runner_args(s: Strategy) -> dict[str, Any]:
     return out
 
 
+def feature_columns(name: str, available: Sequence[str]) -> list[str]:
+    """The stored columns a selected feature reads: itself when it is a column,
+    otherwise every column of a multi-output method when ALL of them are
+    stored (a cyclical feature's `_sin` and `_cos`), otherwise none. A lone
+    `x_sin` without its `x_cos` is not a feature called `x`."""
+    from nn.normalize import MULTI_OUTPUT
+
+    spec = set(available)
+    if name in spec:
+        return [name]
+    for suffixes in MULTI_OUTPUT.values():
+        cols = [name + suffix for suffix in suffixes]
+        if all(c in spec for c in cols):
+            return cols
+    return []
+
+
 def resolve_columns(
     selected: Sequence[str], available: Sequence[str], train_counts: Mapping[str, int],
     train_bars: int, data_only: Sequence[str] = (),
@@ -380,7 +405,6 @@ def resolve_columns(
     are dropped with their own reason rather than "not in this feature set": the
     set does hold them, and the run should say they were kept out on purpose.
     """
-    spec = set(available)
     data = set(data_only)
     kept: list[str] = []
     dropped: list[tuple[str, str]] = []
@@ -392,17 +416,21 @@ def resolve_columns(
         if name in seen:
             continue
         seen.add(name)
-        n = train_counts.get(name, 0)
         if name in data:
             dropped.append((name, "data only, kept out of the network"))
-        elif name not in spec:
+            continue
+        cols = feature_columns(name, available)
+        if not cols:
             dropped.append((name, "not in this feature set"))
-        elif n == 0:
-            dropped.append((name, "no values in the train window"))
-        else:
-            kept.append(name)
-            if n < train_bars:
-                partial.append((name, n, train_bars))
+            continue
+        for col in cols:
+            n = train_counts.get(col, 0)
+            if n == 0:
+                dropped.append((col, "no values in the train window"))
+            else:
+                kept.append(col)
+                if n < train_bars:
+                    partial.append((col, n, train_bars))
     if not kept:
         raise StrategyRefused([
             "none of the selected features can be used: "

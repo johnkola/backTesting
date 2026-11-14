@@ -265,6 +265,36 @@ class TestResolveColumns:
         with pytest.raises(ss.StrategyRefused, match="none of the selected"):
             ss.resolve_columns(["a"], ["a"], {}, 10)
 
+    # G36: a strategy selects catalogue features; a cyclical one is stored as
+    # two columns. Until 2026-11-14 it was dropped as "not in this feature
+    # set", so phase1-full trained on 23 of its 26 features.
+
+    SET = ["a", "day_of_week_sin", "day_of_week_cos", "x_sin"]
+
+    def test_a_cyclical_feature_keeps_both_of_its_stored_columns(self):
+        r = ss.resolve_columns(["a", "day_of_week"], self.SET,
+                               {"a": 10, "day_of_week_sin": 10, "day_of_week_cos": 10}, 10)
+        assert r.kept == ("a", "day_of_week_sin", "day_of_week_cos")
+        assert r.dropped == () and r.partial == ()
+
+    def test_a_cyclical_feature_is_judged_per_stored_column(self):
+        r = ss.resolve_columns(["day_of_week"], self.SET,
+                               {"day_of_week_sin": 10, "day_of_week_cos": 6}, 10)
+        assert r.kept == ("day_of_week_sin", "day_of_week_cos")
+        assert r.partial == (("day_of_week_cos", 6, 10),)
+
+    def test_half_of_a_cyclical_pair_is_not_a_feature(self):
+        """`x_sin` without `x_cos` could be anything; it is not a feature `x`."""
+        r = ss.resolve_columns(["a", "x"], self.SET, {"a": 10, "x_sin": 10}, 10)
+        assert r.kept == ("a",)
+        assert r.dropped == (("x", "not in this feature set"),)
+
+    def test_feature_columns_prefers_the_name_itself(self):
+        assert ss.feature_columns("a", self.SET) == ["a"]
+        assert ss.feature_columns("day_of_week", self.SET) == ["day_of_week_sin",
+                                                               "day_of_week_cos"]
+        assert ss.feature_columns("zeta", self.SET) == []
+
 
 class TestTrainCoverage:
     DAYS = [date(2003, 1, 2), date(2006, 1, 3), date(2015, 12, 31), date(2016, 1, 4)]

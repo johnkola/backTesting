@@ -15,6 +15,7 @@ from datetime import date
 import numpy as np
 import pytest
 
+from nn import labels
 from nn import walkforward as wf
 
 
@@ -628,3 +629,34 @@ class TestMarginTrainRefusals:
                    wf.margin_refusals(self.args(loss="ce"), [(2008, [1], [2])], self.M))
         assert any("not supported yet" in o for o in
                    wf.margin_refusals(self.args(tax_train=True), [(2008, [1], [2])], self.M))
+
+
+# --------------------------------------------------------------------------
+# Fold accuracy (G43): each kind of model is scored on the decision it makes
+# --------------------------------------------------------------------------
+
+BUY, HOLD, SELL = labels.CLASS_BUY, labels.CLASS_HOLD, labels.CLASS_SELL
+
+
+def test_a_classifier_is_scored_on_three_classes_against_the_majority_class():
+    y_tr = np.array([HOLD, HOLD, BUY])
+    y_va = np.array([BUY, HOLD, SELL, HOLD])
+    pred = np.array([BUY, HOLD, HOLD, HOLD])
+    acc, base = wf.fold_accuracy(pred, y_va, y_tr, "ce")
+    assert acc == 0.75 and base == 0.5        # always HOLD gets 2 of 4
+
+
+def test_a_money_model_is_scored_on_out_or_long_against_always_long():
+    """Its pred is SELL or 0 ("not SELL"). Read as BUY against the 3-class
+    label, a long day on a HOLD label counted as wrong, so every long-only fold
+    scored the share of BUY labels (17.1% in 2016 for runs 300, 301 and 348)."""
+    y_tr = np.array([HOLD, BUY, SELL, HOLD])
+    y_va = np.array([HOLD, HOLD, BUY, SELL])
+    always_long = np.zeros(4, dtype=np.int64)
+    acc, base = wf.fold_accuracy(always_long, y_va, y_tr, "return")
+    assert acc == 0.75 and base == 0.75       # always long IS the baseline
+    caught = np.array([0, 0, 0, SELL])
+    acc, base = wf.fold_accuracy(caught, y_va, y_tr, "return")
+    assert acc == 1.0 and base == 0.75
+    # The old reading: "not SELL" compared as BUY with the 3-class label.
+    assert float((always_long == y_va).mean()) == 0.25
