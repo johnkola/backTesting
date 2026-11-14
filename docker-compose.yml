@@ -147,6 +147,10 @@ services:
       FEEDS_SCHEDULE: ${FEEDS_SCHEDULE:-18:30}
       FRED_API_KEY: ${FRED_API_KEY:-}
       NDX_CONSTITUENTS_DIR: /data/ndx-constituents
+      # The SEC earnings series: SEC asks automated clients to name themselves
+      # (.env.example); unset, a generic tool name is sent.
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+      NDX_EARNINGS_DIR: /data/ndx-earnings
     volumes:
       # CSV archive — owned by the loader, read by anyone who needs the on-disk
       # slices (the host-side gradle path also writes here through the same mount).
@@ -157,6 +161,9 @@ services:
       # Breadth members' daily closes, kept current by the feeds and read by
       # build_ndx_breadth.py on the host.
       - ./data/ndx-constituents:/data/ndx-constituents
+      # The members' SEC filings (8-K dates, net income facts), kept current by
+      # the feeds and read by build_ndx_earnings.py on the host.
+      - ./data/ndx-earnings:/data/ndx-earnings
 
   # Database UI. Not part of the default stack — it sits behind the `tools`
   # profile, so `docker compose up -d` is unchanged and you ask for this one

@@ -1349,9 +1349,9 @@ export type FeedRow = {
   symbol: string
   source: string
   type: string
-  provider: 'yahoo' | 'yahoo-adj' | 'fred' | 'boc' | 'breadth'
+  provider: 'yahoo' | 'yahoo-adj' | 'fred' | 'boc' | 'breadth' | 'sec'
   ref: string
-  group: 'prices' | 'macro' | 'breadth'
+  group: 'prices' | 'macro' | 'breadth' | 'earnings'
   lastDate: string | null
   /** The newest non-dry-run result for this series, if any run has touched it. */
   result: FeedResult | null
@@ -1384,7 +1384,14 @@ export type FeedRunSummary = {
 }
 
 export type FeedRunDetail = FeedRunSummary & {
-  result: { feeds: FeedResult[], members: { symbol: string, status: string, note: string }[] } | null
+  result: {
+    feeds: FeedResult[]
+    members: { symbol: string, status: string, note: string }[]
+    /** The SEC earnings refresh: the session every company's filings are complete
+     *  for, and what each company's refresh did. Absent on runs before it was fed. */
+    sec?: { through: string | null, companies: number, unmapped: string[],
+      results: { cik: number, tickers: string[], status: string, added: number, note: string }[] } | null
+  } | null
 }
 
 export type FeedSchedule = {

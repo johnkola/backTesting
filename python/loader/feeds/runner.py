@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from loader.archive_path import relative_path
-from loader.feeds import boc, breadth, core, fred, members, registry, yahoo
+from loader.feeds import boc, breadth, core, earnings, fred, members, registry, sec, yahoo
 from loader.feeds.registry import Feed
 
 TIMEFRAME = "D1"
@@ -56,6 +56,12 @@ class RunContext:
     #: Breadth members' closes, refreshed once per run when a breadth series is fed.
     closes: dict[str, dict[str, float]] | None = None
     member_results: list[members.MemberResult] = field(default_factory=list)
+    #: The SEC earnings series (feed ref -> bars), computed once per run when
+    #: one of them is fed, and what the company refresh did.
+    earnings: dict[str, list[core.Bar]] | None = None
+    filings: sec.Refreshed | None = None
+    #: Why the filings could not be loaded; their series then fail, not the run.
+    earnings_error: str | None = None
 
     @classmethod
     def at(cls, now: dt.datetime, dry_run: bool = False) -> RunContext:
@@ -88,9 +94,36 @@ def fetch_bars(feed: Feed, start: dt.date | None, ctx: RunContext) -> list[core.
         if ctx.closes is None:
             raise FeedError("breadth members were not loaded")
         bars, _ = breadth.compute(ctx.closes, feed.ref)
+    elif feed.provider == "sec":
+        if ctx.earnings is None:
+            raise FeedError(f"the SEC filings could not be loaded: {ctx.earnings_error}")
+        bars = ctx.earnings[feed.ref]
     else:
         raise FeedError(f"unknown provider {feed.provider!r}")
     return core.cut(bars, ctx.cutoff, start)
+
+
+def earnings_members() -> list[str]:
+    """The earnings series' members: the breadth members, one cache file each."""
+    return sorted(p.stem for p in members.cache_dir().glob("*.json"))
+
+
+def load_earnings(ctx: RunContext, log: Callable[[str], None] = print) -> None:
+    """Refresh the members' SEC filings and compute the four earnings series
+    up to the session every company's filings are complete for."""
+    ctx.filings = sec.refresh_all(
+        sec.cache_dir(), earnings_members(), sec=sec.Sec(sec.user_agent()),
+        cutoff=ctx.cutoff, today=ctx.now.astimezone(core.NEW_YORK).date(),
+        save_changes=not ctx.dry_run)
+    if ctx.filings.through is None:
+        raise FeedError("no SEC filings are cached or could be fetched")
+    ctx.earnings = earnings.compute(ctx.filings.companies, ctx.filings.through)
+    odd = [r for r in ctx.filings.results if r.status not in ("up-to-date", "extended", "facts")]
+    changed = sum(1 for r in ctx.filings.results if r.status in ("extended", "facts", "new"))
+    behind = (f"; complete through {ctx.filings.through}, behind the cutoff"
+              if ctx.filings.through < ctx.cutoff else "")
+    log(f"  SEC filings: {len(ctx.filings.results)} companies, {changed} with new filings{behind}"
+        + "".join(f"\n    {'/'.join(r.tickers)}: {r.status} {r.note}" for r in odd))
 
 
 def member_fetcher(ctx: RunContext) -> Callable[[str, dt.date | None], dict[str, float]]:
@@ -393,6 +426,12 @@ def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = 
                        if m.status not in ("extended", "up-to-date")]
                 log(f"  members: {len(ctx.member_results)} refreshed"
                     + "".join(f"\n    {m.symbol}: {m.status} {m.note}" for m in odd))
+            if any(f.provider == "sec" for f in feeds):
+                try:
+                    load_earnings(ctx, log)
+                except Exception as exc:  # noqa: BLE001 — SEC must not stop the other feeds
+                    ctx.earnings_error = f"{type(exc).__name__}: {exc}"[:300]
+                    log(f"  SEC filings: FAILED {ctx.earnings_error}")
             results: list[dict] = []
             for feed in feeds:
                 try:
@@ -420,6 +459,7 @@ def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = 
                 "trigger": trigger, "cutoff": ctx.cutoff.isoformat(), "dryRun": dry_run,
                 "feeds": results,
                 "members": [m.to_dict() for m in ctx.member_results],
+                "sec": ctx.filings.summary() if ctx.filings is not None else None,
                 "rebuild": rebuilt,
             }
         finally:

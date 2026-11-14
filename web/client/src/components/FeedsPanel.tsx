@@ -13,6 +13,7 @@ const GROUPS: { key: FeedRow['group'], title: string }[] = [
   { key: 'prices', title: 'Prices (Yahoo)' },
   { key: 'macro', title: 'Rates and macro (FRED, Bank of Canada)' },
   { key: 'breadth', title: 'Nasdaq-100 breadth (computed from member closes)' },
+  { key: 'earnings', title: 'Nasdaq-100 earnings (computed from SEC filings)' },
 ]
 
 /**

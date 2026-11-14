@@ -627,7 +627,8 @@ drives more position-squaring than a midweek one."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Earnings (Features.md 39-40). Built by build_ndx_earnings.py from SEC EDGAR:
+# Earnings (Features.md 39-40). Computed from SEC EDGAR (loader/feeds/earnings.py),
+# kept current by the data feeds, or rebuilt by hand with build_ndx_earnings.py:
 # release dates from 8-K Items 12 / 2.02 (so from late 2003), and net income from
 # XBRL facts at the value and date first filed (so from 2011). Today's members
 # over the whole history, like breadth: survivorship-biased. Foreign filers
@@ -649,8 +650,10 @@ note = """Percent of members releasing earnings in the 5 trading days starting
 today (8-K Item 12 / 2.02 filing dates). Mean 8.4%, peak 44.6%. Release dates
 are announced weeks ahead, so this is knowable; the date used is when the 8-K
 was filed, a small lookahead accepted. From 2003-10-28, the first day 45
-members are covered. Not buildable for the last 5 trading days before a fetch:
-releases not yet filed are invisible, so live use needs an earnings calendar."""
+members are covered. Not buildable for the last 4 trading days: a day's value
+counts releases over the next four, and releases not yet filed are invisible, so
+the series ends 4 sessions before the newest finished one, and live use needs an
+earnings calendar."""
 
 [[feature]]
 name = "earnings_season_flag"

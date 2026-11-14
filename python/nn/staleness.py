@@ -53,13 +53,16 @@ from nn import feature_config, lineage
 
 #: Sessions a series may trail the newest finished session before Data calls it
 #: stale. Prices settle the same evening; FRED prints a day's yields the next
-#: afternoon and the Bank of Canada CORRA the next morning; the SEC earnings
-#: series stop five sessions before their fetch by construction and are refreshed
-#: by hand.
-LAG_SESSIONS = {"yahoo": 1, "yahoo-adj": 1, "breadth": 1, "fred": 3, "boc": 3, "manual": 10}
-#: Series whose provider publishes on its own slower schedule. FRED takes WTI
-#: spot from the EIA, which publishes a week at a time.
-SERIES_LAG = {"DCOILWTICO/fred": 8}
+#: afternoon and the Bank of Canada CORRA the next morning; SEC filings are
+#: complete for a session once it is over. A series with no feed is refreshed by
+#: hand ("manual").
+LAG_SESSIONS = {"yahoo": 1, "yahoo-adj": 1, "breadth": 1, "sec": 1, "fred": 3, "boc": 3,
+                "manual": 10}
+#: Series that trail on their own schedule. FRED takes WTI spot from the EIA,
+#: which publishes a week at a time. The earnings release share looks four
+#: sessions ahead, so it ends four sessions before the cutoff by construction
+#: (loader/feeds/earnings.py), and its season flag with it.
+SERIES_LAG = {"DCOILWTICO/fred": 8, "NDXERN5D/computed": 5, "NDXERNSEASON/computed": 5}
 
 #: Backtest strategies (`backtest_results.strategy_name`) that never read a
 #: bar's volume: the ta4j ones build every indicator on ClosePriceIndicator, and

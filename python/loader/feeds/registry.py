@@ -20,6 +20,7 @@ PROVIDERS = {
     "fred": "FRED series id",
     "boc": "Bank of Canada Valet series id",
     "breadth": "breadth metric over the Nasdaq-100 member closes",
+    "sec": "earnings metric over the Nasdaq-100 members' SEC filings",
 }
 
 
@@ -30,7 +31,7 @@ class Feed:
     type: str        # instruments.type
     provider: str    # a PROVIDERS key
     ref: str         # the provider's name for it
-    group: str       # prices | macro | breadth, for the panel
+    group: str       # prices | macro | breadth | earnings, for the panel
 
     @property
     def key(self) -> str:
@@ -82,17 +83,17 @@ FEEDS: tuple[Feed, ...] = (
     Feed("NDXAD", "computed", "INDEX", "breadth", "advance-decline", "breadth"),
     Feed("NDXDISP", "computed", "INDEX", "breadth", "dispersion", "breadth"),
     Feed("NDXNHNL", "computed", "INDEX", "breadth", "new-highs-lows", "breadth"),
+    # The SEC earnings series (Features.md 39-40), computed from the members'
+    # filings (`earnings`, `sec`). Manual until 2026-11-12.
+    Feed("NDXERN5D", "computed", "INDEX", "sec", "release-share", "earnings"),
+    Feed("NDXERNSEASON", "computed", "INDEX", "sec", "season", "earnings"),
+    Feed("NDXNIQOQ", "computed", "INDEX", "sec", "ni-qoq", "earnings"),
+    Feed("NDXNITTM", "computed", "INDEX", "sec", "ni-ttm", "earnings"),
 )
 
-#: Feature inputs that are deliberately not fed yet, and why. The SEC earnings
-#: series take ~100 companies' filings and change weekly at most
-#: (`build_ndx_earnings.py`); the author left them manual for the first version.
-MANUAL = {
-    ("NDXERN5D", "computed"): "build_ndx_earnings.py (SEC EDGAR)",
-    ("NDXERNSEASON", "computed"): "build_ndx_earnings.py (SEC EDGAR)",
-    ("NDXNIQOQ", "computed"): "build_ndx_earnings.py (SEC EDGAR)",
-    ("NDXNITTM", "computed"): "build_ndx_earnings.py (SEC EDGAR)",
-}
+#: Feature inputs deliberately not fed, (symbol, source) -> how they are kept
+#: current instead. Empty since the SEC earnings series joined the feeds.
+MANUAL: dict[tuple[str, str], str] = {}
 
 BY_KEY: dict[str, Feed] = {f.key: f for f in FEEDS}
 

@@ -216,7 +216,9 @@ def test_each_provider_has_its_own_allowed_lag():
     assert staleness.allowed_lag("VIX/yahoo", "yahoo") == 1
     assert staleness.allowed_lag("DGS10/fred", "fred") == 3
     assert staleness.allowed_lag("DCOILWTICO/fred", "fred") == 8   # EIA publishes weekly
-    assert staleness.allowed_lag("NDXERN5D/computed", "manual") == 10
+    assert staleness.allowed_lag("NDXERN5D/computed", "sec") == 5      # looks 4 sessions ahead
+    assert staleness.allowed_lag("NDXNIQOQ/computed", "sec") == 1
+    assert staleness.allowed_lag("SOMETHING/computed", "manual") == 10
 
 
 @pytest.mark.parametrize("states, expected", [

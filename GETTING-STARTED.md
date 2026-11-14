@@ -103,7 +103,8 @@ warning in its docstring before a backtest leans on the output.
 company's filings from SEC EDGAR: release dates from its earnings 8-Ks (from late 2003) and
 net income from its XBRL facts (from 2011). It writes four `INDEX` series, `NDXERN5D`,
 `NDXERNSEASON`, `NDXNIQOQ` and `NDXNITTM`, imported with source `computed` like breadth.
-Set `SEC_USER_AGENT` in `.env` to name yourself to SEC (see `.env.example`).
+Set `SEC_USER_AGENT` in `.env` to name yourself to SEC (see `.env.example`). After the
+first build the [data feeds](/docs/readme#data-feeds) keep all four current.
 
 **Vendor indicators.** `fetch_twelvedata_indicator.py rsi` (and `macd`) downloads Twelve
 Data's own RSI and MACD for QQQ, which the feature build compares ours against. It needs

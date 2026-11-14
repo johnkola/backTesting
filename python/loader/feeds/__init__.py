@@ -16,7 +16,7 @@ current days both from the provider's API: a feed's first refresh of a series
 with nothing stored loads its full history (`runner.load_full`); (2) history from
 a CSV upload, current days from the API: the feed extends whatever is stored,
 and holds if the provider disagrees with the CSV on the overlap; (3) everything
-from CSV, for what no API serves (the SEC earnings series, built by a script).
+from CSV, for what no API serves.
 
 WHAT A FEED MAY CHANGE ON ITS OWN. New days after the last stored one, and the
 last stored day itself: that bar is often preliminary when it is first fetched
@@ -36,7 +36,8 @@ were, and the only difference it can see is the one the feed meant to make.
 
 Modules: `core` (pure: bars, cutoff, overlap, slices), `yahoo`, `fred`, `boc`
 (provider clients, shared with the root fetch scripts), `breadth` and `members`
-(the Nasdaq-100 breadth series and their member-close cache), `registry` (which
+(the Nasdaq-100 breadth series and their member-close cache), `earnings` and `sec`
+(the Nasdaq-100 earnings series and the members' SEC filings), `registry` (which
 series are fed), `runner` (database and orchestration), `api` (HTTP),
 `schedule` (the daily run). This module imports nothing, so the root scripts can
 use the provider clients without the database driver installed.
