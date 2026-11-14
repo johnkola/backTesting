@@ -316,8 +316,8 @@ starts, the plan checklist. This section holds only what has to be true before t
 is marked done.
 
 Four of the rows quote a requirement that is not in `read-only-doc/` yet: see the note
-at the top of Pass 3. B7 waits for the author's decision D7. Do not start it until the
-answer is written in `DESIGN-GAPS.md`. D6 and D8 are decided, and B6 states them.
+at the top of Pass 3. The author's decisions D6, D7 and D8 are made, and B6 and B7 state
+them.
 
 **Every build step, before it is done**
 
@@ -416,14 +416,18 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 ### B7. Faber and dual momentum beside every run (G33)
 
-Waits for D7, and comes after B6 so all three benchmarks are costed alike.
+Comes after B6, so all three benchmarks are costed alike.
 
 **Done when**
 
 - [ ] Faber's rule: at each month's last bar, hold the instrument when its close is
-  above the average of the last 10 monthly closes, otherwise hold cash. Dual momentum:
-  as D7 defines it. Both trade by B1, pay costs and tax by B6, and earn on cash what
-  the strategy's own idle money earns.
+  above the average of the last 10 monthly closes, otherwise hold cash.
+- [ ] Dual momentum (D7): at each month's last bar, take whichever of the instrument
+  and SPY has the higher 12-month return. Hold it for the next month if that return
+  beats T-bills (DTB3) over the same 12 months, otherwise hold cash at the T-bill
+  rate. When the instrument is SPY, only the T-bill test applies.
+- [ ] Both trade by B1 and pay costs and tax by B6. Faber's cash earns what the
+  strategy's own idle money earns.
 - [ ] Both are computed for every run's window with nothing to set up, and each is
   stored as a result line linked to the run.
 - [ ] The strategy and each benchmark show the same figures side by side: return,
@@ -500,6 +504,6 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B4. In-sample flag | G30 | | not started | |
 | B5. Trainer purge | G31 | | not started | |
 | B6. Buy-and-hold costs | G32 | | not started | |
-| B7. Faber and dual momentum | G33 | D7, B6 | waiting | |
+| B7. Faber and dual momentum | G33 | B6 | not started | |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
