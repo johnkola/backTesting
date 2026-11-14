@@ -34,6 +34,10 @@ A tab marked **stale** means a rerun now would read different inputs than its
 output was made from. A step whose upstream step is stale or not done is not done
 either.
 
+The status call does not cover everything the tabs do. For Normalization and Split
+it only repeats the Features state: the value-shape check (step 3) and the block
+check (step 4) run in the browser, so read those two on their tabs.
+
 ---
 
 ## Working rules
@@ -101,16 +105,17 @@ Tab: **Pipeline → Data**.
 
   The allowed lag is 1 session for prices, breadth and SEC net income, and also
   for gold, copper and the dollar index, which are taken a day late. It is 3 for
-  FRED and the Bank of Canada, 8 for WTI, and 5 for the earnings release share and
-  its flag.
+  FRED and the Bank of Canada, 8 for WTI, 5 for the earnings release share and
+  its flag, and 10 for a series with no feed, which is refreshed by hand
+  (`nn/staleness.py`, `LAG_SESSIONS` and `SERIES_LAG`).
 - [ ] **app**: the newest feeds run finished as `done`, not `done-with-errors`,
   and it is the run expected from the schedule. See the Data tab's feeds panel,
   last and next run.
 - [ ] **review**: any held series has had its diff shown to the author and been
   applied or left held on purpose. A held series stops at its last stored day.
 - [ ] **review**: the cohesion findings on the inputs are read, and each one is
-  either expected or acted on. The categories are ohlc, duplicate, order, gaps and
-  outliers. Findings are advisory and never block an import. See
+  either expected or acted on. The categories are `ohlc`, `duplicate`, `order`,
+  `gap` and `outlier`. Findings are advisory and never block an import. See
   [Data cohesiveness checks](README.md#data-cohesiveness-checks), the Imports page,
   or `backtest-audit`.
 - [ ] **review**: each input's date range covers the windows the strategies use.
@@ -133,9 +138,9 @@ Tab: **Pipeline → Features**.
 
 - [ ] **app**: the newest build matches `features.toml` byte for byte, and read
   the newest stored version of every input. The Features tab shows passed.
-- [ ] **app**: the build's data checks each print `[ok]`, or each `[LOOK]` has a
-  written explanation. The checks are printed by `python -m nn.feature_build` and
-  recorded in each feeds run's `rebuild`.
+- [ ] **app**: the build's data checks are each marked `ok`, or each `LOOK` has a
+  written explanation. The checks are printed by `python -m nn.feature_build`
+  under `DATA CHECKS` and recorded in each feeds run's `rebuild`.
 - [ ] **review**: every enabled column is in the newest set. Every disabled
   column shows its reason, and the `data-only` ones say why they are out.
 - [ ] **review**: the first fully-populated date the build prints is the one
@@ -152,12 +157,15 @@ rows only. Tab: **Pipeline → Normalization**.
 **Done when**
 
 - [ ] **app**: every column's values have the shape its method promises. The
-  Normalization tab shows passed:
+  Normalization tab lists no column as failing (the tab only, not the status
+  call):
   - Cyclical values lie in −1..1, rescaled values in 0..1, and flags are 0 or 1.
   - A z-score's mean is within ±1 and no value goes past ±25.
   - Ratios are not negative.
-- [ ] **app**: the network's scaler is refitted inside each walk-forward fold and
-  never across folds (`nn/walkforward.py`, `train_one`).
+- [ ] **review**: the network's scaler is refitted inside each walk-forward fold
+  and never across folds. Nothing in the app checks this: read `train_one` and
+  `train_money` in `nn/walkforward.py`, which each call `fit_scaler` on the fold's
+  training rows only.
 - [ ] **not built**: the before/after previews the design's Normalization tab
   describes.
 
@@ -169,7 +177,8 @@ time order. Tab: **Pipeline → Split**.
 **Done when**
 
 - [ ] **app**: no block is empty, each block starts after the one before it
-  ends, and none overlap. The Split tab shows passed.
+  ends, and none overlap. The Split tab shows passed (the tab only, not the
+  status call).
 - [ ] **review**: the boundaries are where the strategy and config put them.
 - [ ] **review**: the training and validation blocks each include at least one
   rough market, such as 2008, 2020 or 2022. The design asks for it, and nothing
@@ -236,16 +245,32 @@ Tab: **Pipeline → Backtest**.
 **Done when**
 
 - [ ] **app**: no stored result is stale, meaning no import has changed its bars
-  since it ran. The Backtest tab shows passed. A fix that changed only volume
-  doesn't count for the price-only strategies.
+  since it ran. The Backtest tab's stale count is 0. Passed alone is not enough:
+  the tab shows passed whenever the newest result is fresh, and it looks at the
+  200 newest results only. A fix that changed only volume doesn't count for the
+  price-only strategies.
 - [ ] **app**: the result has its stored buy-and-hold benchmark. The equity chart
   draws the hold curve, which ends on the benchmark's stored final equity, or says
   why it can't.
 - [ ] **review**: the result reproduces. Rerun it with the same settings and
   window, and check the trades, return, final equity and Sharpe are unchanged.
   This was last confirmed for results 709–713 on 2026-11-12.
+- [ ] **review**: for an nn strategy, the result's window starts after the model's
+  training window ends (Models page, or `training_window` in the version's
+  `metadata.json`). Nothing checks it: a model is found by its configuration, so
+  the engine will backtest it over the bars it was trained on, and that result is
+  in-sample.
 - [ ] **not built (G20)**: after-tax results. The engine's backtest is before
   tax, while walk-forward scoring includes it.
+
+Known limits:
+
+- The engine fills at the close of the bar that gave the signal, while step 6
+  acts the next session. So a step 7 result is not comparable with a step 6
+  fold, and it is the flattering one of the two. See
+  [Execution engine](README.md#execution-engine).
+- Entries are sized at all of cash on the close, before slippage and commission
+  are added. With costs on, cash goes slightly negative on every entry.
 
 ## 8. The held-out test
 
@@ -253,7 +278,7 @@ This is the design's final exam. A strategy that passed step 6 is trained throug
 its last validation year and scored **once** on the test block. It can only be
 done once: tuning on the result would turn the test block into training data. It
 runs only from a terminal (`python -m nn.walkforward --strategy-id N --test`); the
-API refuses it.
+API and the web app do not offer it.
 
 **Done when**
 
