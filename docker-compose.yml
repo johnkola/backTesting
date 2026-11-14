@@ -66,10 +66,10 @@ services:
       - ./README.md:/app/docs/README.md:ro
       # The design set, at the path the DOCS registry addresses it by. Quoted
       # because `Design Notes.md` contains a space, and :ro because nothing in
-      # this repo may write to read-only-doc/.
-      - "./read-only-doc/Architecture.md:/app/docs/read-only-doc/Architecture.md:ro"
-      - "./read-only-doc/Design Notes.md:/app/docs/read-only-doc/Design Notes.md:ro"
-      - "./read-only-doc/Features.md:/app/docs/read-only-doc/Features.md:ro"
+      # this repo may write to readonly-doc/.
+      - "./readonly-doc/Architecture.md:/app/docs/readonly-doc/Architecture.md:ro"
+      - "./readonly-doc/Design Notes.md:/app/docs/readonly-doc/Design Notes.md:ro"
+      - "./readonly-doc/Features.md:/app/docs/readonly-doc/Features.md:ro"
 
   # The React SPA, static files behind nginx. No backend of its own: it calls
   # the API by the URL baked in at build time.

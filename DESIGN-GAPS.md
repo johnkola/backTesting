@@ -1,6 +1,6 @@
 # Design gap tracker
 
-What `read-only-doc/` asks for that the code does not do yet. Rolling tracker, not a
+What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
 Newest pass at the top.
 
@@ -19,14 +19,14 @@ trainers, plus four requirements the repo's design copy does not carry. Nothing 
 and no stored run was checked. What each row needs before it counts as done is in
 [`AGENTS.md`, Build steps](AGENTS.md#build-steps).
 
-**The design copy is behind.** `read-only-doc/Architecture.md` is an older snapshot of the
+**The design copy is behind.** `readonly-doc/Architecture.md` is an older snapshot of the
 author's Architecture document. The current one has a numbered Requirements list, and four
-groups of its entries have no text in `read-only-doc/`: trading at the next bar's open
+groups of its entries have no text in `readonly-doc/`: trading at the next bar's open
 (Requirement 76), three benchmarks beside every run (36, 39), a naive prediction baseline
 (72) and three engine types (21 to 23, 74). The rows below quote them. They are always
 written "Requirement N", because R1 to R9 in this file are Pass 2's review findings. These
-rows are the only copy in the repo until the author refreshes `read-only-doc/`; after
-that, where the two differ, `read-only-doc/` wins. The rest of the Requirements list was
+rows are the only copy in the repo until the author refreshes `readonly-doc/`; after
+that, where the two differ, `readonly-doc/` wins. The rest of the Requirements list was
 not checked against the code in this pass. The current document also numbers its sections
 differently: what is §6.3, §8.x and §10 here is §5.3, §7.x and §9 there, so the section
 references in this repo's docs and code comments need a pass when it lands.
@@ -57,7 +57,7 @@ rule in `AGENTS.md`.
 
 Each of these blocks a row above. The answer goes here, and into the design, before the
 work starts. All three were answered on 2026-11-14 and the author's design documents now
-say so; `read-only-doc/` will say so once it is refreshed.
+say so; `readonly-doc/` will say so once it is refreshed.
 
 | # | Question | What exists today | Status |
 |---|---|---|---|

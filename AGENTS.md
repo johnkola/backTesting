@@ -14,9 +14,9 @@ It does not repeat how to run anything. Commands and settings are in
 [`README.md`](README.md), and the end-to-end walkthrough is in
 [`GETTING-STARTED.md`](GETTING-STARTED.md). Each step links to the section it
 needs. The design these steps come from is
-[`read-only-doc/Design Notes.md`](read-only-doc/Design%20Notes.md) ("Staged Pipeline
+[`readonly-doc/Design Notes.md`](readonly-doc/Design%20Notes.md) ("Staged Pipeline
 Architecture" and "Web Monitoring App"), with the tab lineup in
-[`read-only-doc/Architecture.md`](read-only-doc/Architecture.md) §8.1a. Open gaps
+[`readonly-doc/Architecture.md`](readonly-doc/Architecture.md) §8.1a. Open gaps
 are tracked in [`DESIGN-GAPS.md`](DESIGN-GAPS.md).
 
 **How each condition is checked**
@@ -65,7 +65,7 @@ steps.
 - **Keep work followable.** Write the plan as a checklist in `DESIGN-GAPS.md`, tick
   it as you go, and stop at a checkpoint before applying anything.
 - **Commit or push only when the author asks**, and then do just that.
-- **`read-only-doc/` is never edited.** Each new fact goes in exactly one place:
+- **`readonly-doc/` is never edited.** Each new fact goes in exactly one place:
   see [`CLAUDE.md`](CLAUDE.md).
 - **Settings the user chooses don't change the signal.** The app may become a
   signal provider, so per-user settings such as tax must not change the signal it
@@ -315,7 +315,7 @@ design asks for and the app does not have. Each has a row in
 starts, the plan checklist. This section holds only what has to be true before that row
 is marked done.
 
-Four of the rows quote a requirement that is not in `read-only-doc/` yet: see the note
+Four of the rows quote a requirement that is not in `readonly-doc/` yet: see the note
 at the top of Pass 3. The author's decisions D6, D7 and D8 are made, and B6 and B7 state
 them.
 

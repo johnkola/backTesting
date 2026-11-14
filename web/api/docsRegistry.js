@@ -12,7 +12,7 @@
 // describes the model rather than this codebase (Architecture.md §8.1a asks for
 // them on the Docs tab).
 //
-// Those three come from `read-only-doc/`, which the author maintains by hand and
+// Those three come from `readonly-doc/`, which the author maintains by hand and
 // nothing in this repo may write to. It supersedes
 // `reference/qqq-backtesting-model/`, which is an earlier revision of the same
 // three documents and is deliberately NOT served: its Design.md still fits
@@ -21,7 +21,7 @@
 // the stale copy would put a description of a data leak on the Docs tab.
 //
 // There is no entry for a repo-root ARCHITECTURE.md: that document was deleted
-// when `read-only-doc/` was created. The `/architecture` and `/claude` legacy
+// when `readonly-doc/` was created. The `/architecture` and `/claude` legacy
 // redirects in server.js therefore point at `qqq-architecture`, which is the
 // only Architecture document left.
 //
@@ -37,24 +37,24 @@ const DOCS = {
   GETTING_STARTED: { file: 'GETTING-STARTED.md', label: 'Getting Started', slug: 'getting-started' },
   README: { file: 'README.md', label: 'README', slug: 'readme' },
   QQQ_DESIGN: {
-    file: 'read-only-doc/Design Notes.md',
+    file: 'readonly-doc/Design Notes.md',
     label: 'QQQ Design Notes',
     slug: 'qqq-design',
   },
   QQQ_ARCHITECTURE: {
-    file: 'read-only-doc/Architecture.md',
+    file: 'readonly-doc/Architecture.md',
     label: 'QQQ Architecture',
     slug: 'qqq-architecture',
   },
   QQQ_FEATURES: {
-    file: 'read-only-doc/Features.md',
+    file: 'readonly-doc/Features.md',
     label: 'QQQ Features',
     slug: 'qqq-features',
   },
 };
 
 /** Where the authoritative design set lives; see the note above. */
-const DESIGN_DOC_DIR = 'read-only-doc/';
+const DESIGN_DOC_DIR = 'readonly-doc/';
 
 /** slug -> registry key, so the client can address docs by the name in its URL. */
 const DOC_BY_SLUG = new Map(Object.entries(DOCS).map(([name, c]) => [c.slug, name]));
