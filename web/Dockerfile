@@ -18,13 +18,13 @@ COPY web/api/ ./
 # from there.
 RUN mkdir -p /app/docs
 COPY GETTING-STARTED.md README.md /app/docs/
-# The QQQ design set keeps its read-only-doc/ path, because that is the path the
+# The QQQ design set keeps its readonly-doc/ path, because that is the path the
 # DOCS registry addresses it by. JSON form because `Design Notes.md` contains a
 # space, which the shell form would split into two arguments.
 #
 # Not reference/qqq-backtesting-model/: that is an earlier revision of these
 # same three documents and the registry deliberately no longer serves it.
-COPY ["read-only-doc/Architecture.md", "read-only-doc/Design Notes.md", "read-only-doc/Features.md", "/app/docs/read-only-doc/"]
+COPY ["readonly-doc/Architecture.md", "readonly-doc/Design Notes.md", "readonly-doc/Features.md", "/app/docs/readonly-doc/"]
 
 ENV NODE_ENV=production
 ENV DOCS_DIR=/app/docs

@@ -1309,7 +1309,7 @@ app.get('/api/docs/:slug/history', (req, res) => {
 // redirect rather than 404 — query strings included, so ?rev=N survives.
 //
 // `architecture` and `claude` land on `qqq-architecture`: the repo-root
-// ARCHITECTURE.md they used to serve was deleted when read-only-doc/ became the
+// ARCHITECTURE.md they used to serve was deleted when readonly-doc/ became the
 // design set, and the QQQ architecture is the only Architecture document left.
 // A redirect to a slug the registry does not know is a 301 into a 404, so the
 // targets below are checked against the registry in docsRegistry.test.js.

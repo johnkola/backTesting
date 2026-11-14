@@ -7,7 +7,7 @@ const { DOCS } = require('./docsRegistry');
 // silent failure -- the tab looks fine and the history page is empty forever.
 // Deriving makes that impossible instead of asking the next person to remember.
 //
-// The design docs under read-only-doc/ get revision history like the rest, and
+// The design docs under readonly-doc/ get revision history like the rest, and
 // it matters most for them: the author edits those files by hand, outside this
 // repo's tooling, so a snapshot on every read is the only record of what the
 // design said last week.

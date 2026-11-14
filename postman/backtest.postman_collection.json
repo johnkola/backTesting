@@ -2508,7 +2508,7 @@
                   "});",
                   "",
                   "pm.test('includes the design set, and not the deleted root doc', function () {",
-                  "    // The repo-root ARCHITECTURE.md was deleted when read-only-doc/ became",
+                  "    // The repo-root ARCHITECTURE.md was deleted when readonly-doc/ became",
                   "    // the design set, so the 'architecture' slug went with it. The three",
                   "    // QQQ docs are what the Docs tab serves now; /architecture and /claude",
                   "    // 301 to qqq-architecture for back-compat.",
