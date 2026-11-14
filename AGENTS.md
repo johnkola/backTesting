@@ -7,6 +7,9 @@ through the steps **one at a time, in order**, check every condition, and record
 the result in [the review table](#review). A step is done only when every
 condition holds or the author has waived it with a reason written down.
 
+After the steps come the [build steps](#build-steps): the changes still to make,
+in order, and what has to be true before each one is done.
+
 It does not repeat how to run anything. Commands and settings are in
 [`README.md`](README.md), and the end-to-end walkthrough is in
 [`GETTING-STARTED.md`](GETTING-STARTED.md). Each step links to the section it
@@ -33,6 +36,10 @@ curl -s "http://localhost:8001/api/nn/pipeline/status?fresh=1"
 A tab marked **stale** means a rerun now would read different inputs than its
 output was made from. A step whose upstream step is stale or not done is not done
 either.
+
+The status call does not cover everything the tabs do. For Normalization and Split
+it only repeats the Features state: the value-shape check (step 3) and the block
+check (step 4) run in the browser, so read those two on their tabs.
 
 ---
 
@@ -101,16 +108,17 @@ Tab: **Pipeline → Data**.
 
   The allowed lag is 1 session for prices, breadth and SEC net income, and also
   for gold, copper and the dollar index, which are taken a day late. It is 3 for
-  FRED and the Bank of Canada, 8 for WTI, and 5 for the earnings release share and
-  its flag.
+  FRED and the Bank of Canada, 8 for WTI, 5 for the earnings release share and
+  its flag, and 10 for a series with no feed, which is refreshed by hand
+  (`nn/staleness.py`, `LAG_SESSIONS` and `SERIES_LAG`).
 - [ ] **app**: the newest feeds run finished as `done`, not `done-with-errors`,
   and it is the run expected from the schedule. See the Data tab's feeds panel,
   last and next run.
 - [ ] **review**: any held series has had its diff shown to the author and been
   applied or left held on purpose. A held series stops at its last stored day.
 - [ ] **review**: the cohesion findings on the inputs are read, and each one is
-  either expected or acted on. The categories are ohlc, duplicate, order, gaps and
-  outliers. Findings are advisory and never block an import. See
+  either expected or acted on. The categories are `ohlc`, `duplicate`, `order`,
+  `gap` and `outlier`. Findings are advisory and never block an import. See
   [Data cohesiveness checks](README.md#data-cohesiveness-checks), the Imports page,
   or `backtest-audit`.
 - [ ] **review**: each input's date range covers the windows the strategies use.
@@ -133,9 +141,9 @@ Tab: **Pipeline → Features**.
 
 - [ ] **app**: the newest build matches `features.toml` byte for byte, and read
   the newest stored version of every input. The Features tab shows passed.
-- [ ] **app**: the build's data checks each print `[ok]`, or each `[LOOK]` has a
-  written explanation. The checks are printed by `python -m nn.feature_build` and
-  recorded in each feeds run's `rebuild`.
+- [ ] **app**: the build's data checks are each marked `ok`, or each `LOOK` has a
+  written explanation. The checks are printed by `python -m nn.feature_build`
+  under `DATA CHECKS` and recorded in each feeds run's `rebuild`.
 - [ ] **review**: every enabled column is in the newest set. Every disabled
   column shows its reason, and the `data-only` ones say why they are out.
 - [ ] **review**: the first fully-populated date the build prints is the one
@@ -152,12 +160,15 @@ rows only. Tab: **Pipeline → Normalization**.
 **Done when**
 
 - [ ] **app**: every column's values have the shape its method promises. The
-  Normalization tab shows passed:
+  Normalization tab lists no column as failing (the tab only, not the status
+  call):
   - Cyclical values lie in −1..1, rescaled values in 0..1, and flags are 0 or 1.
   - A z-score's mean is within ±1 and no value goes past ±25.
   - Ratios are not negative.
-- [ ] **app**: the network's scaler is refitted inside each walk-forward fold and
-  never across folds (`nn/walkforward.py`, `train_one`).
+- [ ] **review**: the network's scaler is refitted inside each walk-forward fold
+  and never across folds. Nothing in the app checks this: read `train_one` and
+  `train_money` in `nn/walkforward.py`, which each call `fit_scaler` on the fold's
+  training rows only.
 - [ ] **not built**: the before/after previews the design's Normalization tab
   describes.
 
@@ -169,7 +180,8 @@ time order. Tab: **Pipeline → Split**.
 **Done when**
 
 - [ ] **app**: no block is empty, each block starts after the one before it
-  ends, and none overlap. The Split tab shows passed.
+  ends, and none overlap. The Split tab shows passed (the tab only, not the
+  status call).
 - [ ] **review**: the boundaries are where the strategy and config put them.
 - [ ] **review**: the training and validation blocks each include at least one
   rough market, such as 2008, 2020 or 2022. The design asks for it, and nothing
@@ -224,6 +236,11 @@ Tab: **Pipeline → Training**.
   - Of the cost breakdown, only the `timing` line is the model.
 - [ ] **not built (G11)**: loss decreasing and no NaN loss, epoch by epoch. Only
   the stopping epoch is recorded. The Training tab says so.
+- [ ] **not built (G34)**: a run that does not beat the naive baseline is flagged.
+  The fold view shows the baseline accuracy, but nothing flags the run.
+- [ ] **not built (G33, G35)**: each fold has a result line for every enabled
+  engine and for the three benchmarks. Today there is one engine, and
+  buy-and-hold alone.
 
 ## 7. Backtest / scoring
 
@@ -236,16 +253,36 @@ Tab: **Pipeline → Backtest**.
 **Done when**
 
 - [ ] **app**: no stored result is stale, meaning no import has changed its bars
-  since it ran. The Backtest tab shows passed. A fix that changed only volume
-  doesn't count for the price-only strategies.
+  since it ran. The Backtest tab's stale count is 0. Passed alone is not enough:
+  the tab shows passed whenever the newest result is fresh, and it looks at the
+  200 newest results only. A fix that changed only volume doesn't count for the
+  price-only strategies.
 - [ ] **app**: the result has its stored buy-and-hold benchmark. The equity chart
   draws the hold curve, which ends on the benchmark's stored final equity, or says
   why it can't.
 - [ ] **review**: the result reproduces. Rerun it with the same settings and
   window, and check the trades, return, final equity and Sharpe are unchanged.
   This was last confirmed for results 709–713 on 2026-11-12.
+- [ ] **review**: for an nn strategy, the result's window starts after the model's
+  training window ends (Models page, or `training_window` in the version's
+  `metadata.json`). Nothing checks it: a model is found by its configuration, so
+  the engine will backtest it over the bars it was trained on, and that result is
+  in-sample. B4 makes this an app check (G30).
 - [ ] **not built (G20)**: after-tax results. The engine's backtest is before
   tax, while walk-forward scoring includes it.
+- [ ] **not built (G32, G33)**: the three benchmarks beside the result, under the
+  strategy's own costs and tax. Today it is buy-and-hold alone, with no costs.
+
+Known limits, each with a build step that removes it:
+
+- The engine fills at the close of the bar that gave the signal, while step 6
+  acts the next session. So a step 7 result is not comparable with a step 6
+  fold, and it is the flattering one of the two (G27, B1). See
+  [Execution engine](README.md#execution-engine).
+- Entries are sized at all of cash on the close, before slippage and commission
+  are added. With costs on, cash goes slightly negative on every entry (G28, B2).
+- Do not quote Sortino, total slippage, or a profit factor of 0. A trade with zero
+  profit is counted as a loss (G29, B3).
 
 ## 8. The held-out test
 
@@ -253,7 +290,7 @@ This is the design's final exam. A strategy that passed step 6 is trained throug
 its last validation year and scored **once** on the test block. It can only be
 done once: tuning on the result would turn the test block into training data. It
 runs only from a terminal (`python -m nn.walkforward --strategy-id N --test`); the
-API refuses it.
+API and the web app do not offer it.
 
 **Done when**
 
@@ -266,6 +303,172 @@ API refuses it.
 
 Whether this test run beats buy-and-hold after real costs and tax answers
 phase one's question.
+
+---
+
+## Build steps
+
+Steps 0 to 8 check the app as it is. These are the changes still to make, in the order
+to make them. B1 to B5 correct numbers the app already stores. B6 to B9 add what the
+design asks for and the app does not have. Each has a row in
+[`DESIGN-GAPS.md`](DESIGN-GAPS.md), Pass 3, which holds the evidence and, once work
+starts, the plan checklist. This section holds only what has to be true before that row
+is marked done.
+
+Four of the rows quote a requirement that is not in `read-only-doc/` yet: see the note
+at the top of Pass 3. The author's decisions D6, D7 and D8 are made, and B6 and B7 state
+them.
+
+**Every build step, before it is done**
+
+- [ ] A test fails without the change and passes with it. The gap row names it.
+- [ ] All four CI jobs pass ([Development](README.md#development)).
+- [ ] Any new or changed endpoint is in the Postman collection
+  ([`postman/README.md`](postman/README.md)).
+- [ ] The stored runs and results the change makes wrong are listed in the gap row and
+  handled by the stale-records rule above.
+- [ ] The condition it replaces in steps 0 to 8 is rewritten as an **app** condition,
+  and its "Known limits" line is removed.
+- [ ] What the operator types or reads differently is in `README.md`. The gap row says
+  done, with the commit and the test counts.
+
+### B1. Trade at the next bar's open (G27)
+
+A signal computed from bar *t*'s close is traded at bar *t+1*'s open, by the Java engine
+and the walk-forward scorer alike. Do this first: every later step is measured with it.
+
+**Done when**
+
+- [ ] Engine: a signal on bar *t* fills on bar *t+1*, at that bar's open before
+  slippage. A signal on the last bar is not filled.
+- [ ] Scorer: `simulate`, `simulate_taxed` and `strategy2.simulate_margin` read opens. A
+  signal on day *t* changes the position at day *t+1*'s open: the old position earns
+  close *t* to open *t+1*, and the new one earns open *t+1* to close *t+1*.
+- [ ] No bar trades at the close it was computed from, the first bar of a fold included.
+- [ ] The training losses in `nn/money_loss.py` use the same rule, so a model is trained
+  on the curve it is scored on.
+- [ ] A cross-check test: one long-or-flat signal series over one window gives the same
+  trade dates in the engine and in the scorer and, with costs and tax off, the same
+  return to rounding. This is what lets a step 7 result be compared with a step 6 fold.
+
+### B2. An entry never spends more than the cash (G28)
+
+**Done when**
+
+- [ ] After every entry cash is zero or more, under each commission and slippage model
+  and for long and short entries. The quantity is sized on the slipped price with the
+  commission inside it.
+- [ ] With commission and slippage at zero the quantity is what it is today, so a
+  frictionless result reproduces.
+
+### B3. Engine metrics (G29)
+
+**Done when**
+
+- [ ] Sortino is the mean return over the downside deviation, which is the root of the
+  mean squared losing return taken over all bars, annualised as Sharpe is. A test
+  checks it against a series worked by hand.
+- [ ] Total slippage is the sum over fills of the gap between the bar's price and the
+  fill price, times the quantity.
+- [ ] A trade with zero profit is break-even. It is not a win or a loss, and the win
+  rate, the average loss and the losing streak leave it out.
+- [ ] Sortino with no losing bar, and profit factor with no losing trade, are stored as
+  not available and shown as a dash, never as 0.
+
+### B4. An in-sample backtest says so (G30)
+
+**Done when**
+
+- [ ] Every stored result of an nn strategy records its model's training window and
+  whether the result's own window overlaps it.
+- [ ] An overlapping result is marked in-sample wherever its return is shown: the
+  Results list, the result page and the CLI report. `run` prints a warning that names
+  both windows. It does not refuse, because an in-sample run is a fair sanity check.
+- [ ] Results stored before this are marked from their model's `metadata.json`, or as
+  unknown when that version is gone.
+
+### B5. The single-split trainers purge (G31)
+
+**Done when**
+
+- [ ] `nn/train.py` and `nn/train_features.py` drop the last `forward` training rows,
+  as `walkforward.purged` does. The saved `training_window` ends on the last row
+  actually fitted.
+- [ ] A test shows that no training label reads a close inside the validation slice.
+
+### B6. Buy-and-hold pays what the strategy pays (G32)
+
+**Done when**
+
+- [ ] Buy-and-hold is one buy at the window's first open (B1) and one sale at its end,
+  charged the same enabled commission, slippage and tax as the strategy it stands
+  beside, in the engine's results and in walk-forward folds.
+- [ ] It is recalculated on every run, before training starts, under that run's cost
+  and tax settings, and stored with the run (D6). Two runs with the same window and
+  settings report the same figure.
+- [ ] No run reads another run's benchmark. The shared `benchmarks` rows and their
+  lookups (`BenchmarkRepository.findOrCreate`,
+  `walkforward_store.find_or_create_benchmark`) are gone, and the hold curve on the
+  result page is drawn from the run's own benchmark.
+- [ ] With tax on, a position still open at the end of the window is sold and taxed,
+  for the strategy and for buy-and-hold alike (D8). In walk-forward the window is the
+  fold.
+
+### B7. Faber and dual momentum beside every run (G33)
+
+Comes after B6, so all three benchmarks are costed alike.
+
+**Done when**
+
+- [ ] Faber's rule: at each month's last bar, hold the instrument when its close is
+  above the average of the last 10 monthly closes, otherwise hold cash.
+- [ ] Dual momentum (D7): at each month's last bar, take whichever of the instrument
+  and SPY has the higher 12-month return. Hold it for the next month if that return
+  beats T-bills (DTB3) over the same 12 months, otherwise hold cash at the T-bill
+  rate. When the instrument is SPY, only the T-bill test applies.
+- [ ] Both trade by B1 and pay costs and tax by B6. Faber's cash earns what the
+  strategy's own idle money earns.
+- [ ] Both are computed for every run's window with nothing to set up, and each is
+  stored as a result line linked to the run.
+- [ ] The strategy and each benchmark show the same figures side by side: return,
+  trades, trades a year, average holding time, max drawdown and Sharpe, on the
+  Training tab and on the result page. The equity chart draws all three.
+- [ ] A window with too little history before it for the 10 or 12 months reports that
+  benchmark as not available, with the reason. It is never computed on fewer months.
+- [ ] The 10-month average and the 12-month return each pass a data check against an
+  independently computed copy (`nn/data_checks.py`).
+
+### B8. The naive baseline, flagged (G34)
+
+**Done when**
+
+- [ ] Every fold and every run stores the baseline. For the 3-class label it is always
+  predicting the training majority class, as now.
+- [ ] A run whose accuracy does not beat it is flagged: the runner prints a line and
+  the Training tab badges the run.
+- [ ] A new label kind cannot be registered without its baseline: always "up" for a
+  direction label, the historical mean return for a return label.
+
+### B9. XGBoost and LightGBM engines (G35)
+
+Comes last, so each new engine is judged against the full set of benchmarks.
+
+**Done when**
+
+- [ ] The runner registers `mlp`, `xgboost` and `lightgbm`. The builder offers what the
+  runner registers, read from it, not from a second hard-coded list.
+- [ ] One run of a strategy trains every enabled engine on the same folds, rows, purge,
+  features and labels, and scores each with the same scorer, costs and tax. The tree
+  engines get no scaler.
+- [ ] Each engine's on/off switch and settings are stored on the strategy version and
+  recorded on the run, with the library's version and the seed. The same seed and
+  inputs give the same model.
+- [ ] There is one result line per engine per fold, shown beside the three benchmarks.
+- [ ] A loss an engine cannot train on is refused with the reason, not swapped for
+  another. The money-trained losses are written for the network.
+- [ ] A saved model of each engine type can be backtested in step 7.
+- [ ] Each engine has a catalogue entry on the Strategy tab: name, library and version,
+  a plain description, and what checks it.
 
 ---
 
@@ -289,3 +492,18 @@ Fill in one row per step as we review it.
 | 6. Training | not reviewed | | |
 | 7. Backtest | not reviewed | | |
 | 8. Held-out test | not reviewed | | |
+
+One row per build step. **Status:** `waiting` (a decision is owed), `not started`,
+`in progress`, or `done`.
+
+| Build step | Gap | Waits for | Status | Evidence and notes |
+|---|---|---|---|---|
+| B1. Next-open execution | G27 | | not started | |
+| B2. Entry sizing | G28 | | not started | |
+| B3. Engine metrics | G29 | | not started | |
+| B4. In-sample flag | G30 | | not started | |
+| B5. Trainer purge | G31 | | not started | |
+| B6. Buy-and-hold costs | G32 | | not started | |
+| B7. Faber and dual momentum | G33 | B6 | not started | |
+| B8. Naive baseline flag | G34 | | not started | |
+| B9. XGBoost and LightGBM | G35 | B7 | not started | |

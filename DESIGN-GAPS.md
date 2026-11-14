@@ -12,6 +12,59 @@ Effort is an estimate: S is under a day, M a few days, L a week or more, XL a re
 
 ---
 
+## Pass 3 — 2026-11-14 (HEAD `0ad6053`)
+
+Scope: a read of the Java engine, the walk-forward scorer and the two single-split
+trainers, plus four requirements the repo's design copy does not carry. Nothing was run
+and no stored run was checked. What each row needs before it counts as done is in
+[`AGENTS.md`, Build steps](AGENTS.md#build-steps).
+
+**The design copy is behind.** `read-only-doc/Architecture.md` is an older snapshot of the
+author's Architecture document. The current one has a numbered Requirements list, and four
+groups of its entries have no text in `read-only-doc/`: trading at the next bar's open
+(Requirement 76), three benchmarks beside every run (36, 39), a naive prediction baseline
+(72) and three engine types (21 to 23, 74). The rows below quote them. They are always
+written "Requirement N", because R1 to R9 in this file are Pass 2's review findings. These
+rows are the only copy in the repo until the author refreshes `read-only-doc/`; after
+that, where the two differ, `read-only-doc/` wins. The rest of the Requirements list was
+not checked against the code in this pass. The current document also numbers its sections
+differently: what is §6.3, §8.x and §10 here is §5.3, §7.x and §9 there, so the section
+references in this repo's docs and code comments need a pass when it lands.
+
+### Fix what is built
+
+Each of these changes numbers that are already stored, so each ends with the stale-records
+rule in `AGENTS.md`.
+
+| # | Gap | Design | Evidence | Effort | Status |
+|---|---|---|---|---|---|
+| G27 | Trades happen on the wrong bar. A signal computed from a bar's close must be traded at the next bar's open. The Java engine fills at the same close that gave the signal, which is the flattering side. The walk-forward scorer trades at the next session's close, a session late, because it reads closes only; the first bar of a fold is the exception and trades at its own close. So the same signals give different trades in steps 6 and 7, and neither follows the rule | Requirement 76 ("traded at the next bar's open ... never at the same close it was computed from. Applies to every engine and benchmark") | `BacktestEngine.processSignal` fills at bar `i`'s `closePrice`; `walkforward.py:1156` builds `rets` close to next close and `simulate` shifts one more day; `test_walkforward.py` `test_the_first_bar_acts_on_its_own_signal`; `money_loss.portfolio_returns` and `strategy2.simulate_margin` pad the same way | M | open |
+| G28 | An entry spends more cash than there is. The quantity is all of cash divided by the close; the fill then pays the slipped price plus commission, so cash is negative after every entry with costs on and the run is slightly leveraged without saying so | Design Notes, Staged Pipeline Architecture, stage 6 ("costs applied") | `PortfolioManager.calculatePositionSize` returns `cash * riskPercent / price`; `BacktestEngine.processSignal` sizes on `closePrice`, and `openPosition` then subtracts `filledPrice * quantity + commission` | S | open |
+| G29 | Four engine metrics are wrong or empty. (a) Sortino divides by the standard deviation of the losing bars about their own mean, which is not the downside deviation, and is 0 when no bar loses. (b) Total slippage is always 0. (c) A trade with zero profit counts as a loss. (d) Profit factor is 0 when no trade loses, which reads as the worst case | Design Notes, Staged Pipeline Architecture, stage 6 ("metrics computed") | `MetricsCalculator.calculateSortinoRatio`; `.totalSlippage(0.0)` in `calculate`; `Trade.isWin` is `pnl > 0` and every other trade is counted as losing; `MathUtils.safeDiv` returns 0 on a zero divisor | S | open |
+| G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | open |
+| G31 | The two single-split trainers do not purge. Both cut training from validation by a ratio and label each row from the close `forward` bars ahead, so the last `forward` training rows are labelled from validation prices. The walk-forward runner already drops them (`purged`) | Design Notes, Three-Way Chronological Split | `nn/train.py` `train_model` (`split = int(n * cfg.train_split_ratio)`); `nn/train_features.py:212` | S | open |
+
+### Missing pieces
+
+| # | Gap | Design | Evidence | Effort | Status |
+|---|---|---|---|---|---|
+| G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | open (D6 and D8 decided) |
+| G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | open (D7 decided) |
+| G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | partial |
+| G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | open |
+
+### Decisions the author owes
+
+Each of these blocks a row above. The answer goes here, and into the design, before the
+work starts. All three were answered on 2026-11-14 and the author's design documents now
+say so; `read-only-doc/` will say so once it is refreshed.
+
+| # | Question | What exists today | Status |
+|---|---|---|---|
+| D6 | How is a benchmark kept? The design says both. Design Notes ("Buy-and-hold is one fixed benchmark") and Architecture §6.3: computed once for a window, stored, reused, "never recomputed per run". Requirement 36: "recalculated on every run, never cached", under the strategy's cost, tax, dividend and currency settings, and stored with the run | The first: `BenchmarkRepository.findOrCreate` and `walkforward_store.find_or_create_benchmark` never recalculate a stored row (G23) | decided 2026-11-14: recalculated on every run, under that run's settings, and stored with the run. The same window and settings must still give the same figure. The shared stored row and its lookups go (G32) |
+| D7 | What exactly is dual momentum here? One line of the design holds the asset when its 12-month return beats T-bills "and the alternative, else switch"; another holds it while its 12-month return beats cash. Which asset is the alternative for QQQ, and what is held when the rule is out | DTB3 (T-bills) and SPY are stored; nothing is chosen | decided 2026-11-14: at each month's last bar take whichever of the instrument and SPY has the higher 12-month return. Hold it for the next month if that return beats T-bills over the same 12 months, otherwise hold cash at the T-bill rate. When the instrument is SPY there is no alternative and only the T-bill test applies (G33) |
+| D8 | With tax on, is a position still open at the end of the window sold and taxed? The design has buy-and-hold pay tax "on its single buy and final sell". The scorer taxes neither the strategy's open position nor buy-and-hold at the end of a fold | `walkforward.simulate_taxed` ("A position still open when the fold ends is not taxed") | decided 2026-11-14: sold and taxed, for the strategy and every benchmark alike, at the end of the window a result is scored over. In walk-forward that window is the fold (G32) |
+
 ## Pass 2 — 2026-11-07 (HEAD `84acc6e`, plus uncommitted G1 section 1)
 
 Scope: a review of the uncommitted G1 work (`nn/strategy_spec.py`, `read_matrix(columns=...)`),
