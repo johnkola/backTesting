@@ -290,7 +290,8 @@ public class BacktestEngine {
                 buyAndHoldReturnPct,
                 tradedBars,
                 tradingDays,
-                periodsPerYear);
+                periodsPerYear,
+                executionSimulator.getTotalSlippage());
 
         String modelCacheKey = null;
         Boolean modelCacheHit = null;

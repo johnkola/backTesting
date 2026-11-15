@@ -388,8 +388,8 @@ export default function RunPage() {
  * them, and the type carries an index signature for the rest. Format defensively
  * rather than asserting they're present.
  */
-function num(value: number | undefined, digits = 2, suffix = ''): string {
-  return value !== undefined && Number.isFinite(value)
+function num(value: number | null | undefined, digits = 2, suffix = ''): string {
+  return value != null && Number.isFinite(value)
     ? `${value.toFixed(digits)}${suffix}`
     : '—'
 }

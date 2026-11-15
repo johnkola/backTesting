@@ -277,6 +277,12 @@ Tab: **Pipeline → Backtest**.
   the tab shows passed whenever the newest result is fresh, and it looks at the
   200 newest results only. A fix that changed only volume doesn't count for the
   price-only strategies.
+- [ ] **app**: the trade metrics count as defined (B3, `MetricsCalculator`):
+  - Sortino is the mean over the downside deviation across every bar.
+  - Total slippage is summed over every fill.
+  - A zero-profit trade is break-even, outside the win rate and the streaks.
+  - Sortino with no losing bar, and profit factor with no losing trade, show as
+    a dash, never 0.
 - [ ] **app**: the result has its stored buy-and-hold benchmark. The equity chart
   draws the hold curve, which ends on the benchmark's stored final equity, or says
   why it can't.
@@ -301,8 +307,6 @@ Known limits, each with a build step that removes it:
   [Execution engine](README.md#execution-engine).
 - Entries are sized at all of cash on the close, before slippage and commission
   are added. With costs on, cash goes slightly negative on every entry (G28, B2).
-- Do not quote Sortino, total slippage, or a profit factor of 0. A trade with zero
-  profit is counted as a loss (G29, B3).
 
 ## 8. The held-out test
 
@@ -510,7 +514,7 @@ Fill in one row per step as we review it.
 | 4. Split | not done | 2026-11-14 | The tab's blocks pass its own check: train 1999-03-10 to 2015-12-31 (4,232 rows), validation 2016-01-04 to 2021-12-31 (1,511), test 2022-01-03 to 2026-11-13 (1,222), all in order. But they come from two API constants, not from any strategy (G37). The strategies train from 2003 (3,273 rows) or 2007 (2,266) and test to 2026-06-30, so the boundaries are not where the strategies put them. Rough markets: both train windows hold 2008 (−53.4%, 2007-10-31 to 2008-11-20), and validation holds COVID (−28.6%) and late 2018 (−22.8%). Test block: no walk-forward run has `is_test`, but corrected 2026-11-15: the Run tab fills a saved strategy's window from its test block, and backtests 686, 697, 698 and 706 score 2022-04-13 to 2026-06-30 inside it, unflagged (G48). Found: G38, since the 2021 fold reads closes to 2022-01-07. |
 | 5. Strategy | done | 2026-11-14 | Rechecked after G36 was fixed (`fb6c5fe`). The newest runs of phase1-full v4, strategy2-scored v1 and strategy2-trained v1 (378, 377, 376) keep all 29 columns, with nothing dropped or partial. The coverage grid and the runner now agree. Strategy judged: **phase1-full v4**, named by the author on 2026-11-14. First review: window order: enforced by the builder (`strategyForm.ts`), the API (422 from `strategies.js`) and the runner (`fold_plan`), and all 17 stored versions pass. The runner accepts the newest version of all five names; `strategy_setup` and the later refusals were replayed read-only on set 27. Coverage: every kept column has a value on every train bar. But phase1-full v4, strategy2-scored v1 and strategy2-trained v1 lose `day_of_week`, `day_of_year` and `day_of_month` (G36), while the coverage grid shows them at 100% and kept. Strategy being judged: owed by the author. The candidates are phase1-full v4 (Strategy 1, trains with a placeholder 25% tax) and strategy2-scored and strategy2-trained (Strategy 2); postman-smoke and strategy2-defaults are fixtures. Each newest run used its newest version. |
 | 6. Training | not done | 2026-11-15 | After G47 (no look-ahead; set 28; runs 376-378 rerun as 394-396, all fresh): phase1-full v4 (396) −0.06 pp a fold, 0 of 6, long throughout. strategy2-scored (394) +3.59 pp and strategy2-trained (395) +2.81 pp against hold, but −1.16 and −1.93 pp against always long at the same leverage. **No strategy passes.** Before G47, after G36 and G43 (reruns 374 to 378): phase1-full v4 (378) is −0.06 pp a fold, 0 of 6, long in every fold with one trade each. It no longer loses on exits, but it has no timing. strategy2-scored and strategy2-trained (376, 377) are +3.00 and +2.87 pp, 5 of 6, but −1.74 and −1.87 pp against always long at the same leverage. Accuracy is now on each model's own call: every money run is at or below always long. **No strategy passes.** First review, runs 259, 299, 300, 301 and 348: each has 6 of 6 folds, lineage and span, except `git_sha`, which is NULL everywhere (G45). Fresh per the app. But 299-301's spans were backfilled after the PSQ fix, so their freshness is unproven (G42). Verdicts: 348 (phase1-full, taxed) −4.60 pp, 0/6, timing −0.49. 300 +3.62 pp and 301 +0.37 pp are before tax, and both lose to always long at the same leverage (−1.13 and −4.37 pp), so the win is leverage. 299 −0.56 pp. 259 is a fixture. **No strategy passes.** Every verdict is provisional until G36 and B1 (G27) are fixed. Not built: G11 (only the stopping epoch is stored, no loss and no NaN check), G34 (baseline stored, nothing flags it; the money runs' accuracy uses the wrong labels, G43), G33 and G35. Found: G42, G43, G44, G45. |
-| 7. Backtest | not done | 2026-11-14 | 16 results (D1 14, H1 1, M30 1). Stale: 0, also checked over every result, not just the 200 newest. Benchmark: all 16 have their stored row, and the hold curve ends on its final equity (within 1e-11). Reproduction: last confirmed for 709-713 on 2026-11-12. Their windows are untouched since and the engine is unchanged, but the loader was rebuilt with torch unpinned. 686, 697-699 and 702-708 have never been rerun, and a stored result keeps no settings, so a rerun has to reconstruct them (G40). In-sample: **713** (1999-06-18 to 2026-09-25) contains its model's whole training window (2003-2015), so its +1,828% is flattering (G30). The other 7 nn results are out of sample. Not built: G20 (no tax), G32 and G33 (buy-and-hold alone, frictionless). Found: G40, G41. |
+| 7. Backtest | not done | 2026-11-15 | After B3: all 16 results were rerun and reproduced exactly (window, model, trades, return, final equity, Sharpe), so the reproduction condition holds for every result. They are now 714-729: 709-713 became 725-729, and the in-sample one is now **729** (was 713). The metrics condition (B3) holds. Still open: 729 in-sample (G30), after-tax (G20), three benchmarks (G32, G33). First review, 2026-11-14: 16 results (D1 14, H1 1, M30 1). Stale: 0, also checked over every result, not just the 200 newest. Benchmark: all 16 have their stored row, and the hold curve ends on its final equity (within 1e-11). Reproduction: last confirmed for 709-713 on 2026-11-12. Their windows are untouched since and the engine is unchanged, but the loader was rebuilt with torch unpinned. 686, 697-699 and 702-708 have never been rerun, and a stored result keeps no settings, so a rerun has to reconstruct them (G40). In-sample: **713** (1999-06-18 to 2026-09-25) contains its model's whole training window (2003-2015), so its +1,828% is flattering (G30). The other 7 nn results are out of sample. Not built: G20 (no tax), G32 and G33 (buy-and-hold alone, frictionless). Found: G40, G41. |
 | 8. Held-out test | not reviewed | | |
 
 One row per build step. **Status:** `waiting` (a decision is owed), `not started`,
@@ -520,7 +524,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 |---|---|---|---|---|
 | B1. Next-open execution | G27 | | not started | |
 | B2. Entry sizing | G28 | | not started | |
-| B3. Engine metrics | G29 | | not started | |
+| B3. Engine metrics | G29 | | done | 2026-11-15. Sortino over the downside deviation, total slippage summed over every fill, break-even trades outside the win rate and streaks, and not-available metrics as null and a dash. Java 128 (9 new), client 142. All 16 stored results were rerun with rebuilt requests and reproduced exactly, apart from the fixed metrics, and replaced: 686-713 are now 714-729 (DESIGN-GAPS, B3 record) |
 | B4. In-sample flag | G30 | | not started | |
 | B5. Trainer purge | G31 | | not started | |
 | B6. Buy-and-hold costs | G32 | | not started | |

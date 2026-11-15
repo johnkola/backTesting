@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.model.EquityPoint;
+import com.bazarbozorg.backtest.model.Order;
 import com.bazarbozorg.backtest.model.Position;
 import com.bazarbozorg.backtest.model.Trade;
 import com.bazarbozorg.backtest.model.enums.OrderSide;
@@ -90,15 +91,17 @@ public class PortfolioManager {
 
     /**
      * Closes all open positions at the given price (force-close at the end of
-     * a backtest). Uses the {@code simulator}'s commission/slippage models.
+     * a backtest). Filled through the {@code simulator}, like any other exit,
+     * so its slippage is counted in the run's total (G29); the price and
+     * commission are the same as applying its models directly.
      */
     public void closeAllPositions(double price, ZonedDateTime time, ExecutionSimulator simulator) {
         List<Position> positionsToClose = new ArrayList<>(openPositions);
         for (Position position : positionsToClose) {
             OrderSide exitSide = position.isLong() ? OrderSide.SELL : OrderSide.BUY;
-            double adjustedPrice = simulator.getSlippageModel().calculate(price, exitSide);
-            double commission = simulator.getCommissionModel().calculate(adjustedPrice, position.quantity());
-            closePosition(position, adjustedPrice, time, commission);
+            Order exit = Order.market(position.instrumentId(), exitSide, position.quantity(), price);
+            ExecutionSimulator.FillResult fill = simulator.fillMarketOrder(exit, price);
+            closePosition(position, fill.filledPrice(), time, fill.commission());
         }
     }
 

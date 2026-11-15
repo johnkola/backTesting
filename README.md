@@ -518,6 +518,16 @@ with reasoning is
 **Every run force-closes at the last bar**, so a result never hides an open position's
 unrealised loss — the final equity is money you would actually have.
 
+**How the trade metrics count.** Total slippage is, over every fill (the forced close
+included), the gap between the bar's price and the fill price, times the quantity. A
+trade closed at exactly zero P&L is **break-even**: it is neither a win nor a loss, so
+the win rate is over decided trades only, and the average loss and both streaks leave it
+out. Sortino is the mean return over the downside deviation, the root of the mean
+squared losing return across every bar, annualised as Sharpe is. When nothing loses,
+Sortino and profit factor have no value. They are left out of the stored result and
+shown as a dash, never as 0. Results stored before 2026-11-15 carried 0 for those two
+and for slippage, and a Sortino computed the wrong way (G29).
+
 ---
 
 ## Roadmap & status

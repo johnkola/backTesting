@@ -44,6 +44,11 @@ public record Trade(String id,
         return pnl > 0;
     }
 
+    /** A loss is a negative P&L. Zero is break-even, neither a win nor a loss (G29). */
+    public boolean isLoss() {
+        return pnl < 0;
+    }
+
     /** Return percentage as a decimal (0.05 == 5%). */
     public double returnPct() {
         if (entryPrice == 0) {

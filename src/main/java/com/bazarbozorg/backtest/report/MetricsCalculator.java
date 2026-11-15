@@ -6,7 +6,6 @@ import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.util.MathUtils;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -26,6 +25,21 @@ import java.util.List;
  * holds, measured from the run. Measured rather than derived from the bar
  * length, because the session decides it: H1 over a 09:30-16:00 NYSE day is
  * seven bars, over a 24-hour FX day 24. A D1 run is exactly what it was.
+ *
+ * <p>FOUR METRICS FIXED, 2026-11-15 (DESIGN-GAPS G29, AGENTS.md B3).
+ * <ul>
+ *   <li>Sortino divided by the standard deviation of the losing bars about
+ *       their own mean. The downside deviation is the root of the mean squared
+ *       losing return taken over ALL bars, with gains counted as zero, and it
+ *       was 0 when no bar lost.</li>
+ *   <li>Total slippage was always 0. It is the sum over fills of the gap
+ *       between the bar's price and the fill price, times the quantity,
+ *       accumulated by the {@code ExecutionSimulator} and passed in.</li>
+ *   <li>A trade with zero P&amp;L counted as a loss. It is break-even, and the
+ *       win rate, the average loss and both streaks leave it out.</li>
+ *   <li>Sortino with no losing bar, and profit factor with no losing trade,
+ *       were 0. They have no value, so they are {@code null}.</li>
+ * </ul>
  */
 public final class MetricsCalculator {
 
@@ -50,8 +64,9 @@ public final class MetricsCalculator {
                                                 double initialCapital, double finalEquity,
                                                 double buyAndHoldReturnPct, long tradingDays) {
         // Daily bars: one bar per trading day, so bars, days and periods agree.
+        // No fills are known here, so no slippage.
         return calculate(trades, equityHistory, initialCapital, finalEquity,
-                buyAndHoldReturnPct, tradingDays, tradingDays, TRADING_DAYS_PER_YEAR);
+                buyAndHoldReturnPct, tradingDays, tradingDays, TRADING_DAYS_PER_YEAR, 0.0);
     }
 
     /**
@@ -60,11 +75,14 @@ public final class MetricsCalculator {
      * @param bars           the bars the strategy traded over (the annualising exponent)
      * @param tradingDays    distinct trading days those bars fall on (reported only)
      * @param periodsPerYear bars in a year at this timeframe, from {@link #periodsPerYear}
+     * @param totalSlippage  the run's slippage cost: over every fill, the gap between
+     *                       the bar's price and the fill price times the quantity
      */
     public static PerformanceMetrics calculate(List<Trade> trades, List<EquityPoint> equityHistory,
                                                 double initialCapital, double finalEquity,
                                                 double buyAndHoldReturnPct, long bars,
-                                                long tradingDays, double periodsPerYear) {
+                                                long tradingDays, double periodsPerYear,
+                                                double totalSlippage) {
 
         double totalReturnPct = MathUtils.safeDiv(finalEquity - initialCapital, initialCapital) * 100.0;
 
@@ -78,7 +96,7 @@ public final class MetricsCalculator {
         double[] dailyReturns = calculateDailyReturns(equityHistory);
 
         double sharpeRatio = calculateSharpeRatio(dailyReturns, periodsPerYear);
-        double sortinoRatio = calculateSortinoRatio(dailyReturns, periodsPerYear);
+        Double sortinoRatio = calculateSortinoRatio(dailyReturns, periodsPerYear);
 
         // Max drawdown
         double maxDrawdownPct = 0.0;
@@ -103,6 +121,7 @@ public final class MetricsCalculator {
         int totalTradeCount = trades.size();
         int winningTradeCount = 0;
         int losingTradeCount = 0;
+        int breakEvenTradeCount = 0;
         double totalWinPnl = 0.0;
         double totalLossPnl = 0.0;
         double totalCommissions = 0.0;
@@ -112,14 +131,19 @@ public final class MetricsCalculator {
             if (trade.isWin()) {
                 winningTradeCount++;
                 totalWinPnl += trade.pnl();
-            } else {
+            } else if (trade.isLoss()) {
                 losingTradeCount++;
                 totalLossPnl += trade.pnl();
+            } else {
+                breakEvenTradeCount++;
             }
         }
 
-        double winRate = MathUtils.safeDiv(winningTradeCount, totalTradeCount) * 100.0;
-        double profitFactor = MathUtils.safeDiv(totalWinPnl, Math.abs(totalLossPnl));
+        // A break-even trade is neither: the rate is over decided trades only.
+        double winRate = MathUtils.safeDiv(winningTradeCount,
+                winningTradeCount + losingTradeCount) * 100.0;
+        // No losing trade: nothing to divide by, so no profit factor (not 0).
+        Double profitFactor = losingTradeCount == 0 ? null : totalWinPnl / Math.abs(totalLossPnl);
         double avgWin = MathUtils.safeDiv(totalWinPnl, winningTradeCount);
         double avgLoss = MathUtils.safeDiv(totalLossPnl, losingTradeCount);
         double avgWinLossRatio = MathUtils.safeDiv(Math.abs(avgWin), Math.abs(avgLoss));
@@ -144,10 +168,11 @@ public final class MetricsCalculator {
                 .totalTrades(totalTradeCount)
                 .winningTrades(winningTradeCount)
                 .losingTrades(losingTradeCount)
+                .breakEvenTrades(breakEvenTradeCount)
                 .maxConsecutiveWins(maxConsecutiveWins)
                 .maxConsecutiveLosses(maxConsecutiveLosses)
                 .totalCommissions(totalCommissions)
-                .totalSlippage(0.0)
+                .totalSlippage(totalSlippage)
                 .buyAndHoldReturnPct(buyAndHoldReturnPct)
                 .initialCapital(initialCapital)
                 .finalEquity(finalEquity)
@@ -231,50 +256,42 @@ public final class MetricsCalculator {
     }
 
     /**
-     * Calculates the annualized Sortino ratio from daily returns.
-     * Sortino = mean(returns) / downsideDeviation * sqrt(periodsPerYear)
-     * where downsideDeviation only considers negative returns.
+     * The annualised Sortino ratio: the mean per-bar return over the downside
+     * deviation, times sqrt(periodsPerYear) as Sharpe is annualised.
      *
-     * @param dailyReturns array of daily returns
-     * @return the Sortino ratio, or 0.0 if insufficient data
+     * <p>The downside deviation is the root of the mean squared losing return
+     * over ALL bars, a gain counting as zero: sqrt(sum(min(r, 0)^2) / n). It is
+     * not the standard deviation of the losing bars about their own mean, which
+     * is what this computed until 2026-11-15 (G29).
+     *
+     * @return the ratio, or null when there are fewer than two returns or no
+     *         bar lost: there is no downside to divide by
      */
-    private static double calculateSortinoRatio(double[] dailyReturns, double periodsPerYear) {
+    static Double calculateSortinoRatio(double[] dailyReturns, double periodsPerYear) {
         if (dailyReturns.length < 2) {
-            return 0.0;
+            return null;
         }
-
-        DescriptiveStatistics allStats = new DescriptiveStatistics();
-        List<Double> negativeReturns = new ArrayList<>();
-
+        double sum = 0.0;
+        double downsideSquares = 0.0;
+        boolean anyLoss = false;
         for (double r : dailyReturns) {
-            allStats.addValue(r);
+            sum += r;
             if (r < 0) {
-                negativeReturns.add(r);
+                downsideSquares += r * r;
+                anyLoss = true;
             }
         }
-
-        double mean = allStats.getMean();
-
-        if (negativeReturns.isEmpty()) {
-            return 0.0;
+        if (!anyLoss) {
+            return null;
         }
-
-        // Calculate downside deviation
-        DescriptiveStatistics downsideStats = new DescriptiveStatistics();
-        for (double r : negativeReturns) {
-            downsideStats.addValue(r);
-        }
-        double downsideDeviation = downsideStats.getStandardDeviation();
-
-        if (downsideDeviation == 0.0) {
-            return 0.0;
-        }
-
+        double mean = sum / dailyReturns.length;
+        double downsideDeviation = Math.sqrt(downsideSquares / dailyReturns.length);
         return (mean / downsideDeviation) * Math.sqrt(periodsPerYear);
     }
 
     /**
-     * Calculates the maximum consecutive streak of wins or losses.
+     * Calculates the maximum consecutive streak of wins or losses. A break-even
+     * trade is left out: it neither extends a streak nor breaks it.
      *
      * @param trades the trade list
      * @param wins   if true, count consecutive wins; if false, count consecutive losses
@@ -285,6 +302,9 @@ public final class MetricsCalculator {
         int currentStreak = 0;
 
         for (Trade trade : trades) {
+            if (!trade.isWin() && !trade.isLoss()) {
+                continue;
+            }
             if (trade.isWin() == wins) {
                 currentStreak++;
                 maxStreak = Math.max(maxStreak, currentStreak);

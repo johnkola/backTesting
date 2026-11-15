@@ -115,9 +115,16 @@ export default function ResultDetailPage() {
   const metrics: Array<[string, string]> = [
     ['Total return', pct(detail.totalReturnPct)],
     ['Sharpe', num(detail.sharpeRatio)],
+    // Absent when no bar lost: a dash, never 0 (G29). The old key, `sortingRatio`,
+    // held a wrong value and is not read.
+    ['Sortino', num(r?.metrics?.sortinoRatio ?? null)],
     ['Max drawdown', pct(detail.maxDrawdownPct)],
     ['Win rate', pct(detail.winRate)],
-    ['Trades', String(detail.totalTrades)],
+    ['Profit factor', num(r?.metrics?.profitFactor ?? null)],
+    ['Trades', r?.metrics?.breakEvenTrades
+      ? `${detail.totalTrades} (${r.metrics.breakEvenTrades} break-even)`
+      : String(detail.totalTrades)],
+    ['Slippage', money(r?.metrics?.totalSlippage ?? null)],
     ['Initial', money(detail.initialCapital)],
     ['Final', money(detail.finalEquity)],
     ['Buy & hold', pct(r?.metrics?.buyAndHoldReturnPct ?? null)],

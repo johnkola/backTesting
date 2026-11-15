@@ -190,7 +190,7 @@ class MetricsCalculatorTest {
 
         assertEquals(0, metrics.getTotalTrades());
         assertEquals(0.0, metrics.getWinRate(), 0.01);
-        assertEquals(0.0, metrics.getProfitFactor(), 0.01);
+        assertNull(metrics.getProfitFactor(), "no losing trade: not available, never 0 (G29)");
     }
 
     @Test
@@ -259,7 +259,7 @@ class MetricsCalculatorTest {
         long bars = days * 13;
         double ppy = MetricsCalculator.periodsPerYear(Timeframe.M30, bars, days);
         PerformanceMetrics m = MetricsCalculator.calculate(
-                List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, bars, days, ppy);
+                List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, bars, days, ppy, 0.0);
         assertEquals(10.0, m.getAnnualizedReturnPct(), 1e-9);
         assertEquals(days, m.getTradingDays());
     }
@@ -271,7 +271,7 @@ class MetricsCalculatorTest {
                 List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, 504);
         PerformanceMetrics newWay = MetricsCalculator.calculate(
                 List.of(), createEquityHistory(), 10000.0, 12100.0, 0.0, 504, 504,
-                MetricsCalculator.periodsPerYear(Timeframe.D1, 504, 504));
+                MetricsCalculator.periodsPerYear(Timeframe.D1, 504, 504), 0.0);
         assertEquals(10.0, oldWay.getAnnualizedReturnPct(), 1e-9);
         assertEquals(oldWay.getAnnualizedReturnPct(), newWay.getAnnualizedReturnPct(), 1e-12);
         assertEquals(oldWay.getSharpeRatio(), newWay.getSharpeRatio(), 1e-12);
@@ -282,9 +282,99 @@ class MetricsCalculatorTest {
     @DisplayName("Sharpe scales with the square root of the periods per year")
     void testSharpeScalesWithPeriods() {
         PerformanceMetrics daily = MetricsCalculator.calculate(
-                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 4, 252);
+                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 4, 252, 0.0);
         PerformanceMetrics m30 = MetricsCalculator.calculate(
-                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 1, 252 * 13);
+                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 1, 252 * 13, 0.0);
         assertEquals(daily.getSharpeRatio() * Math.sqrt(13), m30.getSharpeRatio(), 1e-9);
+    }
+
+    // ----------------------------------------------------------------------
+    // G29 (AGENTS.md B3): Sortino, break-even trades, not-available metrics
+    // ----------------------------------------------------------------------
+
+    private static List<EquityPoint> equity(double... values) {
+        List<EquityPoint> out = new ArrayList<>();
+        for (int i = 0; i < values.length; i++) {
+            out.add(new EquityPoint(BASE_TIME.plusDays(i), values[i], 0.0, 0.0));
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("Sortino is the mean over the downside deviation taken over every bar")
+    void testSortinoAgainstAHandWorkedSeries() {
+        // Returns +10%, -10%, +10%, 0. Mean 0.025. Downside deviation over all
+        // four bars: sqrt((0 + 0.01 + 0 + 0) / 4) = 0.05. Annualised:
+        // 0.025 / 0.05 * sqrt(252) = 7.9372539...
+        double[] returns = {0.10, -0.10, 0.10, 0.0};
+        assertEquals(0.5 * Math.sqrt(252), MetricsCalculator.calculateSortinoRatio(returns, 252), 1e-12);
+        // The old formula took the standard deviation of the one losing bar about
+        // its own mean, which is 0, and reported 0.
+    }
+
+    @Test
+    @DisplayName("Sortino flows through calculate() from the equity curve")
+    void testSortinoFromTheEquityCurve() {
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                List.of(), equity(100, 110, 99, 108.9, 108.9), 100.0, 108.9, 0.0, 4);
+        assertEquals(0.5 * Math.sqrt(252), m.getSortinoRatio(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("No losing bar: Sortino is not available, never 0")
+    void testSortinoWithNoLosingBarIsNull() {
+        assertNull(MetricsCalculator.calculateSortinoRatio(new double[]{0.01, 0.02, 0.0}, 252));
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                List.of(), equity(100, 101, 102, 102), 100.0, 102.0, 0.0, 3);
+        assertNull(m.getSortinoRatio());
+    }
+
+    @Test
+    @DisplayName("No losing trade: profit factor is not available, never 0")
+    void testProfitFactorWithNoLosingTradeIsNull() {
+        List<Trade> trades = List.of(createTrade(100, 110, 10, 0.0, 0), createTrade(100, 105, 10, 0.0, 10));
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                trades, createEquityHistory(), 10000.0, 11000.0, 0.0, 252);
+        assertEquals(2, m.getWinningTrades());
+        assertNull(m.getProfitFactor());
+    }
+
+    @Test
+    @DisplayName("A zero-profit trade is break-even, not a loss")
+    void testBreakEvenTradeIsNeitherWinNorLoss() {
+        List<Trade> trades = List.of(
+                createTrade(100, 110, 10, 0.0, 0),    // win +100
+                createTrade(100, 100, 10, 0.0, 10),   // break-even 0
+                createTrade(100, 95, 10, 0.0, 20));   // loss -50
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                trades, createEquityHistory(), 10000.0, 11000.0, 0.0, 252);
+        assertEquals(3, m.getTotalTrades());
+        assertEquals(1, m.getWinningTrades());
+        assertEquals(1, m.getLosingTrades());
+        assertEquals(1, m.getBreakEvenTrades());
+        assertEquals(50.0, m.getWinRate(), 1e-12);        // 1 of the 2 decided trades
+        assertEquals(-50.0, m.getAvgLoss(), 1e-12);       // the loss alone
+        assertEquals(2.0, m.getProfitFactor(), 1e-12);
+    }
+
+    @Test
+    @DisplayName("A break-even trade neither extends nor breaks a streak")
+    void testBreakEvenTradeIsLeftOutOfStreaks() {
+        List<Trade> trades = List.of(
+                createTrade(100, 95, 10, 0.0, 0),     // loss
+                createTrade(100, 100, 10, 0.0, 10),   // break-even
+                createTrade(100, 90, 10, 0.0, 20));   // loss
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                trades, createEquityHistory(), 10000.0, 11000.0, 0.0, 252);
+        assertEquals(2, m.getMaxConsecutiveLosses());  // counted as a loss, it read 3
+        assertEquals(0, m.getMaxConsecutiveWins());
+    }
+
+    @Test
+    @DisplayName("Total slippage is what the run passes in, not 0")
+    void testTotalSlippageIsReported() {
+        PerformanceMetrics m = MetricsCalculator.calculate(
+                List.of(), createEquityHistory(), 10000.0, 11000.0, 0.0, 4, 4, 252, 12.5);
+        assertEquals(12.5, m.getTotalSlippage(), 1e-12);
     }
 }

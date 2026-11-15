@@ -13,6 +13,8 @@ public class ExecutionSimulator {
 
     private final CommissionModel commissionModel;
     private final SlippageModel slippageModel;
+    /** This run's slippage cost so far: per fill, |fill - bar price| x quantity (G29). */
+    private double totalSlippage;
 
     /**
      * Creates an execution simulator with the given commission and slippage models.
@@ -38,8 +40,19 @@ public class ExecutionSimulator {
         double adjustedPrice = slippageModel.calculate(fillPrice, order.side());
         double slippageAmount = Math.abs(adjustedPrice - fillPrice);
         double commission = commissionModel.calculate(adjustedPrice, order.quantity());
+        totalSlippage += slippageAmount * order.quantity();
 
         return new FillResult(adjustedPrice, commission, slippageAmount);
+    }
+
+    /**
+     * The slippage cost of every fill this simulator has made: the gap between
+     * the bar's price and the fill price, times the quantity, summed. One
+     * simulator serves one run (`BacktestEngine` creates it per run), so this
+     * is that run's total slippage. It was reported as 0 until 2026-11-15 (G29).
+     */
+    public double getTotalSlippage() {
+        return totalSlippage;
     }
 
     /**

@@ -114,6 +114,9 @@ public class ConsoleReportFormatter {
         sb.append(String.format("  Total Trades:        %d%n", metrics.getTotalTrades()));
         sb.append(String.format("  Winning Trades:      %d%n", metrics.getWinningTrades()));
         sb.append(String.format("  Losing Trades:       %d%n", metrics.getLosingTrades()));
+        if (metrics.getBreakEvenTrades() > 0) {
+            sb.append(String.format("  Break-even Trades:   %d%n", metrics.getBreakEvenTrades()));
+        }
         sb.append(String.format("  Win Rate:            %s%%%n",
                 formatNumber(metrics.getWinRate())));
         sb.append(String.format("  Profit Factor:       %s%n",
@@ -271,5 +274,10 @@ public class ConsoleReportFormatter {
      */
     private String formatNumber(double value) {
         return String.valueOf(MathUtils.round(value, 2));
+    }
+
+    /** A metric that can be not available (null): shown as a dash, never as 0 (G29). */
+    private String formatNumber(Double value) {
+        return value == null ? "-" : formatNumber(value.doubleValue());
     }
 }

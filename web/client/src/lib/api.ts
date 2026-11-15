@@ -358,14 +358,24 @@ export type PerformanceMetrics = {
   totalReturnPct?: number
   annualizedReturnPct?: number
   sharpeRatio?: number
-  sortinoRatio?: number
+  /** Mean return over the downside deviation, annualised. Absent (or null)
+   *  when no bar lost: not available, shown as a dash, never 0 (G29). Results
+   *  stored before 2026-11-15 carry a wrong value under `sortingRatio`. */
+  sortinoRatio?: number | null
   calmarRatio?: number
   maxDrawdownPct?: number
   totalTrades?: number
+  /** Over decided trades only: break-even trades are left out (G29). */
   winRate?: number
   avgWin?: number
   avgLoss?: number
-  profitFactor?: number
+  /** Gross profit over gross loss. Absent (or null) when no trade lost (G29). */
+  profitFactor?: number | null
+  /** Trades closed at exactly zero P&L: neither wins nor losses. */
+  breakEvenTrades?: number
+  totalCommissions?: number
+  /** Per fill, |fill - bar price| x quantity, summed. 0 before 2026-11-15 (G29). */
+  totalSlippage?: number
   buyAndHoldReturnPct?: number
   [k: string]: unknown
 }

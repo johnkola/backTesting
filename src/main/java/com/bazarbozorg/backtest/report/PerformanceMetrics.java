@@ -4,17 +4,25 @@ package com.bazarbozorg.backtest.report;
  * Data class holding all calculated performance metrics for a backtest.
  * Includes return metrics, risk-adjusted ratios, trade statistics,
  * and cost summaries. Use the {@link Builder} to construct instances.
+ *
+ * <p>NOT AVAILABLE IS NULL, NEVER 0 (DESIGN-GAPS G29). Sortino with no losing
+ * bar and profit factor with no losing trade have no value: both divide by
+ * nothing. They used to be stored as 0.0, which reads as the worst case for a
+ * run that never lost. They are {@code null} now, Gson leaves them out of
+ * {@code result_json}, and every reader shows a dash. The Sortino field was
+ * also spelled {@code sortingRatio}, so the stored key never matched what the
+ * client reads.
  */
 public class PerformanceMetrics {
 
     private final double totalReturnPct;
     private final double annualizedReturnPct;
     private final double sharpeRatio;
-    private final double sortingRatio;
+    private final Double sortinoRatio;
     private final double calmarRatio;
     private final double maxDrawdownPct;
     private final double maxDrawdownAmount;
-    private final double profitFactor;
+    private final Double profitFactor;
     private final double winRate;
     private final double avgWin;
     private final double avgLoss;
@@ -22,6 +30,7 @@ public class PerformanceMetrics {
     private final int totalTrades;
     private final int winningTrades;
     private final int losingTrades;
+    private final int breakEvenTrades;
     private final int maxConsecutiveWins;
     private final int maxConsecutiveLosses;
     private final double totalCommissions;
@@ -35,7 +44,7 @@ public class PerformanceMetrics {
         this.totalReturnPct = builder.totalReturnPct;
         this.annualizedReturnPct = builder.annualizedReturnPct;
         this.sharpeRatio = builder.sharpeRatio;
-        this.sortingRatio = builder.sortinoRatio;
+        this.sortinoRatio = builder.sortinoRatio;
         this.calmarRatio = builder.calmarRatio;
         this.maxDrawdownPct = builder.maxDrawdownPct;
         this.maxDrawdownAmount = builder.maxDrawdownAmount;
@@ -47,6 +56,7 @@ public class PerformanceMetrics {
         this.totalTrades = builder.totalTrades;
         this.winningTrades = builder.winningTrades;
         this.losingTrades = builder.losingTrades;
+        this.breakEvenTrades = builder.breakEvenTrades;
         this.maxConsecutiveWins = builder.maxConsecutiveWins;
         this.maxConsecutiveLosses = builder.maxConsecutiveLosses;
         this.totalCommissions = builder.totalCommissions;
@@ -69,8 +79,9 @@ public class PerformanceMetrics {
         return sharpeRatio;
     }
 
-    public double getSortinoRatio() {
-        return sortingRatio;
+    /** Mean return over the downside deviation, annualised; null with no losing bar. */
+    public Double getSortinoRatio() {
+        return sortinoRatio;
     }
 
     public double getCalmarRatio() {
@@ -85,7 +96,8 @@ public class PerformanceMetrics {
         return maxDrawdownAmount;
     }
 
-    public double getProfitFactor() {
+    /** Gross profit over gross loss; null with no losing trade. */
+    public Double getProfitFactor() {
         return profitFactor;
     }
 
@@ -115,6 +127,11 @@ public class PerformanceMetrics {
 
     public int getLosingTrades() {
         return losingTrades;
+    }
+
+    /** Trades that closed at exactly zero P&L: neither wins nor losses. */
+    public int getBreakEvenTrades() {
+        return breakEvenTrades;
     }
 
     public int getMaxConsecutiveWins() {
@@ -157,11 +174,11 @@ public class PerformanceMetrics {
         private double totalReturnPct;
         private double annualizedReturnPct;
         private double sharpeRatio;
-        private double sortinoRatio;
+        private Double sortinoRatio;
         private double calmarRatio;
         private double maxDrawdownPct;
         private double maxDrawdownAmount;
-        private double profitFactor;
+        private Double profitFactor;
         private double winRate;
         private double avgWin;
         private double avgLoss;
@@ -169,6 +186,7 @@ public class PerformanceMetrics {
         private int totalTrades;
         private int winningTrades;
         private int losingTrades;
+        private int breakEvenTrades;
         private int maxConsecutiveWins;
         private int maxConsecutiveLosses;
         private double totalCommissions;
@@ -193,7 +211,7 @@ public class PerformanceMetrics {
             return this;
         }
 
-        public Builder sortinoRatio(double sortinoRatio) {
+        public Builder sortinoRatio(Double sortinoRatio) {
             this.sortinoRatio = sortinoRatio;
             return this;
         }
@@ -213,7 +231,7 @@ public class PerformanceMetrics {
             return this;
         }
 
-        public Builder profitFactor(double profitFactor) {
+        public Builder profitFactor(Double profitFactor) {
             this.profitFactor = profitFactor;
             return this;
         }
@@ -250,6 +268,11 @@ public class PerformanceMetrics {
 
         public Builder losingTrades(int losingTrades) {
             this.losingTrades = losingTrades;
+            return this;
+        }
+
+        public Builder breakEvenTrades(int breakEvenTrades) {
+            this.breakEvenTrades = breakEvenTrades;
             return this;
         }
 
