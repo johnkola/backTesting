@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-15-5** · 2026-11-15 12:44 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-15-6** · 2026-11-15 12:52 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -60,6 +60,12 @@ steps.
   never runs older code than the repo. Then recalculate what the change makes
   stale, by the next rule. Wait for a running test suite to finish before
   rebuilding.
+- **Anything derivable is recalculable on demand.** A figure that can be
+  recalculated is, on request as well as after a code change. So never bake one
+  in where only a retrain or rebuild could redo it, and store what a
+  recalculation needs, such as per-bar signals. Raw data can always be
+  repopulated, from its archived CSV or by pulling from its provider again.
+  The author's principle, 2026-11-15; D9 follows from it.
 - **Stale records: back up, confirm, delete, rerun.** After a fix makes stored runs
   or results stale:
   - Dump the affected tables.
@@ -480,6 +486,30 @@ Comes after B6, so all three benchmarks are costed alike.
 - [ ] A new label kind cannot be registered without its baseline: always "up" for a
   direction label, the historical mean return for a return label.
 
+### B10. Signals, then profit (D9, R75)
+
+Engines output buy and sell signals only and know nothing about costs, tax or margin.
+A separate profit step turns stored signals into results, and can be rerun on demand
+without retraining. Comes before B1, so B1 changes the trade timing in one place, the
+profit step; the two can share one rerun.
+
+**Done when**
+
+- [ ] Every walk-forward fold stores its per-bar signals for the bars it scored: date,
+  the model's raw output, and the call it was turned into. They are linked to the run.
+- [ ] One profit step turns stored signals into a fold's results under the strategy's
+  settings: costs, tax, Strategy 2's margin, and later dividends and currency. The
+  scorer calls it, and nothing else computes profit.
+- [ ] Recalculate on demand: a CLI and an API route recompute a run's results from its
+  stored signals under the strategy's current settings, without retraining. A test
+  shows that changing the tax rate this way gives the same figures as a full rerun at
+  that rate.
+- [ ] Engines are blind. The money losses train without commission, tax or margin
+  terms. `taxTrain` and `marginTrain` are refused on save, with D9 as the reason.
+  Strategy versions that used them get new versions without them.
+- [ ] The runs trained with costs, tax or margin (374, 375, 394, 395, 396) are handled
+  by the stale-records rule.
+
 ### B9. XGBoost and LightGBM engines (G35)
 
 Comes last, so each new engine is judged against the full set of benchmarks.
@@ -538,6 +568,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B7. Faber and dual momentum | G33 | B6 | not started | |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
+| B10. Signals, then profit | D9 | | not started | Decided 2026-11-15: R75. Comes before B1 |
 
 ---
 
@@ -547,6 +578,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-15-6 | 2026-11-15 12:52 | Claude Code (Claude Opus 5.5) | Working rule: anything derivable is recalculable on demand, and raw data repopulates from its CSV or API; build step B10 (signals, then profit) for D9 |
 | 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added; working rule: stamp every doc you change |
 | 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3 done; step 7's metrics limit became an app condition; step 7 review row updated (`e7c94a8`) |
 | 2026-11-15-3 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | G47: step 2 gains the publication-delay check; step 6 review row updated (`d04cee5`) |
