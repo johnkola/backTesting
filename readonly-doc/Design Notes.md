@@ -103,8 +103,8 @@ Split the data chronologically (always test forward in time, never backward), ho
 | Piece | Dates | Purpose | Rough markets it contains |
 | --- | --- | --- | --- |
 | Training | 2003 onward, rolling | The model learns patterns | Rolling training base; validation folds land on 2016 through 2021, spanning calm and choppy years |
-| Validation | 2022 | Walk-forward tuning across many folds | 2022 rate-shock bear market plus recent mixed conditions - held out on purpose, touched only at the very end |
-| Test (holdout) | 2023 to today | Honest out-of-sample final exam, never touched until the end | Recent, mixed conditions |
+| Validation | 2016 to 2021 | Walk-forward tuning across many folds | Calm and choppy years, one fold per year |
+| Test (holdout) | 2022 to today | Honest out-of-sample final exam, never touched until the end | 2022 rate-shock bear market plus recent mixed conditions |
 
 Validation uses **walk-forward** rather than a single fixed year. Rather than judging the model on one year (2022 alone was too small and too specific - a single rate-driven bear), the validation window rolls forward one year at a time: train 2003 to 2015 and validate on 2016; then train through 2016 and validate on 2017; and so on up to 2021. This yields a series of validation results across many market regimes - calm years, choppy years, corrections - so confidence comes from holding up across all of them, not luck on one. Each fold retrains from 2003 up to the fold's edge, always testing forward in time, never backward. The 2022-onward test block stays completely untouched until the very end.
 
@@ -156,7 +156,7 @@ Features do not share one common date range. Some series start in 1999, others i
 
 ### Buy-and-hold is one fixed benchmark
 
-Every strategy is measured against buy-and-hold, and buy-and-hold must be the same number for every comparison. It is computed once for a given start date, end date and starting capital, stored, and reused by every model run and every strategy evaluated over that window. It is never recomputed per run, per feature set, or per strategy. If two runs report different buy-and-hold figures for the same window, that is a defect, not a result. An earlier prototype got this wrong: each run produced its own buy-and-hold figure, which made the comparisons meaningless.
+Every strategy is measured against buy-and-hold, and buy-and-hold must be the same number for every like-for-like comparison. It is recalculated on every run, for that run's start date, end date, starting capital and cost and tax settings, and stored with the run. The calculation never depends on the model, the feature set or the strategy's signals. If two runs with the same window and settings report different buy-and-hold figures, that is a defect, not a result. An earlier prototype got this wrong: each run produced its own buy-and-hold figure by its own method, which made the comparisons meaningless.
 
 **Self-computed, and the one paid column:**
 
@@ -177,7 +177,7 @@ The fix is not to remove the tax, which is real, but to put it inside the object
 
 The critical detail: the tax must be inside the signal the model learns from, not applied afterward in reporting. If tax is deducted only after training, the model never feels it and keeps churning. Taxed inside the reward, the model learns on its own that a trade has to clear the tax hurdle to be worth making, and marginal in-and-out trades get punished automatically.
 
-Tax is not a feature column. It is not something the model observes about the market, so it does not belong in the normalized feature table. It belongs in the scoring, as a cost of acting. Refinements to consider: distinguish short-term from long-term holding rates so longer holds are taxed more lightly, and compare the model's after-tax curve against a buy-and-hold benchmark taxed on the same honest basis, so the comparison is fair.
+Tax is not a feature column. It is not something the model observes about the market, so it does not belong in the normalized feature table. It belongs in the scoring, as a cost of acting. Refinements to consider: distinguish short-term from long-term holding rates so longer holds are taxed more lightly, and compare the model's after-tax curve against a buy-and-hold benchmark taxed on the same honest basis, so the comparison is fair. A position still open at the end of the window is sold and taxed, for the model and for buy-and-hold alike.
 
 In the application itself this is exposed as a user-facing tax toggle. The app's primary job is to generate signals (buy, sell, hold), not to execute trades, so a pure signal carries no realized gain and no tax. The switch lets the user choose how results are scored and displayed. Tax off: the raw, pre-tax signal quality, how good the timing is on its own, measured against buy-and-hold. Tax on: the same equity curve run through the tax deduction, showing the after-tax picture that matters to someone trading a taxable account, with the user entering their own rate since every tax situation differs. The model and its signals are identical underneath either way; only the scoring and presentation layer changes.
 
