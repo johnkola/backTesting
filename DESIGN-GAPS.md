@@ -12,6 +12,157 @@ Effort is an estimate: S is under a day, M a few days, L a week or more, XL a re
 
 ---
 
+## Pass 4 — 2026-11-15 (HEAD `6cdc664`): `Requirements.md` R1 to R76 against the code
+
+Scope: the author refreshed `readonly-doc/` on 2026-11-15 (`5f7a8c2`, `ee02e90`). That
+refresh added `Requirements.md` (R1 to R76, numbered for one-by-one review), expanded
+`Architecture.md`, and adjusted `Design Notes.md`. Four read-only agents checked every
+requirement against the code and the live database. Each finding that changes a
+conclusion was checked again before it was written here.
+
+**Result: 12 done, 33 partial, 21 missing, 10 in conflict.** The conflicts are with a
+deliberate code choice or a recorded decision, and four of them are also
+contradictions inside `readonly-doc/` itself.
+
+**What the refresh settled.** Pass 3's note that "the design copy is behind" no longer
+holds. The four requirement groups it quoted now sit in `readonly-doc/`: R76 (B1), R36
+and R39 (B6, B7), R72 (B8), and R21 to R23 with R74 (B9). Where they differ from the
+quotes, `readonly-doc/` wins.
+- `Design Notes.md` now validates on 2016 to 2021 and tests on 2022 onward (the
+  contradiction the step 4 review found is gone).
+- It recalculates the benchmark on every run (D6).
+- It sells and taxes a position still open at the end (D8).
+
+**Renumbered.** Architecture §6 became §5, §8 became §7 and §10 became §9. New sections
+are §4 (Feature store), §6 (Backend services) and §8 (Verification and audit trail). The
+repo holds 124 references to the old numbers in 35 files. All but one map directly (old
+§8.2a to §7.2a, §8.1a to §7.1a, §6.x to §5.x, §10 to §9, §8.3 and §8.4 to §7.3 and §7.4).
+The exception is G10's "§8.1", the old UI structure table, which becomes §8 (the Verify
+chain). The pass waits for the author's go.
+
+### Decisions the author owes (Pass 4)
+
+| # | Conflict | One side | The other side | Stored data it touches |
+|---|---|---|---|---|
+| D9 | Do engines learn costs, tax and margin? | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `Design Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
+| D2 (updated) | Null padding | R3: "no trimming to overlap, no null padding" | `schema.sql`: "value is NULLABLE on purpose". The database confirms what D2 called unconfirmed: set 27 holds 9,565 NULL rows of 264,670, every column spans the whole calendar from 1999-03-10, and the NULLs include padding before each series starts (`ndx_net_income_qoq` 3,013, `earnings_season_*` 1,166, `vxn_*` 532), not only warm-up. Waived for step 2 on 2026-11-14 | every feature set |
+| D10 | Is raw data immutable? | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `data/csv-archive` |
+| D11 | Do checks stop the chain? | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
+| D12 | Keep old feature values? | Architecture §4 and R20: "earlier values stay, each tied to its run"; every value row points at its run | G3 progress: "Not done, by decision: keeping old values"; a rebuild replaces a set's values (`feature_build.py`), and `feature_values` has no build id | every feature set |
+| D13 | Deeplearning4j and ONNX check (R62) | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
+| D14 | Indicators from TA-Lib (R66) | R66: TA-Lib through one shared module, for features and benchmarks | `nn/indicators.py` is hand-written "TA4J-compatible … line up bit-for-bit with the Java side" | every set's RSI, MACD and moving-average columns |
+
+G16 (Spring Boot, Next.js) is already a decision row. R48, R53, R60 and R67 now spell
+it out: Spring Boot as the single backend, `app`, `data` and `jobs` schemas with
+per-writer roles, and a jobs table with `SKIP LOCKED` claims, heartbeats, attempts and
+cancel. The code is the reverse: Node, Java and Python FastAPI over direct HTTP, one
+`public` schema, and one superuser role. New work still lands on Node and Python HTTP,
+for example `GET /api/nn/features/preview` (2026-11-15). D3 (sliding walk-forward) is
+restated by Architecture §7.2a.
+
+### New gaps (Pass 4)
+
+G46 and G47 come first: one can destroy data, the other leaks look-ahead into every
+stored run.
+
+| # | Gap | Requirement | Evidence | Stored data | Effort | Status |
+|---|---|---|---|---|---|---|
+| G46 | **Undo can delete current data.** Undo deletes a series' whole calendar year and only the audit row it was pressed on. Each daily feeds refresh adds an audit row for the current year, so 116 archive paths have several (`computed/NDXAD/2026/D1.csv`: rows 801, 7492, 7524, 7670, 7717). Undo on the oldest deletes all 219 current 2026 bars, leaves four rows pointing at nothing, and the older version cannot come back because its archive file was overwritten. Re-importing the archive restores the current data only | R11 | `imports_api.py` `delete_import` (`DELETE FROM candles … timestamp >= since AND < until`, then the one audit row); the Imports page lists every row with Undo | at risk: any series the feeds refresh | S | open |
+| G47 | **Look-ahead: features join on the date a value describes, not the date it was published.** A row for day D holds FRED's DGS10, DGS2, BAA10Y and DFF, the Bank of Canada's CORRA and EIA's WTI for D. These arrive the next day or later, while the trade is decided after D's close. The live system cannot see them at 18:30 on D (they are carried forward), so history and live disagree, and every backtest used values it could not have had. Also: `holiday_proximity` reads the next stored session, so an unscheduled closure leaks | R17 | `feature_build._fetch_field` (`c.timestamp::date`), `normalize.align_forward_fill`. QQQ's 11-12 bar was stored 2026-11-12 18:30 (import 366); DGS10, DFF and CORRA for 11-12 arrived 2026-11-13 21:25 (imports 420, 425, 428) | every feature set; runs 374 to 378 (phase1-full and both Strategy 2 variants select `treasury_10y`, `treasury_2y`, `yield_curve_10y2y`, `oil_wti`) | M | open |
+| G48 | The test block has been scored, and nothing guards it. The Run tab fills a saved strategy's window from its test block, and results 686, 697, 698 and 706 score 2022-04-13 to 2026-06-30 (inside every strategy's 2022-01-01 to 2026-06-30 test block) with `nn-feedforward` models. No run is marked as having seen the test window | R69 | `RunPage.tsx` `applySaved` ("the window defaults to the strategy's **test** block") | results 686, 697-699, 706, 711-713 | S | open |
+| G49 | Prediction targets are a fixed 3-class label. Only `forward_return_3class` (±2% over 5 bars) is registered, and its thresholds are runner defaults. There is no direction target (P(next bar up), buy and sell thresholds) or return target (N-bar forecast, minimum return). So R72's baselines ("always up", "historical mean return") have nothing to attach to | R71, R72 | `strategy_spec.LABEL_KINDS`; `strategies.js` ("the only one registered") | all 9 runs | M | open |
+| G50 | A walk-forward run keeps neither its models nor its scaler nor its predictions. `run_fold` discards each fold's model and fitted scaler, no per-bar prediction is stored, the windows are kept as years, and the prediction window is never predicted over | R34, R68, R25, R38 | `walkforward.run_fold`, `train_one` ("the feature store deliberately does not persist" the scaler) | all 9 runs | M | open |
+| G51 | Data verification as the design has it: Pandera and exchange_calendars as fixed steps, a `data_checks` table, raw and adjusted candle tables with split detection against imported split history, ydata-profiling and Evidently, one verification column per tool per row, and the OK/warning/error rule (see D11). Today: a hand-written cohesion check, a rule-based NYSE calendar, findings in the response only, one cross-check (the yield curve) | R12, R55, R63, R64, R65, R49 | `loader/cohesion.py`, `loader/market_calendar.py`, `nn/data_checks.py`; no such tables; none of the tools in `pyproject.toml` | none until built | XL | open |
+| G52 | Non-price series are stored as degenerate candles, at the calendar's cadence. There is no raw series table at native cadence; quarterly SEC net income is carried daily; feature values are stored aligned and normalized per set instead of once at native cadence | R15, R17, R49 | `feeds/fred.py` ("each observation becomes a degenerate bar"); all 17 fred, boc and computed series are in `candles` | all non-price series | L | open |
+| G53 | Strategy settings the design adds: commission, slippage and other expenses as separate items with on/off flags (today one `costBps`), a capital-gains inclusion rate, the superficial-loss rule, a minimum trades per year with a "near buy-and-hold" flag, dividends (ex-date payments, reinvest flag, own tax rate, 15% US withholding), account currency (CAD default, Bank of Canada USD/CAD, results in both, conversion fee), a capital setting, and the panel of settings that also drive the benchmarks | R28, R29, R30, R31, R56, R57, R58 | `strategies.js` objective fields; `StrategyPage.tsx` section 7; no USD/CAD series; scoring uses `yahoo-adj` total-return prices, so dividends are reinvested gross and never taxed | none until built | L | open |
+| G54 | The builder saves strategies the runner refuses: the `single` and `kfold_time` schemes, non-D1 timeframes, instruments with no feature set, and windows off year boundaries. `trainSplitRatio` is offered and never used. The model list is Node's own constant, not read from the runner | R22 | `strategies.js` `MODEL_TYPES` and scheme list against `strategy_spec.fold_plan` | none | S | open |
+| G55 | The coverage grid covers the train window only, as marks and a warning rather than a feature-by-window grid; a strategy can be cloned only from its newest version, never from an older one or from a run | R26, R27 | `StrategyPage.tsx` (coverage over train only, `latest: true`); `CoverageWarning.tsx` | none | S | open |
+| G56 | Not instrument-agnostic in practice. `scope` is a label: the instrument-scoped series are hard-coded to QQQ, only QQQ has a feature set, there is no app-wide instrument selector, and Strategy 2 refuses anything but QQQ | R18, R42 | `features.toml` `[alignment]` and instrument series; `Layout.tsx` (timeframe picker only) | none | L | open |
+| G57 | Results: walk-forward runs never reach Results; there is no side-by-side comparison by feature list, windows and metric; no trades per year or average holding time; buy-and-hold has a return but no Sharpe or drawdown | R38, R39, R40 | `ResultsPage.tsx`, `ResultDetailPage.tsx`; `benchmarks` columns | none | M | open |
+| G58 | Train and Run are still two tabs, each with its own ad hoc form; the design has one Train & Run tab that runs a saved strategy with no choices | R33, R41 | `Layout.tsx`, `TrainPage.tsx` ("the ad-hoc path"), `RunPage.tsx` | none | M | open |
+| G59 | Tooltips come from three dictionaries plus about 29 hard-coded `data-tip` strings, and the nav tabs and the Pipeline sub-tabs have none | R43 | `fieldHints.ts`, `metricHints.ts`, `cohesionHints.ts` | none | S | open |
+| G60 | Testing layers the design asks for: React Testing Library component tests, Postman run in CI by Newman and mirroring JUnit endpoint tests, one scripted end-to-end path, Python job-layer tests, a reproducibility test (same seed and snapshot give the same model and predictions), and indicators checked against published values. G15 was closed with these left out | R50, R51, R52, R61 | `ci.yml` (no Newman step); `package.json` (no RTL); `tools/datagen/pipeline.py` is manual | none | L | open |
+| G61 | The lineage chain cannot be followed and two hops are missing. `candles` carry no audit columns and no link to their import slice, rolled-up H4/W1/MN1 candles have no audit record at all, `feed_runs` has no audit columns, and `backtest_results` record no code version or input snapshot | R1, R4, R5, R54 | `schema.sql` (`candles` excluded from the audit loop, "nothing rewrites it" no longer true); 27,092 rolled-up rows with no `data_imports` row | all candles; 16 results | M | open |
+| G62 | Models are files only: no database record with path and file hash, no hash check on load | R49 | `nn/store.py` (`metadata.json`); `backtest_results.model_version_id` only | 6 model versions | S | open |
+| G63 | The engine and benchmark catalogue: buy-and-hold, Faber and dual momentum have no entries, and nothing is shown on Results, Docs or in tooltips. B9 covers engine entries on the Strategy tab only | R74 | `metricHints.ts` (buy-and-hold only) | none | S | open |
+| G64 | `Requirements.md` does not show on the Docs tab: it is not in the `DOCS` registry and not mounted into the api container | R59 | `web/api/docsRegistry.js`; `docker-compose.yml` (three design files mounted) | none | S | open |
+| G65 | Signal voting (Phase 2): per-bar votes per signal, a voting setup with a minimum count, and its backtest | R73 | none in code | none | L | gated: after Phase 1 |
+
+Also recorded against existing rows: G14 (R45) now covers a third charting approach, the hand-written SVG preview added 2026-11-15 (`FeaturePreview.tsx`). G10 (R46) is unchanged. G34 and B8 should follow R72: the baseline is scored on the test window, it is "always up" or the historical mean return per target, and it shows on Results. B6 (R36) does not cover dividends, currency or the superficial-loss rule, which wait on G53.
+
+### Status per requirement
+
+Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R35, R47, R59.
+
+| R | Status | Tracked as |
+|---|---|---|
+| R1 | partial | G10, G40, G45, G61 |
+| R2 | conflicts | D10 |
+| R3 | conflicts | D2 |
+| R4 | partial | G61 |
+| R5 | partial | G45, G61, D12 |
+| R6 | conflicts | G16 |
+| R11 | partial | G46 |
+| R12 | partial | G51, D11 |
+| R15 | conflicts | G52 |
+| R17 | partial | G47, G52 |
+| R18 | partial | G56 |
+| R20 | partial | D12, G45 |
+| R21 | missing | G35 (B9) |
+| R22 | partial | G54, G35 |
+| R23 | missing | G35 (B9) |
+| R25 | partial | G49, G50, D3 |
+| R26 | partial | G55 |
+| R27 | partial | G55 |
+| R28 | partial | G53, G40 |
+| R29 | partial | G53, G32 (B6), D8 |
+| R30 | missing | G53 |
+| R31 | missing | G53 |
+| R32 | conflicts | D9 |
+| R33 | conflicts | G58 |
+| R34 | partial | G50, G45 |
+| R36 | partial | G32 (B6), G33 (B7), G53 |
+| R37 | partial | G32 (B6) |
+| R38 | partial | G50, G57 |
+| R39 | partial | G33 (B7), G57 |
+| R40 | partial | G57 |
+| R41 | partial | G58, G10 |
+| R42 | partial | G56 |
+| R43 | partial | G59 |
+| R44 | missing | G13 |
+| R45 | partial | G14 |
+| R46 | missing | G10 |
+| R48 | conflicts | G16 |
+| R49 | partial | G51, G52, G62 |
+| R50 | partial | G60 |
+| R51 | partial | G60 |
+| R52 | partial | G60 |
+| R53 | conflicts | G16 |
+| R54 | partial | G10, G61 |
+| R55 | partial | G51, G9 |
+| R56 | missing | G53 |
+| R57 | missing | G53 |
+| R58 | missing | G53 |
+| R60 | missing | G16 |
+| R61 | partial | G60 |
+| R62 | conflicts | D13 |
+| R63 | missing | G51 |
+| R64 | missing | G51 |
+| R65 | missing | G51, D11 |
+| R66 | missing | D14 |
+| R67 | missing | G16 |
+| R68 | partial | G50 |
+| R69 | missing | G48 |
+| R70 | missing | G16 |
+| R71 | missing | G49 |
+| R72 | partial | G34 (B8), G49 |
+| R73 | missing | G65 |
+| R74 | missing | G63, G35 (B9) |
+| R75 | conflicts | D9 |
+| R76 | missing | G27 (B1) |
+
+---
+
 ## Pass 3 — 2026-11-14 (HEAD `0ad6053`)
 
 Scope: a read of the Java engine, the walk-forward scorer and the two single-split
@@ -727,7 +878,7 @@ a stored result now, since every result left is newer than every such fix.
 | # | What differs | Why it was done | Status |
 |---|---|---|---|
 | D1 | `breakeven_inflation` (24) is disabled, so training can start before the design's 2003 | `c8ec0fe`: one column was setting the start date for the whole table | decision |
-| D2 | `feature_values.value` is nullable, while the design says no nulls and no row outside a feature's range. Whether such rows are written is unconfirmed | Warm-up days are `None` in `normalize.py` | open |
+| D2 | `feature_values.value` is nullable, while the design says no nulls and no row outside a feature's range (now R3, "no null padding"). Confirmed 2026-11-15: such rows are written, including padding before each series starts, see Pass 4 | Warm-up days are `None` in `normalize.py` | open |
 
 ### Already built
 
