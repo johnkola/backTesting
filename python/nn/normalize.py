@@ -281,6 +281,32 @@ def apply(
 # ---------------------------------------------------------------------------
 
 
+def shift_to_availability(calendar: Sequence[object], observed: dict[object, float],
+                          sessions: int) -> dict[object, float]:
+    """Move each value from the day it describes to the first calendar session
+    the evening run can have it: the `sessions`-th session strictly after that
+    day (R17, G47). A value published the next business day (`sessions` = 1)
+    for a Friday lands on Monday, and so does Saturday's (a 7-day series such as
+    DFF), the later of the two winning. A value whose session is past the end of
+    the calendar is not available yet and is dropped. `sessions` = 0 returns the
+    series untouched, so a same-day source is exactly what it was.
+    """
+    if sessions <= 0:
+        return observed
+    from bisect import bisect_right
+
+    out: dict[object, float] = {}
+    when: dict[object, object] = {}
+    for day, value in observed.items():
+        i = bisect_right(calendar, day) + sessions - 1
+        if i >= len(calendar):
+            continue
+        at = calendar[i]
+        if at not in when or day > when[at]:
+            out[at], when[at] = value, day
+    return out
+
+
 def align_forward_fill(
     calendar: Sequence[object],
     observed: dict[object, float],

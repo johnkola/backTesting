@@ -536,3 +536,24 @@ def test_any_other_disabled_column_is_still_not_built(tmp_path):
 def test_the_shipped_config_stores_rsi_macd_and_realized_vol_as_data_only():
     cfg = fc.load()
     assert {f.name for f in cfg.data_only} == {"rsi_14", "macd", "realized_vol"}
+
+
+def test_publication_delays_are_read_per_source_and_per_series():
+    """R17, G47: a row holds only what the evening run can have."""
+    a = fc.load(fc.DEFAULT_PATH).alignment
+    assert a.delay("DGS10", "fred") == 1
+    assert a.delay("DCOILWTICO", "fred") == 2      # the series' own entry wins
+    assert a.delay("CORRA", "boc") == 1
+    assert a.delay("GOLD", "yahoo") == 1 and a.delay("VIX", "yahoo") == 0
+    assert a.delay("QQQ", "yahoo-adj") == 0 and a.delay(None, None) == 0
+
+
+@pytest.mark.parametrize("entry", ['fred = -1', 'fred = 1.5', 'fred = true', '"a/b/c" = 1'])
+def test_a_bad_publication_delay_is_refused(tmp_path, entry):
+    text = fc.DEFAULT_PATH.read_text().replace(
+        "[alignment.available_after]\n", f"[alignment.available_after]\n{entry}\n", 1)
+    text = text.replace("\nfred = 1\n", "\n", 1) if entry.startswith("fred") else text
+    path = tmp_path / "features.toml"
+    path.write_text(text)
+    with pytest.raises(fc.FeatureConfigError, match="available_after"):
+        fc.load(path)

@@ -62,6 +62,17 @@ class Alignment:
     calendar_timeframe: str
     fill: str
     max_fill_days: int
+    #: `[alignment.available_after]` as (key, sessions) pairs: a source, or one
+    #: "SYMBOL/source" series. See `delay`.
+    available_after: tuple[tuple[str, int], ...] = ()
+
+    def delay(self, symbol: str | None, source: str | None) -> int:
+        """Sessions after the day a value describes before the evening run can
+        have it (R17, G47): the series' own entry, else its source's, else 0."""
+        table = dict(self.available_after)
+        if symbol and source and f"{symbol}/{source}" in table:
+            return table[f"{symbol}/{source}"]
+        return table.get(source or "", 0)
 
 
 # The catalogue fields, from ARCHITECTURE.md 8.2a. Closed sets rather than free
@@ -384,12 +395,21 @@ def load(path: Path | str = DEFAULT_PATH) -> FeatureConfig:
         raise FeatureConfigError(
             f"[alignment] fill {a['fill']!r} must be one of {sorted(_FILL_MODES)}"
         )
+    available = a.get("available_after", {})
+    for key, sessions in available.items():
+        if not isinstance(sessions, int) or isinstance(sessions, bool) or sessions < 0:
+            raise FeatureConfigError(
+                f"[alignment.available_after] {key!r} must be a whole number of sessions >= 0")
+        if key.count("/") > 1 or key.startswith("/") or key.endswith("/"):
+            raise FeatureConfigError(
+                f"[alignment.available_after] {key!r} must be a source or SYMBOL/source")
     alignment = Alignment(
         calendar_symbol=a["calendar_symbol"],
         calendar_source=a["calendar_source"],
         calendar_timeframe=a["calendar_timeframe"],
         fill=a["fill"],
         max_fill_days=int(a.get("max_fill_days", 5)),
+        available_after=tuple(sorted(available.items())),
     )
 
     features = tuple(_build_feature(f, defaults) for f in raw.get("feature", []))

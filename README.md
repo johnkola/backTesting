@@ -100,6 +100,18 @@ normalized causally at build time, so a z-score on a given date is the same
 number whatever range the set was written over — see
 [Build wide, train narrow](/docs/architecture#build-wide-train-narrow).
 
+**Each value lands on the day the system could have it.** A row is decided
+after that session's close, so it holds only what the 18:30 New York feeds run
+on that day can see. A series published later is shifted forward by its delay in
+sessions, set in `features.toml` under `[alignment.available_after]`. The delays
+are 1 for FRED's daily series and the Bank of Canada's CORRA, 2 for WTI, and 1
+for gold, copper and the dollar index, which the evening run takes up to the day
+before. Everything else is 0. They were measured from when the feeds actually
+received each series. Re-measure them if a provider's timing changes: a delay
+too short puts tomorrow's number in today's row. `holiday_proximity` comes from
+the scheduled NYSE holidays for the same reason: a closure nobody scheduled
+cannot be known the day before.
+
 Rows where any column is NULL are dropped when the matrix is read, so leaving
 the pre-2003 head in the window costs disk and nothing else — training with no
 window still yields 5,970 complete days. The limit is the shortest series

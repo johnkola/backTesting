@@ -95,6 +95,32 @@ max_fill_days = 5
 #   DCOILWTICO                330      the worst case, 5.5%
 
 
+[alignment.available_after]
+# Sessions after the day a value describes before the evening run can have it
+# (R17: align on publication time, no look-ahead; G47). A row for session t is
+# decided after t's close, so it may hold only what the 18:30 New York run on t
+# can see. Until 2026-11-15 every series was put on the day it describes, so a
+# row held FRED's yields for that same day, which arrive the next afternoon:
+# every backtest used numbers the live run never had.
+#
+# Keys are a source (the default for every series of it) or "SYMBOL/source" (one
+# series). Unlisted sources are 0: Yahoo equities and indexes and the computed
+# breadth and SEC series are final by the evening run (EDGAR dates a filing
+# accepted after 17:30 with the next day).
+#
+# Measured from the feeds' own runs, 2026-11-12 and 11-13: the daily FRED series
+# and CORRA arrived one session late. WTI arrived two late; FRED's snapshots show
+# Monday's value published Wednesday about 12:10 CT. Gold, copper and the dollar
+# index trade into the evening, so the evening run takes them only up to the day
+# before (loader/feeds `core.feed_cutoff`), and history follows that.
+fred = 1
+boc = 1
+"DCOILWTICO/fred" = 2
+"COPPER/yahoo" = 1
+"GOLD/yahoo" = 1
+"DXY/yahoo" = 1
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Price — the raw bar. Four columns, one common base (yesterday's close) so they
 # stay comparable and together reconstruct the whole bar's geometry.
@@ -635,7 +661,9 @@ series = { computed = "holiday_proximity", calendar = "NYSE", lookahead_days = 1
 method = "flag"
 enabled = true
 note = """Should interact with day_of_week: a holiday making a three-day weekend
-drives more position-squaring than a midweek one."""
+drives more position-squaring than a midweek one. From the scheduled NYSE
+holidays, not the stored calendar: a closure nobody scheduled (9/11, Sandy, a
+day of mourning) could not be known the day before (G47)."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

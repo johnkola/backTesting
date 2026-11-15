@@ -9,11 +9,11 @@ real data — a flat window, a zero base, a series that crosses zero.
 from __future__ import annotations
 
 import math
+from datetime import date as _date
 
 import pytest
 
 from nn import normalize as nz
-
 
 # --------------------------------------------------------------------------
 # ratio_to_prev_close
@@ -240,3 +240,37 @@ def test_align_staleness_resets_on_a_fresh_print():
     cal = list(range(6))
     out = nz.align_forward_fill(cal, {0: 1.0, 2: 2.0, 4: 3.0}, max_fill_days=1)
     assert out == [1.0, 1.0, 2.0, 2.0, 3.0, 3.0]
+
+
+# --------------------------------------------------------------------------
+# Publication delay (R17, G47): a value goes on the first session the evening
+# run can have it, not on the day it describes.
+# --------------------------------------------------------------------------
+
+
+_CAL = [_date(2026, 11, 6), _date(2026, 11, 9), _date(2026, 11, 10), _date(2026, 11, 12),
+        _date(2026, 11, 13)]   # Fri, Mon, Tue, Thu (Wed 11-11 a bond holiday), Fri
+
+
+def test_a_next_day_publication_lands_one_session_later():
+    obs = {_date(2026, 11, 10): 4.98, _date(2026, 11, 12): 5.10}
+    shifted = nz.shift_to_availability(_CAL, obs, 1)
+    assert shifted == {_date(2026, 11, 12): 4.98, _date(2026, 11, 13): 5.10}
+
+
+def test_a_weekend_value_lands_on_the_next_session_and_the_later_day_wins():
+    """DFF prints Saturday and Sunday too: with Friday's, all three land on
+    Monday, and Sunday's is what Monday's run has newest."""
+    obs = {_date(2026, 11, 6): 3.86, _date(2026, 11, 7): 3.87, _date(2026, 11, 8): 3.88}
+    assert nz.shift_to_availability(_CAL, obs, 1) == {_date(2026, 11, 9): 3.88}
+
+
+def test_a_value_not_published_by_the_last_session_is_left_out():
+    assert nz.shift_to_availability(_CAL, {_date(2026, 11, 13): 5.2}, 1) == {}
+    wti = {_date(2026, 11, 10): 60.1}
+    assert nz.shift_to_availability(_CAL, wti, 2) == {_date(2026, 11, 13): 60.1}
+
+
+def test_no_delay_leaves_a_series_exactly_as_it_was():
+    obs = {_date(2026, 11, 7): 1.0, _date(2026, 11, 9): 2.0}
+    assert nz.shift_to_availability(_CAL, obs, 0) is obs

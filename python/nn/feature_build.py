@@ -31,7 +31,7 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -156,24 +156,31 @@ def _computed_day_of_month(cur, spec: dict, cal: list[date], tf: str) -> Observe
     return {d: float(d.day) for d in cal}
 
 
-def _computed_holiday_proximity(cur, spec: dict, cal: list[date], tf: str) -> Observed:
-    """1.0 when the next calendar trading day is not the next weekday — i.e.
-    this bar is the last session before a market holiday or a long weekend.
+def next_scheduled_session(d: date) -> date:
+    """The next weekday after `d` that the NYSE has not scheduled as a holiday."""
+    from loader.market_calendar import is_trading_holiday
 
-    Derived from the calendar itself rather than from a holiday list, so it
-    needs no exchange rules and is automatically right about early closes and
-    one-off shutdowns: if the market did not open, the gap is in the data.
+    nxt = d + timedelta(days=1)
+    while nxt.weekday() >= 5 or is_trading_holiday(nxt):
+        nxt += timedelta(days=1)
+    return nxt
+
+
+def _computed_holiday_proximity(cur, spec: dict, cal: list[date], tf: str) -> Observed:
+    """1.0 when the next SCHEDULED session is not the next weekday: this bar is
+    the last session before a market holiday or a long weekend.
+
+    From the NYSE holiday rules (`loader.market_calendar`), not from the next
+    stored session. Until 2026-11-15 it read the stored calendar, which also
+    holds closures nobody scheduled (9/11, Sandy, days of mourning) and so knew
+    them the day before; and it had no next session for the newest row (G47).
     """
     out: Observed = {}
-    for i, d in enumerate(cal):
-        if i + 1 >= len(cal):
-            out[d] = 0.0
-            continue
-        gap = (cal[i + 1] - d).days
-        # 1 = tomorrow; 3 over a normal Fri->Mon weekend. Anything more means a
-        # session is missing, which is what "before a holiday" looks like here.
+    for d in cal:
+        # 1 = tomorrow; 3 over a normal Fri->Mon weekend. More means a
+        # scheduled holiday falls in between.
         normal = 3 if d.weekday() == 4 else 1
-        out[d] = 1.0 if gap > normal else 0.0
+        out[d] = 1.0 if (next_scheduled_session(d) - d).days > normal else 0.0
     return out
 
 
@@ -238,17 +245,22 @@ def resolve_aligned(
                 raise BuildError(f"unknown op {op!r}")
         return out
 
+    # Each value goes on the first session the evening run can have it, not on
+    # the day it describes (`[alignment.available_after]`, G47).
+    delay = cfg.alignment.delay(spec.get("symbol"), spec.get("source"))
+
     if "computed" in spec:
         name = spec["computed"]
         fn = COMPUTED.get(name)
         if fn is None:
             raise BuildError(f"unknown computed series {name!r}")
-        observed = fn(cur, spec, calendar, tf)
+        observed = nz.shift_to_availability(calendar, fn(cur, spec, calendar, tf), delay)
         # A calendar-derived series is already on the calendar and has no gaps
         # to fill; going through the filler anyway keeps one code path.
         return nz.align_forward_fill(calendar, observed, max_fill_days=fill)
 
     observed = _fetch_field(cur, spec["symbol"], spec["source"], tf, spec["field"])
+    observed = nz.shift_to_availability(calendar, observed, delay)
     return nz.align_forward_fill(calendar, observed, max_fill_days=fill)
 
 

@@ -88,7 +88,7 @@ def test_a_wholly_null_column_reports_zero():
 
 
 # --------------------------------------------------------------------------
-# holiday_proximity — derived from calendar gaps, not a holiday list
+# holiday_proximity — from the scheduled NYSE holidays (G47)
 # --------------------------------------------------------------------------
 
 
@@ -110,18 +110,26 @@ def test_an_ordinary_friday_is_not_flagged():
 
 
 def test_a_friday_before_a_long_weekend_is_flagged():
-    # Fri, then Tue — Monday is a holiday.
-    cal = [date(2021, 12, 31), date(2022, 1, 4)]
+    # Martin Luther King Jr. Day, Monday 2022-01-17.
+    cal = [date(2022, 1, 14), date(2022, 1, 18)]
     out = fb._computed_holiday_proximity(None, {}, cal, "D1")
-    assert out[date(2021, 12, 31)] == 1.0
+    assert out[date(2022, 1, 14)] == 1.0
 
 
-def test_the_last_bar_is_never_flagged():
-    """There is no next session to compare against; guessing would invent a
-    signal on the most recent bar, which is the one a live run acts on."""
-    cal = [date(2021, 11, 22), date(2021, 11, 23)]
+def test_an_unscheduled_closure_is_not_known_the_day_before():
+    """The NYSE closed on 2018-12-05 to mourn George H. W. Bush. The stored
+    calendar shows the gap; nobody's schedule did the day before, so reading the
+    stored calendar was look-ahead (G47)."""
+    cal = [date(2018, 12, 3), date(2018, 12, 4), date(2018, 12, 6)]
     out = fb._computed_holiday_proximity(None, {}, cal, "D1")
-    assert out[date(2021, 11, 23)] == 0.0
+    assert out[date(2018, 12, 4)] == 0.0
+
+
+def test_the_newest_bar_is_read_from_the_schedule_too():
+    """The bar a live run acts on: it used to read 0 for want of a next stored
+    session, even on the eve of Thanksgiving."""
+    out = fb._computed_holiday_proximity(None, {}, [date(2026, 11, 25)], "D1")
+    assert out[date(2026, 11, 25)] == 1.0
 
 
 # --------------------------------------------------------------------------
