@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -668,6 +668,33 @@ def get_features_schema() -> JSONResponse:
             ],
         },
     )
+
+
+@router.get("/api/nn/features/preview")
+def get_feature_preview(column: str, set: int | None = None,  # noqa: A002 - the query name
+                        start: str | None = Query(None, alias="from"),
+                        end: str | None = Query(None, alias="to"),
+                        days: int | None = None) -> JSONResponse:
+    """One stored column before and after its method, date by date: the
+    Normalization tab's preview (`nn/feature_preview.py`). `set` defaults to
+    the newest set of the config's calendar series; `from`/`to` to the last
+    `days` (default 730) of it."""
+    from nn import feature_preview, feature_store
+
+    with pool().connection() as conn, conn.cursor() as cur:
+        try:
+            if set is None:
+                a = feature_config.load().alignment
+                set = feature_store.latest_set_id(  # noqa: A001
+                    cur, a.calendar_symbol, a.calendar_source, a.calendar_timeframe)
+            body = feature_preview.preview(cur, set, column, start, end, days)
+        except feature_preview.PreviewError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        except LookupError as e:
+            return JSONResponse(status_code=404, content={"error": str(e)})
+        except feature_config.FeatureConfigError as e:
+            return JSONResponse(status_code=422, content={"error": str(e)})
+    return JSONResponse(status_code=200, content=body)
 
 
 @router.get("/api/nn/features/config")

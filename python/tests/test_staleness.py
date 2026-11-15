@@ -203,6 +203,24 @@ def test_the_price_only_strategies_never_read_volume():
     assert not {"nn-feedforward", "nn-feature-store"} & staleness.PRICE_ONLY_STRATEGIES
 
 
+def _run(rid, name, version, is_test=False, label=None):
+    return {"id": rid, "strategy_name": name, "strategy_version": version,
+            "is_test": is_test, "label": label}
+
+
+def test_the_newest_version_s_run_stands_for_its_strategy():
+    """Rerunning v8 and v9 after v10 ran must not make v10's run superseded."""
+    runs = [_run(375, "smoke", 9), _run(374, "smoke", 8), _run(259, "smoke", 10),
+            _run(378, "phase1", 4), _run(348, "phase1", 4)]
+    assert [r["id"] for r in staleness.pick_newest(runs)] == [378, 259]
+
+
+def test_validation_and_holdout_runs_and_labels_are_kept_apart():
+    runs = [_run(9, "s", 2, is_test=True), _run(8, "s", 2), _run(7, None, None, label="adhoc"),
+            _run(6, None, None, label="adhoc")]
+    assert [r["id"] for r in staleness.pick_newest(runs)] == [9, 8, 7]
+
+
 def test_sessions_behind_counts_trading_days_only():
     # Thursday 2026-11-26 is Thanksgiving: Wed -> Fri is one session.
     assert staleness.sessions_behind(dt.date(2026, 11, 25), dt.date(2026, 11, 27)) == 1

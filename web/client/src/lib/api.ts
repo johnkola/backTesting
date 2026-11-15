@@ -779,10 +779,34 @@ export type FeatureColumnStats = {
   name: string
   n: number
   nulls: number
+  /** NaN or infinite values: counted apart, and left out of min, max, mean and stdev. */
+  nonFinite?: number
+  /** Values other than 0 and 1, so a flag column can be checked for them. */
+  notBinary?: number
   min: number | null
   max: number | null
   mean: number | null
   stdev: number | null
+}
+
+/**
+ * One stored column before and after its method, date by date
+ * (`GET /api/nn/features/preview`): the Normalization tab's preview. `before`
+ * is the series the method was given, as the set recorded it; `after` is the
+ * stored value, null on a warm-up day.
+ */
+export type FeaturePreview = {
+  setId: number
+  column: string
+  method: string
+  params: Record<string, unknown>
+  series: Record<string, unknown>
+  role: string
+  from: string
+  to: string
+  /** False when today's features.toml is not the config the set was built from. */
+  configMatches: boolean
+  points: { date: string, before: number | null, after: number | null }[]
 }
 
 export type SplitBlock = {
@@ -1558,6 +1582,9 @@ export const api = {
     getJson<WalkforwardJobs>('/api/nn/walkforward/jobs', signal),
   features: (timeframe?: string, signal?: AbortSignal) =>
     getJson<FeaturesReport>(`/api/features${timeframe ? `?${qs({ timeframe })}` : ''}`, signal),
+  /** One column of a set before and after its method, over the last `days`. */
+  featurePreview: (setId: number | string, column: string, days?: number, signal?: AbortSignal) =>
+    getJson<FeaturePreview>(`/api/nn/features/preview?${qs({ set: setId, column, days })}`, signal),
   /** The feature catalogue and the sets coverage can be measured against. */
   featureCatalogue: (signal?: AbortSignal) =>
     getJson<FeatureCatalogue>('/api/features/catalogue', signal),

@@ -417,22 +417,32 @@ _RUN_KEYS = ("id", "instrument_id", "source_id", "timeframe", "feature_set_id", 
              "label", "finished_at")
 
 
+def pick_newest(runs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per strategy (or whole-set label), validation and holdout apart, the run
+    of the newest strategy version, and of that version the newest run. Newest
+    run first.
+
+    By version before id: rerunning an older version (the stale-records rule
+    re-created postman-smoke v8 and v9 after v10 had run, 2026-11-14) re-creates
+    history and must not supersede the newest version's run, which would read
+    that strategy as stale for "v10 saved since". A strategy whose newest
+    version never ran still reads stale, from its newest-version run."""
+    best: dict[tuple, dict[str, Any]] = {}
+    for run in runs:
+        key = (run["strategy_name"] or f"label:{run['label']}", run["is_test"])
+        rank = (run["strategy_version"] or 0, run["id"])
+        held = best.get(key)
+        if held is None or rank > (held["strategy_version"] or 0, held["id"]):
+            best[key] = run
+    return sorted(best.values(), key=lambda r: r["id"], reverse=True)
+
+
 def newest_runs(cur, timeframe: str) -> list[dict[str, Any]]:
-    """The newest finished run per strategy (and per whole-set label), validation
-    and holdout separately: an older run of the same strategy is superseded,
-    not stale."""
+    """The newest finished run per strategy (and per whole-set label): an older
+    run of the same strategy is superseded, not stale (`pick_newest`)."""
     cur.execute(_RUN_SQL + " WHERE r.timeframe = %s AND r.finished_at IS NOT NULL "
                 "ORDER BY r.id DESC", (timeframe,))
-    seen: set = set()
-    out = []
-    for row in cur.fetchall():
-        run = dict(zip(_RUN_KEYS, row, strict=True))
-        key = (run["strategy_name"] or f"label:{run['label']}", run["is_test"])
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(run)
-    return out
+    return pick_newest([dict(zip(_RUN_KEYS, row, strict=True)) for row in cur.fetchall()])
 
 
 def check_run(ctx: Context, run: dict[str, Any], latest_versions: dict[str, int],

@@ -2316,6 +2316,98 @@
           ]
         },
         {
+          "name": "Feature preview: one column before and after its method",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/features/preview?column=vix&days=90",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "features",
+                "preview"
+              ],
+              "query": [
+                {
+                  "key": "column",
+                  "value": "vix"
+                },
+                {
+                  "key": "days",
+                  "value": "90"
+                }
+              ]
+            },
+            "description": "The Normalization tab's preview (G39): the series the column's method was given, as the newest set recorded it, beside the stored value, per date. `set` defaults to the newest set, and the window to the last `days` (730) of it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('pairs the input with the stored value, per date', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.include.keys('setId', 'column', 'method', 'series', 'from', 'to', 'configMatches', 'points');",
+                  "    pm.expect(d.column).to.eql('vix');",
+                  "    pm.expect(d.method).to.eql('rolling_zscore');",
+                  "    pm.expect(d.points.length).to.be.above(0);",
+                  "    pm.expect(d.points[0]).to.have.all.keys('date', 'before', 'after');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Feature preview: an unknown column is 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/features/preview?column=no_such_column",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "features",
+                "preview"
+              ],
+              "query": [
+                {
+                  "key": "column",
+                  "value": "no_such_column"
+                }
+              ]
+            },
+            "description": "A column the set does not hold is a 404 with the reason, not an empty preview."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404 with the reason', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "    pm.expect(pm.response.json().error).to.match(/no column/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Loader's model registry",
           "request": {
             "method": "GET",

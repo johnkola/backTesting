@@ -1133,14 +1133,20 @@ app.get('/api/features', async (req, res) => {
     const newestId = sets.length ? sets[0].id : null;
     let columnStats = [];
     if (newestId !== null) {
+      // NaN and +-Infinity are counted apart and kept out of the statistics:
+      // JSON has no NaN, so a NaN min or mean would reach the client as null
+      // and pass the check unseen (G39). `notBinary` lets a flag column be
+      // checked for values other than 0 and 1, not only for its range.
       const { rows } = await pool.query(
         `SELECT feature_name,
                 COUNT(value) AS n,
                 COUNT(*) FILTER (WHERE value IS NULL) AS nulls,
-                MIN(value) AS min,
-                MAX(value) AS max,
-                AVG(value) AS mean,
-                STDDEV_POP(value) AS stdev
+                COUNT(*) FILTER (WHERE value IN ('NaN', 'Infinity', '-Infinity')) AS non_finite,
+                COUNT(*) FILTER (WHERE value NOT IN (0, 1)) AS not_binary,
+                MIN(value) FILTER (WHERE value NOT IN ('NaN', 'Infinity', '-Infinity')) AS min,
+                MAX(value) FILTER (WHERE value NOT IN ('NaN', 'Infinity', '-Infinity')) AS max,
+                AVG(value) FILTER (WHERE value NOT IN ('NaN', 'Infinity', '-Infinity')) AS mean,
+                STDDEV_POP(value) FILTER (WHERE value NOT IN ('NaN', 'Infinity', '-Infinity')) AS stdev
            FROM feature_values
           WHERE feature_set_id = $1
           GROUP BY feature_name`,
@@ -1150,6 +1156,8 @@ app.get('/api/features', async (req, res) => {
         name: r.feature_name,
         n: Number(r.n),
         nulls: Number(r.nulls),
+        nonFinite: Number(r.non_finite),
+        notBinary: Number(r.not_binary),
         min: r.min === null ? null : Number(r.min),
         max: r.max === null ? null : Number(r.max),
         mean: r.mean === null ? null : Number(r.mean),

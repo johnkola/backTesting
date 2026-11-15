@@ -1,40 +1,12 @@
-import { api, type FeatureColumnStats, type FeaturesReport } from '../../lib/api'
+import { useState } from 'react'
+import FeaturePreview from '../../components/FeaturePreview'
+import { api, type FeaturesReport } from '../../lib/api'
+import { checkColumn } from '../../lib/normalizationCheck'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
 import { mergeState } from '../../lib/stageStatus'
 import StageShell, { type StageState } from './StageShell'
-
-/**
- * The design's normalization gate, as a check per method.
- *
- * Each method promises a shape, and a violated promise is a real bug rather
- * than a cosmetic one: a rescaled column outside its band means the declared
- * min/max was wrong, and a cyclical column outside -1..1 is not a sine. The
- * z-score bound is deliberately loose — a rolling z-score genuinely spikes
- * past 6 in a crash, so only something absurd is worth flagging.
- */
-function checkColumn(method: string, s: FeatureColumnStats): string | null {
-  if (s.n === 0) return 'no values at all'
-  const { min, max, mean } = s
-  if (min === null || max === null || mean === null) return null
-
-  switch (method) {
-    case 'cyclical':
-      return min < -1.0001 || max > 1.0001 ? `outside -1..1 (${min.toFixed(2)}..${max.toFixed(2)})` : null
-    case 'rescale':
-      return min < -0.0001 || max > 1.0001 ? `outside 0..1 (${min.toFixed(2)}..${max.toFixed(2)})` : null
-    case 'flag':
-      return min < 0 || max > 1 ? `not a 0/1 flag (${min}..${max})` : null
-    case 'rolling_zscore':
-      if (Math.abs(mean) > 1) return `mean ${mean.toFixed(2)} is far from 0`
-      return Math.abs(min) > 25 || Math.abs(max) > 25 ? `implausible extreme (${min.toFixed(1)}..${max.toFixed(1)})` : null
-    case 'ratio_to_rolling_mean':
-      return min < 0 ? `negative ratio (${min.toFixed(2)})` : null
-    default:
-      return null
-  }
-}
 
 /** Stage 3 — normalization: the method each column got, and whether the
  *  output distribution actually looks like that method's output. */
@@ -42,6 +14,7 @@ export default function NormalizationStage() {
   const [tf] = useTimeframe()
   const { status } = usePipelineStatus()
   const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf])
+  const [previewing, setPreviewing] = useState<string | null>(null)
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!data) return <span className="loading loading-spinner" />
@@ -82,11 +55,15 @@ export default function NormalizationStage() {
       }
       detail={
         problems.length === 0
-          ? 'Cyclical columns bounded to -1..1, rescaled columns inside 0..1, z-scores centred near zero.'
+          ? 'Cyclical columns bounded to -1..1, rescaled columns inside 0..1, flags only 0 or 1, z-scores centred near zero, daily returns and changes plausible, and no NaN or infinite value. Preview a column to see its input before and after its method.'
           : 'A column outside its method’s range means the transform or its parameters are wrong.'
       }
     >
-      <div className="overflow-x-auto bg-base-200 rounded-box">
+      {previewing && (
+        <FeaturePreview setId={newest.id} column={previewing} onClose={() => setPreviewing(null)} />
+      )}
+
+      <div className="overflow-x-auto bg-base-200 rounded-box mt-4">
         <table className="table table-sm">
           <thead>
             <tr>
@@ -99,6 +76,7 @@ export default function NormalizationStage() {
               <th className="text-right">Mean</th>
               <th className="text-right">Stdev</th>
               <th>Check</th>
+              <th><span className="sr-only">Preview</span></th>
             </tr>
           </thead>
           <tbody>
@@ -116,6 +94,15 @@ export default function NormalizationStage() {
                   {problem
                     ? <span className="text-error">{problem}</span>
                     : <span className="text-success">ok</span>}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className={`btn btn-xs ${previewing === s.name ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setPreviewing(previewing === s.name ? null : s.name)}
+                  >
+                    Preview
+                  </button>
                 </td>
               </tr>
             ))}
