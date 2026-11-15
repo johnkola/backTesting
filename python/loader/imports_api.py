@@ -233,6 +233,19 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
     deleting anything. Re-importing into a compressed chunk is a known
     TimescaleDB limitation and so is deleting from one: that surfaces as
     409 with the same decompress hint the import path gives.
+
+    ONLY THE CURRENT VERSION OF A SLICE CAN BE UNDONE (G46). A year slice can
+    have several audit rows: every version written to the same archive path
+    adds one, and the daily feeds add one each evening to the current year.
+    The newest is what the candles hold; the older ones describe data that was
+    already replaced, and their archive file was rewritten with the newest.
+    Until 2026-11-15 undo deleted the year's candles whichever row it was
+    pressed on, and only that one row, so undoing an old version wiped the
+    current data and left the newer rows pointing at nothing. Now an older
+    row answers 409 `superseded` and names the current one (the dry run too),
+    and undoing the current one removes every audit row of the slice, since
+    none of those versions is stored afterwards. `import_files` keeps the
+    file versions and their diffs.
     """
     with pool().connection() as conn:
         with conn.cursor() as cur:
@@ -282,6 +295,16 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
             )
             present = int(cur.fetchone()[0])
 
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, imported_at FROM data_imports WHERE archive_path = %s "
+                "AND instrument_id = %s AND source_id = %s AND timeframe = %s "
+                "ORDER BY id DESC",
+                (archive, instrument_id, source_id, timeframe),
+            )
+            versions = cur.fetchall()
+        current_id, current_at = versions[0]
+
         target = {
             "importId": import_id,
             "symbol": symbol,
@@ -292,12 +315,30 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
             "archivePath": archive,
             "rowsRecorded": row_count,
             "candlesInWindow": present,
+            "currentImportId": current_id,
         }
+
+        if current_id != import_id:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "superseded",
+                    "error": (
+                        f"import {import_id} is an older version of {archive}: import "
+                        f"{current_id} ({current_at:%Y-%m-%d %H:%M}) replaced it, and the "
+                        f"candles hold that version. Undoing {import_id} would delete "
+                        f"{current_id}'s data, so only {current_id} can be undone"
+                    ),
+                    **target,
+                },
+            )
 
         if dry_run:
             return JSONResponse(
                 status_code=200,
-                content={"status": "dry_run", **target, "candlesWouldDelete": present},
+                content={"status": "dry_run", **target, "candlesWouldDelete": present,
+                         "auditRowsWouldDelete": len(versions),
+                         "olderVersionIds": [v[0] for v in versions[1:]]},
             )
 
         try:
@@ -312,7 +353,12 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
                         (instrument_id, source_id, timeframe, since, until),
                     )
                     deleted = cur.rowcount or 0
-                    cur.execute("DELETE FROM data_imports WHERE id = %s", (import_id,))
+                    cur.execute(
+                        "DELETE FROM data_imports WHERE archive_path = %s AND instrument_id = %s "
+                        "AND source_id = %s AND timeframe = %s",
+                        (archive, instrument_id, source_id, timeframe),
+                    )
+                    audit_deleted = cur.rowcount or 0
         except Exception as exc:  # noqa: BLE001 - re-raised unless it's the known case
             if is_compressed_chunk_error(exc):
                 return JSONResponse(
@@ -334,6 +380,7 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
             "status": "deleted",
             **target,
             "candlesDeleted": deleted,
+            "auditRowsDeleted": audit_deleted,
             "archiveKept": True,
         },
     )

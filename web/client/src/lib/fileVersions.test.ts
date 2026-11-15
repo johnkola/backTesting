@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countByStatus, diffSummary, exampleDates, isFix, summarize } from './fileVersions'
+import { countByStatus, diffSummary, exampleDates, isFix, summarize, supersededBy } from './fileVersions'
 
 const diff = (over = {}) => ({
   added: 0, changed: 0, removed: 0, laterOnly: true, examples: [], ...over,
@@ -44,5 +44,18 @@ describe('countByStatus', () => {
 describe('exampleDates', () => {
   it('trims timestamps to dates', () => {
     expect(exampleDates(diff({ examples: ['2015-06-01T00:00:00Z'] }))).toEqual(['2015-06-01'])
+  })
+})
+
+describe('supersededBy (G46)', () => {
+  it('names the newer import when this row is an older version of its slice', () => {
+    expect(supersededBy({ id: '801', currentId: '7717' })).toBe('7717')
+  })
+  it('is null for the current version, which is the one that can be undone', () => {
+    expect(supersededBy({ id: '7717', currentId: '7717' })).toBeNull()
+  })
+  it('is null when the list does not say, rather than blocking every undo', () => {
+    expect(supersededBy({ id: '5' })).toBeNull()
+    expect(supersededBy({ id: '5', currentId: null })).toBeNull()
   })
 })

@@ -304,7 +304,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/feeds/apply` | JSON `{feed: "SYMBOL/source"}` | Accepts a held series: re-downloads its full history and imports it with `force`, recorded as a `fix` version. `202 {runId}`; `404` for an unknown series, `409` while a run is going |
 | `GET /api/feeds/runs` | `limit` (default 20, max 100) | `{items, running}`: runs newest first, each with its trigger, status, counts per outcome and the feature rebuild |
 | `GET /api/feeds/runs/:id` | — | One run with every series' result and the breadth members' outcomes. `404` if there is no such run |
-| `DELETE /api/imports/:id` | `dry_run` | Undoes one import: deletes the candles in that slice's calendar year and the audit row. The archived CSV is **kept** — it's how you put the data back. `dry_run=true` reports what would go |
+| `DELETE /api/imports/:id` | `dry_run` | Undoes the current version of one year slice: deletes the candles in that slice's calendar year and every audit row of the slice (its older versions describe data already replaced). The archived CSV is **kept** — it's how you put the data back. An older version answers `409` `superseded` with `currentImportId`, because undoing it would delete the newer data. `dry_run=true` reports `candlesWouldDelete`, `auditRowsWouldDelete` and `olderVersionIds` without deleting. `409` too when the candles sit in a compressed chunk |
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
 | `GET /api/nn/pipeline/status` | `timeframe` (default `D1`), `fresh` | Each pipeline stage's state (`passed`, `failed`, `stale`, `empty`, `unknown`, `running`) with the reasons, as the pipeline tabs show them; per strategy, whether its newest walk-forward run would read the same inputs if rerun (`fresh`, `stale`, `unknown`), and which stored backtest results a later fix has touched. Kept for a minute; `fresh=1` recomputes. See [Pipeline stage states](#pipeline-stage-states) |
@@ -576,7 +576,15 @@ Every row in the imports page has an **Undo** button. It runs the loader's
 `dry_run` first and asks for confirmation with the real number — the candles
 actually present in that `(instrument, source, timeframe, year)` window, which
 can differ from the row count the import recorded once a later import has
-overwritten part of the year. Confirming deletes those candles and the audit row.
+overwritten part of the year. Confirming deletes those candles and every audit
+row of that year slice.
+
+A year slice can have several rows: each version written to the same archive
+path adds one, and the daily data feeds add one each evening to the current
+year. Only the newest, the version the candles hold, can be undone. An older
+one shows **Superseded** instead of Undo and names the import that replaced it,
+because undoing it would delete the newer data (the API answers `409`
+`superseded`).
 
 The archived CSV is deliberately kept, so an undo is reversible: re-import the
 same file. Deleting from a compressed TimescaleDB chunk fails with 409 and the

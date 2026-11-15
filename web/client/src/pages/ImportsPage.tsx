@@ -6,6 +6,7 @@ import {
   type Paginated,
 } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import { supersededBy } from '../lib/fileVersions'
 import Pagination from '../components/Pagination'
 import { tipClass } from '../components/FieldLabel'
 import UploadCard from '../components/UploadCard'
@@ -235,6 +236,8 @@ function DeleteImportButton({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const replacedBy = supersededBy(record)
+
   async function openPreview() {
     setBusy(true)
     setError(null)
@@ -263,6 +266,18 @@ function DeleteImportButton({
   function cancel() {
     setPreview(null)
     setError(null)
+  }
+
+  if (replacedBy) {
+    return (
+      <span
+        className={`btn btn-ghost btn-xs btn-disabled ${tipClass}`}
+        data-tip={`An older version of this year slice: import #${replacedBy} replaced it, and the candles hold that version. Only the current version can be undone, so undoing this one would delete #${replacedBy}'s data.`}
+        aria-label={`Import ${record.id} is superseded by import ${replacedBy}`}
+      >
+        Superseded
+      </span>
+    )
   }
 
   return (
@@ -295,7 +310,10 @@ function DeleteImportButton({
               <span className="font-mono">{preview.symbol}</span> ·{' '}
               <span className="font-mono">{preview.source}</span> ·{' '}
               <span className="font-mono">{preview.timeframe}</span> in{' '}
-              <span className="font-mono">{preview.year}</span>, and removes the audit row.
+              <span className="font-mono">{preview.year}</span>, and removes{' '}
+              {(preview.auditRowsWouldDelete ?? 1) > 1
+                ? `all ${preview.auditRowsWouldDelete} audit rows of this year slice (this version and ${(preview.auditRowsWouldDelete ?? 1) - 1} older one${(preview.auditRowsWouldDelete ?? 1) === 2 ? '' : 's'}, none of which is stored any more)`
+                : 'the audit row'}.
             </p>
 
             {preview.candlesWouldDelete !== preview.rowsRecorded && (

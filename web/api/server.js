@@ -408,7 +408,12 @@ app.get('/api/imports', async (req, res) => {
              di.timeframe,
              di.file_path, di.file_name,
              di.row_count, di.imported_at,
-             di.file_hash, di.archive_path
+             di.file_hash, di.archive_path,
+             -- The newest audit row of the same slice is the version the
+             -- candles hold; only that one can be undone (G46).
+             (SELECT max(d2.id) FROM data_imports d2
+               WHERE d2.archive_path = di.archive_path AND d2.instrument_id = di.instrument_id
+                 AND d2.source_id = di.source_id AND d2.timeframe = di.timeframe) AS current_id
         FROM data_imports di
         JOIN data_sources ds ON ds.id = di.source_id
         JOIN instruments i ON i.id = di.instrument_id
@@ -435,6 +440,7 @@ app.get('/api/imports', async (req, res) => {
         importedAt: r.imported_at,
         fileHash: r.file_hash,
         archivePath: r.archive_path,
+        currentId: r.current_id,
       })),
       total: Number(countRows[0].total),
       limit,

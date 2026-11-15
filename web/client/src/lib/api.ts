@@ -133,6 +133,9 @@ export type ImportRecord = {
   /** Relative path the file is archived under, e.g. "yahoo/QQQ/2008/H1.csv".
    *  Null for legacy pre-archive rows. */
   archivePath: string | null
+  /** The newest audit row of the same year slice: the version the candles
+   *  hold. Equal to `id` when this row is current; only then can it be undone. */
+  currentId?: string | null
 }
 
 /** One slice of an upload — multi-year files are split server-side, so a
@@ -265,18 +268,26 @@ type ImportDeleteTarget = {
   rowsRecorded: number
   /** Candles present in that (instrument, source, timeframe, year) window now. */
   candlesInWindow: number
+  /** The slice's newest audit row, the version the candles hold. */
+  currentImportId?: number
 }
 
-/** DELETE /api/imports/:id?dry_run=true — what would go, with nothing removed. */
+/** DELETE /api/imports/:id?dry_run=true — what would go, with nothing removed.
+ *  Only the current version of a year slice can be undone; an older one answers
+ *  409 `superseded` instead (G46). */
 export type ImportDeletePreview = ImportDeleteTarget & {
   status: 'dry_run'
   candlesWouldDelete: number
+  /** Every audit row of the slice goes with it: this version and the older ones. */
+  auditRowsWouldDelete?: number
+  olderVersionIds?: number[]
 }
 
 /** DELETE /api/imports/:id — what went. The archived CSV is deliberately kept. */
 export type ImportDeleteResult = ImportDeleteTarget & {
   status: 'deleted'
   candlesDeleted: number
+  auditRowsDeleted?: number
   archiveKept: boolean
 }
 

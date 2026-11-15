@@ -79,3 +79,14 @@ export function summarize(c: SliceCounts, total: number): string {
   if (c.skipped) parts.push(`${c.skipped} skipped`)
   return `${total} year ${total === 1 ? 'slice' : 'slices'}: ${parts.join(' · ')}`
 }
+
+/**
+ * The import that replaced this one, when this row is an older version of its
+ * year slice; null when it is the current version (or the list predates
+ * `currentId`). Only the current version can be undone: the candles hold it,
+ * so undoing an older row would delete the newer data (G46).
+ */
+export function supersededBy(record: { id: string, currentId?: string | null }): string | null {
+  if (record.currentId == null) return null
+  return String(record.currentId) === String(record.id) ? null : String(record.currentId)
+}
