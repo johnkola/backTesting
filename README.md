@@ -1,5 +1,7 @@
 # BackTesting
 
+> **Revision 2026-11-15-5** · 2026-11-15 12:44 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
 **New here?** [Getting Started](/docs/getting-started) walks the whole path in the order you will actually do it — start the stack, get candles in, run a backtest, read the result. This README is the reference behind it.
@@ -1017,3 +1019,17 @@ fits this history — not that it would have predicted it. See
 line to `StrategyRegistry`'s constructor. The Run form, the CLI and this table all
 read from the registry, so nothing else needs changing. Return an honest
 `getWarmupBars()`: the engine trusts it to decide when the strategy may first act.
+
+---
+
+## Revision history
+
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules). Rows before revision 5 were added afterwards from the commits that made them, which went in under the author's git user with Claude as co-author.
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added |
+| 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3: how the trade metrics count (Sortino, slippage, break-even, not available) (`e7c94a8`) |
+| 2026-11-15-3 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | G47: each feature value lands on the day the system could have it (publication delays) (`d04cee5`) |
+| 2026-11-15-2 | 2026-11-15 09:34 | Claude Code (Claude Opus 5.5) | G46: only the current version of a year slice can be undone (`59678d2`) |
+| 2026-11-15-1 | 2026-11-15 09:10 | Claude Code (Claude Opus 5.5) | Step 3: the stricter Normalization check and the feature preview endpoint (`6cdc664`) |

@@ -1,5 +1,7 @@
 # AGENTS.md: the steps, and when each one is done
 
+> **Revision 2026-11-15-5** · 2026-11-15 12:44 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
 is for any agent working in this repo, and for the author reviewing with one: we go
@@ -70,6 +72,11 @@ steps.
 - **Keep work followable.** Write the plan as a checklist in `DESIGN-GAPS.md`, tick
   it as you go, and stop at a checkpoint before applying anything.
 - **Commit or push only when the author asks**, and then do just that.
+- **Stamp every doc you change.** Bump the revision line under its title
+  (`Revision YYYY-MM-DD-N`, Toronto time, your name and model) and add a row to its
+  Revision history at the end: revision, time, who and model, what changed. This
+  covers the project docs and trackers, never `readonly-doc/`, whose revision line
+  is the author's.
 - **`readonly-doc/` is never edited.** Each new fact goes in exactly one place:
   see [`CLAUDE.md`](CLAUDE.md).
 - **Settings the user chooses don't change the signal.** The app may become a
@@ -531,3 +538,17 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B7. Faber and dual momentum | G33 | B6 | not started | |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
+
+---
+
+## Revision history
+
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules). Rows before revision 5 were added afterwards from the commits that made them, which went in under the author's git user with Claude as co-author.
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added; working rule: stamp every doc you change |
+| 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3 done; step 7's metrics limit became an app condition; step 7 review row updated (`e7c94a8`) |
+| 2026-11-15-3 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | G47: step 2 gains the publication-delay check; step 6 review row updated (`d04cee5`) |
+| 2026-11-15-2 | 2026-11-15 09:21 | Claude Code (Claude Opus 5.5) | Step 4 review row corrected: the test block was scored by Run-tab backtests (G48) (`23e9e6a`) |
+| 2026-11-15-1 | 2026-11-15 09:10 | Claude Code (Claude Opus 5.5) | Step 3 conditions rewritten; steps 3 and 5 done, step 6 updated; rebuild-and-recalculate rule (`6cdc664`) |

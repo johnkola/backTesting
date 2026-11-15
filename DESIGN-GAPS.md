@@ -1,5 +1,7 @@
 # Design gap tracker
 
+> **Revision 2026-11-15-6** · 2026-11-15 12:44 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
 Newest pass at the top.
@@ -931,3 +933,18 @@ Normalized feature table and catalogue, strategy builder with versions and cover
 stored buy-and-hold benchmark, Strategy 1 signal scoring, walk-forward with per-fold
 scaling, all three objectives, a separate holdout mode (`--test`), fold storage on the
 Training tab, the yield-curve check, audit columns, field hints, the Postman suite.
+
+---
+
+## Revision history
+
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules). Rows before revision 6 were added afterwards from the commits that made them, which went in under the author's git user with Claude as co-author.
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-15-6 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added |
+| 2026-11-15-5 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3 record (G29 done) and the old-to-new result id mapping (`e7c94a8`) |
+| 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | G47 done, with the per-column effect and the reruns (`d04cee5`) |
+| 2026-11-15-3 | 2026-11-15 09:34 | Claude Code (Claude Opus 5.5) | G46 plan and done (`59678d2`) |
+| 2026-11-15-2 | 2026-11-15 09:21 | Claude Code (Claude Opus 5.5) | Pass 4: Requirements.md R1-R76 against the code (G46-G65, D9-D14) (`23e9e6a`) |
+| 2026-11-15-1 | 2026-11-15 09:10 | Claude Code (Claude Opus 5.5) | G36 and G43 done, step 3 plan and G39 done (`6cdc664`) |
