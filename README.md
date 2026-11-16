@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-5** · 2026-11-16 09:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-6** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -254,9 +254,9 @@ Three binaries. `backtest` is the Java CLI (`./gradlew run --args="<command>"`, 
 | `list-sources` | — | Data sources with instrument and candle counts and the newest bar. These are the names `--source` accepts |
 | `list-imports` | `[-i SYMBOL]` `[--source NAME]` `[-n LIMIT]` `[--hash]` | The CSV import audit log: what was imported, from which file, how many rows, when |
 | `list-models` | `[-s STRATEGY]` `[--full-key]` | Trained models cached by the loader. Where the version ids for `run --model-version` come from |
-| `report --list` | `[-s STRATEGY]` `[-i SYMBOL]` `[--source NAME]` `[-n LIMIT]` | Saved backtests, newest first |
+| `report --list` | `[-s STRATEGY]` `[-i SYMBOL]` `[--source NAME]` `[-n LIMIT]` | Saved backtests, newest first. The Sample column says `IN` for a model result tested on bars its model was trained on, `out` for one after them, `?` when the model's window is unknown (B4) |
 | `report --last` | — | Full report for the most recent backtest |
-| `report --id N` | — | Full report for one saved backtest |
+| `report --id N` | — | Full report for one saved backtest. A model result's header names its model's training window and says IN-SAMPLE when the result covers it; `run` prints the same as a warning, and does not refuse |
 
 ### `backtest` — act
 
@@ -292,7 +292,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
 | `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable |
 | `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries |
-| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}` |
+| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}` |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
 | `GET /api/docs/:slug` | `rev` | One doc as rendered HTML, headings anchored. Every fetch snapshots the file if its hash changed; `rev=N` returns a captured revision instead |
@@ -330,6 +330,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/nn/walkforward` | `strategyId`, `label` | Starts `python -m nn.walkforward --strategy-id N [--label=…]` in the loader and returns `202` with the job. The strategy is checked first: `400` with `reasons` if it cannot run as saved, `404` if it does not exist, `409` while another run is going (one at a time). Validation folds only; the holdout (`--test`) is terminal-only. The run itself lands in `GET /api/walkforward/runs` as the runner records it |
 | `GET /api/nn/walkforward/jobs` | — | `{items, running}` — jobs started since the loader came up, newest first (last 20): `running`, `exitCode`, `runId` once the runner opens its row, and the last 40 lines of output. In memory only; a restart forgets them, and `walkforward_runs` stays the record. A job that ends with `runId: null` was refused or crashed, and its output says which |
 | `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `bills`, the T-bill carry dual momentum's cash earns per bar; and `checks`, the 10-month average and 12-month return against an independent copy. The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
+| `GET /api/nn/models/window` | `strategy`, `versionId` | The bars a model version was trained on (B4): `{status, since, until, symbol, source}`, `status` being `known`, `not recorded` or `version gone`. The engine stores it with an nn result |
 | `POST /api/nn/walkforward/runs/:id/recalculate` | `strategyId`, `dryRun` | Rescores a run from its stored per-bar signals, without retraining, in the request (seconds). Engines are blind to costs, tax and margin (D9), so anything the profit step applies can change this way: cost, tax, park, Strategy 2 and its dials, the thresholds. Without `strategyId` the run is rescored at its own settings and its folds rewritten in place, which is what a change to the profit code needs; on unchanged code it reproduces every fold exactly. With `strategyId`, another version of the strategy that trains the same model (same features, windows, label, loss and hyperparameters), it writes a new run linked by `recalculatedFrom`. `dryRun` returns the figures and writes nothing. Returns `{sourceRunId, runId, mode, dryRun, strategy, settings, folds: [{fold, valYear, before, after}]}`. `400` with `reasons` for a model-side difference or a holdout run under other settings, `404` for an unknown run or strategy, `409` for a run still going or one that stored no signals (run before 2026-11-15: rerun it once). The terminal form is `python -m nn.recalculate --run N [--strategy-id M] [--dry-run]` in the loader |
 
 ## Bulk CSV import (drop folder)
@@ -504,6 +505,14 @@ Both models come in `Percentage` and `Fixed` flavours and are configured in
 fill. See [Configuration](#configuration) to change them. A strategy that trades often
 pays these on every round trip, twice; if two runs differ only in trade count, that is
 usually most of the difference.
+
+**A model result says whether it is in-sample** (build step B4). A model is found by its
+configuration, not its data window, so nothing stops a backtest over the very bars it
+learned from. The result stores its model's training window (from the version's
+`metadata.json`), and `backtest_results.in_sample` is derived from the two windows: such a
+result is marked in-sample on the Results list, the result page and the CLI. Results stored
+before were filled in with `python -m nn.model_windows --backfill [--dry-run]`, run in the
+loader; a version that is gone, or was saved without its dates, reads as unknown.
 
 **Fills happen at the next bar's open** (R76, build step B1). A strategy decides on a
 bar's close, and its order fills at the next bar's open through the slippage model; a
@@ -1057,6 +1066,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4: in-sample model results marked; `GET /api/nn/models/window`; the backfill command |
 | 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2: entries are sized on the slipped fill with the commission inside the cash |
 | 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8: the naive baseline per run (`meanAccuracy`, `meanBaselineAcc`, `beatsNaive`) and its flag |
 | 2026-11-16-3 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7: Faber and dual momentum beside every run; `GET /api/nn/rules`; result and fold benchmark fields |

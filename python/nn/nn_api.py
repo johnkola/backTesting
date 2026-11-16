@@ -632,6 +632,16 @@ def get_models(strategy: str | None = None) -> JSONResponse:
     )
 
 
+@router.get("/api/nn/models/window")
+def get_model_window(strategy: str, versionId: str) -> JSONResponse:  # noqa: N803
+    """The bars a model version was trained on (B4, G30): `{status, since,
+    until, symbol, source}`, status `known`, `not recorded` or `version gone`.
+    The engine stores it with an nn result, so an in-sample result says so."""
+    from nn import model_windows
+    return JSONResponse(status_code=200,
+                        content=model_windows.lookup(_registry(), strategy, versionId).to_json())
+
+
 @router.get("/api/nn/features/schema")
 def get_features_schema() -> JSONResponse:
     """What `nn-feedforward` feeds the network, per bar.

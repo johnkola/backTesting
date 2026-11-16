@@ -1538,6 +1538,14 @@
                   "            'id', 'strategyName', 'instrumentSymbol', 'timeframe', 'dataSource',",
                   "            'totalReturnPct', 'createdAt');",
                   "    }",
+                  "});",
+                  "",
+                  "pm.test('a model result says whether it was tested on its training bars (B4)', function () {",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(r).to.include.keys('modelWindow', 'inSample', 'modelTrainFrom', 'modelTrainTo');",
+                  "        if (r.modelWindow === null) pm.expect(r.inSample).to.be.null;",
+                  "        if (r.modelWindow !== null && r.modelWindow !== 'known') pm.expect(r.inSample).to.be.null;",
+                  "    }",
                   "});"
                 ]
               }

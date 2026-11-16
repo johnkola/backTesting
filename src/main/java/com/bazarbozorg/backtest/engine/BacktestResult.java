@@ -49,6 +49,12 @@ public class BacktestResult {
      * with the reason. Null on a result stored before B7.
      */
     private final List<RuleBenchmark> benchmarks;
+    /**
+     * The model's training window (B4), or null for a strategy with no model.
+     * Transient: its home is the {@code backtest_results} columns, which the
+     * repository reads it back from, so it is never in two places.
+     */
+    private final transient ModelWindow modelWindow;
 
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
                           String dataSource,
@@ -59,7 +65,8 @@ public class BacktestResult {
                           String modelCacheKey, Boolean modelCacheHit,
                           String modelVersionId,
                           BuyAndHold buyAndHold,
-                          List<RuleBenchmark> benchmarks) {
+                          List<RuleBenchmark> benchmarks,
+                          ModelWindow modelWindow) {
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
@@ -76,6 +83,7 @@ public class BacktestResult {
         this.modelVersionId = modelVersionId;
         this.buyAndHold = buyAndHold;
         this.benchmarks = benchmarks;
+        this.modelWindow = modelWindow;
     }
 
     public String getDataSource() {
@@ -149,5 +157,17 @@ public class BacktestResult {
     /** Faber and dual momentum beside this run, or null on a result stored before B7. */
     public List<RuleBenchmark> getBenchmarks() {
         return benchmarks;
+    }
+
+    /** The model's training window (B4), or null for a strategy with no model. */
+    public ModelWindow getModelWindow() {
+        return modelWindow;
+    }
+
+    /** This result with its model window, as the repository reads it from its columns. */
+    public BacktestResult withModelWindow(ModelWindow window) {
+        return new BacktestResult(strategyName, instrumentSymbol, timeframe, dataSource, startDate,
+                endDate, metrics, trades, equityHistory, initialCapital, finalEquity, modelCacheKey,
+                modelCacheHit, modelVersionId, buyAndHold, benchmarks, window);
     }
 }

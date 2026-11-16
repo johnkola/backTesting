@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-5** · 2026-11-16 09:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-6** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -315,11 +315,9 @@ Tab: **Pipeline → Backtest**.
 - [ ] **review**: the result reproduces. Rerun it with the same settings and
   window, and check the trades, return, final equity and Sharpe are unchanged.
   This was last confirmed for results 709–713 on 2026-11-12.
-- [ ] **review**: for an nn strategy, the result's window starts after the model's
-  training window ends (Models page, or `training_window` in the version's
-  `metadata.json`). Nothing checks it: a model is found by its configuration, so
-  the engine will backtest it over the bars it was trained on, and that result is
-  in-sample. B4 makes this an app check (G30).
+- [ ] **app**: an nn result stores its model's training window, and one that covers
+  it is marked in-sample on the Results list, the result page and the CLI, or its
+  window is marked unknown (B4). The result to judge on is one marked out of sample.
 - [ ] **not built (G20)**: after-tax results. The engine's backtest is before
   tax, while walk-forward scoring includes it.
 - [ ] **app**: Faber and dual momentum beside buy-and-hold, traded with the
@@ -425,12 +423,12 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 **Done when**
 
-- [ ] Every stored result of an nn strategy records its model's training window and
+- [x] Every stored result of an nn strategy records its model's training window and
   whether the result's own window overlaps it.
-- [ ] An overlapping result is marked in-sample wherever its return is shown: the
+- [x] An overlapping result is marked in-sample wherever its return is shown: the
   Results list, the result page and the CLI report. `run` prints a warning that names
   both windows. It does not refuse, because an in-sample run is a fair sanity check.
-- [ ] Results stored before this are marked from their model's `metadata.json`, or as
+- [x] Results stored before this are marked from their model's `metadata.json`, or as
   unknown when that version is gone.
 
 ### B5. The single-split trainers purge (G31)
@@ -572,7 +570,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B1. Next-open execution | G27 | | done | 2026-11-16. The profit step trades at the next session's open: the old position holds the overnight, the new one the day; the money loss trains on the same curve; the engine fills a signal at the next bar's open. One fixture holds the Java engine and the Python scorer to the same three trades and return. Python 772, Java 130. Walk-forward rerun as 456-462: the classifiers equal their dry-run recalculations exactly; the 16 backtest results rerun as 730-745 with the same trades. phase1-full v5 (462) reads +0.55 pp a fold, but it is long throughout with timing 0: the first-overnight artifact B6 removes (DESIGN-GAPS, B1 record) |
 | B2. Entry sizing | G28 | | done | 2026-11-16. `ExecutionSimulator.affordableQuantity` sizes every entry (long, short, the rule benchmarks' switches) on the slipped fill with the commission inside the cash: the fixed point of (cash − commission) ÷ fill, trimmed until the exact charge fits. Frictionless sizing is unchanged. Java 155 (24 sizing cases: four commission models, three slippage models, long and short). The 16 results rerun as 778-793: the same trades, returns slightly lower without the hidden leverage, originals deleted (DESIGN-GAPS, B2 record) |
 | B3. Engine metrics | G29 | | done | 2026-11-15. Sortino over the downside deviation, total slippage summed over every fill, break-even trades outside the win rate and streaks, and not-available metrics as null and a dash. Java 128 (9 new), client 142. All 16 stored results were rerun with rebuilt requests and reproduced exactly, apart from the fixed metrics, and replaced: 686-713 are now 714-729 (DESIGN-GAPS, B3 record) |
-| B4. In-sample flag | G30 | | not started | |
+| B4. In-sample flag | G30 | | done | 2026-11-16. `nn/model_windows.py` reads a model version's training window; the engine stores it with an nn result (`model_train_from`, `model_train_to`, `model_train_symbol`, `model_window`), and `in_sample` is a generated column over the two windows. Marked on the Results list, the result page, `report` and `run`. Backfilled the 8 stored nn results: 793 (1999-2026, model trained 2003-2015) is in-sample, the other 7 out of sample. Python 802, Java 160, API 109, client 145 (DESIGN-GAPS, B4 record) |
 | B5. Trainer purge | G31 | | not started | |
 | B6. Buy-and-hold costs | G32 | | done | 2026-11-16. Buy-and-hold is the always-long strategy through the same code: in the profit step for walk-forward (commission and tax, D8 sale at the end) and through `BacktestEngine.trade` for results (commission and slippage). Stored with each run (fold `hold_*` columns, `result_json.buyAndHold`); the `benchmarks` table, both `benchmark_id` columns and their lookups are gone. A position open at the end is sold and taxed, strategy and Strategy 2's core alike. Python 767, Java 121, API 107, client 138. Walk-forward 456-462 recalculated in place from stored signals (nothing retrained); phase1-full v5 went from +0.55 to +0.00 pp, as it is buy-and-hold. The 16 results rerun as 746-761 with the same strategy figures (DESIGN-GAPS, B6 record) |
 | B7. Faber and dual momentum | G33 | B6 | done | 2026-11-16. `nn/rules.py` decides both rules (Faber 10-month, dual momentum per D7) at month ends; the profit step trades them (`simulate_holdings`) with the run's costs and tax; walk-forward folds store them in `walkforward_benchmarks`; the engine trades the loader's decisions (`GET /api/nn/rules`) with its own costs and stores them in `result_json`. Not available, with the reason, when history is short, the result is not daily or SPY is missing. Data check against an independent copy: 0 disagreements. Python 786, Java 127, API 107, client 141. Walk-forward 456-462 recalculated in place; results rerun as 762-777 (DESIGN-GAPS, B7 record) |
@@ -588,6 +586,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done; step 7's in-sample check is now an app condition |
 | 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done; step 7's sizing limit is now an app condition |
 | 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done; step 6's naive-baseline condition is an app condition |
 | 2026-11-16-3 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done; steps 6 and 7 gain the rule-benchmark conditions |

@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { sampleNote, sampleOf } from '../lib/inSample'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import TradeChart from '../components/TradeChart'
 import BenchmarkTable from '../components/BenchmarkTable'
@@ -185,6 +186,14 @@ export default function ResultDetailPage() {
           run {new Date(detail.createdAt).toLocaleString()}
         </span>
       </div>
+
+      {sampleOf(detail) && (
+        <div className={`alert ${sampleOf(detail) === 'in' ? 'alert-error'
+          : sampleOf(detail) === 'unknown' ? 'alert-warning' : ''} text-sm`}
+        >
+          {sampleNote(detail)}
+        </div>
+      )}
 
       <VerdictBanner
         totalReturnPct={detail.totalReturnPct}

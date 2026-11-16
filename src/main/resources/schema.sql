@@ -583,6 +583,25 @@ ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_backfilled BOOLEAN NO
 -- hold_* columns. The shared table and both links to it are dropped; the
 -- links first, since they reference it.
 ALTER TABLE backtest_results DROP COLUMN IF EXISTS benchmark_id;
+
+-- In-sample, said so (B4, G30). A model is found by its configuration, so the
+-- engine will backtest one over the very bars it learned from. The model's
+-- training window (from its metadata.json, python/nn/model_windows.py) is
+-- stored with the result: model_window is 'known', 'not recorded' (a version
+-- saved without its dates) or 'version gone' (pruned); NULL for a strategy
+-- with no model. in_sample is derived here, in one place, from the stored
+-- windows: the result's window overlaps the training window, on dates alone.
+-- NULL unless the window is known. Timestamps, not dates, so the expression
+-- stays immutable, as a generated column must be.
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_train_from TIMESTAMPTZ;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_train_to TIMESTAMPTZ;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_train_symbol VARCHAR(20);
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS model_window VARCHAR(16);
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS in_sample BOOLEAN
+    GENERATED ALWAYS AS (
+        CASE WHEN model_train_from IS NULL OR model_train_to IS NULL THEN NULL
+             ELSE model_train_from <= end_date AND model_train_to >= start_date END
+    ) STORED;
 ALTER TABLE walkforward_folds DROP COLUMN IF EXISTS benchmark_id;
 DROP TABLE IF EXISTS benchmarks;
 -- Buy-and-hold's own commission and tax in a fold, in negative points like the

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-9** · 2026-11-16 09:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-11** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -412,6 +412,46 @@ Checklist:
 - **Walk-forward is unaffected:** the profit step charges costs as fractions of equity, so an entry there can never overspend.
 
 
+**B4 plan (G30), 2026-11-16.** The author: do B4. The conditions are in `AGENTS.md`, build step B4.
+
+The training window is in each model version's `metadata.json`, under `extra.training_window`, as `since` and `until` plus the series. Two stored versions have neither date, and every nn result names its version (`model_version_id`).
+
+The shape:
+- **One reading of a model's window: `nn/model_windows.py`.** The window, in dates, of a strategy's model version from the registry. Its status is `known`, `not recorded` (the metadata has no dates) or `version gone`. The loader serves it (`GET /api/nn/models/window`), and the backfill uses it directly.
+- **Stored with the result.** New columns on `backtest_results`: `model_train_from`, `model_train_to`, `model_train_symbol`, `model_window`. `in_sample` is a stored generated column: the result's window overlaps the model's training window. It is null when the window is unknown or the strategy has no model. Postgres derives it in one place, so it cannot drift from the windows. The engine fills the columns after an nn run, from the loader. Overlap is on dates: a model trained on another instrument's same years has still seen that market.
+- **Marked wherever the return is shown:**
+  - the Results list, with an "in-sample" badge;
+  - the result page, with a banner naming both windows;
+  - the CLI `report`.
+
+  `run` prints a warning naming both windows. Nothing is refused: an in-sample run is a fair sanity check.
+- **Results stored before.** `python -m nn.model_windows --backfill` fills the columns from the metadata, or marks a result unknown when its version is gone or has no window. Nothing is rerun, since no figure changes.
+
+Checklist:
+- [x] Plan here
+- [x] `nn/model_windows.py`, the loader route and the backfill; tests
+- [x] Schema columns and the generated `in_sample`; the engine fills them; the repository and the CLI (`run` warning, `report` mark); tests
+- [x] API and client: the Results badge and the result-page banner; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go:** the backfill over results 778-793, dry run first
+- [x] README, `AGENTS.md`, G30 and this record say done
+
+*Done, 2026-11-16 11:17.* The author chose: write the backfill.
+- **Tests:** Python 802, Java 160, API 109, client 145. New tests:
+  - reading a window in both recorded forms, not recorded, and version gone;
+  - the overlap, a single shared day included;
+  - the backfill against the database, its dry run writing nothing, and Postgres deriving `in_sample`;
+  - the loader route;
+  - Java: the window's description, and the columns and the generated flag read back through the repository;
+  - the client's marks.
+- **Backfill** (backup `backfill-b4-20261116/before.sql.gz`). All 8 nn results now have their windows:
+  - 793 (nn-feedforward over 1999-06-18 to 2026-09-25, model trained 2003-2015) is in-sample, as step 7's review found.
+  - The other 7 are out of sample.
+  - The 8 non-model results have none.
+- **Live:** the loader route answers `known` for a recorded version, `not recorded` for the two saved without dates (2026-09-20 models), and `version gone` for one not in the registry.
+- **Seen on the way:** result 781's model was trained on GOLD and tested on QQQ. It is out of sample by date. Whether a cross-instrument model belongs on Results is not B4's question.
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -514,7 +554,7 @@ rule in `AGENTS.md`.
 | G27 | Trades happen on the wrong bar. A signal computed from a bar's close must be traded at the next bar's open. The Java engine fills at the same close that gave the signal, which is the flattering side. The walk-forward scorer trades at the next session's close, a session late, because it reads closes only; the first bar of a fold is the exception and trades at its own close. So the same signals give different trades in steps 6 and 7, and neither follows the rule | Requirement 76 ("traded at the next bar's open ... never at the same close it was computed from. Applies to every engine and benchmark") | `BacktestEngine.processSignal` fills at bar `i`'s `closePrice`; `walkforward.py:1156` builds `rets` close to next close and `simulate` shifts one more day; `test_walkforward.py` `test_the_first_bar_acts_on_its_own_signal`; `money_loss.portfolio_returns` and `strategy2.simulate_margin` pad the same way | M | done 2026-11-16 (B1): see the B1 record in Pass 4 |
 | G28 | An entry spends more cash than there is. The quantity is all of cash divided by the close; the fill then pays the slipped price plus commission, so cash is negative after every entry with costs on and the run is slightly leveraged without saying so | Design Notes, Staged Pipeline Architecture, stage 6 ("costs applied") | `PortfolioManager.calculatePositionSize` returns `cash * riskPercent / price`; `BacktestEngine.processSignal` sizes on `closePrice`, and `openPosition` then subtracts `filledPrice * quantity + commission` | S | done 2026-11-16 (B2): see the B2 record in Pass 4 |
 | G29 | Four engine metrics are wrong or empty. (a) Sortino divides by the standard deviation of the losing bars about their own mean, which is not the downside deviation, and is 0 when no bar loses. (b) Total slippage is always 0. (c) A trade with zero profit counts as a loss. (d) Profit factor is 0 when no trade loses, which reads as the worst case | Design Notes, Staged Pipeline Architecture, stage 6 ("metrics computed") | `MetricsCalculator.calculateSortinoRatio`; `.totalSlippage(0.0)` in `calculate`; `Trade.isWin` is `pnl > 0` and every other trade is counted as losing; `MathUtils.safeDiv` returns 0 on a zero divisor | S | done 2026-11-15: see the B3 record in Pass 4 |
-| G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | open |
+| G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | done 2026-11-16 (B4): see the B4 record in Pass 4 |
 | G36 | A selected cyclical feature is never trained on. The strategy names a catalogue feature (`day_of_week`), but the feature set stores a cyclical feature as two columns (`day_of_week_sin`, `day_of_week_cos`). `resolve_columns` compares the two names, finds no match, and drops the feature as "not in this feature set". phase1-full and both Strategy 2 variants select `day_of_week`, `day_of_year` and `day_of_month`, so all their runs trained without those six columns, while reporting that the features were simply absent | Architecture §8.2a (the strategy decides which features go in; a feature is dropped only when it has no values in the train window) | `nn/strategy_spec.py` `resolve_columns` compares `selected` with the set's column names; `feature_spec` for sets 10, 18 and 23 holds `day_of_week_sin` ... `day_of_month_cos` (columns 24 to 29 in set 23); `walkforward_runs.dropped_json` for runs 300, 301 and 348 lists the three as "not in this feature set". Found in the `AGENTS.md` step 1 review, 2026-11-14. The step 5 review found the other half: the coverage grid maps a base name to its `_sin`/`_cos` columns (`web/api/featureCatalogue.js` `VALUE_JOIN`), so the builder shows all three at 100% and kept, and the Train tab lists 26 features where the runner uses 23. Runs 300, 301 and 348 have `input_width` 460 where 580 was selected. No other selectable feature is cyclical | S | done (`fb6c5fe`): `strategy_spec.feature_columns`; runs 300, 301 and 348 were backed up, deleted and rerun on 2026-11-14 as 376, 377 and 378, each on 580 inputs with nothing dropped |
 | G31 | The two single-split trainers do not purge. Both cut training from validation by a ratio and label each row from the close `forward` bars ahead, so the last `forward` training rows are labelled from validation prices. The walk-forward runner already drops them (`purged`) | Design Notes, Three-Way Chronological Split | `nn/train.py` `train_model` (`split = int(n * cfg.train_split_ratio)`); `nn/train_features.py:212` | S | open |
 
@@ -1217,6 +1257,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-11 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done: in-sample model results marked; G30 done |
+| 2026-11-16-10 | 2026-11-16 09:24 | Claude Code (Claude Opus 5.5) | B4 plan (G30) |
 | 2026-11-16-9 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done: entries never spend more than the cash; G28 done |
 | 2026-11-16-8 | 2026-11-16 09:20 | Claude Code (Claude Opus 5.5) | B2 plan (G28) |
 | 2026-11-16-7 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done: runs flagged against the naive baseline; G34 done; R72 partial; 14 orphaned test runs removed |

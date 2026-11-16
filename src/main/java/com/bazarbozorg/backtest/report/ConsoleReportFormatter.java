@@ -66,6 +66,12 @@ public class ConsoleReportFormatter {
                 DateTimeUtils.formatDate(result.getStartDate()),
                 DateTimeUtils.formatDate(result.getEndDate())));
         sb.append(String.format("  Trading Days: %d%n", result.getMetrics().getTradingDays()));
+        // B4: a model result says which bars its model learned from, and loudly
+        // when they are this result's own.
+        if (result.getModelWindow() != null && result.getStartDate() != null) {
+            sb.append(String.format("  Model:       %s%n", result.getModelWindow().describe(
+                    result.getStartDate().toLocalDate(), result.getEndDate().toLocalDate())));
+        }
         sb.append(SECTION_SEPARATOR).append('\n');
     }
 

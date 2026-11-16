@@ -578,6 +578,7 @@ app.get('/api/results', async (req, res) => {
              total_return_pct, sharpe_ratio, max_drawdown_pct,
              total_trades, win_rate, model_cache_key, model_cache_hit,
              model_version_id, created_at,
+             model_train_from, model_train_to, model_train_symbol, model_window, in_sample,
              -- Buy-and-hold is the only number that says whether a result was
              -- worth producing, and the list is where you compare many at once.
              -- It has no column of its own, so it is read out of result_json
@@ -617,6 +618,7 @@ app.get('/api/results', async (req, res) => {
         modelCacheHit: r.model_cache_hit,
         modelVersionId: r.model_version_id,
         createdAt: r.created_at,
+        ...modelWindowOf(r),
       })),
       total: Number(countRows[0].total),
       limit,
@@ -626,6 +628,23 @@ app.get('/api/results', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * A result's model training window and whether the result is in-sample (B4,
+ * G30). The columns are the window's only home; `in_sample` is generated from
+ * them by Postgres. All null for a strategy with no model; `modelWindow` is
+ * `known`, `not recorded` or `version gone`, and only a known one has a verdict.
+ */
+function modelWindowOf(r) {
+  const day = (v) => (v == null ? null : new Date(v).toISOString().slice(0, 10));
+  return {
+    modelWindow: r.model_window ?? null,
+    modelTrainFrom: day(r.model_train_from),
+    modelTrainTo: day(r.model_train_to),
+    modelTrainSymbol: r.model_train_symbol ?? null,
+    inSample: r.in_sample ?? null,
+  };
+}
 
 app.get('/api/results/:id', async (req, res) => {
   const id = req.params.id;
@@ -638,7 +657,8 @@ app.get('/api/results/:id', async (req, res) => {
              start_date, end_date, initial_capital, final_equity,
              total_return_pct, sharpe_ratio, max_drawdown_pct,
              total_trades, win_rate, model_cache_key, model_cache_hit,
-             model_version_id, result_json, created_at
+             model_version_id, result_json, created_at,
+             model_train_from, model_train_to, model_train_symbol, model_window, in_sample
         FROM backtest_results
        WHERE id = $1`;
     const { rows } = await pool.query(sql, [id]);
@@ -684,6 +704,7 @@ app.get('/api/results/:id', async (req, res) => {
       modelCacheHit: r.model_cache_hit,
       modelVersionId: r.model_version_id,
       createdAt: r.created_at,
+      ...modelWindowOf(r),
       // One value per equity history point, in the same order; null with
       // holdEquityNote saying why.
       holdEquity: curve.values,

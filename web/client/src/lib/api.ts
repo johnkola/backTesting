@@ -334,6 +334,17 @@ export type ResultSummary = {
   modelCacheHit: boolean | null
   modelVersionId: string | null
   createdAt: string
+  /**
+   * The model's training window (B4): `known`, `not recorded` or `version
+   * gone`; null for a strategy with no model.
+   */
+  modelWindow?: string | null
+  /** ISO dates of the model's training window, when known. */
+  modelTrainFrom?: string | null
+  modelTrainTo?: string | null
+  modelTrainSymbol?: string | null
+  /** True when the result covers bars its model was trained on; null unless known. */
+  inSample?: boolean | null
 }
 
 export type Trade = {

@@ -5,6 +5,7 @@ import com.bazarbozorg.backtest.data.BacktestResultRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
 import com.bazarbozorg.backtest.engine.BacktestEngine;
 import com.bazarbozorg.backtest.engine.BacktestResult;
+import com.bazarbozorg.backtest.engine.ModelWindow;
 import com.bazarbozorg.backtest.loader.LoaderAggregator;
 import com.bazarbozorg.backtest.model.enums.Timeframe;
 import com.bazarbozorg.backtest.model.commission.CommissionModel;
@@ -147,6 +148,14 @@ public class BacktestCommand implements Runnable {
             // Format and print results
             ConsoleReportFormatter formatter = new ConsoleReportFormatter();
             System.out.println(formatter.formatReport(result));
+
+            // B4: not refused, since an in-sample run is a fair sanity check, but said.
+            ModelWindow window = result.getModelWindow();
+            if (window != null && Boolean.TRUE.equals(window.overlaps(
+                    result.getStartDate().toLocalDate(), result.getEndDate().toLocalDate()))) {
+                System.err.println("WARNING: " + window.describe(
+                        result.getStartDate().toLocalDate(), result.getEndDate().toLocalDate()));
+            }
 
             // Save the result to the database
             BacktestResultRepository resultRepo = new BacktestResultRepository(dbManager);

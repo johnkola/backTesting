@@ -94,7 +94,7 @@ public class ReportCommand implements Runnable {
         List<String> headers = List.of(
                 "ID", "Strategy", "Instrument", "Timeframe", "Source",
                 "Period", "Return%", "Sharpe", "Drawdown%",
-                "Trades", "Win Rate%", "Created"
+                "Trades", "Win Rate%", "Sample", "Created"
         );
 
         List<List<String>> rows = new ArrayList<>();
@@ -112,6 +112,10 @@ public class ReportCommand implements Runnable {
             row.add(String.valueOf(MathUtils.round(summary.maxDrawdownPct(), 2)));
             row.add(String.valueOf(summary.totalTrades()));
             row.add(String.valueOf(MathUtils.round(summary.winRate(), 2)));
+            // B4: IN for a model backtested over bars it trained on.
+            row.add(summary.modelWindow() == null ? ""
+                    : summary.inSample() == null ? "?"
+                    : summary.inSample() ? "IN" : "out");
             row.add(DateTimeUtils.format(summary.createdAt()));
             rows.add(row);
         }
@@ -121,6 +125,8 @@ public class ReportCommand implements Runnable {
                 summaries.size(),
                 describeFilters().isEmpty() ? "" : ", filtered by " + describeFilters());
         System.out.println(TableFormatter.formatTable(headers, rows));
+        System.out.println("  Sample: IN = a model tested on bars it was trained on (B4); out = after"
+                + " them; ? = its training window is unknown.");
         System.out.println("  Full report for one row: report --id <ID>");
     }
 

@@ -1,6 +1,6 @@
 # Postman collection
 
-> **Revision 2026-11-16-2** · 2026-11-16 09:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-3** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 Every endpoint the API origin serves, with assertions on status, shape and key
 values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
@@ -13,7 +13,7 @@ values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
 
 | File | What it is |
 |------|------------|
-| `backtest.postman_collection.json` | 58 requests in 9 folders, 180 assertions |
+| `backtest.postman_collection.json` | 58 requests in 9 folders, 181 assertions |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://api:8001` — from inside the compose network |
 
@@ -86,6 +86,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-3 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | Counts (58 requests, 181 assertions): the in-sample assertion (B4) |
 | 2026-11-16-2 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | Counts (58 requests, 180 assertions): the naive-baseline assertion (B8) |
 | 2026-11-16-1 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | Counts (58 requests, 179 assertions): the rule decisions request and the benchmark assertions (B7) |
 | 2026-11-15-1 | 2026-11-15 14:14 | Claude Code (Claude Opus 5.5) | Revision stamp added; counts brought up to date (57 requests, 9 folders, 175 assertions); the recalculate dry run (B10) |

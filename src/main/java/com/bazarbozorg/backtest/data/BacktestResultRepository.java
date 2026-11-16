@@ -69,8 +69,9 @@ public class BacktestResultRepository {
                 "(instrument_symbol, strategy_name, timeframe, data_source, start_date, end_date, " +
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, " +
-                "model_version_id, result_json) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "model_version_id, result_json, model_train_from, model_train_to, " +
+                "model_train_symbol, model_window) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -119,6 +120,13 @@ public class BacktestResultRepository {
             // Buy-and-hold travels inside result_json (`buyAndHold`, B6): it is
             // scored with this run, so there is no shared row to point at.
             ps.setString(17, row.resultJson());
+            // The model's training window (B4): these columns are its only home;
+            // in_sample is generated from them.
+            com.bazarbozorg.backtest.engine.ModelWindow w = row.modelWindow();
+            setDay(ps, 18, w == null ? null : w.since());
+            setDay(ps, 19, w == null ? null : w.until());
+            ps.setString(20, w == null ? null : w.symbol());
+            ps.setString(21, w == null ? null : w.status());
 
             ps.executeUpdate();
             logger.info("Saved backtest result: {} on {} ({})",
@@ -134,7 +142,7 @@ public class BacktestResultRepository {
             "SELECT id, instrument_symbol, strategy_name, timeframe, data_source, " +
             "start_date, end_date, total_return_pct, sharpe_ratio, " +
             "max_drawdown_pct, total_trades, win_rate, " +
-            "model_cache_key, model_cache_hit, model_version_id, created_at " +
+            "model_cache_key, model_cache_hit, model_version_id, in_sample, model_window, created_at " +
             "FROM backtest_results";
 
     /** Returns lightweight summaries (no result_json), ordered most-recent first. */
@@ -228,9 +236,35 @@ public class BacktestResultRepository {
         }
     }
 
+    private static final String WINDOW_COLUMNS =
+            "model_train_from, model_train_to, model_train_symbol, model_window";
+
+    /** The result with its model window from the columns (B4), its only home. */
+    private static BacktestResult withWindow(BacktestResult result, ResultSet rs) throws SQLException {
+        if (result == null || rs.getString("model_window") == null) {
+            return result;
+        }
+        OffsetDateTime from = rs.getObject("model_train_from", OffsetDateTime.class);
+        OffsetDateTime to = rs.getObject("model_train_to", OffsetDateTime.class);
+        return result.withModelWindow(new com.bazarbozorg.backtest.engine.ModelWindow(
+                rs.getString("model_window"),
+                from == null ? null : from.toLocalDate().toString(),
+                to == null ? null : to.toLocalDate().toString(),
+                rs.getString("model_train_symbol"), null));
+    }
+
+    private static void setDay(PreparedStatement ps, int idx, String isoDate) throws SQLException {
+        if (isoDate == null) {
+            ps.setNull(idx, Types.TIMESTAMP_WITH_TIMEZONE);
+        } else {
+            ps.setObject(idx, java.time.LocalDate.parse(isoDate).atStartOfDay()
+                    .atOffset(java.time.ZoneOffset.UTC));
+        }
+    }
+
     /** One saved backtest, fully reconstructed from {@code result_json}. */
     public Optional<BacktestResult> findById(long id) {
-        String sql = "SELECT result_json FROM backtest_results WHERE id = ?";
+        String sql = "SELECT result_json, " + WINDOW_COLUMNS + " FROM backtest_results WHERE id = ?";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -240,7 +274,8 @@ public class BacktestResultRepository {
                 if (rs.next()) {
                     String json = rs.getString("result_json");
                     if (json != null && !json.isBlank()) {
-                        return Optional.ofNullable(gson.fromJson(json, BacktestResult.class));
+                        return Optional.ofNullable(withWindow(
+                                gson.fromJson(json, BacktestResult.class), rs));
                     }
                 }
             }
@@ -254,7 +289,8 @@ public class BacktestResultRepository {
 
     /** Most recent backtest, fully reconstructed from {@code result_json}. */
     public Optional<BacktestResult> findLatest() {
-        String sql = "SELECT result_json FROM backtest_results ORDER BY created_at DESC LIMIT 1";
+        String sql = "SELECT result_json, " + WINDOW_COLUMNS
+                + " FROM backtest_results ORDER BY created_at DESC LIMIT 1";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql);
@@ -263,7 +299,7 @@ public class BacktestResultRepository {
             if (rs.next()) {
                 String json = rs.getString("result_json");
                 if (json != null && !json.isBlank()) {
-                    BacktestResult result = gson.fromJson(json, BacktestResult.class);
+                    BacktestResult result = withWindow(gson.fromJson(json, BacktestResult.class), rs);
                     return Optional.ofNullable(result);
                 }
             }
@@ -297,6 +333,7 @@ public class BacktestResultRepository {
                 .modelCacheKey(result.getModelCacheKey())
                 .modelCacheHit(result.getModelCacheHit())
                 .modelVersionId(result.getModelVersionId())
+                .modelWindow(result.getModelWindow())
                 .resultJson(gson.toJson(result))
                 .build();
     }
@@ -328,6 +365,8 @@ public class BacktestResultRepository {
                 .modelCacheKey(rs.getString("model_cache_key"))
                 .modelCacheHit(cacheHit)
                 .modelVersionId(rs.getString("model_version_id"))
+                .inSample(rs.getObject("in_sample", Boolean.class))
+                .modelWindow(rs.getString("model_window"))
                 .createdAt(createdAt)
                 .build();
     }

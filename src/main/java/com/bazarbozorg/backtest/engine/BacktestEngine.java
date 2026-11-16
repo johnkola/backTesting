@@ -269,7 +269,29 @@ public class BacktestEngine {
                 modelCacheHit,
                 modelVersionId,
                 buyAndHold,
-                benchmarks);
+                benchmarks,
+                modelVersionId == null ? null : modelWindow(strategy.getName(), modelVersionId));
+    }
+
+    /**
+     * The training window of the model version this run used (B4), from the
+     * loader, or null when the loader cannot say: a backfill can fill it later.
+     */
+    static ModelWindow modelWindow(String strategyName, String versionId) {
+        try {
+            com.google.gson.JsonObject w = com.bazarbozorg.backtest.loader.LoaderClient.get(
+                    "/api/nn/models/window?strategy="
+                    + com.bazarbozorg.backtest.loader.LoaderClient.encode(strategyName)
+                    + "&versionId=" + com.bazarbozorg.backtest.loader.LoaderClient.encode(versionId));
+            java.util.function.Function<String, String> s =
+                    k -> w.has(k) && !w.get(k).isJsonNull() ? w.get(k).getAsString() : null;
+            return new ModelWindow(s.apply("status"), s.apply("since"), s.apply("until"),
+                    s.apply("symbol"), s.apply("source"));
+        } catch (RuntimeException e) {
+            logger.warn("Could not read the training window of {} {}: {}", strategyName, versionId,
+                    e.getMessage());
+            return null;
+        }
     }
 
     /** Always long: an entry on every bar, which a held position ignores. */

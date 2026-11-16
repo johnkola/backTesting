@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { sampleNote, sampleOf } from '../lib/inSample'
 import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import DeleteResultRowButton from '../components/DeleteResultRowButton'
@@ -137,7 +138,25 @@ export default function ResultsPage() {
                       <td className="font-mono">{r.instrumentSymbol}</td>
                       <td>{r.timeframe}</td>
                       <td className="font-mono">{r.dataSource}</td>
-                      <td className={`text-right tabular-nums ${retClass}`}>{pct(r.totalReturnPct)}</td>
+                      <td className={`text-right tabular-nums ${retClass}`}>
+                        {pct(r.totalReturnPct)}
+                        {sampleOf(r) === 'in' && (
+                          <span
+                            className={`badge badge-xs badge-error ml-1 ${tipClass}`}
+                            data-tip={sampleNote(r) ?? ''}
+                          >
+                            in-sample
+                          </span>
+                        )}
+                        {sampleOf(r) === 'unknown' && (
+                          <span
+                            className={`badge badge-xs badge-ghost ml-1 ${tipClass}`}
+                            data-tip={sampleNote(r) ?? ''}
+                          >
+                            sample?
+                          </span>
+                        )}
+                      </td>
                       <td className="text-right tabular-nums text-base-content/70">
                         {pct(r.buyAndHoldReturnPct)}
                       </td>
