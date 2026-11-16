@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-15-7** · 2026-11-15 20:21 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-1** · 2026-11-16 00:04 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -300,6 +300,10 @@ Tab: **Pipeline → Backtest**.
   - A zero-profit trade is break-even, outside the win rate and the streaks.
   - Sortino with no losing bar, and profit factor with no losing trade, show as
     a dash, never 0.
+- [ ] **app**: a signal fills at the next bar's open, never at the close it was
+  computed from, and a signal on the last bar is never filled. The walk-forward scorer
+  trades the same way, so a result here and a step 6 fold of the same signals trade the
+  same days at the same prices (B1; `NextOpenCrossCheckTest`).
 - [ ] **app**: the result has its stored buy-and-hold benchmark. The equity chart
   draws the hold curve, which ends on the benchmark's stored final equity, or says
   why it can't.
@@ -318,10 +322,10 @@ Tab: **Pipeline → Backtest**.
 
 Known limits, each with a build step that removes it:
 
-- The engine fills at the close of the bar that gave the signal, while step 6
-  acts the next session. So a step 7 result is not comparable with a step 6
-  fold, and it is the flattering one of the two (G27, B1). See
-  [Execution engine](README.md#execution-engine).
+- Buy-and-hold is still bought at the window's first close, while a strategy can
+  first buy at the next open. A strategy that is long throughout therefore differs
+  from buy-and-hold by that first overnight, which can read as a win or a loss with no
+  timing behind it (B6, G32).
 - Entries are sized at all of cash on the close, before slippage and commission
   are added. With costs on, cash goes slightly negative on every entry (G28, B2).
 
@@ -380,15 +384,15 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 **Done when**
 
-- [ ] Engine: a signal on bar *t* fills on bar *t+1*, at that bar's open before
+- [x] Engine: a signal on bar *t* fills on bar *t+1*, at that bar's open before
   slippage. A signal on the last bar is not filled.
-- [ ] Scorer: `simulate`, `simulate_taxed` and `strategy2.simulate_margin` read opens. A
+- [x] Scorer: `simulate`, `simulate_taxed` and `strategy2.simulate_margin` read opens. A
   signal on day *t* changes the position at day *t+1*'s open: the old position earns
   close *t* to open *t+1*, and the new one earns open *t+1* to close *t+1*.
-- [ ] No bar trades at the close it was computed from, the first bar of a fold included.
-- [ ] The training losses in `nn/money_loss.py` use the same rule, so a model is trained
+- [x] No bar trades at the close it was computed from, the first bar of a fold included.
+- [x] The training losses in `nn/money_loss.py` use the same rule, so a model is trained
   on the curve it is scored on.
-- [ ] A cross-check test: one long-or-flat signal series over one window gives the same
+- [x] A cross-check test: one long-or-flat signal series over one window gives the same
   trade dates in the engine and in the scorer and, with costs and tax off, the same
   return to rounding. This is what lets a step 7 result be compared with a step 6 fold.
 
@@ -564,7 +568,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 
 | Build step | Gap | Waits for | Status | Evidence and notes |
 |---|---|---|---|---|
-| B1. Next-open execution | G27 | | not started | |
+| B1. Next-open execution | G27 | | done | 2026-11-16. The profit step trades at the next session's open: the old position holds the overnight, the new one the day; the money loss trains on the same curve; the engine fills a signal at the next bar's open. One fixture holds the Java engine and the Python scorer to the same three trades and return. Python 772, Java 130. Walk-forward rerun as 456-462: the classifiers equal their dry-run recalculations exactly; the 16 backtest results rerun as 730-745 with the same trades. phase1-full v5 (462) reads +0.55 pp a fold, but it is long throughout with timing 0: the first-overnight artifact B6 removes (DESIGN-GAPS, B1 record) |
 | B2. Entry sizing | G28 | | not started | |
 | B3. Engine metrics | G29 | | done | 2026-11-15. Sortino over the downside deviation, total slippage summed over every fill, break-even trades outside the win rate and streaks, and not-available metrics as null and a dash. Java 128 (9 new), client 142. All 16 stored results were rerun with rebuilt requests and reproduced exactly, apart from the fixed metrics, and replaced: 686-713 are now 714-729 (DESIGN-GAPS, B3 record) |
 | B4. In-sample flag | G30 | | not started | |
@@ -583,6 +587,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done; step 7's next-open condition replaces its known limit |
 | 2026-11-15-7 | 2026-11-15 20:21 | Claude Code (Claude Opus 5.5) | B10 done; step 6 gains the stored-signals condition |
 | 2026-11-15-6 | 2026-11-15 12:52 | Claude Code (Claude Opus 5.5) | Working rule: anything derivable is recalculable on demand, and raw data repopulates from its CSV or API; build step B10 (signals, then profit) for D9 |
 | 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added; working rule: stamp every doc you change |

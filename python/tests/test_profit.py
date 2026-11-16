@@ -60,15 +60,47 @@ class TestParkedReturn:
         assert profit.park_returns(late, D, profit.next_dates(D), "bills").tolist()[:2] == [0, 0]
 
 
+def px(opens, closes, days=D):
+    return profit.Prices(dict(zip(days, opens, strict=True)), dict(zip(days, closes, strict=True)))
+
+
+class TestSegments:
+    """B1: a bar trades at the next session's open; its overnight and intraday
+    segments multiply to its close-to-close return."""
+
+    P = px([99.0, 101.0, 98.0, 100.0], [100.0, 102.0, 99.0, 101.0])
+
+    def test_overnight_to_the_next_open_then_intraday_to_the_exit_close(self):
+        gap, intra, tradable = profit.segments(self.P, D, profit.next_dates(D))
+        assert gap[0] == pytest.approx(101 / 100 - 1) and intra[0] == pytest.approx(102 / 101 - 1)
+        assert (1 + gap[1]) * (1 + intra[1]) == pytest.approx(99 / 102)
+        assert (gap[3], intra[3], tradable.tolist()) == (0.0, 0.0, [True, True, True, False])
+
+    def test_the_trade_is_at_the_next_session_even_when_the_matrix_skips_one(self):
+        # The matrix has no row for D[1]; bar D[0] still trades at D[1]'s open.
+        dates = [D[0], D[2]]
+        gap, intra, _ = profit.segments(self.P, dates, [D[2], None])
+        assert gap[0] == pytest.approx(101 / 100 - 1)
+        assert intra[0] == pytest.approx(99 / 101 - 1)
+
+    def test_a_missing_price_is_nan_not_zero(self):
+        holed = profit.Prices({D[0]: 99.0}, dict(self.P.closes))
+        gap, _, _ = profit.segments(holed, D, profit.next_dates(D))
+        assert np.isnan(gap[0])
+
+
 def test_margin_inputs_match_the_axis_version():
-    psq = {D[1]: 80.0, D[2]: 82.0, D[3]: 81.18}
+    psq = px([79.0, 81.0, 81.5], [80.0, 82.0, 81.18], D[1:])
     dff = {D[0]: 5.0, date(2021, 1, 7): 5.25}
-    psq_r, rates, days = profit.margin_inputs(psq, dff, D, profit.next_dates(D))
-    m = wf.align_margin(D, psq, dff)
-    np.testing.assert_array_equal(psq_r, m.psq_returns)
+    sessions = px([1.0] * 4, [1.0] * 4)
+    psq_gap, psq_intra, rates, days = profit.margin_inputs(
+        psq, dff, D, profit.next_dates(D), sessions)
+    m = wf.align_margin(D, psq, dff, sessions)
+    np.testing.assert_array_equal(psq_gap, m.psq_gap)
+    np.testing.assert_array_equal(psq_intra, m.psq_intra)
     np.testing.assert_array_equal(rates, m.rates)
     assert days.tolist() == [1, 1, 2, 1]
-    assert np.isnan(psq_r[0]) and psq_r[3] == 0.0
+    assert np.isnan(psq_gap[0]) and (psq_gap[3], psq_intra[3]) == (0.0, 0.0)
 
 
 # --------------------------------------------------------------------------
@@ -87,26 +119,51 @@ def test_a_classifier_is_called_its_most_probable_class():
     assert profit.calls(out, "ce", 0.5).tolist() == [CLASS_BUY, CLASS_HOLD, CLASS_SELL]
 
 
+def a_market(gap, intra, park=None, tradable=None):
+    gap, intra = np.asarray(gap, dtype=float), np.asarray(intra, dtype=float)
+    n = len(gap)
+    return profit.Market((1 + gap) * (1 + intra) - 1, gap, intra,
+                         np.ones(n, dtype=bool) if tradable is None else np.asarray(tradable),
+                         np.zeros(n) if park is None else np.asarray(park, dtype=float))
+
+
 def test_score_is_the_long_flat_simulation_and_its_attribution():
     out = np.array([[0.9], [0.1], [0.1], [0.9]])
-    r = np.array([0.01, -0.02, 0.03, 0.01])
-    m = profit.Market(r, np.zeros(4))
+    m = a_market([0.004, -0.01, 0.002, 0.003], [0.01, -0.02, 0.03, 0.01])
     s = profit.Settings(loss="return", cost_bps=10.0, threshold=0.5)
     got = profit.score(out, m, s)
-    eq, trades = profit.simulate(profit.calls(out, "return", 0.5), r, cost_bps=10.0)
+    eq, trades = profit.simulate(profit.calls(out, "return", 0.5), m.gap, m.intra,
+                                 cost_bps=10.0)
     assert got.strat_return == pytest.approx((eq[-1] - 1) * 100)
-    # Acted a session late, the calls hold [long, long, out, out]: in, out, and
-    # the last bar's re-entry is never traded.
-    assert got.trades == trades == 2
+    # Long, out, out, long, each from the next open: in, out, in again.
+    assert got.trades == trades == 3
     assert got.days_out == 2
-    assert got.commissions == pytest.approx(-2 * 0.1)
+    assert got.commissions == pytest.approx(-3 * 0.1)
     assert got.margin_interest is None and got.levered_return is None
+
+
+def test_drift_and_timing_add_to_the_shortfall_before_costs():
+    rng = np.random.default_rng(5)
+    out = rng.uniform(0, 1, (60, 1))
+    m = a_market(rng.normal(0, 0.004, 60), rng.normal(0, 0.01, 60))
+    got = profit.score(out, m, profit.Settings(loss="return", cost_bps=0.0))
+    prev, pos = profit.positions(profit.calls(out, "return", 0.5))
+    gross = (1 + prev * m.gap) * (1 + pos * m.intra) - 1
+    assert got.drift_tax + got.timing == pytest.approx(-(m.r - gross).sum() * 100, rel=1e-12)
+
+
+def test_a_model_that_never_leaves_has_no_timing():
+    # Its only shortfall is the first overnight, which nothing could hold: drift.
+    m = a_market([0.01, 0.02, -0.01], [0.005, 0.0, 0.01])
+    got = profit.score(np.full((3, 1), 0.9), m, profit.Settings(loss="return", cost_bps=0.0))
+    assert got.days_out == 0
+    assert got.timing == pytest.approx(0.0, abs=1e-12)
+    assert got.drift_tax == pytest.approx(-0.01 * 1.005 * 100)
 
 
 def test_tax_changes_the_money_and_never_the_calls():
     out = np.array([[0.9], [0.9], [0.1], [0.1], [0.9]])
-    r = np.array([0.05, 0.05, -0.01, 0.0, 0.02])
-    m = profit.Market(r, np.zeros(5))
+    m = a_market(np.zeros(5), [0.05, 0.05, -0.01, 0.0, 0.02])
     before = profit.score(out, m, profit.Settings(loss="return"))
     after = profit.score(out, m, profit.Settings(loss="return", tax_rate=25.0))
     assert before.trades == after.trades and before.days_out == after.days_out
@@ -118,7 +175,7 @@ def test_strategy2_needs_its_market():
     s = profit.Settings(loss="ce", execution="margin", leverage_pct=20, hedge_pct=20,
                         margin_spread_pct=1.5, maintenance_pct=30)
     with pytest.raises(ValueError, match="PSQ"):
-        profit.score(np.array([[0.6, 0.2, 0.2]]), profit.Market(np.zeros(1), np.zeros(1)), s)
+        profit.score(np.array([[0.6, 0.2, 0.2]]), a_market([0.0], [0.0]), s)
 
 
 def test_settings_from_runner_flags_leave_the_dials_out_under_strategy1():
@@ -153,11 +210,16 @@ def _args(loss, **over):
     return args
 
 
-def _market(rets, va, execution):
+def _market(n, execution, seed=11):
+    """A whole-axis market for `run_fold`: overnight and intraday segments,
+    PSQ their inverse under Strategy 2."""
+    rng = np.random.default_rng(seed)
+    gap, intra = rng.normal(0.0002, 0.004, n), rng.normal(0.0003, 0.011, n)
+    m = a_market(gap, intra)
     if execution != "margin":
-        return profit.Market(rets[va], np.zeros(len(va)))
-    k = len(va)
-    return profit.Market(rets[va], np.zeros(k), -rets[va], np.full(k, 0.02), np.ones(k))
+        return m
+    return profit.Market(m.r, gap, intra, m.tradable, m.park, -gap, -intra,
+                         np.full(n, 0.02), np.ones(n))
 
 
 STRATEGY2 = dict(execution="margin", leverage_pct=20.0, hedge_pct=20.0,
@@ -172,19 +234,19 @@ class TestBlindTraining:
         x, y, rets, dates = _data()
         tr, va = list(range(0, 160)), list(range(165, 219))
         extra = STRATEGY2 if execution == "margin" else {}
-        m = _market(rets, va, execution)
+        m = _market(len(dates), execution)
 
-        untaxed, sig0 = wf.run_fold(1, 2019, tr, va, x, y, rets, dates,
-                                    _args(loss, tax_rate=None, cost_bps=5.0, **extra), m)
-        rerun, sig25 = wf.run_fold(1, 2019, tr, va, x, y, rets, dates,
-                                   _args(loss, tax_rate=25.0, cost_bps=12.0, **extra), m)
+        untaxed, sig0 = wf.run_fold(1, 2019, tr, va, x, y, m, dates,
+                                    _args(loss, tax_rate=None, cost_bps=5.0, **extra))
+        rerun, sig25 = wf.run_fold(1, 2019, tr, va, x, y, m, dates,
+                                   _args(loss, tax_rate=25.0, cost_bps=12.0, **extra))
 
         # Training never saw the tax or the cost: the signals are the same.
         np.testing.assert_array_equal(sig0.output, sig25.output)
         assert sig0.dates == sig25.dates and sig0.exits == sig25.exits
 
         # The profit step at 25% on the first run's signals is the rerun.
-        recalculated = profit.score(sig0.output, m, profit.Settings.from_args(
+        recalculated = profit.score(sig0.output, m.take(va), profit.Settings.from_args(
             _args(loss, tax_rate=25.0, cost_bps=12.0, **extra)))
         for field in profit.PROFIT_FIELDS:
             assert getattr(rerun, field) == getattr(recalculated, field), field
@@ -193,8 +255,8 @@ class TestBlindTraining:
     def test_the_stored_signals_carry_each_bar_s_two_dates_and_label(self):
         x, y, rets, dates = _data()
         tr, va = list(range(0, 160)), list(range(200, 220))
-        _, sig = wf.run_fold(1, 2019, tr, va, x, y, rets, dates, _args("return"),
-                             _market(rets, va, "signals"))
+        _, sig = wf.run_fold(1, 2019, tr, va, x, y, _market(len(dates), "signals"), dates,
+                             _args("return"))
         assert sig.dates == dates[200:220]
         assert sig.exits == [*dates[201:220], None]    # the last date has no exit
         assert sig.labels.tolist() == y[200:220].tolist()
@@ -202,8 +264,8 @@ class TestBlindTraining:
 
     def test_a_classifier_stores_its_three_probabilities(self):
         x, y, rets, dates = _data()
-        _, sig = wf.run_fold(1, 2019, list(range(160)), list(range(165, 175)), x, y, rets,
-                             dates, _args("ce"), _market(rets, list(range(165, 175)), "signals"))
+        _, sig = wf.run_fold(1, 2019, list(range(160)), list(range(165, 175)), x, y,
+                             _market(len(dates), "signals"), dates, _args("ce"))
         assert sig.output.shape == (10, 3)
         assert np.allclose(sig.output.sum(axis=1), 1.0, atol=1e-6)
 

@@ -1,4 +1,8 @@
-"""Strategy 2's scoring (G5): margin long, PSQ inverse, variable interest."""
+"""Strategy 2's scoring (G5): margin long, PSQ inverse, variable interest.
+
+Each bar comes in two segments (B1): overnight, held as before, then the trade
+at the open, then intraday. `run` takes the intraday moves and, unless given,
+puts nothing overnight; PSQ moves as the inverse of QQQ in both segments."""
 
 from __future__ import annotations
 
@@ -11,21 +15,25 @@ from nn.strategy2 import DOWN, NEUTRAL, UP, MarginConfig
 FREE = dict(spread=0.0, cost_bps=0.0)
 
 
-def run(signals, qqq, psq=None, rate=0.0, days=1, **cfg):
+def run(signals, qqq, gap=None, psq=None, rate=0.0, days=1, tradable=None, **cfg):
     n = len(signals)
-    qqq = np.asarray(qqq, dtype=float)
-    psq = -qqq if psq is None else np.asarray(psq, dtype=float)
+    intra = np.asarray(qqq, dtype=float)
+    gap = np.zeros(n) if gap is None else np.asarray(gap, dtype=float)
+    psq_intra = -intra if psq is None else np.asarray(psq, dtype=float)
     base = dict(leverage=0.2, hedge=0.2, spread=0.0, cost_bps=0.0)
     base.update(cfg)
-    return s2.simulate_margin(np.asarray(signals), qqq, psq, np.full(n, rate),
-                              np.full(n, float(days)), MarginConfig(**base))
+    return s2.simulate_margin(np.asarray(signals), gap, intra, -gap, psq_intra,
+                              np.full(n, rate), np.full(n, float(days)), MarginConfig(**base),
+                              tradable=tradable)
 
 
 class TestBuyAndHoldIsTheCore:
     def test_all_neutral_is_buy_and_hold_exactly(self):
+        # The core is held from the first close, overnights included.
         q = np.array([0.01, -0.02, 0.03, 0.005])
-        r = run([NEUTRAL] * 4, q, rate=0.05, cost_bps=5, spread=0.015)
-        np.testing.assert_allclose(r.equity, np.cumprod(1 + q), rtol=0, atol=1e-15)
+        g = np.array([0.002, 0.004, -0.003, 0.001])
+        r = run([NEUTRAL] * 4, q, gap=g, rate=0.05, cost_bps=5, spread=0.015)
+        np.testing.assert_allclose(r.equity, np.cumprod((1 + g) * (1 + q)), rtol=1e-15)
         assert (r.trades, r.interest, r.commissions, r.gains_tax) == (0, 0.0, 0.0, 0.0)
 
 
@@ -37,14 +45,15 @@ class TestMarginLong:
         assert r.equity[-1] == pytest.approx(growth + 0.2 * (growth - 1))
         assert r.days_long == 2 and r.trades == 1
 
-    def test_is_sized_on_the_core_the_day_it_opens(self):
-        # Neutral for one bar (core grows 10%), then long: 20% of 1.10.
+    def test_is_sized_on_the_core_at_the_open_it_trades(self):
+        # Neutral for one bar (core grows 10%), then long at the next open: 20% of 1.10.
         r = run([NEUTRAL, UP, UP], [0.10, 0.10, 0.0])
-        # The UP signal of bar 1 is held from bar 2 (next session).
-        assert r.days_long == 1
-        assert r.equity[-1] == pytest.approx(1.21 + 0.2 * 1.21 * 0.0)
-        r = run([UP, UP, UP], [0.10, 0.0, 0.0])
-        assert r.equity[-1] == pytest.approx(1.10 + 0.2 * 0.10)
+        assert r.days_long == 2
+        assert r.equity[-1] == pytest.approx(1.21 + 0.2 * 1.10 * 0.10)
+        # The overnight before the open moves the core first.
+        r = run([UP], [0.0], gap=[0.10])
+        assert r.equity[-1] == pytest.approx(1.10)
+        assert r.commissions == 0.0 and r.trades == 1
 
 
 class TestInverse:
@@ -54,12 +63,17 @@ class TestInverse:
         assert r.equity[-1] == pytest.approx(0.90 + 0.03)
         assert r.days_hedged == 2
 
-    def test_a_signal_is_acted_on_the_next_session(self):
-        r = run([NEUTRAL, DOWN, NEUTRAL], [0.0, -0.10, -0.10])
-        # DOWN computed on bar 1 is held over bar 2 only.
+    def test_a_signal_is_acted_on_at_the_next_open_not_its_own_close(self):
+        # DOWN computed at bar 1's close: bar 1's overnight (-10%) is still
+        # unhedged; the hedge opens at the open and covers bar 2's overnight.
+        r = run([NEUTRAL, DOWN, NEUTRAL], [0.0, 0.0, 0.0], gap=[0.0, -0.10, -0.10])
         assert r.days_hedged == 1
         assert r.equity[1] == pytest.approx(0.90)
         assert r.equity[2] == pytest.approx(0.81 + 0.2 * 0.90 * 0.10)
+
+    def test_a_bar_that_cannot_trade_acts_on_nothing(self):
+        r = run([NEUTRAL, UP], [0.0, 0.10], tradable=np.array([True, False]))
+        assert (r.trades, r.days_long) == (0, 0)
 
 
 class TestCeiling:
@@ -81,10 +95,11 @@ class TestCeiling:
 
 
 class TestInterest:
-    def test_accrues_on_the_debit_per_calendar_day_on_360(self):
+    def test_accrues_on_the_debit_carried_overnight_per_calendar_day_on_360(self):
+        # Borrowed at bar 0's open; bar 1's three nights (a weekend) carry it.
         r = run([UP, UP], [0.0, 0.0], leverage=0.2, rate=0.05, spread=0.015, days=3)
         daily = 0.065 * 3 / 360
-        debit = 0.2 * (1 + daily) ** 2
+        debit = 0.2 * (1 + daily)
         assert r.equity[-1] == pytest.approx(1.0 + 0.2 - debit)
         assert r.interest == pytest.approx(-(debit - 0.2) * 100)
 
@@ -93,7 +108,8 @@ class TestInterest:
 
     def test_moves_with_the_rate_on_each_day(self):
         n = 2
-        r = s2.simulate_margin(np.array([UP, UP]), np.zeros(n), np.zeros(n),
+        z = np.zeros(n)
+        r = s2.simulate_margin(np.array([UP, UP]), z, z, z, z,
                                np.array([0.0, 0.10]), np.ones(n),
                                MarginConfig(leverage=0.2, hedge=0.2, **FREE))
         assert r.interest == pytest.approx(-0.2 * 0.10 / 360 * 100)

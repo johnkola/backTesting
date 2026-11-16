@@ -110,9 +110,9 @@ public class BacktestEngine {
      *   <li>Creates a PortfolioManager and ExecutionSimulator</li>
      *   <li>Iterates bar-by-bar from warmupBars to the end:
      *     <ul>
+     *       <li>Fills the previous bar's signal at this bar's open (B1)</li>
      *       <li>Creates a StrategyContext for the current bar</li>
-     *       <li>Evaluates the strategy to get a signal</li>
-     *       <li>Processes entry/exit signals by creating and filling orders</li>
+     *       <li>Evaluates the strategy and holds its signal for the next bar</li>
      *       <li>Records equity points</li>
      *     </ul>
      *   </li>
@@ -176,39 +176,8 @@ public class BacktestEngine {
         PortfolioManager portfolioManager = new PortfolioManager(initialCapital);
         ExecutionSimulator executionSimulator = new ExecutionSimulator(commissionModel, slippageModel);
 
-        // Step 5: Bar-by-bar loop
-        List<Order> pendingOrders = new ArrayList<>();
-
-        for (int i = warmupBars; i < series.getBarCount(); i++) {
-            Bar currentBar = series.getBar(i);
-            double closePrice = currentBar.getClosePrice().doubleValue();
-            ZonedDateTime barTime = ZonedDateTime.ofInstant(currentBar.getEndTime(), ZoneOffset.UTC);
-
-            // Create strategy context
-            StrategyContext context = new StrategyContext(
-                    i, series, new Portfolio(), Collections.unmodifiableList(pendingOrders));
-
-            // Get signal from strategy
-            StrategySignal signal = strategy.evaluate(context);
-
-            // Process signal
-            processSignal(signal, instrument.id(), closePrice, barTime,
-                    portfolioManager, executionSimulator);
-
-            // Record equity point
-            portfolioManager.recordEquityPoint(barTime, closePrice);
-        }
-
-        // Step 6: Force-close any remaining positions at last bar's close
-        if (portfolioManager.hasOpenPositions() && series.getBarCount() > 0) {
-            Bar lastBar = series.getBar(series.getBarCount() - 1);
-            double lastClose = lastBar.getClosePrice().doubleValue();
-            ZonedDateTime lastTime = ZonedDateTime.ofInstant(lastBar.getEndTime(), ZoneOffset.UTC);
-
-            logger.info("Force-closing {} remaining position(s) at last bar close",
-                    portfolioManager.getOpenPositions().size());
-            portfolioManager.closeAllPositions(lastClose, lastTime, executionSimulator);
-        }
+        // Steps 5 and 6: the bar loop, then the end-of-run close-out.
+        trade(series, strategy, warmupBars, instrument.id(), portfolioManager, executionSimulator);
 
         logger.info("Backtest complete: {} trades executed", portfolioManager.getCompletedTrades().size());
 
@@ -432,9 +401,65 @@ public class BacktestEngine {
                                    boolean cacheHit) {}
 
     /**
-     * Processes a trading signal by creating and filling orders as needed.
+     * The bar loop and the end-of-run close-out (steps 5 and 6), with no
+     * database, so a test can drive it with a series alone.
+     *
+     * <p><b>A signal fills at the next bar's open (B1, R76).</b> The strategy
+     * is evaluated on bar {@code t}'s close; what it says is held over and
+     * filled at bar {@code t+1}'s open, through the slippage model like any
+     * other fill. No bar trades at the close it was computed from, which was
+     * the flattering side: a signal knows the close, a real order cannot get
+     * it. A signal on the last bar has no next bar and is never filled. The
+     * walk-forward scorer ({@code python/nn/profit.py}) follows the same rule,
+     * and {@code NextOpenCrossCheckTest} holds the two to the same trades.
+     *
+     * <p>Equity is marked at each bar's close, after that bar's fill. A
+     * position still open at the end is closed at the last close, so a result
+     * never hides an open position's unrealised loss.
      */
-    private void processSignal(StrategySignal signal, long instrumentId, double closePrice,
+    static void trade(BarSeries series, TradingStrategy strategy, int warmupBars,
+                      long instrumentId, PortfolioManager portfolioManager,
+                      ExecutionSimulator executionSimulator) {
+        List<Order> pendingOrders = new ArrayList<>();
+        StrategySignal pending = null;
+
+        for (int i = warmupBars; i < series.getBarCount(); i++) {
+            Bar currentBar = series.getBar(i);
+            ZonedDateTime barTime = ZonedDateTime.ofInstant(currentBar.getEndTime(), ZoneOffset.UTC);
+
+            // What the previous bar's close decided, filled at this bar's open.
+            if (pending != null) {
+                processSignal(pending, instrumentId, currentBar.getOpenPrice().doubleValue(),
+                        barTime, portfolioManager, executionSimulator);
+                pending = null;
+            }
+
+            StrategyContext context = new StrategyContext(
+                    i, series, new Portfolio(), Collections.unmodifiableList(pendingOrders));
+            StrategySignal signal = strategy.evaluate(context);
+            if (signal != StrategySignal.HOLD) {
+                pending = signal;
+            }
+
+            portfolioManager.recordEquityPoint(barTime, currentBar.getClosePrice().doubleValue());
+        }
+
+        if (portfolioManager.hasOpenPositions() && series.getBarCount() > 0) {
+            Bar lastBar = series.getBar(series.getBarCount() - 1);
+            double lastClose = lastBar.getClosePrice().doubleValue();
+            ZonedDateTime lastTime = ZonedDateTime.ofInstant(lastBar.getEndTime(), ZoneOffset.UTC);
+
+            logger.info("Force-closing {} remaining position(s) at last bar close",
+                    portfolioManager.getOpenPositions().size());
+            portfolioManager.closeAllPositions(lastClose, lastTime, executionSimulator);
+        }
+    }
+
+    /**
+     * Acts on a signal at {@code price}, the open of the bar after the one
+     * that produced it, creating and filling orders as needed.
+     */
+    private static void processSignal(StrategySignal signal, long instrumentId, double price,
                                 ZonedDateTime barTime, PortfolioManager portfolioManager,
                                 ExecutionSimulator executionSimulator) {
         switch (signal) {
@@ -442,10 +467,10 @@ public class BacktestEngine {
                 // Only enter if no existing long position
                 Position existingLong = portfolioManager.findOpenPosition(instrumentId, OrderSide.BUY);
                 if (existingLong == null) {
-                    double quantity = portfolioManager.calculatePositionSize(closePrice, 1.0);
+                    double quantity = portfolioManager.calculatePositionSize(price, 1.0);
                     if (quantity > 0) {
-                        Order order = Order.market(instrumentId, OrderSide.BUY, quantity, closePrice);
-                        ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, closePrice);
+                        Order order = Order.market(instrumentId, OrderSide.BUY, quantity, price);
+                        ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, price);
                         order = order.filled(barTime, fill.filledPrice(), fill.commission(), fill.slippage());
 
                         portfolioManager.openPosition(
@@ -462,10 +487,10 @@ public class BacktestEngine {
                 // Only enter if no existing short position
                 Position existingShort = portfolioManager.findOpenPosition(instrumentId, OrderSide.SELL);
                 if (existingShort == null) {
-                    double quantity = portfolioManager.calculatePositionSize(closePrice, 1.0);
+                    double quantity = portfolioManager.calculatePositionSize(price, 1.0);
                     if (quantity > 0) {
-                        Order order = Order.market(instrumentId, OrderSide.SELL, quantity, closePrice);
-                        ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, closePrice);
+                        Order order = Order.market(instrumentId, OrderSide.SELL, quantity, price);
+                        ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, price);
                         order = order.filled(barTime, fill.filledPrice(), fill.commission(), fill.slippage());
 
                         portfolioManager.openPosition(
@@ -481,25 +506,25 @@ public class BacktestEngine {
             case EXIT_LONG -> {
                 Position longPosition = portfolioManager.findOpenPosition(instrumentId, OrderSide.BUY);
                 if (longPosition != null) {
-                    closePositionWithOrder(longPosition, instrumentId, closePrice, barTime,
+                    closePositionWithOrder(longPosition, instrumentId, price, barTime,
                             portfolioManager, executionSimulator);
-                    logger.debug("EXIT_LONG: closed position @ {}", closePrice);
+                    logger.debug("EXIT_LONG: closed position @ {}", price);
                 }
             }
 
             case EXIT_SHORT -> {
                 Position shortPosition = portfolioManager.findOpenPosition(instrumentId, OrderSide.SELL);
                 if (shortPosition != null) {
-                    closePositionWithOrder(shortPosition, instrumentId, closePrice, barTime,
+                    closePositionWithOrder(shortPosition, instrumentId, price, barTime,
                             portfolioManager, executionSimulator);
-                    logger.debug("EXIT_SHORT: closed position @ {}", closePrice);
+                    logger.debug("EXIT_SHORT: closed position @ {}", price);
                 }
             }
 
             case EXIT_ALL -> {
                 if (portfolioManager.hasOpenPositions()) {
-                    portfolioManager.closeAllPositions(closePrice, barTime, executionSimulator);
-                    logger.debug("EXIT_ALL: closed all positions @ {}", closePrice);
+                    portfolioManager.closeAllPositions(price, barTime, executionSimulator);
+                    logger.debug("EXIT_ALL: closed all positions @ {}", price);
                 }
             }
 
@@ -512,12 +537,12 @@ public class BacktestEngine {
     /**
      * Closes a position by creating a corresponding exit order and filling it.
      */
-    private void closePositionWithOrder(Position position, long instrumentId, double closePrice,
+    private static void closePositionWithOrder(Position position, long instrumentId, double price,
                                          ZonedDateTime barTime, PortfolioManager portfolioManager,
                                          ExecutionSimulator executionSimulator) {
         OrderSide exitSide = position.isLong() ? OrderSide.SELL : OrderSide.BUY;
-        Order exitOrder = Order.market(instrumentId, exitSide, position.quantity(), closePrice);
-        ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(exitOrder, closePrice);
+        Order exitOrder = Order.market(instrumentId, exitSide, position.quantity(), price);
+        ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(exitOrder, price);
         exitOrder = exitOrder.filled(barTime, fill.filledPrice(), fill.commission(), fill.slippage());
 
         portfolioManager.closePosition(position, fill.filledPrice(), barTime, fill.commission(), exitOrder.id());

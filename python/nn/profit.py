@@ -32,11 +32,15 @@ Invariants a change must keep:
   float64 values on both paths, never from the network's float32 tensor on one
   of them, so the two cannot disagree on a bar that sits on a threshold.
 
-* **Signals are acted on the next session.** The signal computed from bar i's
-  close sets the position held over bar i+1's return; the first bar's own
-  signal is held from the start. `simulate` and `strategy2.simulate_margin`
-  both shift in one visible place. (B1 moves trading to the next bar's open,
-  here and only here.)
+* **A signal trades at the next session's open (B1, R76).** Bar i runs from
+  the close of its date to the close of its exit. The signal computed at the
+  bar's close trades at the open of the instrument's next session, so the bar
+  has two segments: overnight, close to that open, held by the previous
+  position; intraday, that open to the exit's close, held by the new one. No
+  bar trades at the close it was computed from: before a fold's first bar the
+  position is flat (Strategy 1) or the core alone (Strategy 2). A bar with no
+  exit trades nothing. `simulate`, `simulate_taxed`, `strategy2.simulate_margin`
+  and the money loss all read the two segments; none of them shifts an index.
 """
 
 from __future__ import annotations
@@ -179,9 +183,54 @@ def _carried(obs: dict[date, float]):
 
 def instrument_returns(closes: dict[date, float], dates: list[date],
                        exits: list[date | None]) -> np.ndarray:
-    """Close to close, from each bar's date to its exit; 0 when it has none."""
+    """Close to close, from each bar's date to its exit; 0 when it has none.
+    Buy-and-hold's bar, and the sum the two segments make."""
     return np.array([(closes[e] / closes[d] - 1.0) if e is not None else 0.0
                      for d, e in zip(dates, exits, strict=True)], dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class Prices:
+    """One instrument's daily opens and closes. Its candles are its calendar:
+    the next session after a date is its next candle."""
+    opens: dict[date, float]
+    closes: dict[date, float]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_days", sorted(self.closes))
+
+    def next_session(self, d: date) -> date | None:
+        days = self._days  # type: ignore[attr-defined]
+        j = bisect_right(days, d)
+        return days[j] if j < len(days) else None
+
+
+def segments(px: Prices, dates: list[date], exits: list[date | None],
+             sessions: Prices | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each bar's two segments for `px`, and whether the bar can trade.
+
+    The trade is at the open of the next session after the bar's date, taken
+    from `sessions` (the traded instrument's calendar; `px`'s own when None).
+    Overnight is close of the bar's date to that open; intraday is that open to
+    the exit's close. With no exit both are 0 and the bar cannot trade. NaN
+    where `px` lacks a price the bar needs (PSQ before its first bar).
+    """
+    cal = sessions or px
+    n = len(dates)
+    gap, intra = np.zeros(n), np.zeros(n)
+    tradable = np.zeros(n, dtype=bool)
+    for i, (d, e) in enumerate(zip(dates, exits, strict=True)):
+        if e is None:
+            continue
+        tradable[i] = True
+        s = cal.next_session(d)
+        c0, o1, c1 = px.closes.get(d), px.opens.get(s) if s else None, px.closes.get(e)
+        if c0 is None or o1 is None or c1 is None or c0 <= 0 or o1 <= 0:
+            gap[i] = intra[i] = np.nan
+            continue
+        gap[i] = o1 / c0 - 1.0
+        intra[i] = c1 / o1 - 1.0
+    return gap, intra, tradable
 
 
 def park_returns(obs: dict[date, float] | None, dates: list[date],
@@ -211,15 +260,17 @@ def park_returns(obs: dict[date, float] | None, dates: list[date],
     return out
 
 
-def margin_inputs(psq: dict[date, float], dff: dict[date, float], dates: list[date],
-                  exits: list[date | None]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Strategy 2's series over the bars: PSQ's return to the exit (NaN where PSQ
-    has no close on either end; 0 on a bar with no exit, if PSQ has its date),
-    Fed funds carried forward to the bar's date as a fraction (NaN before it
-    starts), and the calendar days to the exit, over which interest accrues (1
-    with no exit)."""
+def margin_inputs(psq: Prices, dff: dict[date, float], dates: list[date],
+                  exits: list[date | None], sessions: Prices
+                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Strategy 2's series over the bars: PSQ's two segments, traded on the
+    instrument's sessions (NaN where PSQ has no price a bar needs; 0 on a bar
+    with no exit if PSQ has its date), Fed funds carried forward to the bar's
+    date as a fraction (NaN before it starts), and the calendar days to the
+    exit, over which the debit carried overnight accrues interest (1 with no
+    exit)."""
+    psq_gap, psq_intra, _ = segments(psq, dates, exits, sessions=sessions)
     n = len(dates)
-    psq_r = np.full(n, np.nan)
     rates = np.full(n, np.nan)
     days = np.ones(n)
     rate_at = _carried(dff)
@@ -228,42 +279,51 @@ def margin_inputs(psq: dict[date, float], dff: dict[date, float], dates: list[da
         if rate is not None:
             rates[i] = rate / 100.0
         if e is None:
-            if d in psq:
-                psq_r[i] = 0.0
+            if d not in psq.closes:
+                psq_gap[i] = psq_intra[i] = np.nan
             continue
         days[i] = (e - d).days
-        if d in psq and e in psq and psq[d] > 0:
-            psq_r[i] = psq[e] / psq[d] - 1.0
-    return psq_r, rates, days
+    return psq_gap, psq_intra, rates, days
 
 
 @dataclass(frozen=True)
 class Market:
-    """One fold's market, one value per bar. The margin series are None under
-    Strategy 1, which reads none of them."""
+    """One fold's market, one value per bar. `r` is close to close (buy-and-hold's
+    bar); `gap` and `intra` are its overnight and intraday segments, which the
+    strategy trades between; `tradable` is False on a bar with no exit. The
+    margin series are None under Strategy 1, which reads none of them."""
     r: np.ndarray
+    gap: np.ndarray
+    intra: np.ndarray
+    tradable: np.ndarray
     park: np.ndarray
-    psq: np.ndarray | None = None
+    psq_gap: np.ndarray | None = None
+    psq_intra: np.ndarray | None = None
     rates: np.ndarray | None = None
     days: np.ndarray | None = None
 
     def take(self, idx) -> Market:
         """The bars at `idx`, from a market built over a whole date axis."""
-        def t(a):
-            return None if a is None else a[idx]
-        return Market(self.r[idx], self.park[idx], t(self.psq), t(self.rates), t(self.days))
+        return Market(**{f: (None if v is None else v[idx])
+                         for f, v in vars(self).items()})
+
+    @property
+    def strategy2(self) -> bool:
+        return self.psq_gap is not None
 
 
-def market(closes: dict[date, float], dates: list[date], exits: list[date | None],
+def market(px: Prices, dates: list[date], exits: list[date | None],
            park_obs: dict[date, float] | None, park: str,
-           psq: dict[date, float] | None = None,
+           psq: Prices | None = None,
            dff: dict[date, float] | None = None) -> Market:
-    """The market over `dates`. Pass `psq` and `dff` for Strategy 2."""
-    r = instrument_returns(closes, dates, exits)
+    """The market over `dates` for the instrument priced by `px`. Pass `psq`
+    and `dff` for Strategy 2."""
+    r = instrument_returns(px.closes, dates, exits)
+    gap, intra, tradable = segments(px, dates, exits)
     p = park_returns(park_obs, dates, exits, park)
     if psq is None or dff is None:
-        return Market(r, p)
-    return Market(r, p, *margin_inputs(psq, dff, dates, exits))
+        return Market(r, gap, intra, tradable, p)
+    return Market(r, gap, intra, tradable, p, *margin_inputs(psq, dff, dates, exits, px))
 
 
 # ---------------------------------------------------------------------------
@@ -325,34 +385,53 @@ def max_drawdown(equity: np.ndarray) -> float:
     return float((1.0 - equity / peak).max() * 100.0)
 
 
+def positions(predictions: np.ndarray, tradable: np.ndarray | None = None
+              ) -> tuple[np.ndarray, np.ndarray]:
+    """(held overnight, held after the open) for each bar under the long/flat
+    rule: long unless the call is SELL.
+
+    The call made at bar i's close is the position from the next open, so it
+    holds over bar i's intraday segment; over the overnight segment the bar
+    still holds the call before it. Flat before the first bar, so the first
+    bar's own call is bought at the next open, never at its close. A bar that
+    cannot trade (no exit) keeps what it held.
+    """
+    pos = np.where(predictions == CLASS_SELL, 0.0, 1.0)
+    if tradable is not None:
+        for i in np.flatnonzero(~np.asarray(tradable, dtype=bool)):
+            pos[i] = pos[i - 1] if i else 0.0
+    prev = np.concatenate([[0.0], pos[:-1]])
+    return prev, pos
+
+
 def simulate(
-    predictions: np.ndarray, returns: np.ndarray, *, cost_bps: float,
-    park_returns: np.ndarray | None = None,
+    predictions: np.ndarray, gap: np.ndarray, intra: np.ndarray, *, cost_bps: float,
+    park_returns: np.ndarray | None = None, tradable: np.ndarray | None = None,
 ) -> tuple[np.ndarray, int]:
     """Equity curve and trade count for the long/flat rule.
 
-    The prediction on day i is acted on for day i+1's return: a signal computed
-    from day i's close cannot be traded until the next session. Shifting here
-    rather than in the caller keeps the one place that could introduce
-    lookahead visible.
+    Each bar grows by its overnight segment under the position held before the
+    open, pays commission at the open if the position changes there, then
+    grows by its intraday segment under the new position. Money not in
+    equities earns the parked rate rather than nothing. Cash at zero is the
+    pessimistic default; bills or bonds recover part of the drift forfeited by
+    sitting out. Bonds can do far more than carry in a flight-to-quality
+    selloff — or far less in a rate shock, when they fall alongside equities
+    and the hedge simply is not there. The parked return goes to the position
+    held after the open, the one the bar ends in.
     """
-    position = np.where(predictions == CLASS_SELL, 0.0, 1.0)
-    traded = np.concatenate([[position[0]], position[:-1]])  # act next day
-    changes = np.abs(np.diff(np.concatenate([[0.0], traded])))
-    costs = changes * (cost_bps / 10_000.0)
-    # Money not in equities earns the parked rate rather than nothing. Cash at
-    # zero is the pessimistic default; bills or bonds recover part of the drift
-    # forfeited by sitting out. Bonds can do far more than carry in a
-    # flight-to-quality selloff — or far less in a rate shock, when they fall
-    # alongside equities and the hedge simply is not there.
-    park = np.zeros_like(returns) if park_returns is None else park_returns
-    daily = traded * returns + (1.0 - traded) * park - costs
-    return np.cumprod(1.0 + daily), int((changes > 0).sum())
+    prev, pos = positions(predictions, tradable)
+    changes = np.abs(pos - prev)
+    park = np.zeros_like(gap) if park_returns is None else park_returns
+    growth = ((1.0 + prev * gap) * (1.0 - changes * (cost_bps / 10_000.0))
+              * (1.0 + pos * intra + (1.0 - pos) * park))
+    return np.cumprod(growth), int((changes > 0).sum())
 
 
 def simulate_taxed(
-    predictions: np.ndarray, returns: np.ndarray, *, cost_bps: float,
+    predictions: np.ndarray, gap: np.ndarray, intra: np.ndarray, *, cost_bps: float,
     park_returns: np.ndarray | None = None, tax_rate: float = 0.0,
+    tradable: np.ndarray | None = None,
 ) -> tuple[np.ndarray, int, float]:
     """`simulate`, with tax charged on each realized gain. Also returns the tax
     paid, in points of starting capital.
@@ -364,39 +443,41 @@ def simulate_taxed(
 
     The rule, applied the same way to the model and to the benchmark:
 
-    * A gain is taxed when it is REALIZED, on the day the position is sold.
-      Basis is the equity on the day the position was opened; the exit
-      commission is netted from the proceeds, so commissions reduce the gain
-      the way they do on a real return.
+    * A gain is taxed when it is REALIZED, at the open where the position is
+      sold. Basis is the equity at the open where it was bought, before the
+      entry commission; the exit commission is netted from the proceeds, so
+      commissions reduce the gain the way they do on a real return.
     * A realized loss offsets later gains within the fold. A fold is scored on
       its own, so nothing carries into the next one.
     * A position still open when the fold ends is not taxed: nothing was sold.
       Buy-and-hold never sells, so it is never taxed under this rule. That is
       the "same honest basis" the design asks for, and it is exactly the
-      handicap the design suspects is why timing loses to holding.
+      handicap the design suspects is why timing loses to holding. (D8 sells
+      and taxes it at the end; that is B6.)
     * Interest earned while parked is not taxed; only equity gains are.
 
     `tax_rate` is a fraction (0.25 for 25%). At 0 the result is `simulate`'s,
     bit for bit, and the tax is 0.
     """
-    equity, trades = simulate(predictions, returns, cost_bps=cost_bps,
-                              park_returns=park_returns)
-    if tax_rate <= 0.0 or len(returns) == 0:
+    equity, trades = simulate(predictions, gap, intra, cost_bps=cost_bps,
+                              park_returns=park_returns, tradable=tradable)
+    if tax_rate <= 0.0 or len(gap) == 0:
         return equity, trades, 0.0
 
-    position = np.where(predictions == CLASS_SELL, 0.0, 1.0)
-    traded = np.concatenate([[position[0]], position[:-1]])
-    prev = np.concatenate([[0.0], traded[:-1]])
+    prev, pos = positions(predictions, tradable)
     cost = cost_bps / 10_000.0
-    park = np.zeros_like(returns) if park_returns is None else park_returns
+    park = np.zeros_like(gap) if park_returns is None else park_returns
 
-    out = np.empty(len(returns))
+    out = np.empty(len(gap))
     e, basis, carry, paid = 1.0, 0.0, 0.0, 0.0
-    for i in range(len(returns)):
-        if traded[i] == 1.0 and prev[i] == 0.0:
+    for i in range(len(gap)):
+        e *= 1.0 + prev[i] * gap[i]
+        if pos[i] == 1.0 and prev[i] == 0.0:        # bought at the open
             basis = e
-        elif traded[i] == 0.0 and prev[i] == 1.0:
-            net = e * (1.0 - cost) - basis + carry
+            e *= 1.0 - cost
+        elif pos[i] == 0.0 and prev[i] == 1.0:      # sold at the open
+            e *= 1.0 - cost
+            net = e - basis + carry
             if net > 0.0:
                 tax = tax_rate * net
                 e -= tax
@@ -404,8 +485,7 @@ def simulate_taxed(
                 carry = 0.0
             else:
                 carry = net
-        changed = traded[i] != prev[i]
-        e *= 1.0 + traded[i] * returns[i] + (1.0 - traded[i]) * park[i] - (cost if changed else 0.0)
+        e *= 1.0 + pos[i] * intra[i] + (1.0 - pos[i]) * park[i]
         out[i] = e
     return out, trades, -paid * 100.0
 
@@ -416,13 +496,18 @@ class Profit:
 
     The attribution is in percentage points of the fold. It is exact in
     arithmetic terms. Let `forgone = equity return - parked return`, the true
-    opportunity cost of a day spent out. Summing daily differences against
-    buy-and-hold gives -(sum of forgone on days out) - costs, and splitting that
-    about the fold's own mean separates the price of being out at all from the
-    quality of the days chosen:
+    opportunity cost of a day spent out. Summing each bar's shortfall against
+    buy-and-hold, segment by segment, gives what the fold forwent before costs,
+    and splitting that about the fold's own mean separates the price of being
+    out at all from the quality of the moments chosen:
 
-      drift_tax = -days_out * mean(forgone)               (cost of sitting out)
-      timing    = -sum_out(forgone - mean(forgone))       (were those days worse?)
+      drift_tax = -(days_out * mean(forgone) + first overnight)  (sitting out)
+      timing    = -(shortfall) - drift_tax                        (the rest)
+
+    A day out is a bar that ends out of the market. Before B1 every bar was
+    held whole, and timing was exactly -sum_out(forgone - mean(forgone)); the
+    trade now happens at the open, so a bar's overnight segment can be held
+    one way and its intraday the other, and timing takes those segments too.
 
     Only `timing` is the model. A positive timing term means it picked days that
     really were bad; zero means its exits were indistinguishable from closing
@@ -466,42 +551,52 @@ PROFIT_FIELDS = tuple(Profit.__dataclass_fields__)
 def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
     """Turn one fold's signals into its money figures under `s`."""
     pred = calls(output, s.loss, s.threshold)
-    r = m.r
     margin = None
     if s.execution == "margin":
-        if m.psq is None or m.rates is None or m.days is None:
+        if not m.strategy2 or m.rates is None or m.days is None:
             raise ValueError("Strategy 2 needs PSQ, Fed funds and the days between bars")
         # The same signals, acted on with a margin position beside an untouched
         # core.
         cfg = s.margin_config()
-        margin = strategy2.simulate_margin(margin_signals(output, pred, s), r, m.psq,
-                                           m.rates, m.days, cfg)
+        margin = strategy2.simulate_margin(
+            margin_signals(output, pred, s), m.gap, m.intra, m.psq_gap, m.psq_intra,
+            m.rates, m.days, cfg, tradable=m.tradable)
         equity, trades, gains_tax = margin.equity, margin.trades, margin.gains_tax
-        always = strategy2.simulate_margin(np.full(len(r), strategy2.UP), r, m.psq,
-                                           m.rates, m.days, cfg)
+        always = strategy2.simulate_margin(
+            np.full(len(m.r), strategy2.UP), m.gap, m.intra, m.psq_gap, m.psq_intra,
+            m.rates, m.days, cfg, tradable=m.tradable)
     else:
         equity, trades, gains_tax = simulate_taxed(
-            pred, r, cost_bps=s.cost_bps, park_returns=m.park, tax_rate=s.tax_fraction)
-    hold = np.cumprod(1.0 + r)
+            pred, m.gap, m.intra, cost_bps=s.cost_bps, park_returns=m.park,
+            tax_rate=s.tax_fraction, tradable=m.tradable)
+    hold = np.cumprod(1.0 + m.r)
     strat_daily = np.diff(np.concatenate([[1.0], equity])) / np.concatenate([[1.0], equity[:-1]])
 
-    # Which days the fold actually spent out, under the same next-session shift
-    # the simulator uses — recomputed here rather than returned from simulate()
-    # so the two cannot silently disagree about what "out" means.
-    position = np.where(pred == CLASS_SELL, 0.0, 1.0)
-    held = np.concatenate([[position[0]], position[:-1]])
-    out_mask = held == 0.0
-    days_out = int(out_mask.sum())
+    # The attribution, against the positions the simulator holds -- recomputed
+    # here rather than returned from it, so the two cannot silently disagree
+    # about what "out" means. A bar is out when it ends out of the market.
+    prev, pos = positions(pred, m.tradable)
+    days_out = int((pos == 0.0).sum())
     # The opportunity cost of a day out is the equity return MINUS whatever the
     # money earned while parked. With cash that is just the equity return; with
     # bills or bonds it is smaller, and with bonds in a flight to quality it can
     # be negative — the day out made money. Attributing against `r` alone would
     # report the same drift tax whatever the park, which is how this was wrong
     # the first time.
-    forgone = r - m.park
-    mean_forgone = float(forgone.mean())
-    drift_tax = -days_out * mean_forgone * 100.0
-    timing = (-(forgone[out_mask] - mean_forgone).sum() * 100.0) if days_out else 0.0
+    forgone = m.r - m.park
+    mean_forgone = float(forgone.mean()) if len(forgone) else 0.0
+    # What the bars forwent before any cost, segment by segment: drift and
+    # timing add up to exactly this.
+    gross = (1.0 + prev * m.gap) * (1.0 + pos * m.intra + (1.0 - pos) * m.park) - 1.0
+    shortfall = float((m.r - gross).sum())
+    # The first bar's overnight is spent out by construction: nothing can be
+    # bought before the first open, while buy-and-hold holds from the close
+    # before it (until B6 moves it to the same open). A cost of being out, so
+    # drift, not timing.
+    entry = (float(m.gap[0] * (1.0 + pos[0] * m.intra[0] + (1.0 - pos[0]) * m.park[0]))
+             if len(pos) else 0.0)
+    drift_tax = -(days_out * mean_forgone + entry) * 100.0
+    timing = -(shortfall - entry - days_out * mean_forgone) * 100.0
     commissions = -trades * (s.cost_bps / 10_000.0) * 100.0
     if margin is not None:
         # The long/flat attribution describes days out of the market, and under
@@ -511,7 +606,7 @@ def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
     return Profit(
         strat_return=float((equity[-1] - 1.0) * 100.0),
         hold_return=float((hold[-1] - 1.0) * 100.0),
-        strat_sharpe=sharpe(strat_daily), hold_sharpe=sharpe(r),
+        strat_sharpe=sharpe(strat_daily), hold_sharpe=sharpe(m.r),
         strat_maxdd=max_drawdown(equity), hold_maxdd=max_drawdown(hold),
         trades=trades, days_out=days_out, drift_tax=drift_tax,
         commissions=commissions, timing=timing, gains_tax=gains_tax,

@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-15-6** · 2026-11-15 14:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-1** · 2026-11-16 00:01 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -504,12 +504,18 @@ fill. See [Configuration](#configuration) to change them. A strategy that trades
 pays these on every round trip, twice; if two runs differ only in trade count, that is
 usually most of the difference.
 
-**Four simplifications that flatter a result.** Deliberate, not bugs, and the full list
+**Fills happen at the next bar's open** (R76, build step B1). A strategy decides on a
+bar's close, and its order fills at the next bar's open through the slippage model; a
+signal on the last bar has no next bar and is never filled. A position still open at the
+end is closed at the last close. The walk-forward scorer trades the same way, so a
+backtest and a walk-forward fold of the same signals trade the same days at the same
+prices (`NextOpenCrossCheckTest` and `test_next_open_crosscheck.py` hold both to one
+fixture). Results stored before 2026-11-16 filled at the signal bar's own close.
+
+**Three simplifications that flatter a result.** Deliberate, not bugs, and the full list
 with reasoning is
 [Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system):
 
-- **Fills happen at the current bar's close**, not the next bar's open. The strategy
-  decided using that close, so this is a small but real lookahead advantage.
 - **All-in sizing.** Every entry puts 100% of cash in, every exit takes all of it out.
   No risk fraction, no stops, no diversification — the equity curve is one instrument's
   path, leveraged by concentration.
@@ -1031,6 +1037,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-1 | 2026-11-16 00:01 | Claude Code (Claude Opus 5.5) | B1: fills at the next bar's open, in the engine and the walk-forward scorer; three simplifications left |
 | 2026-11-15-6 | 2026-11-15 14:17 | Claude Code (Claude Opus 5.5) | B10: recalculating a walk-forward run on demand (route and CLI), `recalculatedFrom`; train with tax and train with margin removed (D9) |
 | 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added |
 | 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3: how the trade metrics count (Sortino, slippage, break-even, not available) (`e7c94a8`) |

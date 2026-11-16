@@ -81,6 +81,18 @@ def load_closes(cur, symbol: str, source: str, timeframe: str) -> dict[date, flo
     return {d: float(v) for d, v in cur.fetchall()}
 
 
+def load_opens(cur, symbol: str, source: str, timeframe: str) -> dict[date, float]:
+    """The opens beside `load_closes`: where a signal's trade fills (B1)."""
+    cur.execute(
+        "SELECT c.timestamp::date, c.open FROM candles c "
+        "JOIN instruments i ON i.id = c.instrument_id "
+        "JOIN data_sources ds ON ds.id = c.source_id "
+        "WHERE i.symbol = %s AND ds.name = %s AND c.timeframe = %s ORDER BY c.timestamp",
+        (symbol, source, timeframe),
+    )
+    return {d: float(v) for d, v in cur.fetchall()}
+
+
 def build_labels(
     dates: list[date], closes: dict[date, float], *, forward: int,
     buy_threshold: float, sell_threshold: float,

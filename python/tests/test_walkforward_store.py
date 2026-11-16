@@ -509,14 +509,15 @@ class TestRoundTrip:
                         "JOIN instruments i ON i.id = fs.instrument_id "
                         "JOIN data_sources ds ON ds.id = fs.source_id WHERE fs.id = %s", (a_set,))
             symbol, source = cur.fetchone()
-            closes = wf.load_closes(cur, symbol, source, "D1")
+            prices = wf.load_prices(cur, symbol, source, "D1")
+        closes = prices.closes
         days = sorted(closes)[-4:]
         if len(days) < 4:
             pytest.skip(f"no D1 candles for {symbol}/{source}, which the set is of")
         sig = profit.Signals(days[:3], days[1:], np.array([[0.9], [0.1], [0.9]]),
                              np.array([0, 2, 1]))
         settings = profit.Settings(loss="return", cost_bps=5.0)
-        money = profit.score(sig.output, profit.market(closes, sig.dates, sig.exits, None,
+        money = profit.score(sig.output, profit.market(prices, sig.dates, sig.exits, None,
                                                        "cash"), settings)
         fold = wf.FoldResult(fold=1, train_from=days[0], train_to=days[0], val_year=days[0].year,
                              n_train=1, n_val=3, accuracy=0.5, baseline_acc=0.5,

@@ -24,45 +24,44 @@ def t(*values: float) -> torch.Tensor:
     return torch.tensor(values, dtype=torch.float32)
 
 
+def z(n: int) -> torch.Tensor:
+    return torch.zeros(n, dtype=torch.float32)
+
+
 # --------------------------------------------------------------------------
 # Lookahead — the guard that protects every result downstream
 # --------------------------------------------------------------------------
 
 
-def test_position_cannot_earn_its_own_bar():
-    """Changing position[k] must not change day k's P&L, only day k+1's.
+def test_a_position_never_earns_the_overnight_before_its_own_open():
+    """Position[k] is decided at bar k's close and traded at the next open
+    (B1). Bar k's overnight, from that close to the open, must still be the
+    previous position's; bar k+1's overnight is position[k]'s."""
+    gap = t(0.10, 0.10, 0.10, 0.10)
+    base = ml.portfolio_returns(t(0.0, 0.0, 0.0, 0.0), gap, z(4))
+    bumped = ml.portfolio_returns(t(0.0, 1.0, 0.0, 0.0), gap, z(4))
 
-    This is the shift that makes the simulation honest: a signal computed from
-    day k's close is acted on the next session.
-    """
-    r = t(0.10, 0.10, 0.10, 0.10)
-    base = ml.portfolio_returns(t(0.0, 0.0, 0.0, 0.0), r)
-    bumped = ml.portfolio_returns(t(0.0, 1.0, 0.0, 0.0), r)
-
-    assert bumped[1] == base[1], "position[1] changed day 1's return — lookahead"
-    assert bumped[2] != base[2], "position[1] must affect day 2"
+    assert bumped[1] == base[1], "position[1] earned bar 1's overnight: lookahead"
+    assert bumped[2] != base[2], "position[1] must hold bar 2's overnight"
 
 
-def test_an_oracle_position_cannot_profit_from_the_bar_it_sees():
-    """A position that is long exactly on the up days earns nothing extra.
-
-    If the shift were missing, this 'cheating' position would capture every
-    gain and skip every loss, and total return would be strongly positive.
-    With the shift it is acting a day late, so it has no systematic edge.
-    """
-    returns = t(0.05, -0.05, 0.05, -0.05, 0.05, -0.05)
-    oracle = (returns > 0).float()  # knows today's move, today
-    daily = ml.portfolio_returns(oracle, returns)
-    # Acting a day late on a strict alternation means always being wrong.
+def test_an_oracle_position_cannot_profit_from_the_overnight_it_sees():
+    """A position that knows each bar's overnight move as the bar closes earns
+    nothing from it: it can only act at the open, after the move. On a strict
+    alternation that means always being wrong."""
+    gap = t(0.05, -0.05, 0.05, -0.05, 0.05, -0.05)
+    oracle = (gap > 0).float()
+    daily = ml.portfolio_returns(oracle, gap, z(6))
     assert float(ml.log_wealth(daily)) < 0.0
 
 
-def test_first_position_is_carried_not_dropped():
-    """Day 0 has no prior position; the series must still be full length and
-    must not silently start from zero exposure on day 1."""
-    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), t(0.01, 0.01, 0.01))
+def test_the_first_position_is_flat_overnight_and_long_from_the_open():
+    """Nothing is held before the first bar, so its overnight is not earned;
+    the series is still full length."""
+    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), t(0.01, 0.01, 0.01), t(0.02, 0.02, 0.02))
     assert len(out) == 3
-    assert out[0] == pytest.approx(0.01)
+    assert out[0] == pytest.approx(0.02)
+    assert out[1] == pytest.approx(1.01 * 1.02 - 1)
 
 
 # --------------------------------------------------------------------------
@@ -74,22 +73,24 @@ def test_the_loss_charges_nothing_for_changing_position():
     """Engines know nothing about costs, tax or margin; the profit step applies
     them afterwards. A loss that charged for a change would make the signals
     depend on a cost setting again."""
-    churn = ml.portfolio_returns(t(1.0, 0.0, 1.0, 0.0), t(0.0, 0.0, 0.0, 0.0))
+    churn = ml.portfolio_returns(t(1.0, 0.0, 1.0, 0.0), z(4), z(4))
     assert float(churn.abs().sum()) == 0.0
 
 
 def test_the_loss_takes_no_cost_tax_or_margin():
     import inspect
-    assert list(inspect.signature(ml.objective).parameters) == ["name", "positions", "returns"]
-    assert list(inspect.signature(ml.portfolio_returns).parameters) == ["positions", "returns"]
+    assert list(inspect.signature(ml.objective).parameters) == [
+        "name", "positions", "gap", "intra"]
+    assert list(inspect.signature(ml.portfolio_returns).parameters) == [
+        "positions", "gap", "intra"]
     for gone in ("portfolio_returns_taxed", "MarginTerms", "margin_returns"):
         assert not hasattr(ml, gone)
 
 
-def test_a_held_position_earns_the_return_exactly():
-    r = t(0.01, -0.02, 0.03)
-    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), r)
-    assert torch.allclose(out, r)
+def test_a_held_position_earns_both_segments_after_the_first_open():
+    gap, intra = t(0.01, -0.02, 0.03), t(0.005, 0.01, -0.004)
+    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), gap, intra)
+    assert torch.allclose(out[1:], (1 + gap[1:]) * (1 + intra[1:]) - 1)
 
 
 # --------------------------------------------------------------------------
@@ -149,7 +150,7 @@ def test_every_objective_is_differentiable(name):
     logits = torch.zeros(20, 1, requires_grad=True)
     pos = ml.positions_from_logits(logits)
     r = torch.linspace(-0.02, 0.02, 20)
-    loss, _ = ml.objective(name, pos, r)
+    loss, _ = ml.objective(name, pos, torch.zeros_like(r), r)
     loss.backward()
     assert logits.grad is not None
     assert float(logits.grad.abs().sum()) > 0.0
@@ -162,26 +163,26 @@ def test_calmar_is_not_won_by_doing_nothing():
     r = torch.tensor([0.01] * 50 + [-0.02] * 10 + [0.01] * 40, dtype=torch.float32)
     flat = torch.zeros(100)
     invested = torch.ones(100)
-    loss_flat, _ = ml.objective("calmar", flat, r)
-    loss_invested, _ = ml.objective("calmar", invested, r)
+    loss_flat, _ = ml.objective("calmar", flat, torch.zeros_like(r), r)
+    loss_invested, _ = ml.objective("calmar", invested, torch.zeros_like(r), r)
     assert float(loss_invested) < float(loss_flat)
 
 
 def test_return_objective_prefers_more_money():
     r = torch.full((50,), 0.01)
-    more, _ = ml.objective("return", torch.ones(50), r)
-    less, _ = ml.objective("return", torch.full((50,), 0.5), r)
+    more, _ = ml.objective("return", torch.ones(50), torch.zeros_like(r), r)
+    less, _ = ml.objective("return", torch.full((50,), 0.5), torch.zeros_like(r), r)
     assert float(more) < float(less)  # loss is negated, so lower is better
 
 
 def test_objective_rejects_an_unknown_name():
     with pytest.raises(ValueError, match="unknown money objective"):
-        ml.objective("profit", torch.ones(3), torch.zeros(3))
+        ml.objective("profit", torch.ones(3), torch.zeros(3), torch.zeros(3))
 
 
 def test_metrics_are_reported_alongside_the_loss():
     r = torch.full((30,), 0.01)
-    _, m = ml.objective("return", torch.ones(30), r)
+    _, m = ml.objective("return", torch.ones(30), torch.zeros_like(r), r)
     assert set(m) == {"total_return_pct", "sharpe", "max_drawdown_pct",
                       "mean_position", "turnover"}
     assert m["mean_position"] == pytest.approx(1.0)

@@ -83,6 +83,7 @@ def allowed_lag(key: str, provider: str) -> int:
 PART_TEXT = {
     "matrix": "feature values",
     "closes": "the closes its labels and returns come from",
+    "opens": "the opens its trades fill at",
     "park": "the parked (out-of-market) return",
     "margin": "PSQ and Fed funds (Strategy 2)",
 }
@@ -315,6 +316,14 @@ class Context:
             self._closes[key] = load_closes(self.cur, symbol, source, timeframe)
         return self._closes[key]
 
+    def opens(self, symbol: str, source: str, timeframe: str):
+        from nn.walkforward import load_opens
+
+        key = ("open", symbol, source, timeframe)
+        if key not in self._closes:
+            self._closes[key] = load_opens(self.cur, symbol, source, timeframe)
+        return self._closes[key]
+
 
 def data_stage(ctx: Context) -> dict[str, Any]:
     from loader.feeds import core as feeds_core
@@ -482,10 +491,13 @@ def check_run(ctx: Context, run: dict[str, Any], latest_versions: dict[str, int]
             elif fm is not None:
                 sub = restrict(fm, run["span_from"], run["span_to"])
                 closes = ctx.closes(run["symbol"], run["source"], run["timeframe"])
+                then = json.loads(run["span_parts_json"])
                 now = snapshot_parts(ctx.cur, sub, closes, run["park"],
                                      margin_source=run["source"] if run["execution"] == "margin"
-                                     else None)
-                then = json.loads(run["span_parts_json"])
+                                     else None,
+                                     opens=(ctx.opens(run["symbol"], run["source"],
+                                                      run["timeframe"])
+                                            if "opens" in then else None))
                 for part in sorted(then):
                     if then[part] != now.get(part):
                         reasons.append(reason(

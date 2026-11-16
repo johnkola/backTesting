@@ -1,0 +1,78 @@
+{
+  "about": "B1 cross-check (R76). One long-or-flat call per bar, made at that bar's close. The Java engine (NextOpenCrossCheckTest) and the walk-forward scorer (python/tests/test_next_open_crosscheck.py) both read this file and must produce these trades and this return, with costs and tax off. A call fills at the next bar's open; the last bar's call has no next bar and is never filled; a position still open at the end is marked at the last close.",
+  "bars": [
+    {
+      "date": "2021-01-04",
+      "open": 100.0,
+      "close": 101.0
+    },
+    {
+      "date": "2021-01-05",
+      "open": 102.0,
+      "close": 103.0
+    },
+    {
+      "date": "2021-01-06",
+      "open": 102.5,
+      "close": 101.0
+    },
+    {
+      "date": "2021-01-07",
+      "open": 100.0,
+      "close": 104.0
+    },
+    {
+      "date": "2021-01-08",
+      "open": 105.0,
+      "close": 106.0
+    },
+    {
+      "date": "2021-01-11",
+      "open": 104.0,
+      "close": 103.0
+    },
+    {
+      "date": "2021-01-12",
+      "open": 103.5,
+      "close": 107.0
+    },
+    {
+      "date": "2021-01-13",
+      "open": 108.0,
+      "close": 109.0
+    }
+  ],
+  "long": [
+    true,
+    true,
+    false,
+    true,
+    true,
+    false,
+    true,
+    true
+  ],
+  "expected": {
+    "trades": [
+      {
+        "entry": "2021-01-05",
+        "entryPrice": 102.0,
+        "exit": "2021-01-07",
+        "exitPrice": 100.0
+      },
+      {
+        "entry": "2021-01-08",
+        "entryPrice": 105.0,
+        "exit": "2021-01-12",
+        "exitPrice": 103.5
+      },
+      {
+        "entry": "2021-01-13",
+        "entryPrice": 108.0,
+        "exit": "2021-01-13",
+        "exitPrice": 109.0
+      }
+    ],
+    "returnPct": -2.466542172424524
+  }
+}

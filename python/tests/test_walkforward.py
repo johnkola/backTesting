@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from nn import labels
+from nn import profit
 from nn import walkforward as wf
 
 
@@ -68,53 +69,55 @@ def test_a_year_absent_from_the_calendar_is_skipped():
 
 
 # --------------------------------------------------------------------------
-# simulate — must match money_loss's convention exactly
+# simulate — trades at the next open (B1, R76), as money_loss trains
 # --------------------------------------------------------------------------
 
 
-def test_a_prediction_is_acted_on_the_following_session():
-    """A signal on day k moves the position on day k+1, not day k.
-
-    `rets[i]` is the close[i] -> close[i+1] move, so a position held over index
-    i is one entered at close[i]. Shifting the position series by one means the
-    signal computed from close[k] is only in the market from close[k+1] — a
-    full session of delay, which is the conservative reading.
-    """
-    preds = np.array([0, 2, 0, 0])  # SELL on day 1 only
-    rets = np.array([0.10, 0.10, 0.10, 0.10])
-    eq, _ = wf.simulate(preds, rets, cost_bps=0.0)
-    assert eq[1] == pytest.approx(1.21)  # still long on day 1 despite the SELL
-    assert eq[2] == pytest.approx(1.21)  # flat on day 2 — the signal landed
+def sim(preds, gap, intra, **kw):
+    return wf.simulate(np.asarray(preds), np.asarray(gap, dtype=float),
+                       np.asarray(intra, dtype=float), **{"cost_bps": 0.0, **kw})
 
 
-def test_the_first_bar_acts_on_its_own_signal():
-    """The one asymmetry: bar 0 has no previous position to carry, so the
-    padding repeats position[0] and the opening bar is timely while every later
-    bar is delayed.
-
-    This is not lookahead — position[0] is known at close[0] and rets[0] is the
-    close[0] -> close[1] move, so trading it is legitimate. It is recorded here
-    because the convention differs between the first bar and the rest, and
-    `money_loss.portfolio_returns` pads identically. If either side ever
-    changes, test_simulate_matches_the_money_loss_convention catches the drift.
-    """
-    eq, _ = wf.simulate(np.array([2, 0, 0]), np.array([0.10, 0.10, 0.10]),
-                        cost_bps=0.0)
-    assert eq[0] == pytest.approx(1.0)  # flat on day 0, obeying its own SELL
+def taxed(preds, gap, intra, **kw):
+    return wf.simulate_taxed(np.asarray(preds), np.asarray(gap, dtype=float),
+                             np.asarray(intra, dtype=float), **{"cost_bps": 0.0, **kw})
 
 
-def test_all_hold_is_buy_and_hold_minus_one_entry():
-    preds = np.zeros(50, dtype=int)
-    rets = np.full(50, 0.001)
-    eq, trades = wf.simulate(preds, rets, cost_bps=10.0)
-    hold = float(np.cumprod(1 + rets)[-1])
+def test_a_signal_trades_at_the_next_open():
+    """The call made at a bar's close changes the position at the next open:
+    the bar's overnight is held as before, its intraday as called."""
+    eq, _ = sim([0, 2, 0, 0], [0.01] * 4, [0.10] * 4)
+    assert eq[0] == pytest.approx(1.10)            # flat overnight, long from the open
+    assert eq[1] == pytest.approx(1.10 * 1.01)     # long overnight, sold at the open
+    assert eq[2] == pytest.approx(1.111 * 1.10)    # flat overnight, bought at the open
+    assert eq[3] == pytest.approx(1.2221 * 1.01 * 1.10)
+
+
+def test_no_bar_trades_at_the_close_it_was_computed_from():
+    """The first bar too: its own call is bought at the next open, so the
+    overnight after the fold's first close is never held (G27)."""
+    eq, trades = sim([0], [0.05], [0.0])
+    assert eq[0] == pytest.approx(1.0)
     assert trades == 1
-    assert eq[-1] == pytest.approx(hold * (1 - 0.001), rel=1e-4)
+
+
+def test_a_bar_that_cannot_trade_keeps_its_position():
+    # The last labelled date has no next bar to trade at.
+    eq, trades = sim([0, 2], [0.0, 0.0], [0.10, 0.0], tradable=np.array([True, False]))
+    assert trades == 1
+    assert eq[-1] == pytest.approx(1.10)
+
+
+def test_all_long_is_buy_and_hold_less_the_first_overnight_and_one_entry():
+    gap, intra = np.full(50, 0.0005), np.full(50, 0.0007)
+    eq, trades = sim(np.zeros(50, dtype=int), gap, intra, cost_bps=10.0)
+    hold = float(np.prod((1 + gap) * (1 + intra)))
+    assert trades == 1
+    assert eq[-1] == pytest.approx(hold / 1.0005 * (1 - 0.001), rel=1e-12)
 
 
 def test_trade_count_counts_changes_not_days_in_the_market():
-    preds = np.array([0, 0, 2, 2, 0, 0])
-    _, trades = wf.simulate(preds, np.zeros(6), cost_bps=0.0)
+    _, trades = sim([0, 0, 2, 2, 0, 0], np.zeros(6), np.zeros(6))
     assert trades == 3  # enter, exit, re-enter
 
 
@@ -124,56 +127,50 @@ def test_trade_count_counts_changes_not_days_in_the_market():
 
 
 def test_a_winning_round_trip_is_taxed_when_sold():
-    # Long three days at +10%, sold at the start of the fourth.
-    eq, trades, tax = wf.simulate_taxed(np.array([0, 0, 2, 2]), np.full(4, 0.10),
-                                        cost_bps=0.0, tax_rate=0.25)
-    gain = 1.1 ** 3 - 1.0
+    # Bought at the first open, long two days at +10%, sold at the third open.
+    eq, trades, tax = taxed([0, 0, 2, 2], np.zeros(4), np.full(4, 0.10), tax_rate=0.25)
+    gain = 1.1 ** 2 - 1.0
     assert tax == pytest.approx(-25.0 * gain)
-    assert eq[-1] == pytest.approx(1.1 ** 3 - 0.25 * gain)
+    assert eq[-1] == pytest.approx(1.1 ** 2 - 0.25 * gain)
     assert trades == 2
 
 
 def test_a_realized_loss_offsets_a_later_gain_in_the_same_fold():
     # In at 1.0, out at 0.9 (loss 0.1); in at 0.9, out at 1.35 (gain 0.45).
-    # Taxed on 0.35, not 0.45. Returns on flat days are ignored.
-    preds = np.array([0, 2, 0, 0, 2, 2])
-    rets = np.array([-0.10, 0.0, 0.70, 0.50, 0.0, 0.30])
-    eq, _, tax = wf.simulate_taxed(preds, rets, cost_bps=0.0, tax_rate=0.25)
+    # Taxed on 0.35, not 0.45. Days spent flat earn nothing.
+    eq, _, tax = taxed([0, 2, 0, 2], np.zeros(4), [-0.10, 0.70, 0.50, 0.30], tax_rate=0.25)
     assert tax == pytest.approx(-25.0 * 0.35)
     assert eq[-1] == pytest.approx(1.35 - 0.25 * 0.35)
 
 
 def test_a_loss_alone_pays_no_tax():
-    _, _, tax = wf.simulate_taxed(np.array([0, 2, 2]), np.array([-0.05, 0.0, 0.0]),
-                                  cost_bps=0.0, tax_rate=0.4)
+    _, _, tax = taxed([0, 2, 2], np.zeros(3), [-0.05, 0.0, 0.0], tax_rate=0.4)
     assert tax == 0.0
 
 
 def test_an_open_position_is_not_taxed_so_holding_never_pays():
     """Buy-and-hold never sells. Under the same rule the model pays nothing
     while it holds either, which is what makes the comparison fair."""
-    rets = np.full(30, 0.01)
-    eq, _, tax = wf.simulate_taxed(np.zeros(30, dtype=int), rets, cost_bps=5.0, tax_rate=0.5)
-    plain, _ = wf.simulate(np.zeros(30, dtype=int), rets, cost_bps=5.0)
+    gap, intra = np.full(30, 0.002), np.full(30, 0.01)
+    eq, _, tax = taxed(np.zeros(30, dtype=int), gap, intra, cost_bps=5.0, tax_rate=0.5)
+    plain, _ = sim(np.zeros(30, dtype=int), gap, intra, cost_bps=5.0)
     assert tax == 0.0
-    np.testing.assert_array_equal(eq, plain)
+    np.testing.assert_allclose(eq, plain, rtol=1e-12)
 
 
 def test_the_exit_commission_reduces_the_taxed_gain():
-    # The SELL on day 1 is acted on day 2 (next session), so three days.
-    eq, _, tax = wf.simulate_taxed(np.array([0, 2, 2]), np.array([0.10, 0.0, 0.0]),
-                                   cost_bps=10.0, tax_rate=0.25)
-    before_exit = 1.0 * (1 + 0.10 - 0.001)
-    assert tax == pytest.approx(-25.0 * (before_exit * 0.999 - 1.0))
+    # Bought at the first open (10 bps), +10% that day, sold at the next open (10 bps).
+    _, _, tax = taxed([0, 2, 2], np.zeros(3), [0.10, 0.0, 0.0], cost_bps=10.0, tax_rate=0.25)
+    assert tax == pytest.approx(-25.0 * (0.999 * 1.10 * 0.999 - 1.0))
 
 
 def test_tax_off_is_the_untaxed_simulation_bit_for_bit():
     rng = np.random.default_rng(3)
     preds = rng.choice([0, 1, 2], 120)
-    rets = rng.normal(0, 0.01, 120)
+    gap, intra = rng.normal(0, 0.004, 120), rng.normal(0, 0.01, 120)
     park = rng.normal(0.0001, 0.0001, 120)
-    plain, trades = wf.simulate(preds, rets, cost_bps=5.0, park_returns=park)
-    eq, t2, tax = wf.simulate_taxed(preds, rets, cost_bps=5.0, park_returns=park, tax_rate=0.0)
+    plain, trades = sim(preds, gap, intra, cost_bps=5.0, park_returns=park)
+    eq, t2, tax = taxed(preds, gap, intra, cost_bps=5.0, park_returns=park, tax_rate=0.0)
     np.testing.assert_array_equal(eq, plain)
     assert (t2, tax) == (trades, 0.0)
 
@@ -183,11 +180,11 @@ def test_with_tax_the_loop_tracks_the_vectorised_curve_until_the_first_sale():
     the vectorised simulation, or the loop has its own idea of costs or park."""
     rng = np.random.default_rng(4)
     preds = np.concatenate([np.zeros(20, dtype=int), rng.choice([0, 2], 40)])
-    rets = rng.normal(0, 0.01, 60)
+    gap, intra = rng.normal(0, 0.004, 60), rng.normal(0, 0.01, 60)
     park = np.full(60, 0.0001)
-    plain, _ = wf.simulate(preds, rets, cost_bps=5.0, park_returns=park)
-    eq, _, _ = wf.simulate_taxed(preds, rets, cost_bps=5.0, park_returns=park, tax_rate=0.3)
-    first_sale = int(np.argmax(preds == 2)) + 1
+    plain, _ = sim(preds, gap, intra, cost_bps=5.0, park_returns=park)
+    eq, _, _ = taxed(preds, gap, intra, cost_bps=5.0, park_returns=park, tax_rate=0.3)
+    first_sale = int(np.argmax(preds == 2))   # sold at that bar's open
     np.testing.assert_allclose(eq[:first_sale], plain[:first_sale], rtol=1e-12)
 
 
@@ -213,25 +210,23 @@ def test_the_runner_refuses_a_non_daily_timeframe_before_touching_the_db(monkeyp
 
 
 def test_simulate_matches_the_money_loss_convention():
-    """The trainer and the evaluator must shift identically. If they drift, a
-    model is optimised against one timing and scored against another, and the
-    gap looks like a modelling result. The loss is blind to costs (D9), so the
-    two are compared before any."""
+    """The trainer and the evaluator must time trades identically. If they
+    drift, a model is optimised against one timing and scored against another,
+    and the gap looks like a modelling result. The loss is blind to costs (D9),
+    so the two are compared before any."""
     import torch
 
     from nn import money_loss as ml
 
     rng = np.random.default_rng(0)
-    rets = rng.normal(0, 0.01, 40)
+    gap, intra = rng.normal(0, 0.004, 40), rng.normal(0, 0.01, 40)
     pos = rng.integers(0, 2, 40).astype(float)
     preds = np.where(pos < 0.5, 2, 0)  # SELL where flat
 
-    eq, _ = wf.simulate(preds, rets, cost_bps=0.0)
-    daily = ml.portfolio_returns(
-        torch.tensor(pos, dtype=torch.float64),
-        torch.tensor(rets, dtype=torch.float64),
-    ).numpy()
-    assert eq[-1] == pytest.approx(float(np.cumprod(1 + daily)[-1]), rel=1e-9)
+    eq, _ = sim(preds, gap, intra)
+    daily = ml.portfolio_returns(*(torch.tensor(a, dtype=torch.float64)
+                                   for a in (pos, gap, intra))).numpy()
+    assert eq[-1] == pytest.approx(float(np.cumprod(1 + daily)[-1]), rel=1e-12)
 
 
 # --------------------------------------------------------------------------
@@ -471,8 +466,9 @@ def test_a_classifier_stops_before_the_cap_and_reports_its_epochs():
 def test_a_money_model_stops_too():
     rng = np.random.default_rng(1)
     x = rng.normal(size=(200, 4)).astype(np.float32)
-    r = rng.normal(0, 0.01, 200)
-    _, _, stopper = wf.train_money(x[:150], r[:150], _stop_args(), stop=(x[150:], r[150:]))
+    gap, intra = rng.normal(0, 0.004, 200), rng.normal(0, 0.01, 200)
+    _, _, stopper = wf.train_money(x[:150], (gap[:150], intra[:150]), _stop_args(),
+                                   stop=(x[150:], (gap[150:], intra[150:])))
     assert stopper.epochs_run < 200
 
 
@@ -533,24 +529,31 @@ class TestHoldWindow:
 
 class TestAlignMargin:
     D = [date(2006, 6, 20), date(2006, 6, 21), date(2006, 6, 22), date(2006, 6, 26)]
-    PSQ = {date(2006, 6, 21): 80.0, date(2006, 6, 22): 82.0, date(2006, 6, 26): 81.18}
+    PSQ = profit.Prices({date(2006, 6, 21): 79.0, date(2006, 6, 22): 81.0,
+                         date(2006, 6, 26): 81.5},
+                        {date(2006, 6, 21): 80.0, date(2006, 6, 22): 82.0,
+                         date(2006, 6, 26): 81.18})
+    QQQ = profit.Prices({d: 100.0 for d in D}, {d: 100.0 for d in D})
     DFF = {date(2006, 6, 20): 5.0, date(2006, 6, 24): 5.25}
 
-    def test_psq_returns_are_next_bar_and_nan_before_its_first_bar(self):
-        m = wf.align_margin(self.D, self.PSQ, self.DFF)
-        assert np.isnan(m.psq_returns[0])
-        assert m.psq_returns[1] == pytest.approx(0.025)
-        assert m.psq_returns[2] == pytest.approx(-0.01)
-        assert m.psq_returns[3] == 0.0
+    def m(self):
+        return wf.align_margin(self.D, self.PSQ, self.DFF, self.QQQ)
+
+    def test_psq_segments_run_to_the_next_open_and_on_and_are_nan_before_its_first_bar(self):
+        m = self.m()
+        assert np.isnan(m.psq_gap[0]) and np.isnan(m.psq_intra[0]) and m.psq_missing[0]
+        assert m.psq_gap[1] == pytest.approx(81.0 / 80.0 - 1)
+        assert m.psq_intra[1] == pytest.approx(82.0 / 81.0 - 1)
+        assert m.psq_gap[2] == pytest.approx(81.5 / 82.0 - 1)   # Thursday to Monday's open
+        assert (m.psq_gap[3], m.psq_intra[3]) == (0.0, 0.0)     # no exit
         assert m.psq_first == date(2006, 6, 21)
 
     def test_fed_funds_is_carried_forward_as_a_fraction(self):
-        m = wf.align_margin(self.D, self.PSQ, self.DFF)
-        assert m.rates.tolist() == pytest.approx([0.05, 0.05, 0.05, 0.0525])
+        assert self.m().rates.tolist() == pytest.approx([0.05, 0.05, 0.05, 0.0525])
 
     def test_days_are_calendar_days_to_the_next_bar(self):
         # Thursday to Monday is four days of interest.
-        assert wf.align_margin(self.D, self.PSQ, self.DFF).days.tolist() == [1, 1, 4, 1]
+        assert self.m().days.tolist() == [1, 1, 4, 1]
 
 
 class TestMarginRefusals:
@@ -562,8 +565,8 @@ class TestMarginRefusals:
         base.update(over)
         return Namespace(**base)
 
-    M = wf.MarginInputs(np.array([np.nan, 0.01, 0.0]), np.array([0.05] * 3),
-                        np.ones(3), date(2006, 6, 21))
+    M = wf.MarginInputs(np.array([np.nan, 0.01, 0.0]), np.array([np.nan, 0.0, 0.0]),
+                        np.array([0.05] * 3), np.ones(3), date(2006, 6, 21))
 
     def test_a_fold_before_psq_is_refused(self):
         out = wf.margin_refusals(self.args(), [(2006, [], [0, 1])], self.M)

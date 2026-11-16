@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-15-11** · 2026-11-15 20:19 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-1** · 2026-11-16 00:04 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -96,6 +96,7 @@ stored run.
 | G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `data/csv-archive` | none | S | open |
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
 | G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
+| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | open: found during B1 |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
 
@@ -197,6 +198,63 @@ Checklist:
 - **Recalculating at another tax rate equals a rerun.** postman-smoke v7 is v6 plus a 25% tax, with the model side identical. Run 434 (v6, before tax) recalculated as a dry run under v7 matches run 435, the full rerun at 25%, in all 60 fields compared: return, Sharpe, drawdown, trades, tax, days out, drift, commission, timing and accuracy.
 - **Why the money runs moved.** Training without commission lets the return loss change position more often: 374's fold 5 trades 3 times instead of once, and 394's fold 1 trades 19 times instead of 9. That is the training-side change D9 intends, not a scoring one. 374 gained 0.16 pp a fold; 394 lost 0.63 and phase1-full 2.03.
 
+**B1 plan (G27, R76), 2026-11-15.** The author: do B1. The conditions are in `AGENTS.md`, build step B1. The adjusted source scales a whole bar by one factor (`yahoo-adj` open/close equals `yahoo`'s, 0.99009 on QQQ 2010-03-01), and every QQQ and PSQ open lies inside its bar's range, so opens can be used as stored.
+
+The shape:
+- **A bar in the scorer.** Bar *i* runs from the close of its date *d* to the close of its exit *e*, the next matrix date. Its signal, computed at *d*'s close, trades at the open of the next session after *d* (the instrument's next candle; that is *e* unless the matrix skipped a day). So the bar has two segments:
+  - overnight, close *d* to that open, held by the previous position;
+  - intraday, that open to close *e*, held by the new one.
+
+  The market gains both segments' returns, for QQQ and for PSQ, each a function of the bar's dates. Before a fold's first bar the position is flat (Strategy 1) or the core alone (Strategy 2), so no bar trades at its own close. A bar with no exit (the last labelled date) trades nothing.
+- **Costs, tax, park.** Commission and tax are charged at the open where the trade happens. The parked return goes to the position held after the open. Under Strategy 2, interest accrues on the debit held overnight, before the trade, over the calendar days to the exit. The margin call and the 50% trim are checked at the close, as before.
+- **Attribution.** `days_out` counts bars that end out of the market. `drift_tax` keeps its formula. `timing` becomes the rest of the shortfall before costs, bar by bar, so drift and timing still add to it exactly, and the gap segments count as timing.
+- **Training.** The money loss uses the same two segments, so a model trains on the curve it is scored on.
+- **Engine.** A signal on bar *t* waits and fills at bar *t+1*'s open, through the slippage model. A signal on the last bar is never filled. The end-of-run close-out stays at the last close. Buy-and-hold is B6's.
+- **Cross-check.** One fixture (`src/test/resources/crosscheck/next-open.json`) holds the bars and a long-or-flat signal series, with the expected trade dates and return. The Python and Java tests each read it, so the scorer and the engine are held to the same answer.
+
+Checklist:
+- [x] Plan here
+- [x] Market: opens, the next session, both segments for QQQ and PSQ, and whether a bar can trade; `simulate`, `simulate_taxed`, `score` and the attribution on the two segments; tests
+- [x] `strategy2.simulate_margin` on the two segments: interest overnight, trades at the open; tests rewritten to the new timing
+- [x] `money_loss` on the same rule; `run_fold` trains on the training bars' segments
+- [x] Engine: fill at the next bar's open; a last-bar signal not filled; tests
+- [x] The cross-check fixture, read by a Python test and a Java test
+- [x] All four CI jobs; rebuild
+
+*Built, 2026-11-15 20:48, up to the checkpoint.*
+- Tests: Python 772, Java 130, API and client unchanged (110 and 138). Two new tests fail on the old timing. `NextOpenCrossCheckTest` (Java) and `test_next_open_crosscheck.py` read the same fixture and agree on its three trades, at the next open, and its return of −2.4665%. The tests for the simulators, Strategy 2 and the money loss are rewritten to the new timing.
+- The input snapshot gains an `opens` part, and the margin part now hashes PSQ's open and close. Staleness and the snapshot check compare only the parts a run recorded, so a run from before B1 is still judged on its own parts.
+- Found while planning: a run's snapshot covers neither opens nor PSQ opens, so a classifier run recalculated in place would read opens its snapshot does not watch. Hence the checkpoint below reruns all seven instead of recalculating 434-437.
+- Dry runs (`rerun-b1-20261115/recalc-*.json` in the session scratchpad), mean excess per fold on the stored signals, before → after: 434 −2.21 → −5.30, 435 −7.51 → −9.74, 436 +3.99 → +3.25, 437 −0.56 → −0.11, 438 −0.71 → −0.66, 439 +2.96 → +2.77, 440 −2.09 → +0.46. 438-440 need retraining as well, since their loss changes.
+
+- [x] **Checkpoint, the author's go.** Stale records:
+  - Walk-forward 434-437 (classifiers): recalculated in place from their stored signals, nothing retrained (B10).
+  - 438-440 (money losses): backed up, deleted and rerun, since their loss changes.
+  - Backtest results 714-729: backed up, deleted and rerun with their stored requests.
+  - *The author: rerun all.* All seven walk-forward runs were rerun, rather than recalculating 434-437 in place, so that every snapshot covers opens.
+- [x] README, `AGENTS.md` (B1 ticked; steps 6 and 7 conditions), G27 and this record say done
+
+*Done, 2026-11-16 00:04.*
+- **Backup and deletes.** The six tables were backed up to `rerun-b1-20261115/before.sql.gz`. The seven walk-forward runs (42 folds) were deleted in one transaction and rerun with their own sets and labels. The 16 results were rerun first, from the requests B3 rebuilt, and the originals then deleted in one transaction.
+
+| Was | Now | Strategy | Mean excess, pp a fold | Note |
+|---|---|---|---|---|
+| 434 | 456 | postman-smoke v6 (ce) | −2.21 → −5.30 | equals the dry-run recalculation in every field |
+| 435 | 457 | postman-smoke v7 (ce, tax 25%) | −7.51 → −9.74 | equals the dry run |
+| 436 | 458 | postman-smoke v10 (ce) | +3.99 → +3.25 | equals the dry run |
+| 437 | 459 | strategy2-defaults v1 (ce) | −0.56 → −0.11 | equals the dry run; −4.94 against always long |
+| 438 | 460 | postman-smoke v8 (return loss) | −0.71 → −0.32 | retrained on the next-open curve |
+| 439 | 461 | strategy2-scored v1 (return loss) | +2.96 → +3.58 | retrained; −1.24 against always long, 2 of 6: still leverage, not timing |
+| 440 | 462 | phase1-full v5 (return loss, tax 25%) | −2.09 → +0.55 | retrained; see below |
+
+- **phase1-full v5's "beats buy-and-hold" is an artifact, not timing.** It is long throughout: one trade a fold, no day out, timing 0.00 in every fold. Its excess is all in `drift_tax`, the first overnight: it buys at the first open, while buy-and-hold is measured from the close before. In 2019-2021 those opens were lower (+1.45, +1.33, +0.33 pp), and in 2016-2018 higher. B6 buys buy-and-hold at the same first open, which removes the difference. Until then this verdict must not be read as a pass.
+- **Backtest results.** 714-729 are now 730-745. All 16 have the same trades as before, now filled at the next open: for example 745 (nn-feedforward, 1999-2026) is 2,618.94% where 729 was 1,828.22%, and 739 (macd) is 152.11% where 723 was 181.69%.
+- **Live checks.**
+  - Each walk-forward rerun, recalculated at its own settings, reproduces every field.
+  - Every snapshot has the `opens` part, and `--check-snapshot 461` matches.
+  - The Training stage reads all four strategies' newest runs as fresh.
+- **Found:** G69, the Known limitations and How to read a result links go to `/docs/architecture`, a page that no longer exists.
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -266,7 +324,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R73 | missing | G65 |
 | R74 | missing | G63, G35 (B9) |
 | R75 | partial: engines blind and profit recalculated on demand (B10). Slippage, superficial loss, dividends and currency are not in the profit step yet, and the benchmarks do not go through it (B6, B7, G53) | D9 |
-| R76 | missing | G27 (B1) |
+| R76 | partial: the engine and the walk-forward scorer trade at the next open (B1); buy-and-hold still buys at the first close (B6) | G27, G32 |
 
 ---
 
@@ -296,7 +354,7 @@ rule in `AGENTS.md`.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G27 | Trades happen on the wrong bar. A signal computed from a bar's close must be traded at the next bar's open. The Java engine fills at the same close that gave the signal, which is the flattering side. The walk-forward scorer trades at the next session's close, a session late, because it reads closes only; the first bar of a fold is the exception and trades at its own close. So the same signals give different trades in steps 6 and 7, and neither follows the rule | Requirement 76 ("traded at the next bar's open ... never at the same close it was computed from. Applies to every engine and benchmark") | `BacktestEngine.processSignal` fills at bar `i`'s `closePrice`; `walkforward.py:1156` builds `rets` close to next close and `simulate` shifts one more day; `test_walkforward.py` `test_the_first_bar_acts_on_its_own_signal`; `money_loss.portfolio_returns` and `strategy2.simulate_margin` pad the same way | M | open |
+| G27 | Trades happen on the wrong bar. A signal computed from a bar's close must be traded at the next bar's open. The Java engine fills at the same close that gave the signal, which is the flattering side. The walk-forward scorer trades at the next session's close, a session late, because it reads closes only; the first bar of a fold is the exception and trades at its own close. So the same signals give different trades in steps 6 and 7, and neither follows the rule | Requirement 76 ("traded at the next bar's open ... never at the same close it was computed from. Applies to every engine and benchmark") | `BacktestEngine.processSignal` fills at bar `i`'s `closePrice`; `walkforward.py:1156` builds `rets` close to next close and `simulate` shifts one more day; `test_walkforward.py` `test_the_first_bar_acts_on_its_own_signal`; `money_loss.portfolio_returns` and `strategy2.simulate_margin` pad the same way | M | done 2026-11-16 (B1): see the B1 record in Pass 4 |
 | G28 | An entry spends more cash than there is. The quantity is all of cash divided by the close; the fill then pays the slipped price plus commission, so cash is negative after every entry with costs on and the run is slightly leveraged without saying so | Design Notes, Staged Pipeline Architecture, stage 6 ("costs applied") | `PortfolioManager.calculatePositionSize` returns `cash * riskPercent / price`; `BacktestEngine.processSignal` sizes on `closePrice`, and `openPosition` then subtracts `filledPrice * quantity + commission` | S | open |
 | G29 | Four engine metrics are wrong or empty. (a) Sortino divides by the standard deviation of the losing bars about their own mean, which is not the downside deviation, and is 0 when no bar loses. (b) Total slippage is always 0. (c) A trade with zero profit counts as a loss. (d) Profit factor is 0 when no trade loses, which reads as the worst case | Design Notes, Staged Pipeline Architecture, stage 6 ("metrics computed") | `MetricsCalculator.calculateSortinoRatio`; `.totalSlippage(0.0)` in `calculate`; `Trade.isWin` is `pnl > 0` and every other trade is counted as losing; `MathUtils.safeDiv` returns 0 on a zero divisor | S | done 2026-11-15: see the B3 record in Pass 4 |
 | G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | open |
@@ -1002,6 +1060,9 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done: the reruns and checks; G27 done, R76 partial (benchmarks: B6); new gap G69 (dead Known limitations links) |
+| 2026-11-15-13 | 2026-11-15 20:48 | Claude Code (Claude Opus 5.5) | B1 built and tested, up to the checkpoint |
+| 2026-11-15-12 | 2026-11-15 20:29 | Claude Code (Claude Opus 5.5) | B1 plan (G27, R76) |
 | 2026-11-15-11 | 2026-11-15 20:19 | Claude Code (Claude Opus 5.5) | B10 done: the reruns, the live checks, G68 done, D9 resolved; R32 done and R75 partial; G50's predictions are stored |
 | 2026-11-15-10 | 2026-11-15 14:18 | Claude Code (Claude Opus 5.5) | B10 built and tested, up to the checkpoint |
 | 2026-11-15-9 | 2026-11-15 13:01 | Claude Code (Claude Opus 5.5) | B10 plan (D9, R75); new gap G68 (the parked return is a bar early) |

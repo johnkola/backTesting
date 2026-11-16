@@ -13,11 +13,13 @@ position" reading of a timing aid on buy-and-hold). Daily returns are constants,
 so the portfolio return is a smooth function of the positions, and so is every
 statistic built on it.
 
-TIMING MATCHES THE BACKTESTER. `returns[i]` is the move from day i to day i+1,
-and the position applied to it is the one decided on day i-1 — a full session of
-delay, the same convention `walkforward.simulate` uses. Training on a more
-generous assumption than the evaluation would flatter the model exactly where it
-matters and be invisible in the numbers.
+TIMING MATCHES THE SCORER (B1, R76). Bar i's move comes in two segments, as
+`profit.simulate` scores it: overnight, from bar i's close to the next session's
+open, held by the position decided at the bar before; and intraday, from that
+open to the next close, held by the position decided at bar i's close. Flat
+before the first bar. Training on a more generous assumption than the
+evaluation would flatter the model exactly where it matters and be invisible in
+the numbers.
 
 BLIND TO COSTS, TAX AND MARGIN (D9, R75). The loss is the market's own return
 times the position, and nothing else. Commission, tax on realized gains and
@@ -47,11 +49,14 @@ def positions_from_logits(logits: torch.Tensor) -> torch.Tensor:
     return torch.sigmoid(logits).squeeze(-1)
 
 
-def portfolio_returns(positions: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
-    """Daily portfolio return, as a differentiable series: the position decided
-    on day i-1 times day i's return. No cost of any kind (D9)."""
-    traded = torch.cat([positions[:1], positions[:-1]])
-    return traded * returns
+def portfolio_returns(positions: torch.Tensor, gap: torch.Tensor,
+                      intra: torch.Tensor) -> torch.Tensor:
+    """Each bar's portfolio return, as a differentiable series: the previous
+    position over the overnight segment, then this bar's over the intraday
+    one. No cost of any kind (D9)."""
+    prev = torch.cat([torch.zeros(1, dtype=positions.dtype, device=positions.device),
+                      positions[:-1]])
+    return (1.0 + prev * gap) * (1.0 + positions * intra) - 1.0
 
 
 def log_wealth(daily: torch.Tensor) -> torch.Tensor:
@@ -83,7 +88,7 @@ def max_drawdown(daily: torch.Tensor) -> torch.Tensor:
 
 
 def objective(
-    name: str, positions: torch.Tensor, returns: torch.Tensor,
+    name: str, positions: torch.Tensor, gap: torch.Tensor, intra: torch.Tensor,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Loss to MINIMISE, plus the readable metrics behind it.
 
@@ -93,7 +98,7 @@ def objective(
     and `calmar` cares only about the worst stretch. All three are computed on
     the market's own curve, before any cost (D9).
     """
-    daily = portfolio_returns(positions, returns)
+    daily = portfolio_returns(positions, gap, intra)
 
     if name == "return":
         loss = -log_wealth(daily)
@@ -113,9 +118,10 @@ def objective(
             "sharpe": float(sharpe(daily)),
             "max_drawdown_pct": float(max_drawdown(daily) * 100.0),
             "mean_position": float(positions.mean()),
+            # Each change happens at an open, from flat before the first bar.
             "turnover": float(
-                torch.abs(torch.cat([positions[:1], positions[:-1]])
-                          - torch.cat([torch.zeros(1), positions[:-1]])).sum()
+                torch.abs(positions - torch.cat([torch.zeros(1, dtype=positions.dtype),
+                                                 positions[:-1]])).sum()
             ),
         }
     return loss, metrics

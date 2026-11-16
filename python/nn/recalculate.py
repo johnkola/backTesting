@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+import numpy as np
 from psycopg.rows import dict_row
 
 from nn import profit, strategy_spec, walkforward, walkforward_store
@@ -168,8 +169,6 @@ def _margin_refusals(run: dict[str, Any], s: profit.Settings,
                      markets: dict[int, profit.Market], years: dict[int, int],
                      psq_first: date | None) -> list[str]:
     """`walkforward.margin_refusals`, over the stored bars."""
-    import numpy as np
-
     order = sorted(markets)
     folds, at = [], 0
     for fold in order:
@@ -177,7 +176,8 @@ def _margin_refusals(run: dict[str, Any], s: profit.Settings,
         folds.append((years[fold], [], list(range(at, at + n))))
         at += n
     m = walkforward.MarginInputs(
-        np.concatenate([markets[f].psq for f in order]),
+        np.concatenate([markets[f].psq_gap for f in order]),
+        np.concatenate([markets[f].psq_intra for f in order]),
         np.concatenate([markets[f].rates for f in order]),
         np.concatenate([markets[f].days for f in order]), psq_first)
     args = argparse.Namespace(symbol=run["symbol"], **dataclasses.asdict(s))
@@ -246,7 +246,7 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
     if missing:
         raise Refused([f"run {run_id} has no stored signals for fold(s) {missing}"], status=409)
 
-    closes = walkforward.load_closes(cur, run["symbol"], run["source"], run["timeframe"])
+    px = walkforward.load_prices(cur, run["symbol"], run["source"], run["timeframe"])
     park_obs = profit.load_park(cur, settings.park)
     psq = dff = None
     if settings.execution == "margin":
@@ -254,19 +254,26 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
     markets: dict[int, profit.Market] = {}
     for r in before:
         sig = signals[r.fold]
-        gone = sorted({d for d in [*sig.dates, *sig.exits] if d is not None and d not in closes})
+        gone = sorted({d for d in [*sig.dates, *sig.exits]
+                       if d is not None and d not in px.closes})
         if gone:
             reasons.append(f"fold {r.fold}: no stored close for {len(gone)} bar(s) the run "
                            f"scored, from {gone[0]}; the candles changed under it, so "
                            f"rerun it instead")
             continue
-        markets[r.fold] = profit.market(closes, sig.dates, sig.exits, park_obs,
-                                        settings.park, psq, dff)
+        m = profit.market(px, sig.dates, sig.exits, park_obs, settings.park, psq, dff)
+        holes = [d for d, g, h in zip(sig.dates, m.gap, m.intra, strict=True)
+                 if np.isnan(g) or np.isnan(h)]
+        if holes:
+            reasons.append(f"fold {r.fold}: no open for {len(holes)} bar(s) it trades, "
+                           f"from {holes[0]}; trades fill at the next open (B1)")
+            continue
+        markets[r.fold] = m
     if reasons:
         raise Refused(reasons, status=409)
     if settings.execution == "margin":
         refused = _margin_refusals(run, settings, markets, {r.fold: r.val_year for r in before},
-                                   min(psq) if psq else None)
+                                   min(psq.closes) if psq.closes else None)
         if refused:
             raise Refused(refused)
 

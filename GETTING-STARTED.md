@@ -1,5 +1,7 @@
 # Getting Started
 
+> **Revision 2026-11-16-1** · 2026-11-16 00:01 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+
 A start-to-finish path through this app for someone who has just cloned it: from an
 empty database to a backtest you can read, then the loop you actually work in day to
 day. Everything here is the short version — each step links to the section of the
@@ -212,8 +214,8 @@ trades, nothing else on the page is reliable.
 order.
 
 Before you conclude anything: this is a research tool with deliberate simplifications —
-fills at the current bar's close, all-in position sizing, one open position per side,
-fixed slippage. They matter when you interpret a good-looking result. The
+all-in position sizing, one open position per side, fixed slippage. (Fills are at the
+next bar's open, never at the close the signal was computed from.) They matter when you interpret a good-looking result. The
 *Known limitations* section of [Architecture](/docs/architecture) is short and worth
 reading once, now, rather than after a surprising number.
 
@@ -305,3 +307,11 @@ by `docker compose down -v`.
   going to change something.
 - **Running the pieces outside Docker**, with hot reload, is in
   [Development](/docs/readme#development).
+
+## Revision history
+
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules).
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-16-1 | 2026-11-16 00:01 | Claude Code (Claude Opus 5.5) | Revision stamp added; fills are at the next bar's open (B1) |

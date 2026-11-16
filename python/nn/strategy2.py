@@ -27,9 +27,15 @@ The account, in units of the owner's own money (1.0 at the start):
 Equity = core + margin position - debit. Buy-and-hold is the core alone, so a
 run whose signals are all neutral reproduces buy-and-hold exactly.
 
-Signals are acted on the next session, as in `walkforward.simulate`: the signal
-computed from day i's close sets the position held over day i+1's return
-(the first bar's own signal is held from the start, the same convention).
+Signals trade at the next session's open (B1, R76), as in `profit.simulate`.
+Bar i runs from its date's close to its exit's close in two segments: overnight
+to the next open, then intraday to the exit's close. Over the overnight the bar
+holds the margin position from before, and the debit carried overnight accrues
+interest for the calendar days to the exit. At the open the signal computed at
+the bar's close is acted on, a sale taxed at that open. Over the intraday the
+new position is held. The core is held from the fold's first close, like
+buy-and-hold. Nothing is on margin before the first bar, so no bar trades at its
+own close. The trim and the margin call are checked at the close.
 """
 
 from __future__ import annotations
@@ -91,25 +97,28 @@ class MarginResult:
 
 
 def simulate_margin(
-    signals: np.ndarray, qqq_returns: np.ndarray, psq_returns: np.ndarray,
+    signals: np.ndarray, qqq_gap: np.ndarray, qqq_intra: np.ndarray,
+    psq_gap: np.ndarray, psq_intra: np.ndarray,
     rates: np.ndarray, days: np.ndarray, cfg: MarginConfig,
+    tradable: np.ndarray | None = None,
 ) -> MarginResult:
     """Score `signals` (UP / NEUTRAL / DOWN per bar) under Strategy 2.
 
-    `qqq_returns[i]` and `psq_returns[i]` run from bar i's close to the next;
-    `rates[i]` is the annual Fed funds rate as a fraction on bar i's date and
-    `days[i]` the calendar days to the next bar, over which interest accrues.
+    Each bar's QQQ and PSQ moves come in two segments, overnight (close to the
+    next open) and intraday (that open to the exit's close). `rates[i]` is the
+    annual Fed funds rate as a fraction on bar i's date and `days[i]` the
+    calendar days to its exit. `tradable[i]` False (a bar with no exit) acts on
+    nothing.
     """
     refused = cfg.refusals()
     if refused:
         raise ValueError("; ".join(refused))
     n = len(signals)
-    if not (len(qqq_returns) == len(psq_returns) == len(rates) == len(days) == n):
-        raise ValueError("signals, returns, rates and days must have one value per bar")
+    if not all(len(a) == n for a in (qqq_gap, qqq_intra, psq_gap, psq_intra, rates, days)):
+        raise ValueError("signals, segments, rates and days must have one value per bar")
+    can_trade = np.ones(n, dtype=bool) if tradable is None else np.asarray(tradable, dtype=bool)
 
     c = cfg.cost_bps / 10_000.0
-    held = np.concatenate([signals[:1], signals[:-1]]) if n else signals
-
     core = 1.0
     kind = NEUTRAL      # what the margin position is
     pos = 0.0           # its market value
@@ -145,8 +154,26 @@ def simulate_margin(
             sell(pos)
         kind, pos, basis = NEUTRAL, 0.0, 0.0
 
+    def move(q: float, p: float) -> None:
+        """One segment: the core moves with QQQ, the margin position with its leg."""
+        nonlocal core, pos
+        core *= 1.0 + q
+        if kind == UP:
+            pos *= 1.0 + q
+        elif kind == DOWN:
+            pos *= 1.0 + p
+
     for i in range(n):
-        want = int(held[i])
+        # Overnight, with what was held at the last close; the debit carried
+        # over these nights accrues interest.
+        move(qqq_gap[i], psq_gap[i])
+        if debit > 0:
+            interest = debit * (rates[i] + cfg.spread) * days[i] / DAY_COUNT
+            debit += interest
+            r.interest -= interest * 100.0
+
+        # At the open: act on the signal computed at this bar's close.
+        want = int(signals[i]) if can_trade[i] else kind
         if want != kind:
             close()
             if want != NEUTRAL:
@@ -157,18 +184,12 @@ def simulate_margin(
                 r.commissions -= fee * 100.0
                 r.trades += 1
 
-        core *= 1.0 + qqq_returns[i]
+        # Intraday, with the new position.
+        move(qqq_intra[i], psq_intra[i])
         if kind == UP:
-            pos *= 1.0 + qqq_returns[i]
             r.days_long += 1
         elif kind == DOWN:
-            pos *= 1.0 + psq_returns[i]
             r.days_hedged += 1
-
-        if debit > 0:
-            interest = debit * (rates[i] + cfg.spread) * days[i] / DAY_COUNT
-            debit += interest
-            r.interest -= interest * 100.0
 
         if kind != NEUTRAL and pos > CEILING * core:
             sell(pos - CEILING * core)
