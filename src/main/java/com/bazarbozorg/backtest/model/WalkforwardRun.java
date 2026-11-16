@@ -87,6 +87,9 @@ import java.time.ZonedDateTime;
  * @param meanCommissions     mean mechanical trading cost
  * @param meanGainsTax        mean tax on realized gains per fold; 0 when scored before tax
  * @param meanTiming          mean model contribution — the only term that is the model
+ * @param meanAccuracy        mean fold accuracy on the decision the model makes (G43)
+ * @param meanBaselineAcc     mean fold accuracy of the naive predictor (R72, B8); the
+ *                            run is flagged when {@link #beatsNaive()} is false
  */
 public record WalkforwardRun(
         long id,
@@ -131,8 +134,22 @@ public record WalkforwardRun(
         Double meanDriftTax,
         Double meanCommissions,
         Double meanGainsTax,
-        Double meanTiming
+        Double meanTiming,
+        Double meanAccuracy,
+        Double meanBaselineAcc
 ) {
+
+    /**
+     * Does the model beat the naive predictor on the same folds (R72, B8)? Null
+     * when a figure is missing. A tie does not beat it.
+     */
+    public Boolean beatsNaive() {
+        if (meanAccuracy == null || meanBaselineAcc == null) {
+            return null;
+        }
+        return meanAccuracy > meanBaselineAcc;
+    }
+
 
     /**
      * Which saved strategy a run executed, and what its training window really

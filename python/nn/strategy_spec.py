@@ -61,6 +61,7 @@ from datetime import date, timedelta
 from types import MappingProxyType
 from typing import Any
 
+from nn import label_kinds
 from nn.profit import D9_REASON
 
 #: Saved hyperparameter -> walk-forward argument. Mirrors PARAM_SPEC in
@@ -126,10 +127,11 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
 #: The design's hard rule for Strategy 2 (G5), as web/api/strategies.js holds it.
 MARGIN_CEILING_PCT = 50.0
 
-#: What the runner can execute. Mirrors MODEL_TYPES and the label check in
-#: web/api/strategies.js.
+#: What the runner can execute. Mirrors MODEL_TYPES and LABEL_KINDS in
+#: web/api/strategies.js. The label kinds are the registry's (`nn/label_kinds.py`),
+#: where a kind cannot exist without its naive baseline (R72, B8).
 MODEL_TYPES = ("mlp",)
-LABEL_KINDS = ("forward_return_3class",)
+LABEL_KINDS = tuple(label_kinds.LABEL_KINDS)
 
 #: Flags a strategy run may still pass, because none changes what is trained or
 #: how it is scored. `set_id` is allowed but checked: it must be a set of the

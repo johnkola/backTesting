@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-3** · 2026-11-16 00:57 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-4** · 2026-11-16 09:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -273,8 +273,9 @@ Tab: **Pipeline → Training**.
   - Of the cost breakdown, only the `timing` line is the model.
 - [ ] **not built (G11)**: loss decreasing and no NaN loss, epoch by epoch. Only
   the stopping epoch is recorded. The Training tab says so.
-- [ ] **not built (G34)**: a run that does not beat the naive baseline is flagged.
-  The fold view shows the baseline accuracy, but nothing flags the run.
+- [ ] **app**: a run that does not beat the naive baseline is flagged (B8). Each
+  fold stores its baseline; the run's accuracy and baseline are the fold means; the
+  runner prints a `NAIVE` line and the Training tab badges the run "below naive".
 - [ ] **app**: each fold has buy-and-hold, Faber's 10-month average and dual
   momentum beside the strategy, under the run's own costs and tax, or a benchmark
   marked not available with the reason. The Training tab shows the four side by
@@ -489,11 +490,11 @@ Comes after B6, so all three benchmarks are costed alike.
 
 **Done when**
 
-- [ ] Every fold and every run stores the baseline. For the 3-class label it is always
+- [x] Every fold and every run stores the baseline. For the 3-class label it is always
   predicting the training majority class, as now.
-- [ ] A run whose accuracy does not beat it is flagged: the runner prints a line and
+- [x] A run whose accuracy does not beat it is flagged: the runner prints a line and
   the Training tab badges the run.
-- [ ] A new label kind cannot be registered without its baseline: always "up" for a
+- [x] A new label kind cannot be registered without its baseline: always "up" for a
   direction label, the historical mean return for a return label.
 
 ### B10. Signals, then profit (D9, R75)
@@ -577,7 +578,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B5. Trainer purge | G31 | | not started | |
 | B6. Buy-and-hold costs | G32 | | done | 2026-11-16. Buy-and-hold is the always-long strategy through the same code: in the profit step for walk-forward (commission and tax, D8 sale at the end) and through `BacktestEngine.trade` for results (commission and slippage). Stored with each run (fold `hold_*` columns, `result_json.buyAndHold`); the `benchmarks` table, both `benchmark_id` columns and their lookups are gone. A position open at the end is sold and taxed, strategy and Strategy 2's core alike. Python 767, Java 121, API 107, client 138. Walk-forward 456-462 recalculated in place from stored signals (nothing retrained); phase1-full v5 went from +0.55 to +0.00 pp, as it is buy-and-hold. The 16 results rerun as 746-761 with the same strategy figures (DESIGN-GAPS, B6 record) |
 | B7. Faber and dual momentum | G33 | B6 | done | 2026-11-16. `nn/rules.py` decides both rules (Faber 10-month, dual momentum per D7) at month ends; the profit step trades them (`simulate_holdings`) with the run's costs and tax; walk-forward folds store them in `walkforward_benchmarks`; the engine trades the loader's decisions (`GET /api/nn/rules`) with its own costs and stores them in `result_json`. Not available, with the reason, when history is short, the result is not daily or SPY is missing. Data check against an independent copy: 0 disagreements. Python 786, Java 127, API 107, client 141. Walk-forward 456-462 recalculated in place; results rerun as 762-777 (DESIGN-GAPS, B7 record) |
-| B8. Naive baseline flag | G34 | | not started | |
+| B8. Naive baseline flag | G34 | | done | 2026-11-16. Folds store the baseline as before; the run's is the fold mean, read with the run (`meanAccuracy`, `meanBaselineAcc`, `beatsNaive`). The runner prints `NAIVE`; the Training tab badges "below naive". `nn/label_kinds.py` registers a label kind only with a target that has a naive baseline (class: majority, direction: always up, return: historical mean), mirrored in `strategies.js`. All 7 stored runs are flagged: none beats its baseline. Python 795, Java 128, API 109, client 143 (DESIGN-GAPS, B8 record) |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
 | B10. Signals, then profit | D9 | | done | 2026-11-15. `nn/profit.py` is the one profit step; each fold stores its signals (`walkforward_signals`); `nn/recalculate.py` and its route rescore a run without retraining; the money losses are blind and the training switches refused (D9). G68 fixed on the way. Python 765, Java 128, API 110, client 138. Seven runs rerun as 434-440: the classifiers reproduced, the money runs retrained blind; 375 and 395 dropped as duplicates. Run 434 recalculated at 25% tax equals the full rerun 435 in all 60 fields (DESIGN-GAPS, B10 record) |
 
@@ -589,6 +590,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done; step 6's naive-baseline condition is an app condition |
 | 2026-11-16-3 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done; steps 6 and 7 gain the rule-benchmark conditions |
 | 2026-11-16-2 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done; step 7's buy-and-hold condition rewritten as an app condition |
 | 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done; step 7's next-open condition replaces its known limit |

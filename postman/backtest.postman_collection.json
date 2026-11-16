@@ -1169,7 +1169,17 @@
                   "",
                   "// Hand the detail request a run that actually has folds.",
                   "const withFolds = pm.response.json().items.find(r => r.folds > 0);",
-                  "if (withFolds) { pm.collectionVariables.set('wfRunId', withFolds.id); }"
+                  "if (withFolds) { pm.collectionVariables.set('wfRunId', withFolds.id); }",
+                  "",
+                  "pm.test('every run says whether it beats the naive predictor (B8)', function () {",
+                  "    // R72: the fold means of accuracy and of the naive baseline, and the flag.",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(r).to.include.keys('meanAccuracy', 'meanBaselineAcc', 'beatsNaive');",
+                  "        if (r.meanAccuracy !== null && r.meanBaselineAcc !== null) {",
+                  "            pm.expect(r.beatsNaive).to.eql(r.meanAccuracy > r.meanBaselineAcc);",
+                  "        }",
+                  "    }",
+                  "});"
                 ]
               }
             }

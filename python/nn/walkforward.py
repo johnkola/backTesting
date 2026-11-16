@@ -55,6 +55,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from nn import (
     data_checks,
     feature_store,
+    label_kinds,
     lineage,
     profit,
     rules,
@@ -437,10 +438,8 @@ def fold_accuracy(pred: np.ndarray, y_va: np.ndarray, y_tr: np.ndarray,
     """
     acc = profit.accuracy(pred, y_va, loss)
     if loss == "ce":
-        majority = Counter(y_tr.tolist()).most_common(1)[0][0]
-        return acc, float((y_va == majority).mean())
-    majority_out = bool((y_tr == CLASS_SELL).mean() > 0.5)
-    return acc, float(((y_va == CLASS_SELL) == majority_out).mean())
+        return acc, label_kinds.majority_class_accuracy(y_tr, y_va)
+    return acc, label_kinds.majority_class_accuracy(y_tr == CLASS_SELL, y_va == CLASS_SELL)
 
 
 def predict(model: nn.Module, scaler, x: np.ndarray, loss: str) -> np.ndarray:
@@ -562,6 +561,23 @@ def fold_line(r: FoldResult) -> str:
                + (f" CORE AT RISK {r.core_at_risk}d" if r.core_at_risk else "")))
 
 
+def naive_line(results: list[FoldResult], loss: str) -> str:
+    """The run's accuracy against the naive predictor (R72, B8): the fold
+    means, and a flag when the model does not beat it."""
+    accs = [r.accuracy for r in results if r.accuracy is not None]
+    bases = [r.baseline_acc for r in results if r.baseline_acc is not None]
+    if not accs or not bases:
+        return "NAIVE:   no accuracy to compare"
+    acc, base = float(np.mean(accs)), float(np.mean(bases))
+    what = ("always the training majority class" if loss == "ce"
+            else "always the training majority of out or long")
+    verdict = "beats" if acc > base else "does NOT beat"
+    return (f"NAIVE:   {verdict} the naive baseline: accuracy {acc:.1%} against "
+            f"{base:.1%} for {what}"
+            + ("" if acc > base else "  -- FLAGGED: the model learned nothing a trivial "
+               "predictor did not"))
+
+
 def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
     """The folds' summary and the verdict, as the runner and a recalculation
     print it. `args` supplies the objective, park, cost and tax rate."""
@@ -658,6 +674,7 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
                  if passed and mean_timing_m <= 0 else ""))
     if total_trades == 0:
         print("         (it never left the market — this is buy-and-hold with extra steps)")
+    print(naive_line(results, args.loss))
     # Faber and dual momentum beside it (B7), under the same costs and tax.
     print(f"\nBENCHMARKS   mean return a fold, same costs and tax:  strategy "
           f"{mean_return:+.2f}%  buy & hold {mean_hold_return:+.2f}%", end="")

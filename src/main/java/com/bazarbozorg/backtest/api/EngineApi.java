@@ -361,6 +361,10 @@ public class EngineApi {
         out.put("meanCommissions", run.meanCommissions());
         out.put("meanGainsTax", run.meanGainsTax());
         out.put("meanTiming", run.meanTiming());
+        // R72, B8: the naive baseline, and whether the model beats it.
+        out.put("meanAccuracy", run.meanAccuracy());
+        out.put("meanBaselineAcc", run.meanBaselineAcc());
+        out.put("beatsNaive", run.beatsNaive());
         out.put("beatsHoldOnReturn", run.beatsHoldOnReturn());
 
         String raw = run.hyperparamsJson();

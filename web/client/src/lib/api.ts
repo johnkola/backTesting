@@ -1317,6 +1317,12 @@ export type WalkforwardRun = {
   /** Mean tax on realized gains per fold; 0 when scored before tax. */
   meanGainsTax: number | null
   meanTiming: number | null
+  /** Mean fold accuracy on the decision the model makes (G43); null with no folds. */
+  meanAccuracy?: number | null
+  /** Mean fold accuracy of the naive predictor (R72, B8). */
+  meanBaselineAcc?: number | null
+  /** False when the model does not beat the naive predictor: the run is flagged. */
+  beatsNaive?: boolean | null
   /** Null until a fold exists. Only decided for the `return` objective. */
   beatsHoldOnReturn: boolean | null
   /** Parsed by the API; the seed lives here, which §6.1 needs for reproducibility. */

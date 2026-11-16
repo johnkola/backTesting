@@ -166,7 +166,7 @@ describe('validateStrategy — the rest of the form', () => {
   it('requires a label definition with a horizon', () => {
     assert.match(errorsFor(body({ label: undefined })), /label definition is required/);
     assert.match(errorsFor(body({ label: { kind: 'regression', horizonBars: 5 } })),
-      /label.kind must be forward_return_3class/);
+      /label.kind must be one of forward_return_3class/);
     assert.match(errorsFor(body({ label: { kind: 'forward_return_3class', horizonBars: 0 } })),
       /horizonBars must be a whole number/);
     assert.match(errorsFor(body({ label: { kind: 'forward_return_3class', horizonBars: 2.5 } })),
@@ -464,5 +464,20 @@ describe('validateStrategy — train with margin is gone (D9)', () => {
     const o = objective({ execution: 'margin', loss: 'return', marginTrain: false }).value.objective;
     assert.equal('marginTrain' in o, false);
     assert.equal(o.execution, 'margin');
+  });
+});
+
+describe('label kinds and their naive baselines (B8, R72)', () => {
+  const { LABEL_KINDS, NAIVE_BASELINES } = require('./strategies');
+
+  it('lists no kind whose target has no naive baseline', () => {
+    for (const [name, kind] of Object.entries(LABEL_KINDS)) {
+      assert.ok(kind.target in NAIVE_BASELINES, `${name} has no baseline`);
+    }
+  });
+
+  it('refuses a kind that is not registered, naming the ones that are', () => {
+    const errors = validateStrategy(body({ label: { kind: 'direction_up', horizonBars: 5 } })).errors;
+    assert.match(errors.join(' '), /label.kind must be one of forward_return_3class/);
   });
 });

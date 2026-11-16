@@ -101,7 +101,9 @@ public class WalkforwardRepository {
                    avg(f.drift_tax) AS mean_drift_tax,
                    avg(f.commissions) AS mean_commissions,
                    avg(f.gains_tax) AS mean_gains_tax,
-                   avg(f.timing) AS mean_timing
+                   avg(f.timing) AS mean_timing,
+                   avg(f.accuracy) AS mean_accuracy,
+                   avg(f.baseline_acc) AS mean_baseline_acc
               FROM walkforward_runs r
               JOIN instruments i ON i.id = r.instrument_id
               JOIN data_sources ds ON ds.id = r.source_id
@@ -381,7 +383,9 @@ public class WalkforwardRepository {
                 nullableDouble(rs, "mean_drift_tax"),
                 nullableDouble(rs, "mean_commissions"),
                 nullableDouble(rs, "mean_gains_tax"),
-                nullableDouble(rs, "mean_timing"));
+                nullableDouble(rs, "mean_timing"),
+                nullableDouble(rs, "mean_accuracy"),
+                nullableDouble(rs, "mean_baseline_acc"));
     }
 
     private static WalkforwardFold mapFold(ResultSet rs) throws SQLException {

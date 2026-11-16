@@ -120,6 +120,11 @@ class WalkforwardRepositoryTest {
         exec("UPDATE walkforward_folds SET gains_tax = -2.0, best_epoch = 7, epochs_run = 12"
              + " WHERE run_id = " + taxedRunId + " AND fold = 1");
         exec("UPDATE walkforward_runs SET purge_bars = 5 WHERE id = " + taxedRunId);
+        // B8: fold accuracies against the naive baseline, averaging to a tie.
+        exec("UPDATE walkforward_folds SET accuracy = 0.5, baseline_acc = 0.6 WHERE run_id = "
+             + taxedRunId + " AND fold = 1");
+        exec("UPDATE walkforward_folds SET accuracy = 0.7, baseline_acc = 0.6 WHERE run_id = "
+             + taxedRunId + " AND fold = 2");
 
         // G3: a run that read build `then`; the set has since been rebuilt as
         // `now` with different values.
@@ -325,6 +330,16 @@ class WalkforwardRepositoryTest {
         assertNull(folds.get(1).bestEpoch(), "a fold trained for fixed epochs has none");
         assertEquals(5, run.purgeBars());
         assertEquals(0.0, folds.get(1).gainsTax(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("a run's accuracy and naive baseline are the fold means, and a tie is flagged (B8)")
+    void naiveBaselineIsTheFoldMean() {
+        WalkforwardRun run = theRun(taxedRunId);
+        assertEquals(0.6, run.meanAccuracy(), 1e-12);
+        assertEquals(0.6, run.meanBaselineAcc(), 1e-12);
+        assertEquals(Boolean.FALSE, run.beatsNaive(), "a tie does not beat the naive predictor");
+        assertEquals(Boolean.TRUE, theRun(runId).beatsNaive(), "0.52 against 0.48 in every fold");
     }
 
     @Test

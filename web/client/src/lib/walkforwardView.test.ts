@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { WalkforwardExecution, WalkforwardLineage, WalkforwardRun } from './api'
 import {
   accuracyMeaning, executionLine, isLeverageOnly, leveredTiming, lineageLine, newestFinished, num, pp,
-  stageSummary, verdictOf,
+  stageSummary, verdictOf, naiveFlag,
 } from './walkforwardView'
 
 /**
@@ -318,5 +318,18 @@ describe('accuracyMeaning (G43)', () => {
       expect(accuracyMeaning(loss).header).toMatch(/Out .* or long/)
       expect(accuracyMeaning(loss).baseline).toMatch(/^Always long/)
     }
+  })
+})
+
+describe('naiveFlag (B8, R72)', () => {
+  it('flags a run whose accuracy does not beat the naive predictor, a tie included', () => {
+    const flag = naiveFlag(aRun({ meanAccuracy: 0.55, meanBaselineAcc: 0.55, beatsNaive: false }))
+    expect(flag).toContain('55.0% does not beat 55.0%')
+    expect(flag).toContain('learned nothing')
+  })
+
+  it('says nothing when the run beats it or there is nothing to compare', () => {
+    expect(naiveFlag(aRun({ meanAccuracy: 0.6, meanBaselineAcc: 0.5, beatsNaive: true }))).toBeNull()
+    expect(naiveFlag(aRun({ meanAccuracy: null, meanBaselineAcc: null, beatsNaive: null }))).toBeNull()
   })
 })

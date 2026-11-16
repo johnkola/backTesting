@@ -213,6 +213,22 @@ export function isLeverageOnly(run: WalkforwardRun): boolean {
 }
 
 /**
+ * The flag for a run whose model does not beat the naive predictor on the same
+ * folds (R72, B8), with both figures; null when it does or when there is
+ * nothing to compare. A tie does not beat it.
+ */
+export function naiveFlag(run: WalkforwardRun): string | null {
+  if (run.beatsNaive !== false || run.meanAccuracy == null || run.meanBaselineAcc == null) {
+    return null
+  }
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`
+  return `Accuracy ${pct(run.meanAccuracy)} does not beat ${pct(run.meanBaselineAcc)} for the `
+    + `naive predictor (${run.loss === 'ce' ? 'always the training majority class'
+      : 'always the training majority of out or long'}): the model learned nothing a trivial `
+    + 'predictor did not'
+}
+
+/**
  * What a fold's accuracy and baseline measure (G43). A classifier calls BUY,
  * HOLD or SELL, so it is scored on three classes against always predicting the
  * training majority class. A money-trained model makes one call, out or long,

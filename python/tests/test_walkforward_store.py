@@ -346,6 +346,10 @@ class TestRoundTrip:
 
     @staticmethod
     def _cleanup(conn, run_id):
+        # A test that failed mid-statement leaves the transaction aborted, and
+        # every statement after it would fail too, leaving its run behind in
+        # the developer's database. Roll back first.
+        conn.rollback()
         with conn.cursor() as cur:
             # Folds cascade, but be explicit so a schema change cannot leave
             # orphans behind in a developer's database.

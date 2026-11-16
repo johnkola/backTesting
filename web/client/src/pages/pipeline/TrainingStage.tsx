@@ -10,7 +10,8 @@ import {
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import {
-  accuracyMeaning, executionLine, isLeverageOnly, lineageLine, newestFinished, num, pp, stageSummary,
+  accuracyMeaning, executionLine, isLeverageOnly, lineageLine, naiveFlag, newestFinished, num, pp,
+  stageSummary,
 } from '../../lib/walkforwardView'
 import StartWalkforward from '../../components/StartWalkforward'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
@@ -245,6 +246,14 @@ export default function TrainingStage() {
                       ? (
                         <>
                           <span className="badge badge-sm badge-success">beat hold</span>
+                          {naiveFlag(r) && (
+                            <span
+                              className="badge badge-sm badge-error ml-1 tooltip tooltip-left"
+                              data-tip={naiveFlag(r) ?? ''}
+                            >
+                              below naive
+                            </span>
+                          )}
                           {isLeverageOnly(r) && (
                             <span
                               className="badge badge-sm badge-warning ml-1 tooltip tooltip-left"

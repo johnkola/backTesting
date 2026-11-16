@@ -103,6 +103,20 @@ const MARGIN_DEFAULTS = { leveragePct: 20, hedgePct: 20, marginSpreadPct: 1.5, m
 const DEFAULT_LONG_THRESHOLD = 0.75;
 /** The design's hard rule: the margin position never exceeds 50% of the holding. */
 const MARGIN_CEILING_PCT = 50;
+/**
+ * Each prediction target's naive baseline (R72, B8), and the registered label
+ * kinds with their target. A kind cannot be listed without a target that has a
+ * baseline (`strategies.test.js`), and the list mirrors the Python registry,
+ * python/nn/label_kinds.py (`test_strategy_spec`).
+ */
+const NAIVE_BASELINES = {
+  class: 'the training majority class',
+  direction: 'always up',
+  return: 'the historical mean return',
+};
+const LABEL_KINDS = {
+  forward_return_3class: { target: 'class' },
+};
 /** Loss → what it trains. `ce` is the 3-class label; the rest a position head. */
 const LOSSES = new Set(['ce', 'return', 'sharpe', 'calmar']);
 /** The metric that decides whether a run beat holding. */
@@ -401,13 +415,13 @@ function validateStrategy(body) {
   } else {
     const kind = typeof b.label.kind === 'string' ? b.label.kind.trim() : '';
     const horizon = Number(b.label.horizonBars);
-    if (kind !== 'forward_return_3class') {
-      errors.push('label.kind must be forward_return_3class (the only one registered)');
+    if (!(kind in LABEL_KINDS)) {
+      errors.push(`label.kind must be one of ${Object.keys(LABEL_KINDS).join(', ')} (the registered kinds)`);
     }
     if (!Number.isInteger(horizon) || horizon < 1 || horizon > 100) {
       errors.push('label.horizonBars must be a whole number between 1 and 100');
     }
-    if (kind === 'forward_return_3class' && Number.isInteger(horizon)) {
+    if (kind in LABEL_KINDS && Number.isInteger(horizon)) {
       label = { kind, horizonBars: horizon };
     }
   }
@@ -708,6 +722,8 @@ const OBJECTIVE_SPEC = {
 };
 
 module.exports = {
+  LABEL_KINDS,
+  NAIVE_BASELINES,
   PARAM_SPEC,
   OBJECTIVE_DEFAULTS,
   OBJECTIVE_SPEC,

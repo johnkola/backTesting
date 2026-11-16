@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-5** · 2026-11-16 00:57 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-7** · 2026-11-16 09:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -355,6 +355,43 @@ Checklist:
   - Trades are position changes in walk-forward and round trips in results, the same in every row of a table.
 
 
+**B8 plan (G34, R72), 2026-11-16.** The author: do B8. The conditions are in `AGENTS.md`, build step B8.
+
+The shape:
+- **Stored per fold, derived per run.** Each fold already stores `baseline_acc`, its accuracy on the decision the model makes against the naive predictor (G43). A run's accuracy and baseline are the fold means, computed on read like every run summary: the Java reader adds `meanAccuracy`, `meanBaselineAcc` and `beatsNaive`. Storing a copy would be a second source of truth.
+- **Flagged.** A run whose mean accuracy does not beat its mean baseline is flagged:
+  - the runner prints a `NAIVE` line;
+  - the Training tab badges the run "below naive", with both figures in the tooltip.
+- **No label kind without its baseline.** A registry in `nn/labels.py` maps each prediction target to its naive predictor (R72): the training majority class for a class label, always up for a direction label, the historical mean return for a return label. A label kind is registered with its target, and registering one whose target has no baseline raises. `strategy_spec.LABEL_KINDS` and the API's list (`strategies.js`) come from it, and a test holds the two together.
+- **No stored data changes:** the flag and the run figures are read from folds that already exist.
+
+Checklist:
+- [x] Plan here
+- [x] Label registry with baselines (Python and API), tests
+- [x] Runner `NAIVE` line; Java run summary fields; Training tab badge; tests
+- [x] All four CI jobs; rebuild; live check
+- [x] README, `AGENTS.md`, G34 and this record say done
+
+*Done, 2026-11-16 09:17.* No stored figure changed, so nothing was rerun.
+- **Tests:** Python 795, Java 128, API 109, client 143. New tests:
+  - a label kind without a baseline cannot be created, and a name registers once;
+  - the runner and the API list the same kinds with the same targets;
+  - the three naive predictors;
+  - the `NAIVE` line flags a run below or tied with its baseline;
+  - the Java run figures are the fold means, and a tie is flagged;
+  - the client's badge text.
+- **Live, every stored run is flagged.** Mean accuracy against the naive baseline:
+
+  | Run | Strategy | Accuracy | Naive |
+  |---|---|---|---|
+  | 457, 459 | classifiers | 61.10% | 62.76% |
+  | 458 | classifier | 62.49% | 62.76% |
+  | 460, 461 | money models | 86.70% and 86.63% | 86.83% |
+  | 462 | phase1-full v5 | 86.83% | 86.83% (it is always long, so it is the naive predictor) |
+
+- **Found and fixed: 14 orphaned runs.** The store's database tests failed during B6, before the schema had the new columns, and left their aborted transactions unable to clean up. That left 14 empty, unfinished runs (464-470, 472-478). The cleanup now rolls back first. With the author's go, the runs were backed up (`cleanup-b8-20261116/before.sql.gz`) and deleted.
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -420,7 +457,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R69 | missing | G48 |
 | R70 | missing | G16 |
 | R71 | missing | G49 |
-| R72 | partial | G34 (B8), G49 |
+| R72 | partial: every run is scored against its naive predictor, and one that does not beat it is flagged (B8); a label kind cannot exist without its baseline. Direction and return targets are not registered yet (G49), and Results do not show walk-forward runs (G57) | G49, G57 |
 | R73 | missing | G65 |
 | R74 | missing | G63, G35 (B9) |
 | R75 | partial: engines blind and profit recalculated on demand (B10). Slippage, superficial loss, dividends and currency are not in the profit step yet, and the benchmarks do not go through it (B6, B7, G53) | D9 |
@@ -467,7 +504,7 @@ rule in `AGENTS.md`.
 |---|---|---|---|---|---|
 | G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | done 2026-11-16 (B6): see the B6 record in Pass 4 |
 | G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | done 2026-11-16 (B7): see the B7 record in Pass 4 |
-| G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | partial |
+| G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | done 2026-11-16 (B8): see the B8 record in Pass 4 |
 | G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | open |
 
 ### Decisions the author owes
@@ -1160,6 +1197,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-7 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done: runs flagged against the naive baseline; G34 done; R72 partial; 14 orphaned test runs removed |
+| 2026-11-16-6 | 2026-11-16 01:01 | Claude Code (Claude Opus 5.5) | B8 plan (G34, R72) |
 | 2026-11-16-5 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done: Faber and dual momentum beside every run; G33 done; R36 and R39 updated |
 | 2026-11-16-4 | 2026-11-16 00:27 | Claude Code (Claude Opus 5.5) | B7 plan (G33, D7) |
 | 2026-11-16-3 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done: buy-and-hold costed and stored with each run; G32 done, D6 and D8 built, R36 partial |
