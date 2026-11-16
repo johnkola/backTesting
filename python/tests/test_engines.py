@@ -118,7 +118,7 @@ class TestOneFoldEveryEngine:
     def test_the_tree_engines_are_given_the_raw_rows(self, monkeypatch):
         seen = {}
 
-        def spy(engine, x, y, settings, weighted=False):
+        def spy(engine, x, y, settings, weighted=False, target="class"):
             seen[engine] = x
             return trees.TreeModel(engine, None)
 

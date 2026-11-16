@@ -137,7 +137,13 @@ def run_settings(run: dict[str, Any]) -> profit.Settings:
     def f(key: str) -> float | None:
         return None if run[key] is None else float(run[key])
 
+    # The run's target and the thresholds that make its calls (G49); a run from
+    # before records none and was the 3-class label.
+    label = json.loads(run["label_json"]) if run.get("label_json") else {}
     return profit.Settings(
+        target=run.get("target") or "class",
+        p_buy=label.get("buyThreshold"), p_sell=label.get("sellThreshold"),
+        min_return=label.get("minReturn"),
         loss=run["loss"], cost_bps=float(run["cost_bps"]), tax_rate=f("tax_rate"),
         park=run["park"], execution=run["execution"],
         threshold=f("threshold") if run["threshold"] is not None else 0.5,
@@ -300,9 +306,12 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
     for r in before:
         sig = signals_of(r)
         money = profit.score(sig.output, markets[r.fold], settings)
-        pred = profit.calls(sig.output, settings.loss, settings.threshold)
+        pred = profit.calls_of(sig.output, settings)
+        # A return target is scored on the actual returns stored with it (G49).
+        truth = sig.values if settings.target == "return" else sig.labels
         after.append(dataclasses.replace(
-            r, accuracy=profit.accuracy(pred, sig.labels, settings.loss),
+            r, accuracy=walkforward.fold_accuracy(pred, truth, truth, settings.loss,
+                                                  settings.target, sig.output)[0],
             rules=walkforward.score_rules(decisions, sig.dates, markets[r.fold], settings,
                                           run["symbol"]),
             **money.fields()))

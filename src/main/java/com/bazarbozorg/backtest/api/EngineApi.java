@@ -300,7 +300,8 @@ public class EngineApi {
             body.put("epochs", repo.findEpochCurves(id));
             // One line per engine over its folds (B9); the run's own figures
             // above are its first engine's.
-            body.put("engineSummaries", com.bazarbozorg.backtest.model.EngineSummary.of(folds));
+            body.put("engineSummaries",
+                    com.bazarbozorg.backtest.model.EngineSummary.of(folds, run.target()));
             return body;
         }
 
@@ -363,6 +364,11 @@ public class EngineApi {
         // Each engine trained, with its settings, library version and seed (B9);
         // null for a run from before, which trained the network alone.
         out.put("engines", jsonArray(run.enginesJson(), run.id(), "engines_json"));
+        // What it predicted, and the label with its horizon and thresholds (G49);
+        // a run from before was the 3-class label. Its own key: `label` is the
+        // run's name.
+        out.put("target", run.target() == null ? "class" : run.target());
+        out.put("labelSpec", jsonObject(run.labelJson(), run.id(), "label_json"));
         out.put("strategy", strategyPayload(run));
         out.put("lineage", lineagePayload(run));
         out.put("execution", run.execution());

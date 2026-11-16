@@ -696,4 +696,24 @@ class WalkforwardRepositoryTest {
         assertFalse(failed.inProgress());
         assertTrue(failed.failedReason().contains("loss is nan"));
     }
+
+    @Test
+    @DisplayName("G49: a return target's error beats naive when it is lower; the run says its target")
+    void aReturnTargetBeatsNaiveWhenLower() {
+        long id = insertRun(LABEL, false, "return", "ce", null);
+        exec("UPDATE walkforward_runs SET target = 'return', label_json ="
+             + " '{\"kind\": \"forward_return\", \"horizonBars\": 5, \"minReturn\": 0.001}'"
+             + " WHERE id = " + id);
+        insertFold(id, 1, 2016, 12.0, 7.0, 0.8, 0.6, 9.0, 11.0, 4, 0, 0, 0);
+        // The fixture's accuracy 0.52 against 0.48: read as errors, the model's is higher.
+        WalkforwardRun run = theRun(id);
+        assertEquals("return", run.target());
+        assertEquals(Boolean.FALSE, run.beatsNaive());
+        assertEquals(Boolean.FALSE, com.bazarbozorg.backtest.model.EngineSummary
+                .of(repo.findFolds(id), run.target()).get(0).beatsNaive());
+        assertEquals(Boolean.TRUE, WalkforwardRun.beatsNaive(0.010, 0.012, "return"));
+        assertEquals(Boolean.TRUE, WalkforwardRun.beatsNaive(0.55, 0.52, "direction"));
+        assertNull(theRun(runId).target());                   // a run from before: the class label
+        assertEquals(Boolean.TRUE, theRun(runId).beatsNaive()); // 0.52 vs 0.48, higher is better
+    }
 }

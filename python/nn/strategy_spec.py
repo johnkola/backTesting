@@ -355,6 +355,17 @@ def runner_args(s: Strategy) -> dict[str, Any]:
     kind = s.label.get("kind")
     if kind not in LABEL_KINDS:
         errors.append(f"label kind {kind!r} has no runner; only {', '.join(LABEL_KINDS)}")
+    else:
+        errors.extend(label_kinds.problems(s.label))
+    # A direction or return target is fitted, not traded by a position head
+    # (G49): a money-trained loss with one would ignore the target it names.
+    target = label_kinds.target_of(s.label)
+    loss = s.objective.get("loss", OBJECTIVE_DEFAULTS["loss"])
+    if target != "class" and loss != "ce":
+        errors.append(f"a {target} target is fitted by its own loss; the money-trained "
+                      f"'{loss}' loss trains a position and would ignore it. Use 'ce'")
+    if target == "return" and s.objective.get("classWeights"):
+        errors.append("class weights need a class label, not a return target")
     # Saved before D9 (2026-11-15): the API refuses these switches now, and a
     # row that still has one is refused here rather than silently run blind,
     # which would record a run its strategy did not ask for.
@@ -370,6 +381,14 @@ def runner_args(s: Strategy) -> dict[str, Any]:
         raise StrategyRefused(errors)
     out = {RUNNER_ARGS[k]: v for k, v in s.hyperparams.items() if k in RUNNER_ARGS}
     out["engines"] = {name: dict(settings) for name, settings in s.engines.items()}
+    # The target and the thresholds that make its calls (G49, R71), recorded on
+    # the run as the strategy saved them.
+    out["target"] = target
+    out["label_json"] = json.dumps(dict(s.label), sort_keys=True)
+    if target == "direction":
+        out["p_buy"], out["p_sell"] = s.label["buyThreshold"], s.label["sellThreshold"]
+    elif target == "return":
+        out["min_return"] = float(s.label["minReturn"])
     for key, arg in OBJECTIVE_ARGS.items():
         value = s.objective.get(key, OBJECTIVE_DEFAULTS[key])
         if value is not None:

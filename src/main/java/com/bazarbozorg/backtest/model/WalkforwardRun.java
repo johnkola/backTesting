@@ -116,6 +116,8 @@ public record WalkforwardRun(
         String hyperparamsJson,
         String columnsJson,
         String enginesJson,
+        String target,
+        String labelJson,
         StrategyProvenance strategy,
         Lineage lineage,
         Execution execution,
@@ -146,10 +148,19 @@ public record WalkforwardRun(
      * when a figure is missing. A tie does not beat it.
      */
     public Boolean beatsNaive() {
-        if (meanAccuracy == null || meanBaselineAcc == null) {
+        return beatsNaive(meanAccuracy, meanBaselineAcc, target);
+    }
+
+    /**
+     * Whether a score beats its naive baseline, by the run's target (G49):
+     * accuracy and a direction's hit rate are better higher, a return
+     * forecast's mean absolute error lower. Null without both figures.
+     */
+    public static Boolean beatsNaive(Double score, Double baseline, String target) {
+        if (score == null || baseline == null) {
             return null;
         }
-        return meanAccuracy > meanBaselineAcc;
+        return "return".equals(target) ? score < baseline : score > baseline;
     }
 
 

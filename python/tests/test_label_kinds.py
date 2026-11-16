@@ -33,7 +33,8 @@ def test_a_name_registers_once():
 def test_the_runner_and_the_api_list_the_same_kinds():
     js = (Path(__file__).parents[2] / "web" / "api" / "strategies.js").read_text()
     block = re.search(r"const LABEL_KINDS = \{(.*?)\n\};", js, re.S).group(1)
-    listed = dict(re.findall(r"^\s+(\w+): \{ target: '(\w+)' \}", block, re.M))
+    # Each top-level kind names its target first; its thresholds may follow (G49).
+    listed = dict(re.findall(r"^  (\w+): \{\s*target: '(\w+)'", block, re.M))
     assert listed == {k: v.target for k, v in lk.LABEL_KINDS.items()}
     assert tuple(lk.LABEL_KINDS) == ss.LABEL_KINDS
 

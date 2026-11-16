@@ -52,7 +52,7 @@ from datetime import date
 import numpy as np
 
 from nn import strategy2
-from nn.labels import CLASS_BUY, CLASS_SELL
+from nn.labels import CLASS_BUY, CLASS_HOLD, CLASS_SELL
 
 #: Periods per year for the Sharpe and the parked rate (an annual rate / 252 per
 #: bar). Correct for D1 only, which is why the runner refuses other timeframes.
@@ -92,6 +92,8 @@ class Signals:
     exits: list[date | None]
     output: np.ndarray
     labels: np.ndarray
+    #: The actual return each bar was labelled with, for a return target (G49).
+    values: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         n = len(self.dates)
@@ -118,6 +120,14 @@ class Settings:
     hedge_pct: float | None = None
     margin_spread_pct: float | None = None
     maintenance_pct: float | None = None
+    #: The prediction target (G49, R71) and what turns its output into calls:
+    #: P(up) at or above `p_buy` is BUY and at or below `p_sell` SELL for a
+    #: direction; a forecast at or above `min_return` BUY and at or below its
+    #: negative SELL for a return. The class label needs neither.
+    target: str = "class"
+    p_buy: float | None = None
+    p_sell: float | None = None
+    min_return: float | None = None
 
     @classmethod
     def from_args(cls, args, execution: str | None = None) -> Settings:
@@ -141,6 +151,9 @@ class Settings:
             leverage_pct=dial("leverage_pct"), hedge_pct=dial("hedge_pct"),
             margin_spread_pct=dial("margin_spread_pct"),
             maintenance_pct=dial("maintenance_pct"),
+            target=getattr(args, "target", None) or "class",
+            p_buy=getattr(args, "p_buy", None), p_sell=getattr(args, "p_sell", None),
+            min_return=getattr(args, "min_return", None),
         )
 
     @property
@@ -354,6 +367,28 @@ def calls(output: np.ndarray, loss: str, threshold: float) -> np.ndarray:
     if loss == "ce":
         return output.argmax(axis=1).astype(np.int64)
     return np.where(output[:, 0] < threshold, CLASS_SELL, CLASS_BUY).astype(np.int64)
+
+
+def calls_of(output: np.ndarray, s: Settings) -> np.ndarray:
+    """The class each bar's output is called as, by the run's target (G49).
+
+    A money-trained model and the 3-class label are `calls`. A direction
+    model's P(up) is BUY at or above the buy threshold, SELL at or below the
+    sell threshold, HOLD between; a return forecast is BUY at or above the
+    minimum return, SELL at or below its negative. From here the profit step
+    reads the same calls whatever the target: Strategy 1 is long unless SELL,
+    and Strategy 2's conviction is BUY.
+    """
+    if s.loss != "ce" or s.target == "class":
+        return calls(output, s.loss, s.threshold)
+    x = output[:, 0]
+    if s.target == "direction":
+        up, down = s.p_buy, s.p_sell
+    elif s.target == "return":
+        up, down = s.min_return, -s.min_return
+    else:
+        raise ValueError(f"target {s.target!r} is not registered")
+    return np.where(x >= up, CLASS_BUY, np.where(x <= down, CLASS_SELL, CLASS_HOLD)).astype(np.int64)
 
 
 def margin_signals(output: np.ndarray, pred: np.ndarray, s: Settings) -> np.ndarray:
@@ -701,7 +736,7 @@ def _daily(equity: np.ndarray) -> np.ndarray:
 def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
     """Turn one fold's signals into its money figures under `s`, beside
     buy-and-hold under the same `s`."""
-    pred = calls(output, s.loss, s.threshold)
+    pred = calls_of(output, s)
     margin = None
     if s.execution == "margin":
         if not m.strategy2 or m.rates is None or m.days is None:

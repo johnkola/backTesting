@@ -319,6 +319,17 @@ describe('accuracyMeaning (G43)', () => {
       expect(accuracyMeaning(loss).baseline).toMatch(/^Always long/)
     }
   })
+  it('scores a direction run by hit rate against always up (G49)', () => {
+    expect(accuracyMeaning('ce', 'direction').header).toMatch(/^Hit rate/)
+    expect(accuracyMeaning('ce', 'direction').baseline).toMatch(/^Always up/)
+  })
+  it('scores a return run by mean absolute error, lower better (G49)', () => {
+    expect(accuracyMeaning('ce', 'return').header).toMatch(/^Mean absolute error.*lower is better$/)
+    expect(accuracyMeaning('ce', 'return').baseline).toMatch(/training mean return/)
+  })
+  it('reads a run from before G49 as the 3-class label', () => {
+    expect(accuracyMeaning('ce', undefined)).toEqual(accuracyMeaning('ce', 'class'))
+  })
 })
 
 describe('naiveFlag (B8, R72)', () => {
@@ -331,5 +342,27 @@ describe('naiveFlag (B8, R72)', () => {
   it('says nothing when the run beats it or there is nothing to compare', () => {
     expect(naiveFlag(aRun({ meanAccuracy: 0.6, meanBaselineAcc: 0.5, beatsNaive: true }))).toBeNull()
     expect(naiveFlag(aRun({ meanAccuracy: null, meanBaselineAcc: null, beatsNaive: null }))).toBeNull()
+  })
+
+  it('names a direction run\'s hit rate against always up (G49)', () => {
+    const flag = naiveFlag(aRun({
+      target: 'direction', meanAccuracy: 0.51, meanBaselineAcc: 0.56, beatsNaive: false,
+    }))
+    expect(flag).toBe('Hit rate 51.0% does not beat 56.0% for the naive predictor (always up): '
+      + 'the model learned nothing a trivial predictor did not')
+  })
+
+  it('shows a return run\'s errors as errors, and takes the server\'s word on which beat (G49)', () => {
+    // A lower error beats the baseline, so a server flag with the model's
+    // error HIGHER is the one shown; with it lower the server says it beat.
+    const flag = naiveFlag(aRun({
+      target: 'return', meanAccuracy: 0.0131, meanBaselineAcc: 0.0122, beatsNaive: false,
+    }))
+    expect(flag).toContain('Mean absolute error 0.0131 is not below 0.0122')
+    expect(flag).toContain('the historical mean return, lower is better')
+    expect(flag).not.toContain('%')
+    expect(naiveFlag(aRun({
+      target: 'return', meanAccuracy: 0.0110, meanBaselineAcc: 0.0122, beatsNaive: true,
+    }))).toBeNull()
   })
 })

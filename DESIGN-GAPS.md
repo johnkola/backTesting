@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-23** · 2026-11-16 15:43 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-25** · 2026-11-16 16:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -76,7 +76,7 @@ stored run.
 | G46 | **Undo can delete current data.** Undo deletes a series' whole calendar year and only the audit row it was pressed on. Each daily feeds refresh adds an audit row for the current year, so 116 archive paths have several (`computed/NDXAD/2026/D1.csv`: rows 801, 7492, 7524, 7670, 7717). Undo on the oldest deletes all 219 current 2026 bars, leaves four rows pointing at nothing, and the older version cannot come back because its archive file was overwritten. Re-importing the archive restores the current data only | R11 | `imports_api.py` `delete_import` (`DELETE FROM candles … timestamp >= since AND < until`, then the one audit row); the Imports page lists every row with Undo | at risk: any series the feeds refresh | S | done 2026-11-15: an older version answers 409 `superseded` (the dry run too); undoing the current one removes every audit row of the slice; the Imports page shows Superseded instead of Undo |
 | G47 | **Look-ahead: features join on the date a value describes, not the date it was published.** A row for day D holds FRED's DGS10, DGS2, BAA10Y and DFF, the Bank of Canada's CORRA and EIA's WTI for D. These arrive the next day or later, while the trade is decided after D's close. The live system cannot see them at 18:30 on D (they are carried forward), so history and live disagree, and every backtest used values it could not have had. Also: `holiday_proximity` reads the next stored session, so an unscheduled closure leaks | R17 | `feature_build._fetch_field` (`c.timestamp::date`), `normalize.align_forward_fill`. QQQ's 11-12 bar was stored 2026-11-12 18:30 (import 366); DGS10, DFF and CORRA for 11-12 arrived 2026-11-13 21:25 (imports 420, 425, 428) | every feature set; runs 374 to 378 (phase1-full and both Strategy 2 variants select `treasury_10y`, `treasury_2y`, `yield_curve_10y2y`, `oil_wti`) | M | done 2026-11-15: `[alignment.available_after]` and `normalize.shift_to_availability`; `holiday_proximity` from the scheduled holidays; set 28; runs 376-378 rerun as 394-396 |
 | G48 | The test block has been scored, and nothing guards it. The Run tab fills a saved strategy's window from its test block, and results 686, 697, 698 and 706 score 2022-04-13 to 2026-06-30 (inside every strategy's 2022-01-01 to 2026-06-30 test block) with `nn-feedforward` models. No run is marked as having seen the test window | R69 | `RunPage.tsx` `applySaved` ("the window defaults to the strategy's **test** block") | results 686, 697-699, 706, 711-713 | S | done 2026-11-16: see the G38 and G48 record in Pass 4 |
-| G49 | Prediction targets are a fixed 3-class label. Only `forward_return_3class` (±2% over 5 bars) is registered, and its thresholds are runner defaults. There is no direction target (P(next bar up), buy and sell thresholds) or return target (N-bar forecast, minimum return). So R72's baselines ("always up", "historical mean return") have nothing to attach to | R71, R72 | `strategy_spec.LABEL_KINDS`; `strategies.js` ("the only one registered") | all 9 runs | M | open |
+| G49 | Prediction targets are a fixed 3-class label. Only `forward_return_3class` (±2% over 5 bars) is registered, and its thresholds are runner defaults. There is no direction target (P(next bar up), buy and sell thresholds) or return target (N-bar forecast, minimum return). So R72's baselines ("always up", "historical mean return") have nothing to attach to | R71, R72 | `strategy_spec.LABEL_KINDS`; `strategies.js` ("the only one registered") | all 9 runs | M | done 2026-11-16: see the G49 record in Pass 4 |
 | G50 | A walk-forward run keeps neither its models nor its scaler nor its predictions. `run_fold` discards each fold's model and fitted scaler, no per-bar prediction is stored, the windows are kept as years, and the prediction window is never predicted over | R34, R68, R25, R38 | `walkforward.run_fold`, `train_one` ("the feature store deliberately does not persist" the scaler) | all 9 runs | M | open. The per-bar predictions are stored since B10 (`walkforward_signals`: raw output, call, label); the models, the scaler, the windows and the prediction window are not |
 | G51 | Data verification as the design has it: Pandera and exchange_calendars as fixed steps, a `data_checks` table, raw and adjusted candle tables with split detection against imported split history, ydata-profiling and Evidently, one verification column per tool per row, and the OK/warning/error rule (see D11). Today: a hand-written cohesion check, a rule-based NYSE calendar, findings in the response only, one cross-check (the yield curve) | R12, R55, R63, R64, R65, R49 | `loader/cohesion.py`, `loader/market_calendar.py`, `nn/data_checks.py`; no such tables; none of the tools in `pyproject.toml` | none until built | XL | open |
 | G52 | Non-price series are stored as degenerate candles, at the calendar's cadence. There is no raw series table at native cadence; quarterly SEC net income is carried daily; feature values are stored aligned and normalized per set instead of once at native cadence | R15, R17, R49 | `feeds/fred.py` ("each observation becomes a degenerate bar"); all 17 fred, boc and computed series are in `candles` | all non-price series | L | open |
@@ -720,6 +720,61 @@ Checklist:
 
 
 
+**G49 plan, 2026-11-16.** The author: do G49. R71: "Prediction target is a setting on the NN strategy page: (a) direction — probability the next bar closes up, traded with a buy threshold and a sell threshold; or (b) return — forecast return over N bars, turned into buy/sell points with a minimum-return threshold ... Each run records its target, thresholds and horizon". R72 gives each its naive baseline. Only the 3-class label is registered; `nn/label_kinds.py` already names the three targets and their baselines (B8).
+
+The shape:
+- **Two more label kinds.**
+  - `next_bar_direction` (target `direction`): label 1 when the close `horizonBars` ahead is above today's. Saved with `buyThreshold` and `sellThreshold`, probabilities.
+  - `forward_return` (target `return`): label the return over `horizonBars`. Saved with `minReturn`.
+
+  The thresholds live in the strategy's label, beside the horizon. The 3-class label keeps its ±thresholds in the hyperparameters, as saved.
+- **Every engine fits the target.**
+  - Direction: a two-class classifier (the network's softmax, XGBoost's and LightGBM's binary objective), storing P(up).
+  - Return: a regression (squared error), storing the forecast.
+  - The 3-class label is unchanged.
+  - A money-trained loss trains a position, not a target, so it is refused with a direction or return target; class weights with a return target are refused too.
+- **Calls in one place.** `profit.calls_of` turns an output into BUY, HOLD or SELL by the run's target:
+  - the class label's most probable class;
+  - P(up) at or above the buy threshold is BUY, at or below the sell threshold SELL;
+  - a forecast at or above `minReturn` is BUY, at or below −`minReturn` SELL.
+
+  The profit step, Strategy 1 and 2 and recalculation then work as they do.
+- **The naive baseline per target (R72).** The class label's majority. Direction: the hit rate of P(up) ≥ ½ against always up. Return: the mean absolute error against the training mean, where lower is better. A run records its `target` and its label, so readers know which way "beats naive" points. The signals keep the actual return beside the label for a return target.
+- **Shown.** The Strategy tab offers the registered kinds with their thresholds. The Training tab names the score per target (accuracy, hit rate, error).
+- **Stored runs** are all the 3-class label and stay as they are. Running the new targets is the checkpoint.
+
+Checklist:
+- [x] Plan here
+- [x] The two kinds, their labels, the engines' heads and outputs, `calls_of`, the baselines; the run records its target and label; recalculation; tests
+- [x] API: the kinds and their thresholds validated; Java: `target`, "beats naive" by target; tests
+- [x] Client: the target on the Strategy tab, the score's name on the Training tab; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go:** runs with the new targets
+- [x] README, `AGENTS.md`, G49 and this record say done
+
+*Done, 2026-11-16 16:26.* The author chose: run both targets.
+- **Tests:** Python 869, Java 174, API 121, client 218. New tests:
+  - each target's labels; the class label unchanged;
+  - the thresholds checked;
+  - the calls by target;
+  - every engine on a fold for each target: P(up) in [0, 1] held to always up, a forecast held to the training mean's error;
+  - a return score beating naive when lower;
+  - the label reaching the runner, and a money loss or class weights refused with a target;
+  - against the database: a return-target run stores its actual returns and recalculates exactly;
+  - Java: "beats naive" by target;
+  - the API's validation and the client's target helpers.
+- **Found and fixed on the way (my slip):** the run payload's new `label` key overwrote the run's name, which is also `label`. The client caught it. The target's label is `labelSpec` now, and a Postman check keeps `label` the name.
+- **First runs:** phase1-direction v1 (run 855) and phase1-return v1 (run 856). Each is phase1-engines v1 with the new target and all three engines, 25% tax. Both have 18 fold rows that recalculate exactly; the loss fell in every fold.
+  - **855:**
+    - The network's mean excess is +1.11 pp a fold, so the runner's VERDICT reads BEATS on the return objective, the first run to.
+    - It beats hold in 1 fold of 6: 2020, +13.49 pp, a COVID exit with timing +17.63. It is −6.81 pp in 2016 and long throughout in the other four.
+    - Its hit rate is 55.5% against always up's 58.1%: below naive.
+    - XGBoost (−6.81 pp, 224 trades) and LightGBM (−10.79 pp, 324 trades) lose.
+  - **856:** every engine loses (−4.59 to −10.03 pp a fold). Each forecast's mean absolute error (0.0195 to 0.0204) is above the training mean's (0.0190): below naive.
+- **What it says:** the direction target gives the network a different behaviour from the 3-class label's long-throughout. But one well-timed fold is not yet an edge, and every engine is still below its naive baseline. Whether run 855 counts as passing step 6 is the author's call.
+
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -784,8 +839,8 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R68 | partial | G50 |
 | R69 | partial | G57 (walk-forward runs, logged and printed, do not reach Results) |
 | R70 | missing | G16 |
-| R71 | missing | G49 |
-| R72 | partial: every run is scored against its naive predictor, and one that does not beat it is flagged (B8); a label kind cannot exist without its baseline. Direction and return targets are not registered yet (G49), and Results do not show walk-forward runs (G57) | G49, G57 |
+| R71 | partial: the three targets with their thresholds and horizon, recorded on each run (G49); runs with different targets are not compared on Results, which shows no walk-forward run (G57) | G57 |
+| R72 | partial: every run is scored against its target's naive predictor (majority class, always up, the training mean return), and one that does not beat it is flagged (B8, G49). Results do not show walk-forward runs (G57) | G57 |
 | R73 | missing | G65 |
 | R74 | partial | G63 |
 | R75 | partial: engines blind and profit recalculated on demand (B10). Slippage, superficial loss, dividends and currency are not in the profit step yet, and the benchmarks do not go through it (B6, B7, G53) | D9 |
@@ -1525,6 +1580,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-25 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | G49 done: direction and return targets; runs 855 and 856; R71 and R72 partial (G57) |
+| 2026-11-16-24 | 2026-11-16 15:58 | Claude Code (Claude Opus 5.5) | G49 plan |
 | 2026-11-16-23 | 2026-11-16 15:43 | Claude Code (Claude Opus 5.5) | G11 and G44 done: every epoch recorded, a NaN loss fails the run, the live view; runs rerun as 779-786 |
 | 2026-11-16-22 | 2026-11-16 15:28 | Claude Code (Claude Opus 5.5) | G11 plan (with G44) |
 | 2026-11-16-21 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | G20 done: a backtest can be scored after tax, its benchmarks alike; result 876 |

@@ -804,6 +804,9 @@ app.get('/api/strategies/saved', async (req, res) => {
       // The form is generated from the same spec the validator enforces.
       paramSpec: strategies.PARAM_SPEC,
       objectiveSpec: strategies.OBJECTIVE_SPEC,
+      // The registered targets with their thresholds and naive baselines (G49).
+      labelKinds: strategies.LABEL_KINDS,
+      naiveBaselines: strategies.NAIVE_BASELINES,
       modelTypes: [...strategies.MODEL_TYPES],
       validationSchemes: [...strategies.VALIDATION_SCHEMES],
       windows: strategies.WINDOWS,

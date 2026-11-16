@@ -541,3 +541,24 @@ describe('validateEngines — the runner registry decides (B9, R22)', () => {
       { xgboost: { enabled: true, settings: { maxDepth: 4 } } });
   });
 });
+
+describe('the prediction targets (G49, R71)', () => {
+  const direction = { kind: 'next_bar_direction', horizonBars: 1, buyThreshold: 0.6, sellThreshold: 0.4 };
+
+  it('keeps a direction label with its thresholds, and a return label with its minimum', () => {
+    assert.deepEqual(validateStrategy(body({ label: direction })).value.label, direction);
+    const r = validateStrategy(body({ label: { kind: 'forward_return', horizonBars: 5 } }));
+    assert.deepEqual(r.value.label, { kind: 'forward_return', horizonBars: 5, minReturn: 0 });
+  });
+
+  it('refuses crossed thresholds and a money-trained loss with a target', () => {
+    const crossed = validateStrategy(body({ label: { ...direction, buyThreshold: 0.4, sellThreshold: 0.6 } }));
+    assert.match(crossed.errors.join(), /sellThreshold must be below/);
+    const money = validateStrategy(body({ label: direction,
+      objective: { loss: 'sharpe', positionThreshold: 0.5 } }));
+    assert.match(money.errors.join(), /money-trained 'sharpe'/);
+    const weighted = validateStrategy(body({ label: { kind: 'forward_return', horizonBars: 5 },
+      objective: { loss: 'ce', classWeights: true } }));
+    assert.match(weighted.errors.join(), /class weights need a class label/);
+  });
+});

@@ -28,12 +28,12 @@ from nn.labels import NUM_CLASSES
 THREADS = 1
 
 
-def class_weights(y: np.ndarray) -> np.ndarray:
+def class_weights(y: np.ndarray, n_classes: int = NUM_CLASSES) -> np.ndarray:
     """Per-row weights: inverse class frequency, normalised to mean 1 over the
     classes, as `walkforward.train_one` weights the network's loss."""
     counts = Counter(y.tolist())
-    raw = np.array([len(y) / (NUM_CLASSES * max(counts.get(c, 0), 1))
-                    for c in range(NUM_CLASSES)], dtype=np.float64)
+    raw = np.array([len(y) / (n_classes * max(counts.get(c, 0), 1))
+                    for c in range(n_classes)], dtype=np.float64)
     per_class = raw / raw.mean()
     return per_class[np.asarray(y, dtype=np.int64)]
 
@@ -44,9 +44,13 @@ class TreeModel:
 
     engine: str
     booster: Any
-    #: The training loss after each round (multi-class log loss on the training
-    #: rows), for the run's loss curve (G11); None for a model loaded from disk.
+    #: The training loss after each round (log loss on the training rows, or
+    #: the squared error for a return target), for the run's loss curve (G11);
+    #: None for a model loaded from disk.
     curve: list[float] | None = None
+    #: What it predicts (G49): the 3-class label's probabilities, P(up), or a
+    #: return forecast.
+    target: str = "class"
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float32)
@@ -55,7 +59,8 @@ class TreeModel:
             out = self.booster.predict(xgb.DMatrix(x, nthread=THREADS))
         else:
             out = self.booster.predict(x, num_threads=THREADS)
-        return np.asarray(out, dtype=np.float64).reshape(len(x), NUM_CLASSES)
+        width = NUM_CLASSES if self.target == "class" else 1
+        return np.asarray(out, dtype=np.float64).reshape(len(x), width)
 
     def to_bytes(self) -> bytes:
         """The model in its library's own text format, for the registry."""
@@ -78,18 +83,31 @@ class TreeModel:
 MODEL_FILES = {"xgboost": "model.json", "lightgbm": "model.txt"}
 
 
+#: Each target's objective and its training-loss metric, per library (G49).
+OBJECTIVES = {
+    "xgboost": {"class": ("multi:softprob", "mlogloss"), "direction": ("binary:logistic", "logloss"),
+                "return": ("reg:squarederror", "rmse")},
+    "lightgbm": {"class": ("multiclass", "multi_logloss"), "direction": ("binary", "binary_logloss"),
+                 "return": ("regression", "l2")},
+}
+
+
 def train(engine: str, x: np.ndarray, y: np.ndarray, settings: Mapping[str, Any],
-          weighted: bool = False) -> TreeModel:
-    """Fit `engine` on rows `x` (unscaled) and labels `y`."""
+          weighted: bool = False, target: str = "class") -> TreeModel:
+    """Fit `engine` on rows `x` (unscaled) and labels `y`: the 3-class label,
+    up or down (0/1), or a return (G49)."""
     x = np.asarray(x, dtype=np.float32)
-    y = np.asarray(y, dtype=np.int64)
-    w = class_weights(y) if weighted else None
+    y = np.asarray(y, dtype=np.float32 if target == "return" else np.int64)
+    if weighted and target == "return":
+        raise ValueError("class weights need a class label, not a return target")
+    w = class_weights(y, NUM_CLASSES if target == "class" else 2) if weighted else None
     seed = int(settings["seed"])
     rounds = int(settings["nEstimators"])
     if engine == "xgboost":
         import xgboost as xgb
+        objective, metric = OBJECTIVES["xgboost"][target]
         params = {
-            "objective": "multi:softprob", "num_class": NUM_CLASSES,
+            "objective": objective, **({"num_class": NUM_CLASSES} if target == "class" else {}),
             "tree_method": "hist", "nthread": THREADS, "seed": seed,
             "max_depth": int(settings["maxDepth"]), "eta": float(settings["learningRate"]),
             "subsample": float(settings["subsample"]),
@@ -99,14 +117,15 @@ def train(engine: str, x: np.ndarray, y: np.ndarray, settings: Mapping[str, Any]
         }
         dtrain = xgb.DMatrix(x, label=y, weight=w, nthread=THREADS)
         evals: dict = {}
-        booster = xgb.train({**params, "eval_metric": "mlogloss"}, dtrain, num_boost_round=rounds,
+        booster = xgb.train({**params, "eval_metric": metric}, dtrain, num_boost_round=rounds,
                             evals=[(dtrain, "train")], evals_result=evals, verbose_eval=False)
-        return TreeModel(engine, booster, [float(v) for v in evals["train"]["mlogloss"]])
+        return TreeModel(engine, booster, [float(v) for v in evals["train"][metric]], target)
     if engine == "lightgbm":
         import lightgbm as lgb
         subsample = float(settings["subsample"])
+        objective, metric = OBJECTIVES["lightgbm"][target]
         params = {
-            "objective": "multiclass", "num_class": NUM_CLASSES,
+            "objective": objective, **({"num_class": NUM_CLASSES} if target == "class" else {}),
             "num_threads": THREADS, "seed": seed, "deterministic": True,
             "force_row_wise": True, "verbose": -1,
             "num_leaves": int(settings["numLeaves"]),
@@ -117,8 +136,8 @@ def train(engine: str, x: np.ndarray, y: np.ndarray, settings: Mapping[str, Any]
         }
         data = lgb.Dataset(x, label=y, weight=w)
         evals: dict = {}
-        booster = lgb.train({**params, "metric": "multi_logloss"}, data, num_boost_round=rounds,
+        booster = lgb.train({**params, "metric": metric}, data, num_boost_round=rounds,
                             valid_sets=[data], valid_names=["train"],
                             callbacks=[lgb.record_evaluation(evals)])
-        return TreeModel(engine, booster, [float(v) for v in evals["train"]["multi_logloss"]])
+        return TreeModel(engine, booster, [float(v) for v in evals["train"][metric]], target)
     raise ValueError(f"{engine!r} is not a tree engine")

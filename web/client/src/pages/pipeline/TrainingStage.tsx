@@ -23,6 +23,7 @@ import { mergeState } from '../../lib/stageStatus'
 import StageShell from './StageShell'
 import LossCurves from '../../components/LossCurves'
 import { progressLine } from '../../lib/epochs'
+import { labelLine, runLabel, runName, runTarget, scoreLabel } from '../../lib/targets'
 
 type Loaded = { items: TrainedModel[], modelsDir: string }
 
@@ -81,6 +82,9 @@ export default function TrainingStage() {
   // B9: a run of several engines has one fold row per engine, so the fold
   // table names the engine. A run of the network alone reads as before.
   const engineColumn = !!detail && !isNetworkAlone(detail.run)
+  // G49: a run's accuracy figures are an accuracy, a hit rate, or a return
+  // forecast's mean absolute error, by what it predicted.
+  const score = scoreLabel(detail?.run.target)
 
   const { data, error } = useApiData<Loaded>((signal) => api.models(tf, signal), [tf])
 
@@ -182,7 +186,7 @@ export default function TrainingStage() {
               <tr key={r.id} className={r.inProgress ? 'opacity-70' : ''}>
                 <td className="text-xs">
                   <span className="font-mono">#{r.id}</span>
-                  {r.label && <span className="ml-2">{r.label}</span>}
+                  {runName(r) && <span className="ml-2">{runName(r)}</span>}
                   {r.strategy && (
                     <div className="opacity-70" title={`Saved strategy id ${r.strategy.id}`}>
                       {r.strategy.name}
@@ -223,6 +227,18 @@ export default function TrainingStage() {
                     <span className="opacity-60" title="What the network trained on">
                       {` / ${r.loss}`}
                     </span>
+                  )}
+                  {/* G49: named only when it is not the 3-class label, as every
+                      run before G49 was. */}
+                  {runTarget(r) !== 'class' && (
+                    <div
+                      className="opacity-70 tooltip tooltip-right text-left"
+                      data-tip={`Predicts the ${runTarget(r)}; scored by `
+                        + `${scoreLabel(r.target).header.toLowerCase()} against `
+                        + `${scoreLabel(r.target).baselineWords}`}
+                    >
+                      {runTarget(r)} target
+                    </div>
                   )}
                 </td>
                 <td className="font-mono text-xs whitespace-nowrap">
@@ -406,9 +422,9 @@ export default function TrainingStage() {
                       )}
                       <th
                         className="text-right tooltip tooltip-left"
-                        data-tip={accuracyMeaning(detail.run.loss).header}
+                        data-tip={accuracyMeaning(detail.run.loss, detail.run.target).header}
                       >
-                        Accuracy
+                        {score.header}
                       </th>
                       <th
                         className="text-right tooltip tooltip-left"
@@ -512,10 +528,13 @@ export default function TrainingStage() {
                           <td className="text-right text-xs">
                             {f.accuracy == null
                               ? <span className="opacity-60" title="Money-trained: no class to be right about">—</span>
-                              : `${(f.accuracy * 100).toFixed(1)}%`}
+                              : score.format(f.accuracy)}
                             {f.baselineAcc != null && (
-                              <span className="opacity-60" title={accuracyMeaning(detail.run.loss).baseline}>
-                                {` / ${(f.baselineAcc * 100).toFixed(1)}%`}
+                              <span
+                                className="opacity-60"
+                                title={accuracyMeaning(detail.run.loss, detail.run.target).baseline}
+                              >
+                                {` / ${score.format(f.baselineAcc)}`}
                               </span>
                             )}
                           </td>
@@ -657,8 +676,9 @@ function RunEngines({ run }: { run: WalkforwardRun }) {
  * run's record of what trained it.
  */
 function EngineSummaries({ run, summaries }: { run: WalkforwardRun, summaries: EngineSummary[] }) {
-  const pct = (x: number | null) => (x == null ? '—' : `${(x * 100).toFixed(1)}%`)
-  const meaning = accuracyMeaning(run.loss)
+  // G49: an accuracy, a hit rate or a mean absolute error, by the run's target.
+  const score = scoreLabel(run.target)
+  const meaning = accuracyMeaning(run.loss, run.target)
   return (
     <>
       <p className="text-xs text-base-content/70 mb-1">
@@ -679,7 +699,7 @@ function EngineSummaries({ run, summaries }: { run: WalkforwardRun, summaries: E
               <th className="text-right">Worst DD</th>
               <th className="text-right">Trades</th>
               <th className="text-right tooltip tooltip-left" data-tip={meaning.header}>
-                Accuracy
+                {score.header}
               </th>
               <th>State</th>
             </tr>
@@ -687,7 +707,7 @@ function EngineSummaries({ run, summaries }: { run: WalkforwardRun, summaries: E
           <tbody>
             {summaries.map((s) => {
               const rec = run.engines?.find((e) => e.engine === s.engine)
-              const flag = naiveFlag({ ...s, loss: run.loss })
+              const flag = naiveFlag({ ...s, loss: run.loss, target: run.target })
               return (
                 <tr key={s.engine}>
                   <td className="text-xs whitespace-nowrap font-medium">{engineTitle(s.engine)}</td>
@@ -706,10 +726,10 @@ function EngineSummaries({ run, summaries }: { run: WalkforwardRun, summaries: E
                   <td className="text-right font-mono text-xs">{num(s.worstStratDrawdown, 1)}</td>
                   <td className="text-right">{s.folds === 0 ? '—' : s.totalTrades}</td>
                   <td className="text-right text-xs">
-                    {pct(s.meanAccuracy)}
+                    {score.format(s.meanAccuracy)}
                     {s.meanBaselineAcc != null && (
                       <span className="opacity-60" title={meaning.baseline}>
-                        {` / ${pct(s.meanBaselineAcc)}`}
+                        {` / ${score.format(s.meanBaselineAcc)}`}
                       </span>
                     )}
                   </td>
@@ -789,6 +809,7 @@ function RunProvenance({ run }: { run: WalkforwardRun }) {
         )
         : <p>Launched from flags, not a saved strategy.</p>}
       {executionLine(run) && <p>{executionLine(run)}</p>}
+      <RunTarget run={run} />
       <p className={run.purgeBars === null ? 'text-warning' : ''}>
         {run.purgeBars === null
           ? 'Trained before the purge: the last training bars, whose targets look into the '
@@ -814,6 +835,30 @@ function RunProvenance({ run }: { run: WalkforwardRun }) {
       )}
       <RunLineage run={run} />
     </div>
+  )
+}
+
+/**
+ * What the run predicted and the thresholds that turned it into calls (G49),
+ * with the score its folds carry and the naive predictor that score is held
+ * to. A run from before recorded no label: it was the 3-class label.
+ */
+function RunTarget({ run }: { run: WalkforwardRun }) {
+  const target = runTarget(run)
+  const label = runLabel(run)
+  const score = scoreLabel(target)
+  // A money-trained model on the 3-class label makes one call, out or long (G43).
+  const naive = target === 'class' && run.loss !== 'ce'
+    ? 'the training majority of out or long'
+    : score.baselineWords
+  return (
+    <p>
+      Target: {label
+        ? labelLine(label, target, run.hyperparams)
+        : 'the 3-class label (recorded before runs kept their label and its thresholds)'}
+      {' · '}scored by {score.header.toLowerCase()} against {naive}
+      {score.lowerIsBetter && ', lower is better'}
+    </p>
   )
 }
 

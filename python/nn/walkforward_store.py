@@ -89,7 +89,7 @@ INSERT INTO walkforward_runs
      feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
      execution, leverage_pct, hedge_pct, margin_spread_pct, maintenance_pct, long_threshold,
      span_from, span_to, last_used, window_end, span_snapshot, span_parts_json,
-     span_backfilled, recalculated_from, engines_json)
+     span_backfilled, recalculated_from, engines_json, target, label_json)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
@@ -105,7 +105,8 @@ VALUES
      %(execution)s, %(leverage_pct)s, %(hedge_pct)s, %(margin_spread_pct)s,
      %(maintenance_pct)s, %(long_threshold)s,
      %(span_from)s, %(span_to)s, %(last_used)s, %(window_end)s, %(span_snapshot)s,
-     %(span_parts_json)s, %(span_backfilled)s, %(recalculated_from)s, %(engines_json)s)
+     %(span_parts_json)s, %(span_backfilled)s, %(recalculated_from)s, %(engines_json)s,
+     %(target)s, %(label_json)s)
 RETURNING id
 """
 
@@ -238,6 +239,9 @@ def run_row(args: Any, set_id: int, input_width: int,
         "is_test": bool(getattr(args, "test", False)),
         "hyperparams_json": json.dumps(hyperparams(args), sort_keys=True),
         "columns_json": json.dumps(list(columns)) if columns is not None else None,
+        # What it predicted, and the thresholds that make its calls (G49, R71).
+        "target": getattr(args, "target", None) or "class",
+        "label_json": label_json_of(args),
         # Each engine trained, with its settings, library version and seed (B9).
         "engines_json": json.dumps(engines.record(engines_of(args), hyperparams(args)),
                                    sort_keys=True),
@@ -245,6 +249,24 @@ def run_row(args: Any, set_id: int, input_width: int,
         **{**NO_PROVENANCE, **(provenance or {})},
         **{**NO_LINEAGE, **(lineage or {})},
     }
+
+
+def label_json_of(args: Any) -> str:
+    """The run's label as JSON (G49): a strategy's as saved, or one built from
+    the flags of a run set up without one."""
+    saved = getattr(args, "label_json", None)
+    if saved:
+        return saved
+    target = getattr(args, "target", None) or "class"
+    label: dict[str, Any] = {"kind": {"class": "forward_return_3class",
+                                      "direction": "next_bar_direction",
+                                      "return": "forward_return"}[target],
+                             "horizonBars": int(getattr(args, "forward", 5))}
+    if target == "direction":
+        label.update(buyThreshold=args.p_buy, sellThreshold=args.p_sell)
+    elif target == "return":
+        label["minReturn"] = args.min_return
+    return json.dumps(label, sort_keys=True)
 
 
 def engines_of(args: Any) -> dict[str, dict[str, Any]]:
@@ -379,8 +401,8 @@ def rule_rows(run_id: int, fold: int, figures) -> list[dict[str, Any]]:
 
 _INSERT_SIGNAL = """
 INSERT INTO walkforward_signals
-    (run_id, fold, bar_date, exit_date, output, call_class, label, engine)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    (run_id, fold, bar_date, exit_date, output, call_class, label, engine, target_value)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 
@@ -389,11 +411,13 @@ def signal_rows(run_id: int, fold: int, sig: profit.Signals,
     """One fold's signals from one engine as rows. The call is the one the
     run's own threshold makes; a recalculation derives its own from `output`.
     Pure."""
-    calls = profit.calls(sig.output, settings.loss, settings.threshold)
+    calls = profit.calls_of(sig.output, settings)
+    values = sig.values if sig.values is not None else [None] * len(sig.dates)
     return [
-        (run_id, fold, d, e, [float(v) for v in out], int(c), int(label), engine)
-        for d, e, out, c, label in zip(sig.dates, sig.exits, sig.output, calls, sig.labels,
-                                       strict=True)
+        (run_id, fold, d, e, [float(v) for v in out], int(c), int(label), engine,
+         None if value is None else float(value))
+        for d, e, out, c, label, value in zip(sig.dates, sig.exits, sig.output, calls,
+                                              sig.labels, values, strict=True)
     ]
 
 
@@ -427,19 +451,21 @@ def save_fold(conn, run_id: int, r: FoldResult, sig: profit.Signals | None = Non
 def load_engine_signals(cur, run_id: int) -> dict[str, dict[int, profit.Signals]]:
     """A run's stored signals, by engine and fold; empty for a run that stored none."""
     cur.execute(
-        "SELECT engine, fold, bar_date, exit_date, output, label FROM walkforward_signals "
-        "WHERE run_id = %s ORDER BY engine, fold, bar_date",
+        "SELECT engine, fold, bar_date, exit_date, output, label, target_value "
+        "FROM walkforward_signals WHERE run_id = %s ORDER BY engine, fold, bar_date",
         (run_id,),
     )
     grouped: dict[str, dict[int, list[tuple]]] = {}
-    for engine, fold, d, e, out, label in cur.fetchall():
-        grouped.setdefault(engine, {}).setdefault(int(fold), []).append((d, e, out, label))
+    for engine, fold, d, e, out, label, value in cur.fetchall():
+        grouped.setdefault(engine, {}).setdefault(int(fold), []).append((d, e, out, label, value))
     return {
         engine: {
             fold: profit.Signals(
                 dates=[r[0] for r in rows], exits=[r[1] for r in rows],
                 output=np.array([r[2] for r in rows], dtype=np.float64),
                 labels=np.array([r[3] for r in rows], dtype=np.int64),
+                values=(None if all(r[4] is None for r in rows)
+                        else np.array([r[4] for r in rows], dtype=np.float64)),
             )
             for fold, rows in by_fold.items()
         }

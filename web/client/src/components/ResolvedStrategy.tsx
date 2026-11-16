@@ -1,6 +1,7 @@
 import type { SavedStrategy } from '../lib/api'
 import { tipClass } from './FieldLabel'
 import { hintFor } from '../lib/fieldHints'
+import { labelLine, targetOf } from '../lib/targets'
 
 /**
  * What a saved strategy resolved to, read-only.
@@ -57,9 +58,11 @@ export default function ResolvedStrategy(
           value={`${s.features.length} selected`}
           hint={s.features.join(', ')}
         />
+        {/* G49: what it predicts and the thresholds that make the calls. */}
         <Row
           label="Label"
-          value={s.label ? `${s.label.kind} · ${s.label.horizonBars} bars ahead` : '—'}
+          value={s.label ? labelLine(s.label, targetOf(s.label.kind), s.hyperparams) : '—'}
+          hint={s.label?.kind}
         />
         <Row
           label="Stored series"

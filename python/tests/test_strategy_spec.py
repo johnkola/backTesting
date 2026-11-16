@@ -112,8 +112,10 @@ class TestFoldPlan:
             ss.fold_plan(s)
 
 
-#: A strategy with no engine rows runs the network alone (B9).
-NETWORK_ONLY = {"engines": {"mlp": {}}}
+#: A strategy with no engine rows runs the network alone (B9), and records the
+#: 3-class label's target and its label as saved (G49).
+NETWORK_ONLY = {"engines": {"mlp": {}}, "target": "class",
+                "label_json": '{"horizonBars": 5, "kind": "forward_return_3class"}'}
 
 DEFAULT_OBJECTIVE_ARGS = {
     "loss": "ce", "class_weights": False, "objective": "return", "cost_bps": 5, "park": "cash",

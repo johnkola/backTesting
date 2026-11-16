@@ -1025,3 +1025,11 @@ CREATE TABLE IF NOT EXISTS walkforward_epochs (
 -- Why a run stopped short (G11): a NaN or infinite loss, naming the fold, engine
 -- and epoch. NULL for a run that finished or is still going.
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS failed_reason TEXT;
+
+-- G49 (R71): what a run predicted. target is the label's target ('class',
+-- 'direction', 'return'; NULL on a run from before, the 3-class label), and
+-- label_json the strategy's label with its horizon and thresholds, which turn
+-- the output into calls. A return target's signals keep the actual return.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS target VARCHAR(16);
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS label_json TEXT;
+ALTER TABLE walkforward_signals ADD COLUMN IF NOT EXISTS target_value DOUBLE PRECISION;

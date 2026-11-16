@@ -557,6 +557,57 @@ class TestRoundTrip:
         finally:
             self._cleanup(db, run_id)
 
+    def test_a_return_target_run_keeps_its_returns_and_recalculates(self, db, a_set):
+        # G49: the run records its target and label; its signals keep the actual
+        # returns, so recalculation rescores the forecast's error exactly.
+        import json
+
+        import numpy as np
+
+        from nn import label_kinds, profit, recalculate
+        from nn import walkforward as wf
+        with db.cursor() as cur:
+            cur.execute("SELECT i.symbol, ds.name FROM feature_sets fs "
+                        "JOIN instruments i ON i.id = fs.instrument_id "
+                        "JOIN data_sources ds ON ds.id = fs.source_id WHERE fs.id = %s", (a_set,))
+            symbol, source = cur.fetchone()
+            prices = wf.load_prices(cur, symbol, source, "D1")
+        days = sorted(prices.closes)[-4:]
+        if len(days) < 4:
+            pytest.skip(f"no D1 candles for {symbol}/{source}, which the set is of")
+        args = an_args(label="pytest-return", target="return", min_return=0.001,
+                       forward=1)
+        settings = profit.Settings.from_args(args)
+        actual = np.array([0.004, -0.002, 0.0005])
+        forecast = np.array([[0.003], [-0.004], [0.0002]])
+        sig = profit.Signals(days[:3], days[1:], forecast, (actual > 0).astype(np.int64), actual)
+        money = profit.score(sig.output, profit.market(prices, sig.dates, sig.exits, None, "cash"),
+                             settings)
+        fold = wf.FoldResult(fold=1, train_from=days[0], train_to=days[0], val_year=days[0].year,
+                             n_train=1, n_val=3,
+                             accuracy=label_kinds.mean_error(forecast[:, 0], actual),
+                             baseline_acc=0.002, **money.fields())
+        run_id = ws.open_run(db, args, a_set, 580)
+        try:
+            ws.save_fold(db, run_id, fold, sig, settings)
+            ws.close_run(db, run_id)
+            with db.cursor() as cur:
+                cur.execute("SELECT target, label_json FROM walkforward_runs WHERE id = %s",
+                            (run_id,))
+                target, label = cur.fetchone()
+                cur.execute("SELECT call_class, target_value FROM walkforward_signals "
+                            "WHERE run_id = %s ORDER BY bar_date", (run_id,))
+                rows = cur.fetchall()
+            assert target == "return" and json.loads(label)["minReturn"] == 0.001
+            assert [r[0] for r in rows] == profit.calls_of(forecast, settings).tolist()
+            assert [r[1] for r in rows] == actual.tolist()
+            dry = recalculate.recalculate(db, run_id, dry_run=True)
+            assert dry.after[0].accuracy == pytest.approx(fold.accuracy)
+            for name in profit.PROFIT_FIELDS:
+                assert getattr(dry.after[0], name) == getattr(fold, name), name
+        finally:
+            self._cleanup(db, run_id)
+
     def test_a_run_without_signals_is_refused_with_the_reason(self, db, a_set):
         from nn import recalculate
         run_id = ws.open_run(db, an_args(label="pytest-nosignals"), a_set, 580)
@@ -729,18 +780,22 @@ def test_load_signals_groups_rows_by_engine_and_fold_in_date_order():
             assert "ORDER BY engine, fold, bar_date" in sql and params == (5,)
 
         def fetchall(self):
-            return [("mlp", 1, date(2020, 1, 2), date(2020, 1, 3), [0.4], 2),
-                    ("mlp", 1, date(2020, 1, 3), None, [0.6], 0),
-                    ("mlp", 2, date(2021, 1, 4), date(2021, 1, 5), [0.8], 1),
-                    ("xgboost", 1, date(2020, 1, 2), date(2020, 1, 3), [0.2, 0.5, 0.3], 2)]
+            return [("mlp", 1, date(2020, 1, 2), date(2020, 1, 3), [0.4], 2, None),
+                    ("mlp", 1, date(2020, 1, 3), None, [0.6], 0, None),
+                    ("mlp", 2, date(2021, 1, 4), date(2021, 1, 5), [0.8], 1, None),
+                    ("xgboost", 1, date(2020, 1, 2), date(2020, 1, 3), [0.2, 0.5, 0.3], 2,
+                     None),
+                    ("lightgbm", 1, date(2020, 1, 2), date(2020, 1, 3), [0.01], 1, 0.013)]
 
     got = ws.load_signals(Cur(), 5)
     assert sorted(got) == [1, 2]
     assert got[1].exits == [date(2020, 1, 3), None]
     assert got[1].output.shape == (2, 1) and got[1].labels.tolist() == [2, 0]
     both = ws.load_engine_signals(Cur(), 5)
-    assert sorted(both) == ["mlp", "xgboost"]
+    assert sorted(both) == ["lightgbm", "mlp", "xgboost"]
     assert both["xgboost"][1].output.shape == (1, 3)
+    assert got[1].values is None                        # no actual returns stored
+    assert both["lightgbm"][1].values.tolist() == [0.013]   # a return target's (G49)
 
 
 def test_storing_signals_needs_the_settings_that_made_the_call():

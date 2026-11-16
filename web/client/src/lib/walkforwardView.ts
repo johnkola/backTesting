@@ -1,4 +1,5 @@
 import type { WalkforwardLineage, WalkforwardRun } from './api'
+import { asTarget, runName, scoreLabel } from './targets'
 
 /**
  * The pure logic behind the Training tab's walk-forward tables.
@@ -141,10 +142,11 @@ export function stageSummary(
   const newest = newestFinished(runs)
   if (newest) {
     const v = verdictOf(newest)
+    const name = runName(newest)
     return {
       state: v.state,
-      summary: newest.label
-        ? `Newest finished run: ${newest.label}`
+      summary: name
+        ? `Newest finished run: ${name}`
         : `Newest finished run #${newest.id}`,
       detail: v.detail,
     }
@@ -216,29 +218,58 @@ export function isLeverageOnly(run: WalkforwardRun): boolean {
  * The flag for a run whose model does not beat the naive predictor on the same
  * folds (R72, B8), with both figures; null when it does or when there is
  * nothing to compare. A tie does not beat it. Takes one engine's summary too
- * (B9), with the run's loss.
+ * (B9), with the run's loss and target.
+ *
+ * Whether it beat is the server's `beatsNaive`, which points the way the
+ * target says (G49): a return forecast's error beats its baseline by being
+ * lower. Only the words and the figures' format are decided here.
  */
 export function naiveFlag(
-  run: Pick<WalkforwardRun, 'beatsNaive' | 'meanAccuracy' | 'meanBaselineAcc' | 'loss'>,
+  run: Pick<WalkforwardRun, 'beatsNaive' | 'meanAccuracy' | 'meanBaselineAcc' | 'loss' | 'target'>,
 ): string | null {
   if (run.beatsNaive !== false || run.meanAccuracy == null || run.meanBaselineAcc == null) {
     return null
   }
-  const pct = (x: number) => `${(x * 100).toFixed(1)}%`
-  return `Accuracy ${pct(run.meanAccuracy)} does not beat ${pct(run.meanBaselineAcc)} for the `
-    + `naive predictor (${run.loss === 'ce' ? 'always the training majority class'
-      : 'always the training majority of out or long'}): the model learned nothing a trivial `
-    + 'predictor did not'
+  const target = asTarget(run.target)
+  const score = scoreLabel(target)
+  const naive = target !== 'class' ? score.baselineWords
+    : run.loss === 'ce' ? 'always the training majority class'
+      : 'always the training majority of out or long'
+  const figures = target === 'return'
+    ? `Mean absolute error ${score.format(run.meanAccuracy)} is not below `
+      + `${score.format(run.meanBaselineAcc)} for the naive predictor (${naive}, lower is better)`
+    : `${score.header} ${score.format(run.meanAccuracy)} does not beat `
+      + `${score.format(run.meanBaselineAcc)} for the naive predictor (${naive})`
+  return `${figures}: the model learned nothing a trivial predictor did not`
 }
 
 /**
- * What a fold's accuracy and baseline measure (G43). A classifier calls BUY,
- * HOLD or SELL, so it is scored on three classes against always predicting the
- * training majority class. A money-trained model makes one call, out or long,
- * so it is scored on that against always long. The two are not comparable,
- * so the column says which one it shows.
+ * What a fold's accuracy and baseline measure (G43, G49). A classifier calls
+ * BUY, HOLD or SELL, so it is scored on three classes against always
+ * predicting the training majority class. A money-trained model makes one
+ * call, out or long, so it is scored on that against always long. A direction
+ * model is scored by its hit rate against always up, and a return forecast by
+ * its mean absolute error against the training mean return, lower better.
+ * None of these is comparable with another, so the column says which it shows.
  */
-export function accuracyMeaning(loss: string): { header: string, baseline: string } {
+export function accuracyMeaning(
+  loss: string,
+  target: string | null | undefined = 'class',
+): { header: string, baseline: string } {
+  const t = asTarget(target)
+  if (t === 'direction') {
+    return {
+      header: 'Hit rate: P(up) at or above one half against whether the close rose over the horizon',
+      baseline: 'Always up: the share of bars whose close rose over the horizon',
+    }
+  }
+  if (t === 'return') {
+    return {
+      header: 'Mean absolute error of the return forecast against the realized return over the '
+        + 'horizon. Not a percentage, and lower is better',
+      baseline: 'The training mean return as the forecast: its mean absolute error',
+    }
+  }
   if (loss === 'ce') {
     return {
       header: 'BUY, HOLD or SELL against the label',

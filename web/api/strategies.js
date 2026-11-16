@@ -114,8 +114,27 @@ const NAIVE_BASELINES = {
   direction: 'always up',
   return: 'the historical mean return',
 };
+/**
+ * The registered label kinds (G49, R71), as `python/nn/label_kinds.py` holds
+ * them, each with the thresholds that turn its prediction into calls. The
+ * 3-class label's ±thresholds are hyperparameters, as they always were; a
+ * direction's and a return's live in the label beside the horizon.
+ */
 const LABEL_KINDS = {
-  forward_return_3class: { target: 'class' },
+  forward_return_3class: { target: 'class', params: {} },
+  next_bar_direction: {
+    target: 'direction',
+    params: {
+      buyThreshold: { min: 0, max: 1, default: 0.55, label: 'P(up) that calls BUY' },
+      sellThreshold: { min: 0, max: 1, default: 0.45, label: 'P(up) that calls SELL' },
+    },
+  },
+  forward_return: {
+    target: 'return',
+    params: {
+      minReturn: { min: 0, max: 0.99, default: 0, label: 'Forecast return a call must clear' },
+    },
+  },
 };
 /** Loss → what it trains. `ce` is the 3-class label; the rest a position head. */
 const LOSSES = new Set(['ce', 'return', 'sharpe', 'calmar']);
@@ -486,6 +505,18 @@ function validateStrategy(body, registry = null) {
     }
     if (kind in LABEL_KINDS && Number.isInteger(horizon)) {
       label = { kind, horizonBars: horizon };
+      for (const [key, spec] of Object.entries(LABEL_KINDS[kind].params)) {
+        const raw = b.label[key];
+        const n = raw === undefined || raw === null || raw === '' ? spec.default : Number(raw);
+        if (!Number.isFinite(n) || n < spec.min || n > spec.max) {
+          errors.push(`label.${key} must be between ${spec.min} and ${spec.max}`);
+        } else label[key] = n;
+      }
+      if (LABEL_KINDS[kind].target === 'direction'
+          && label.sellThreshold !== undefined && label.buyThreshold !== undefined
+          && !(label.sellThreshold < label.buyThreshold)) {
+        errors.push('label.sellThreshold must be below label.buyThreshold');
+      }
     }
   }
 
@@ -520,6 +551,16 @@ function validateStrategy(body, registry = null) {
   }
 
   const objective = validateObjective(b.objective, errors);
+  // G49: a direction or return target is fitted by its own loss; a money-trained
+  // loss trains a position and would ignore it. Refused, as the runner does.
+  const target = label ? LABEL_KINDS[label.kind].target : 'class';
+  if (objective && target !== 'class' && objective.loss !== 'ce') {
+    errors.push(`a ${target} target is fitted by its own loss; the money-trained '${objective.loss}' `
+      + "loss trains a position and would ignore it. Use 'ce'");
+  }
+  if (objective && target === 'return' && objective.classWeights) {
+    errors.push('class weights need a class label, not a return target');
+  }
   const engines = validateEngines(b.engines, registry, objective?.loss, errors);
   // Strategy 2 holds a QQQ core and hedges with PSQ, QQQ's inverse.
   if (objective?.execution === 'margin' && instrument && instrument !== 'QQQ') {

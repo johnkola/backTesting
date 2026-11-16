@@ -1123,6 +1123,38 @@ export type WalkforwardJob = {
 export type WalkforwardJobs = { items: WalkforwardJob[], running: number | null }
 
 /**
+ * What a label kind predicts (G49, R71): BUY/HOLD/SELL against ± return
+ * thresholds, the probability the close is up, or the return itself. Each has
+ * its own naive baseline (R72) and its own score: accuracy, hit rate, or the
+ * mean absolute error of a return forecast, which is better LOWER.
+ */
+export type LabelTarget = 'class' | 'direction' | 'return'
+
+/** One threshold a label kind carries, with the bounds the API enforces. */
+export type LabelParamSpec = { min: number, max: number, default: number, label: string }
+
+/**
+ * One registered label kind (G49). The 3-class kind has no params: its ±
+ * thresholds are the strategy's `buyThreshold` / `sellThreshold`
+ * hyperparameters. A direction's thresholds are probabilities of up; a
+ * return's `minReturn` is the forecast a call must clear.
+ */
+export type LabelKindSpec = { target: LabelTarget, params: Record<string, LabelParamSpec> }
+
+/**
+ * A strategy's label as saved (G49): the kind, the bars ahead it looks, and
+ * the kind's own thresholds. `buyThreshold` / `sellThreshold` here are P(up)
+ * for a direction label, never the 3-class label's return thresholds.
+ */
+export type StrategyLabel = {
+  kind: string
+  horizonBars: number
+  buyThreshold?: number
+  sellThreshold?: number
+  minReturn?: number
+}
+
+/**
  * A saved strategy: every choice a training run makes, named and versioned
  * (Architecture.md §8.2a).
  *
@@ -1143,7 +1175,8 @@ export type SavedStrategy = {
   /** Ordered feature names, as picked from the catalogue. */
   features: string[]
   windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
-  label: { kind: string, horizonBars: number } | null
+  /** What the model predicts (G49); null on a row saved before labels were recorded. */
+  label: StrategyLabel | null
   hyperparams: Record<string, number>
   objective: StrategyObjective
   /** True for a row saved before `objective` existed: its values are the defaults. */
@@ -1165,6 +1198,14 @@ export type SavedStrategiesResponse = {
   /** The editable fields and bounds, so the form matches what the API enforces. */
   paramSpec: Record<string, ParamSpec>
   objectiveSpec: ObjectiveSpec
+  /**
+   * The registered label kinds in the registry's order, each with its target
+   * and the thresholds that turn its prediction into calls (G49, R71). Absent
+   * from an API older than G49: the form then offers the 3-class label alone.
+   */
+  labelKinds?: Record<string, LabelKindSpec>
+  /** Each target's naive baseline in words (R72), e.g. `direction: 'always up'`. */
+  naiveBaselines?: Partial<Record<LabelTarget, string>>
   /** §8.2a: populated from what the model layer registers, not hard-coded. */
   modelTypes: string[]
   /**
@@ -1188,7 +1229,8 @@ export type SaveStrategyRequest = {
   validationScheme: string
   features: string[]
   windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
-  label: { kind: string, horizonBars: number }
+  /** The kind, its horizon and its own thresholds; a missing threshold takes its default. */
+  label: StrategyLabel
   hyperparams: Record<string, string | number>
   objective: StrategyObjective
   /** B9: each engine on or off with its settings. Absent: the network alone. */
@@ -1428,7 +1470,15 @@ export type WalkforwardExecution = {
  */
 export type WalkforwardRun = {
   id: number
+  /**
+   * The run's name, or (G49) its parsed label. The API writes both under this
+   * one key and the label is written last, so a run read since G49 carries the
+   * label object (null for a run from before) and its name is lost. Read it
+   * through `runName` / `runLabel` in `lib/targets.ts`, which take either.
+   */
   label: string
+  /** The strategy's label with its horizon and thresholds (G49); null before G49. */
+  labelSpec?: StrategyLabel | null
   instrumentId: number
   symbol: string
   sourceId: number
@@ -1505,6 +1555,12 @@ export type WalkforwardRun = {
   /** Mean tax on realized gains per fold; 0 when scored before tax. */
   meanGainsTax: number | null
   meanTiming: number | null
+  /**
+   * What the run predicted (G49): 'class' for a run from before. For 'return'
+   * every accuracy figure below and on its folds is a mean absolute error of
+   * a return forecast, lower better; for 'direction' a hit rate.
+   */
+  target?: LabelTarget | string
   /** Mean fold accuracy on the decision the model makes (G43); null with no folds. */
   meanAccuracy?: number | null
   /** Mean fold accuracy of the naive predictor (R72, B8). */

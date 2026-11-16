@@ -96,12 +96,14 @@ export const fieldHints: Record<string, string> = {
     'Forward return above which a bar is labelled BUY. With 0.02, the model is '
     + 'taught to call a move only when it expects more than +2% over the '
     + 'horizon. Raise it and labels get rarer but cleaner; lower it and the '
-    + 'model learns to act on noise.',
+    + 'model learns to act on noise. The 3-class label\'s only: a direction or '
+    + 'return target carries its own thresholds in 5 · How to fit it.',
   'param.sellThreshold':
     'Forward return below which a bar is labelled SELL. Negative, and the band '
     + 'between it and the buy threshold is HOLD. Both at zero collapses that '
     + 'band — every bar becomes buy or sell on the sign of its return alone, and '
-    + 'the model is taught to always hold a position.',
+    + 'the model is taught to always hold a position. The 3-class label\'s only: '
+    + 'a direction or return target carries its own thresholds in 5 · How to fit it.',
   'param.hiddenLayerSize':
     'Neurons in each hidden layer. The main dial on how much the network can '
     + 'memorise: too small and it cannot represent the pattern, too large and it '
@@ -172,10 +174,30 @@ export const fieldHints: Record<string, string> = {
     + 'forward. The design\'s choice: judging a model on a single year is luck, '
     + 'and holding up across calm, choppy and falling years is not.',
   'strategy.labelHorizon':
-    'Bars ahead the forward return is measured over to label each bar. The same '
-    + 'horizon as Forward bars, and the thing the model is being asked to '
-    + 'predict. Counted in bars of the chosen timeframe, so 5 is a week on D1 '
-    + 'but two and a half hours on M30.',
+    'Bars ahead the label looks: the return over them for the 3-class and return '
+    + 'targets, whether the close is higher for direction. The same horizon as '
+    + 'Forward bars, and the thing the model is being asked to predict. Counted '
+    + 'in bars of the chosen timeframe, so 5 is a week on D1 but two and a half '
+    + 'hours on M30.',
+  'strategy.target':
+    'What the model is asked to predict over the horizon (R71). 3-class: BUY, HOLD '
+    + 'or SELL by the return against the ± thresholds in the shared inputs, scored '
+    + 'by accuracy. Direction: the probability the close is higher, called by its '
+    + 'own P(up) thresholds, scored by hit rate. Return: the return itself, called '
+    + 'when the forecast clears a minimum, scored by mean absolute error, where '
+    + 'lower is better. Each is held to its own naive predictor (R72). A direction '
+    + 'or return target is fitted by ce: the money-trained losses train a position '
+    + 'instead and would ignore it.',
+  'label.buyThreshold':
+    'Direction target: the model\'s probability of up at or above which a bar is '
+    + 'called BUY. 0.5 calls every lean; higher waits for conviction.',
+  'label.sellThreshold':
+    'Direction target: the probability of up at or below which a bar is called '
+    + 'SELL. Must sit below the BUY probability; the band between is HOLD.',
+  'label.minReturn':
+    'Return target: the forecast return a call must clear, as a fraction (0.01 is '
+    + '1%). A forecast at or above it is BUY, at or below its negative SELL, HOLD '
+    + 'between. 0 calls on the forecast\'s sign alone.',
   'strategy.features':
     'The exact columns the network sees. Recorded with the run, so two runs with '
     + 'different feature lists are two different experiments rather than one '

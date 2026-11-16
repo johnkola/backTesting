@@ -313,6 +313,11 @@ class Stopper:
             model.load_state_dict(self.state)
 
 
+#: Each target's network outputs (G49): three class probabilities, P(down) and
+#: P(up) (P(up) is what is stored), or one return forecast.
+OUTPUTS = {"class": NUM_CLASSES, "direction": 2, "return": 1}
+
+
 class NonFiniteLoss(RuntimeError):
     """A NaN or infinite loss: training diverged, and the run stops (G11)."""
 
@@ -399,31 +404,42 @@ def train_one(
     scaler = fit_scaler(x_tr)
     xs = scaler.transform(x_tr)
 
+    # The head and loss follow the target (G49): three classes or up/down by
+    # cross-entropy, a return forecast by squared error.
+    target = getattr(args, "target", None) or "class"
+    n_out = OUTPUTS[target]
     torch.manual_seed(args.seed)
     model = build(ArchSpec(input_size=xs.shape[1], hidden_size=args.hidden,
                            num_hidden=args.layers, dropout_rate=args.dropout,
-                           seed=args.seed))
+                           seed=args.seed, output_size=n_out))
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    if args.class_weights:
+    if target == "return":
+        loss_fn = nn.MSELoss()
+    elif args.class_weights:
         counts = Counter(y_tr.tolist())
-        raw = np.array([len(y_tr) / (NUM_CLASSES * max(counts.get(c, 0), 1))
-                        for c in range(NUM_CLASSES)], dtype=np.float32)
+        raw = np.array([len(y_tr) / (n_out * max(counts.get(c, 0), 1))
+                        for c in range(n_out)], dtype=np.float32)
         loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(raw / raw.mean()))
     else:
         loss_fn = nn.CrossEntropyLoss()
 
+    def as_target(y: np.ndarray) -> torch.Tensor:
+        if target == "return":
+            return torch.from_numpy(np.asarray(y, dtype=np.float32).reshape(-1, 1))
+        return torch.from_numpy(np.asarray(y, dtype=np.int64))
+
     gen = torch.Generator()
     gen.manual_seed(args.seed)
     loader = DataLoader(
-        TensorDataset(torch.from_numpy(xs), torch.from_numpy(y_tr)),
+        TensorDataset(torch.from_numpy(xs), as_target(y_tr)),
         batch_size=args.batch, shuffle=True, generator=gen,
     )
     stopper = None
     if stop is not None:
         stopper = Stopper(args.patience)
         xs_stop = torch.from_numpy(scaler.transform(stop[0]))
-        ys_stop = torch.from_numpy(stop[1])
+        ys_stop = as_target(stop[1])
     for epoch in range(1, args.epochs + 1):
         model.train()
         total, rows = 0.0, 0
@@ -517,7 +533,8 @@ def margin_refusals(args, folds, margin: MarginInputs) -> list[str]:
 
 
 def fold_accuracy(pred: np.ndarray, y_va: np.ndarray, y_tr: np.ndarray,
-                  loss: str) -> tuple[float, float]:
+                  loss: str, target: str = "class",
+                  output: np.ndarray | None = None) -> tuple[float, float]:
     """(accuracy, naive baseline) of one fold, each on the decision the model
     actually makes.
 
@@ -532,25 +549,40 @@ def fold_accuracy(pred: np.ndarray, y_va: np.ndarray, y_tr: np.ndarray,
     now cut to out (a SELL label) or long (anything else), and the baseline is
     the majority of that split in the training labels, which is "always long".
     """
+    if loss == "ce" and target == "direction":
+        # G49: the hit rate of P(up) >= 1/2 against always predicting up.
+        return (label_kinds.direction_hit_rate(output[:, 0], y_va),
+                label_kinds.always_up_accuracy(y_va))
+    if loss == "ce" and target == "return":
+        # G49: a forecast's mean absolute error against the training mean's;
+        # lower is better (label_kinds.HIGHER_IS_BETTER).
+        return (label_kinds.mean_error(output[:, 0], y_va),
+                label_kinds.historical_mean_error(y_tr, y_va))
     acc = profit.accuracy(pred, y_va, loss)
     if loss == "ce":
         return acc, label_kinds.majority_class_accuracy(y_tr, y_va)
     return acc, label_kinds.majority_class_accuracy(y_tr == CLASS_SELL, y_va == CLASS_SELL)
 
 
-def predict(model: nn.Module, scaler, x: np.ndarray, loss: str) -> np.ndarray:
+def predict(model: nn.Module, scaler, x: np.ndarray, loss: str,
+            target: str = "class") -> np.ndarray:
     """The model's raw output over `x`, as stored: a money model's position in
     [0, 1] as one column, a classifier's BUY, HOLD and SELL probabilities as
-    three. float64, so the call is cut from exactly what is stored."""
+    three, a direction model's P(up) as one, a return model's forecast as one
+    (G49). float64, so the call is cut from exactly what is stored."""
     from nn import money_loss
 
     model.eval()
     with torch.no_grad():
         logits = model(torch.from_numpy(scaler.transform(x)))
-        if loss == "ce":
-            out = torch.softmax(logits, dim=1)
-        else:
+        if loss != "ce":
             out = money_loss.positions_from_logits(logits).reshape(-1, 1)
+        elif target == "direction":
+            out = torch.softmax(logits, dim=1)[:, 1:2]
+        elif target == "return":
+            out = logits.reshape(-1, 1)
+        else:
+            out = torch.softmax(logits, dim=1)
     return out.numpy().astype(np.float64)
 
 
@@ -579,14 +611,15 @@ def fit_network(
         model, scaler, stopper = train_money(
             x_tr, seg(tr), args, stop=(x_all[stop_ix], seg(stop_ix)) if patience else None,
             on_epoch=on_epoch)
-    return predict(model, scaler, x_all[va], args.loss), tr, stopper
+    return (predict(model, scaler, x_all[va], args.loss, getattr(args, "target", None) or "class"),
+            tr, stopper)
 
 
 def run_fold(
     fold_no: int, year: int, tr: list[int], va: list[int],
     x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
     dates: list[date], args, decisions: rules.Decisions | None = None,
-    record=None,
+    record=None, labels_all: np.ndarray | None = None, values_all: np.ndarray | None = None,
 ) -> list[tuple[FoldResult, profit.Signals]]:
     """Train every enabled engine on `tr`, predict `va`, and hand each engine's
     signals to the profit step.
@@ -603,6 +636,7 @@ def run_fold(
     raises `NonFiniteLoss` naming the fold, engine and epoch.
     """
     y_va = y_all[va]
+    target = getattr(args, "target", None) or "class"
     settings = profit.Settings.from_args(args)
     market = full.take(va)
     va_dates = [dates[i] for i in va]
@@ -621,7 +655,8 @@ def run_fold(
             else:
                 model = trees.train(name, x_all[tr], y_all[tr],
                                     engines.ENGINES[name].resolve(saved),
-                                    weighted=bool(getattr(args, "class_weights", False)))
+                                    weighted=bool(getattr(args, "class_weights", False)),
+                                    target=target)
                 for epoch, v in enumerate(model.curve or [], 1):
                     report_epoch(None, epoch, v, None)
                 if record is not None and model.curve:
@@ -633,11 +668,13 @@ def run_fold(
             dates=va_dates,
             exits=[dates[i + 1] if i + 1 < len(dates) else None for i in va],
             output=output,
-            labels=np.asarray(y_va, dtype=np.int64),
+            labels=np.asarray((y_all if labels_all is None else labels_all)[va], dtype=np.int64),
+            values=None if values_all is None else np.asarray(values_all[va], dtype=np.float64),
         )
         money = profit.score(sig.output, market, settings)
-        pred = profit.calls(sig.output, settings.loss, settings.threshold)
-        accuracy, baseline_acc = fold_accuracy(pred, y_va, y_all[fitted], args.loss)
+        pred = profit.calls_of(sig.output, settings)
+        accuracy, baseline_acc = fold_accuracy(pred, y_va, y_all[fitted], args.loss, target,
+                                               output)
         out.append((FoldResult(
             fold=fold_no, engine=name,
             train_from=dates[fitted[0]], train_to=dates[fitted[-1]], val_year=year,
@@ -701,20 +738,28 @@ def fold_line(r: FoldResult) -> str:
                + (f" CORE AT RISK {r.core_at_risk}d" if r.core_at_risk else "")))
 
 
-def naive_line(results: list[FoldResult], loss: str) -> str:
-    """The run's accuracy against the naive predictor (R72, B8): the fold
-    means, and a flag when the model does not beat it."""
+def naive_line(results: list[FoldResult], loss: str, target: str = "class") -> str:
+    """The run's score against the naive predictor (R72, B8): the fold means,
+    and a flag when the model does not beat it. A return target's score is an
+    error, so lower beats it (G49)."""
     accs = [r.accuracy for r in results if r.accuracy is not None]
     bases = [r.baseline_acc for r in results if r.baseline_acc is not None]
     if not accs or not bases:
         return "NAIVE:   no accuracy to compare"
     acc, base = float(np.mean(accs)), float(np.mean(bases))
-    what = ("always the training majority class" if loss == "ce"
-            else "always the training majority of out or long")
-    verdict = "beats" if acc > base else "does NOT beat"
-    return (f"NAIVE:   {verdict} the naive baseline: accuracy {acc:.1%} against "
-            f"{base:.1%} for {what}"
-            + ("" if acc > base else "  -- FLAGGED: the model learned nothing a trivial "
+    if loss == "ce" and target == "return":
+        beats = acc < base
+        figures = (f"mean absolute error {acc:.4f} against {base:.4f} for the training "
+                   f"mean return")
+    else:
+        beats = acc > base
+        what = ("always up" if loss == "ce" and target == "direction"
+                else "always the training majority class" if loss == "ce"
+                else "always the training majority of out or long")
+        name = "hit rate" if loss == "ce" and target == "direction" else "accuracy"
+        figures = f"{name} {acc:.1%} against {base:.1%} for {what}"
+    return (f"NAIVE:   {'beats' if beats else 'does NOT beat'} the naive baseline: {figures}"
+            + ("" if beats else "  -- FLAGGED: the model learned nothing a trivial "
                "predictor did not"))
 
 
@@ -814,7 +859,7 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
                  if passed and mean_timing_m <= 0 else ""))
     if total_trades == 0:
         print("         (it never left the market — this is buy-and-hold with extra steps)")
-    print(naive_line(results, args.loss))
+    print(naive_line(results, args.loss, getattr(args, "target", None) or "class"))
     # Faber and dual momentum beside it (B7), under the same costs and tax.
     print(f"\nBENCHMARKS   mean return a fold, same costs and tax:  strategy "
           f"{mean_return:+.2f}%  buy & hold {mean_hold_return:+.2f}%", end="")
@@ -922,6 +967,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Position below this counts as flat when a money-trained model "
                         "is evaluated by the binary rule")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--target", choices=["class", "direction", "return"], default="class",
+                   help="What the engines predict (G49, R71): the 3-class label (±thresholds "
+                        "over --forward bars), up or down over --forward bars, or the return "
+                        "over --forward bars. A saved strategy's label sets it")
+    p.add_argument("--p-buy", type=float, default=0.55,
+                   help="Direction target: P(up) at or above this calls BUY")
+    p.add_argument("--p-sell", type=float, default=0.45,
+                   help="Direction target: P(up) at or below this calls SELL")
+    p.add_argument("--min-return", type=float, default=0.0,
+                   help="Return target: a forecast at or above this calls BUY, at or below "
+                        "its negative SELL")
     p.add_argument("--engines", default="mlp",
                    help="Engines to train on every fold, comma-separated, from "
                         f"{', '.join(engines.ENGINES)} (B9). The tree engines run on their "
@@ -1152,6 +1208,13 @@ def main(argv: list[str] | None = None) -> int:
         # Flags name the engines; a strategy's rows do, through `strategy_setup`.
         args.engines = {n.strip(): {} for n in str(args.engines).split(",") if n.strip()}
         refused = engines.refusals(args.engines, args.loss)
+        if args.target != "class" and args.loss != "ce":
+            refused.append(f"a {args.target} target is fitted by its own loss; the "
+                           f"money-trained '{args.loss}' loss would ignore it. Use 'ce'")
+        if args.target == "direction" and not 0.0 <= args.p_sell < args.p_buy <= 1.0:
+            refused.append("--p-sell must be below --p-buy, both in [0, 1]")
+        if args.target == "return" and args.class_weights:
+            refused.append("class weights need a class label, not a return target")
         if refused:
             for why in refused:
                 print(f"refused: {why}")
@@ -1213,9 +1276,11 @@ def main(argv: list[str] | None = None) -> int:
     x_all = feature_store.stack_lookback(fm.values, args.lookback)
     wdates = fm.dates[args.lookback - 1 :]
     label_dates = list(wdates)    # every stacked row's date, before the label cut
-    y_all, _ = build_labels(wdates, closes, forward=args.forward,
-                            buy_threshold=args.buy_threshold,
-                            sell_threshold=args.sell_threshold)
+    # The run's target (G49, R71): the 3-class label, up or down, or the return.
+    tg = label_kinds.targets(getattr(args, "target", None) or "class", wdates, closes,
+                             forward=args.forward, buy_threshold=args.buy_threshold,
+                             sell_threshold=args.sell_threshold)
+    y_all, labels_all, values_all = tg.y, tg.labels, tg.values
     x_all = x_all[: len(y_all)]
     wdates = wdates[: len(y_all)]
 
@@ -1373,7 +1438,8 @@ def main(argv: list[str] | None = None) -> int:
     for i, (year, tr, va) in enumerate(folds, 1):
         try:
             fold_results = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions,
-                                    record=recorder(i))
+                                    record=recorder(i), labels_all=labels_all,
+                                    values_all=values_all)
         except NonFiniteLoss as exc:
             print(f"FAILED       {exc}: training diverged, so the run stops here (G11)")
             if run_id is not None:

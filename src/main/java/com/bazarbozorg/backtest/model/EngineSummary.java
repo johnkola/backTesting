@@ -34,16 +34,21 @@ public record EngineSummary(
 
     /** One summary per engine, in the order the engines first appear in {@code folds}. */
     public static List<EngineSummary> of(List<WalkforwardFold> folds) {
+        return of(folds, null);
+    }
+
+    /** The same, its "beats naive" pointing the way the run's target says (G49). */
+    public static List<EngineSummary> of(List<WalkforwardFold> folds, String target) {
         Map<String, List<WalkforwardFold>> by = new LinkedHashMap<>();
         for (WalkforwardFold f : folds) {
             by.computeIfAbsent(f.engine(), k -> new ArrayList<>()).add(f);
         }
         List<EngineSummary> out = new ArrayList<>();
-        by.forEach((engine, fs) -> out.add(summarise(engine, fs)));
+        by.forEach((engine, fs) -> out.add(summarise(engine, fs, target)));
         return out;
     }
 
-    private static EngineSummary summarise(String engine, List<WalkforwardFold> fs) {
+    private static EngineSummary summarise(String engine, List<WalkforwardFold> fs, String target) {
         int won = (int) fs.stream().filter(f -> f.stratReturn() > f.holdReturn()).count();
         Double excess = mean(fs.stream().map(WalkforwardFold::excess).toList());
         Double acc = mean(fs.stream().map(WalkforwardFold::accuracy).toList());
@@ -58,7 +63,7 @@ public record EngineSummary(
                 fs.stream().mapToInt(WalkforwardFold::trades).sum(),
                 mean(fs.stream().map(WalkforwardFold::timing).toList()),
                 acc, base,
-                acc == null || base == null ? null : acc > base,
+                WalkforwardRun.beatsNaive(acc, base, target),
                 excess == null ? null : excess > 0);
     }
 

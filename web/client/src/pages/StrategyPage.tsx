@@ -21,13 +21,21 @@ import {
   objectiveFromForm, objectiveToForm, windowDays, windowErrors,
   type ObjectiveForm, type WindowKey, type Windows,
 } from '../lib/strategyForm'
+import {
+  DEFAULT_LABEL_FORM, HORIZON_MAX, HORIZON_MIN,
+  classWeightsRefusal, fitObjectiveToTarget, kindTitle, labelKindsOf, labelParamHint, labelPayload,
+  labelProblems, labelToForm, lossRefusalForTarget, scoreLabel, targetObjectiveProblems, targetOf,
+  unregisteredKind,
+  type LabelForm,
+} from '../lib/targets'
 
 /**
  * The Strategy tab — the builder (Architecture.md §8.1a / §8.2a).
  *
  * Compose a strategy *before* anything is trained: the feature subset, the four
  * date windows, the validation scheme, the model type, the engines that compete
- * on the same folds (B9), the label definition, the hyperparameters, and the
+ * on the same folds (B9), the label definition (its target, horizon and
+ * thresholds, G49), the hyperparameters, and the
  * objective: the loss, the verdict metric, the cost charged and where money parks. Saving stores a named, versioned record; Train executes
  * one and makes no choices of its own.
  *
@@ -71,7 +79,13 @@ export default function StrategyPage() {
   const [modelType, setModelType] = useState('mlp')
   const [scheme, setScheme] = useState('walkforward')
   const [selected, setSelected] = useState<string[]>([])
-  const [horizon, setHorizon] = useState('5')
+  // G49: the label's kind (what the model predicts), horizon and thresholds.
+  // Not derived from the API like the objective: its starting point, the
+  // 3-class label over 5 bars, is the one every version before G49 saved.
+  const [labelForm, setLabelForm] = useState<LabelForm>(DEFAULT_LABEL_FORM)
+  // What a change of target switched in the objective, or a cloned version's
+  // kind the API no longer registers; said without the user asking.
+  const [targetNotice, setTargetNotice] = useState<string | null>(null)
   const [params, setParams] = useState<Record<string, string>>({})
   // Null until touched, then derived from the API's defaults like the windows.
   const [editedObjective, setEditedObjective] = useState<ObjectiveForm | null>(null)
@@ -249,6 +263,26 @@ export default function StrategyPage() {
     })
     setLossNotice(null)
   }
+  // G49: the targets the API registers, or the 3-class label alone from an
+  // API that predates them.
+  const labelKinds = labelKindsOf(saved)
+  const target = targetOf(labelForm.kind, labelKinds)
+  const score = scoreLabel(target, saved?.naiveBaselines)
+  const labelIssues = labelProblems(labelForm, labelKinds)
+  const targetIssues = objectiveForm ? targetObjectiveProblems(objectiveForm, target) : []
+  const setLabel = (part: Partial<LabelForm>) => setLabelForm((f) => ({ ...f, ...part }))
+  /**
+   * A new target. A money-trained loss it cannot be fitted by becomes ce, and
+   * class weights a return target cannot read go off, each said: the form
+   * never keeps an unrunnable combination, as with the engines (B9).
+   */
+  const setLabelKind = (kind: string) => {
+    setLabel({ kind })
+    if (!objectiveForm) return
+    const { change, notice } = fitObjectiveToTarget(objectiveForm, targetOf(kind, labelKinds))
+    if (Object.keys(change).length) setObjective(change)
+    setTargetNotice(notice)
+  }
   const marginIssues = objectiveSpec && objectiveForm
     ? marginProblems(objectiveForm, objectiveSpec, symbol)
     : []
@@ -257,6 +291,7 @@ export default function StrategyPage() {
     : []
   const ready = !!(name.trim() && slice && selected.length > 0
     && windowProblems.length === 0 && marginIssues.length === 0 && engineIssues.length === 0
+    && labelIssues.length === 0 && targetIssues.length === 0
     && objectiveSpec && objectiveForm && !busy)
   const { shared: sharedParams, network: networkParams } = splitParamSpec(paramSpec)
   const networkOff = !!engineForm && engineForm[NETWORK]?.enabled === false
@@ -284,7 +319,7 @@ export default function StrategyPage() {
         validationScheme: scheme,
         features: selected,
         windows,
-        label: { kind: 'forward_return_3class', horizonBars: Number(horizon) },
+        label: labelPayload(labelForm, labelKinds),
         hyperparams,
         objective: objectiveFromForm(objectiveForm, objectiveSpec),
         // B9. Left out when the registry did not answer: the network alone.
@@ -331,7 +366,14 @@ export default function StrategyPage() {
     setModelType(s.modelType); setScheme(s.validationScheme)
     setSelected(s.features)
     setEditedWindows(s.windows as Windows)
-    setHorizon(String(s.label?.horizonBars ?? 5))
+    // A version from before G49 (no label, or the 3-class kind) loads as the
+    // 3-class label, which is what it ran.
+    setLabelForm(labelToForm(s.label, labelKinds))
+    const lostKind = unregisteredKind(s.label, labelKinds)
+    setTargetNotice(lostKind
+      ? `v${s.version} labels with '${lostKind}', which the API no longer registers: `
+        + 'this form uses the 3-class label.'
+      : null)
     setParams(Object.fromEntries(
       Object.entries(s.hyperparams).map(([k, v]) => [k, String(v)]),
     ))
@@ -575,17 +617,64 @@ export default function StrategyPage() {
               <label className="form-control">
                 <FieldLabel text="Label horizon (bars)" hint={hintFor('strategy.labelHorizon')} />
                 <input
-                  type="number" min={1} max={100} className="input input-bordered"
-                  value={horizon} onChange={(e) => setHorizon(e.target.value)}
+                  type="number" min={HORIZON_MIN} max={HORIZON_MAX} className="input input-bordered"
+                  value={labelForm.horizon} onChange={(e) => setLabel({ horizon: e.target.value })}
                 />
                 {/* I8: bars are not days below D1, so say what the number means here. */}
-                {horizonSpan(Number(horizon), timeframe) && (
+                {horizonSpan(Number(labelForm.horizon), timeframe) && (
                   <span className="label-text-alt mt-1 text-base-content/60">
-                    {horizonSpan(Number(horizon), timeframe)}
+                    {horizonSpan(Number(labelForm.horizon), timeframe)}
                   </span>
                 )}
               </label>
             </div>
+            {/* G49: what the model predicts over the horizon, with the kind's
+                own thresholds. The 3-class label's are in 7 · Shared inputs. */}
+            <div className="grid gap-4 md:grid-cols-3 mt-4">
+              <label className="form-control">
+                <FieldLabel text="Prediction target" hint={hintFor('strategy.target')} />
+                <select
+                  className="select select-bordered" value={labelForm.kind}
+                  onChange={(e) => setLabelKind(e.target.value)}
+                >
+                  {Object.keys(labelKinds).map((k) => (
+                    <option key={k} value={k}>{kindTitle(k, labelKinds)}</option>
+                  ))}
+                </select>
+              </label>
+              {Object.entries(labelKinds[labelForm.kind]?.params ?? {}).map(([key, spec]) => (
+                <label key={key} className="form-control">
+                  <FieldLabel text={spec.label} hint={labelParamHint(key, spec)} />
+                  <input
+                    className="input input-bordered" inputMode="decimal"
+                    placeholder={String(spec.default)}
+                    value={labelForm.params[key] ?? ''}
+                    onChange={(e) => setLabel({ params: { ...labelForm.params, [key]: e.target.value } })}
+                  />
+                </label>
+              ))}
+              {target === 'class' && (
+                <p className="text-sm text-base-content/60 md:col-span-2 self-end pb-3">
+                  BUY, HOLD or SELL by the return over the horizon against the ± buy and sell
+                  thresholds in 7 · Shared inputs.
+                </p>
+              )}
+            </div>
+            <p className="text-sm text-base-content/70 mt-3">
+              Held to the naive baseline: <strong>{score.baselineWords}</strong>, scored by{' '}
+              {score.lowerIsBetter
+                ? 'the mean absolute error of the forecast return, where lower is better'
+                : score.header.toLowerCase()}
+              . A run that does not beat it is flagged.
+            </p>
+            {targetNotice && <p className="mt-2 text-sm text-warning">{targetNotice}</p>}
+            {[...labelIssues, ...targetIssues].length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {[...labelIssues, ...targetIssues].map((m) => (
+                  <li key={m} className="text-sm text-error">{m}</li>
+                ))}
+              </ul>
+            )}
           </Section>
 
           <Section
@@ -633,12 +722,17 @@ export default function StrategyPage() {
             <h3 className="text-sm font-medium mb-1">Every engine reads</h3>
             <p className="text-xs text-base-content/60 mb-2">
               The window each sample sees and the label it is taught: the same for every engine.
+              The buy and sell thresholds are the 3-class label&apos;s ± return thresholds only;
+              a direction or return target carries its own in 5 · How to fit it.
             </p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {sharedParams.map(([key, spec]) => (
                 <ParamField
                   key={key} name={key} spec={spec} value={params[key] ?? ''}
                   onChange={(v) => setParams((p) => ({ ...p, [key]: v }))}
+                  note={target !== 'class' && THREE_CLASS_ONLY.includes(key)
+                    ? `Not read by the ${target} target: saved, but no run uses it.`
+                    : undefined}
                 />
               ))}
             </div>
@@ -670,13 +764,36 @@ export default function StrategyPage() {
                   <FieldLabel className="text-xs" text="Loss" hint={hintFor('objective.loss')} />
                   <select
                     className="select select-bordered select-sm" value={objectiveForm.loss}
-                    onChange={(e) => setObjective({ loss: e.target.value as ObjectiveForm['loss'] })}
+                    onChange={(e) => {
+                      setObjective({ loss: e.target.value as ObjectiveForm['loss'] })
+                      setTargetNotice(null)
+                    }}
                   >
-                    {objectiveSpec.losses.map((l) => <option key={l} value={l}>{l}</option>)}
+                    {/* G49: a money-trained loss cannot fit a direction or
+                        return target, so it is offered but not selectable. */}
+                    {objectiveSpec.losses.map((l) => {
+                      const refused = lossRefusalForTarget(l, target)
+                      return (
+                        <option key={l} value={l} disabled={!!refused} title={refused ?? undefined}>
+                          {l}{refused ? ' (3-class target only)' : ''}
+                        </option>
+                      )
+                    })}
                   </select>
                   {lossNotice && (
                     <span className="label-text-alt mt-1 text-warning">
                       Switched an engine off: see 6 · Engines.
+                    </span>
+                  )}
+                  {targetNotice && (
+                    <span className="label-text-alt mt-1 text-warning">
+                      Changed by the prediction target: see 5 · How to fit it.
+                    </span>
+                  )}
+                  {target !== 'class' && !targetNotice && (
+                    <span className="label-text-alt mt-1 text-base-content/60">
+                      A {target} target is fitted by ce; the money-trained losses need the 3-class
+                      target.
                     </span>
                   )}
                 </label>
@@ -688,8 +805,14 @@ export default function StrategyPage() {
                     <input
                       type="checkbox" className="checkbox checkbox-sm mt-2"
                       checked={objectiveForm.classWeights}
+                      disabled={!!classWeightsRefusal(target) && !objectiveForm.classWeights}
                       onChange={(e) => setObjective({ classWeights: e.target.checked })}
                     />
+                    {classWeightsRefusal(target) && (
+                      <span className="label-text-alt mt-1 text-base-content/60">
+                        {classWeightsRefusal(target)}
+                      </span>
+                    )}
                   </label>
                 ) : (
                   <label className="form-control">
@@ -858,10 +981,18 @@ function enginesLabel(s: SavedStrategy, registry: EngineEntry[] | null): string 
   return on.length ? on.map((n) => engineTitle(n, registry)).join(' + ') : 'no engine on'
 }
 
+/**
+ * The hyperparameters only the 3-class label reads (G49): its ± return
+ * thresholds. A direction or return target carries its own in the label.
+ */
+const THREE_CLASS_ONLY: readonly string[] = ['buyThreshold', 'sellThreshold']
+
 /** One hyperparameter field: blank is the model default, the hint gives the bounds. */
 function ParamField(
-  { name, spec, value, onChange }: {
+  { name, spec, value, onChange, note }: {
     name: string, spec: ParamSpec, value: string, onChange: (v: string) => void
+    /** Said under the field, e.g. that the chosen target does not read it. */
+    note?: string
   },
 ) {
   return (
@@ -874,6 +1005,7 @@ function ParamField(
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+      {note && <span className="label-text-alt mt-1 text-base-content/60">{note}</span>}
     </label>
   )
 }
