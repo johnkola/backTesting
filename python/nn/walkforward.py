@@ -236,6 +236,28 @@ def trim_to_window(
     return out
 
 
+def plan_folds(label_dates: list[date], args, test_end: date | None,
+               ) -> tuple[list[tuple[int, list[int], list[int]]], date | None]:
+    """The folds a run scores, and the window end they stop at.
+
+    `label_dates` is every stacked row's date. The last `forward` rows have no
+    label, so no fold uses them; folds expand from `train_start` (or one
+    holdout fold with `--test`, ending at the strategy's `test_end`), each
+    training window purged, and no fold reads past the window end (G38). The
+    runner builds its folds here and the Split tab's report does too
+    (`nn/split.py`), so the two cannot disagree.
+    """
+    wdates = label_dates[: max(0, len(label_dates) - args.forward)]
+    if args.test:
+        folds = make_test_fold(wdates, args.train_start, args.last_val + 1,
+                               last_day=test_end, purge=args.forward)
+    else:
+        folds = make_folds(wdates, args.train_start, args.first_val, args.last_val,
+                           purge=args.forward)
+    window_end = staleness.window_end_of(args.last_val, bool(args.test), test_end)
+    return trim_to_window(folds, label_dates, args.forward, window_end), window_end
+
+
 def stop_split(tr: list[int], dates: list[date], purge: int) -> tuple[list[int], list[int]]:
     """(fit, stop): a fold's training indices split for early stopping.
 
@@ -1150,18 +1172,9 @@ def main(argv: list[str] | None = None) -> int:
     # market from those two dates, and a recalculation from the same two.
     exits = profit.next_dates(wdates)
 
-    if args.test:
-        folds = make_test_fold(wdates, args.train_start, args.last_val + 1,
-                               last_day=setup.plan.test_end if setup else None,
-                               purge=args.forward)
-    else:
-        folds = make_folds(wdates, args.train_start, args.first_val, args.last_val,
-                           purge=args.forward)
-    # No fold reads past the run's window (G38): the last validation fold
-    # stops before its labels and returns reach the test block.
-    window_end = staleness.window_end_of(args.last_val, bool(args.test),
-                                         setup.plan.test_end if setup is not None else None)
-    folds = trim_to_window(folds, label_dates, args.forward, window_end)
+    folds, window_end = plan_folds(label_dates, args,
+                                   setup.plan.test_end if setup is not None else None)
+    assert all(i < len(wdates) for _, tr, va in folds for i in (*tr, *va))
     args.purge_bars = args.forward
     if args.patience:
         short = [y for y, tr, _ in folds if not all(stop_split(tr, wdates, args.forward))]

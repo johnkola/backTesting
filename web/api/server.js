@@ -42,11 +42,6 @@ const HEALTH_TIMEOUT_MS = Number(process.env.HEALTH_TIMEOUT_MS) || 3000;
 // Longer than a health probe: this one parses a config rather than answering
 // a ping.
 const FEATURES_TIMEOUT_MS = Number(process.env.FEATURES_TIMEOUT_MS) || 8000;
-// Chronological split boundaries, from the design: training runs from 2003,
-// validation folds land on 2016-2021, and 2022 onward is the untouched test
-// block. Env-overridable because the design says the boundaries can slide.
-const SPLIT_FIRST_VAL = process.env.SPLIT_FIRST_VAL || '2016-01-01';
-const SPLIT_FIRST_TEST = process.env.SPLIT_FIRST_TEST || '2022-01-01';
 
 const app = express();
 // This process is the API, and only the API — the React client is served
@@ -1041,7 +1036,8 @@ app.get('/api/instruments', async (req, res) => {
 // The Features tab -- the catalogue and the coverage view (8.1a)
 // ---------------------------------------------------------------------------
 // Distinct from /api/features, which reports the pipeline STAGE's health (the
-// TOML config, the newest set's column statistics, the chronological split).
+// TOML config and the newest set's column statistics). The split is a strategy's,
+// served by the loader (`GET /api/nn/walkforward/split`, G37).
 // These answer what features exist and where they actually have values.
 
 app.get('/api/features/catalogue', async (req, res) => {
@@ -1189,41 +1185,6 @@ app.get('/api/features', async (req, res) => {
       }));
     }
 
-    // Row counts per chronological block, from the set's own dates. The
-    // boundaries are the design's: train from 2003, walk-forward validation
-    // folds 2016-2021, and the 2022-onward block held back as the final exam.
-    let split = null;
-    if (newestId !== null) {
-      const { rows } = await pool.query(
-        `SELECT CASE
-                  WHEN timestamp < $2 THEN 'train'
-                  WHEN timestamp < $3 THEN 'validation'
-                  ELSE 'test'
-                END AS block,
-                COUNT(DISTINCT timestamp) AS rows,
-                MIN(timestamp) AS from_date,
-                MAX(timestamp) AS to_date
-           FROM feature_values
-          WHERE feature_set_id = $1
-          GROUP BY 1`,
-        [newestId, SPLIT_FIRST_VAL, SPLIT_FIRST_TEST],
-      );
-      const byBlock = new Map(rows.map((r) => [r.block, r]));
-      split = {
-        firstValidationYear: new Date(SPLIT_FIRST_VAL).getUTCFullYear(),
-        firstTestYear: new Date(SPLIT_FIRST_TEST).getUTCFullYear(),
-        blocks: ['train', 'validation', 'test'].map((block) => {
-          const r = byBlock.get(block);
-          return {
-            block,
-            rows: r ? Number(r.rows) : 0,
-            fromDate: r ? r.from_date : null,
-            toDate: r ? r.to_date : null,
-          };
-        }),
-      };
-    }
-
     const specBySet = new Map();
     for (const s of spec) {
       if (!specBySet.has(s.feature_set_id)) specBySet.set(s.feature_set_id, []);
@@ -1244,7 +1205,6 @@ app.get('/api/features', async (req, res) => {
       timeframe,
       newestSetId: newestId === null ? null : String(newestId),
       columnStats,
-      split,
       sets: sets.map((s) => {
         const st = statsBySet.get(s.id);
         return {

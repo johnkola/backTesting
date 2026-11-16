@@ -886,18 +886,66 @@ export type FeaturePreview = {
   points: { date: string, before: number | null, after: number | null }[]
 }
 
+/** One saved window of a strategy and the matrix rows inside it (G37). */
 export type SplitBlock = {
-  block: 'train' | 'validation' | 'test'
+  block: 'train' | 'validation' | 'test' | 'prediction'
+  /** The window as saved. */
+  from: string
+  to: string
+  /** Rows of the strategy's set inside it, after its columns' gaps drop bars. */
   rows: number
-  fromDate: string | null
-  toDate: string | null
+  firstRow: string | null
+  lastRow: string | null
 }
 
-export type SplitReport = {
-  firstValidationYear: number
-  firstTestYear: number
-  blocks: SplitBlock[]
+/** One walk-forward fold as a run makes it: expanding train, purged, then one year. */
+export type SplitFold = {
+  fold: number
+  valYear: number
+  trainFrom: string
+  trainTo: string
+  trainRows: number
+  valFrom: string
+  valTo: string
+  valRows: number
+  /**
+   * With early stopping, the network fits all but the last training year,
+   * which decides when it stops; the tree engines train on every row. Null
+   * without it.
+   */
+  earlyStopping: {
+    fitFrom: string, fitTo: string, fitRows: number,
+    stopFrom: string, stopTo: string, stopRows: number,
+  } | null
 }
+
+/** A saved strategy's split, from the runner's own code (`nn/split.py`). */
+export type StrategySplit = {
+  strategy: {
+    id: number, name: string, version: number, instrument: string, source: string,
+    timeframe: string,
+  }
+  setId: number
+  columns: number
+  dropped: [string, string][]
+  rows: number
+  firstRow: string | null
+  lastRow: string | null
+  lookback: number
+  /** Training bars dropped before each fold's scored year (the label horizon). */
+  purgeBars: number
+  /** No fold reads past this day (G38). */
+  windowEnd: string | null
+  /** The network's early-stopping patience, or null when it trains a fixed number of epochs. */
+  patience: number | null
+  blocks: SplitBlock[]
+  folds: SplitFold[]
+}
+
+/** The split, or why the strategy cannot run as saved. */
+export type StrategySplitAnswer =
+  | { ok: true, split: StrategySplit }
+  | { ok: false, error: string, reasons: string[] }
 
 export type FeaturesReport = {
   config: FeatureConfig | null
@@ -908,7 +956,6 @@ export type FeaturesReport = {
   newestSetId: string | null
   /** Per-column distribution of the newest set — the normalization gate. */
   columnStats: FeatureColumnStats[]
-  split: SplitReport | null
   sets: FeatureSet[]
 }
 
@@ -1731,6 +1778,20 @@ export const api = {
     params: { timeframe?: string, includeTest?: boolean, limit?: number } = {},
     signal?: AbortSignal,
   ) => getJson<WalkforwardRuns>(`/api/walkforward/runs?${qs(params)}`, signal),
+  /**
+   * A saved strategy's split as a walk-forward run makes it (G37). A strategy
+   * that cannot run answers with every reason rather than an exception.
+   */
+  walkforwardSplit: async (strategyId: string, signal?: AbortSignal): Promise<StrategySplitAnswer> => {
+    const res = await fetch(apiUrl(`/api/nn/walkforward/split?${qs({ strategyId })}`), { signal })
+    const body = await res.json().catch(() => ({}))
+    if (res.ok) return { ok: true, split: body as StrategySplit }
+    return {
+      ok: false,
+      error: body?.error ?? `${res.status} ${res.statusText}`,
+      reasons: Array.isArray(body?.reasons) ? body.reasons : [],
+    }
+  },
   /** One run with every fold in sequence. */
   walkforwardRun: (id: number, signal?: AbortSignal) =>
     getJson<WalkforwardRunDetail>(

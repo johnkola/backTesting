@@ -2073,6 +2073,94 @@
           ]
         },
         {
+          "name": "A saved strategy's split, as a run makes it (G37)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward/split?strategyId={{savedStrategyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward",
+                "split"
+              ],
+              "query": [
+                {
+                  "key": "strategyId",
+                  "value": "{{savedStrategyId}}"
+                }
+              ]
+            },
+            "description": "G37: the strategy's windows with the rows of its own feature set in each, and each walk-forward fold's train and scored spans, from the runner's own code. 400 with the reasons when the strategy cannot run as saved."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200, or 400 with the reasons the strategy cannot run', function () {",
+                  "    pm.expect([200, 400]).to.include(pm.response.code);",
+                  "    if (pm.response.code === 400) pm.expect(pm.response.json().reasons).to.be.an('array').that.is.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('the blocks are the strategy\\'s windows, in order, and the folds stop at the window end', function () {",
+                  "    if (pm.response.code !== 200) return;",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.blocks.map(b => b.block).slice(0, 3)).to.eql(['train', 'validation', 'test']);",
+                  "    for (let i = 1; i < d.blocks.length; i++) pm.expect(d.blocks[i].from > d.blocks[i - 1].to).to.be.true;",
+                  "    pm.expect(d.folds).to.be.an('array').that.is.not.empty;",
+                  "    for (const f of d.folds) pm.expect(f.valTo <= d.windowEnd).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The split of a strategy that does not exist is 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward/split?strategyId=999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward",
+                "split"
+              ],
+              "query": [
+                {
+                  "key": "strategyId",
+                  "value": "999999999"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "A non-numeric strategy id is rejected",
           "request": {
             "method": "GET",
@@ -2208,7 +2296,7 @@
           ]
         },
         {
-          "name": "Feature table and split",
+          "name": "Feature table",
           "request": {
             "method": "GET",
             "header": [],
@@ -2240,7 +2328,7 @@
                   "",
                   "pm.test('describes the stored feature table', function () {",
                   "    const d = pm.response.json();",
-                  "    pm.expect(d).to.include.keys('config', 'columnStats', 'split', 'sets');",
+                  "    pm.expect(d).to.include.keys('config', 'columnStats', 'sets');",
                   "});",
                   "",
                   "pm.test('a disabled column is a recorded decision, not an absence', function () {",
@@ -2249,12 +2337,8 @@
                   "    for (const c of cols) pm.expect(c).to.include.keys('name', 'enabled', 'method');",
                   "});",
                   "",
-                  "pm.test('the split is the design\\'s own boundaries', function () {",
-                  "    const s = pm.response.json().split;",
-                  "    if (s) {",
-                  "        pm.expect(s.firstValidationYear).to.eql(2016);",
-                  "        pm.expect(s.firstTestYear).to.eql(2022);",
-                  "    }",
+                  "pm.test('the split is a strategy\\'s now, not this route\\'s (G37)', function () {",
+                  "    pm.expect(pm.response.json()).to.not.have.property('split');",
                   "});"
                 ]
               }

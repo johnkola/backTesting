@@ -2,6 +2,7 @@
 
   POST /api/nn/walkforward       {strategyId, label?} -> 202 job | 400 | 404 | 409
   GET  /api/nn/walkforward/jobs  jobs started since this process came up
+  GET  /api/nn/walkforward/split?strategyId=N  a strategy's split, as a run makes it
   POST /api/nn/walkforward/runs/{id}/recalculate  {strategyId?, dryRun?}
                                  -> 200 figures | 400 | 404 | 409 (`nn/recalculate.py`)
 
@@ -211,6 +212,22 @@ def start(req: StartRequest):
     threading.Thread(target=_follow, args=(job,), daemon=True,
                      name=f"walkforward-job-{job.id}").start()
     return body
+
+
+@router.get("/api/nn/walkforward/split")
+def split(strategyId: int):  # noqa: N803 - the query name the client sends
+    """A saved strategy's split, as a run of it makes it (G37, `nn/split.py`):
+    its windows with the rows each holds, and each validation fold's spans.
+    400 with every reason when the strategy cannot run, 404 when it is unknown."""
+    from nn import split as split_report
+    try:
+        with pool().connection() as conn:
+            return split_report.report(conn.cursor(), strategyId)
+    except strategy_spec.StrategyRefused as exc:
+        return JSONResponse(status_code=400, content={
+            "error": f"strategy {strategyId} cannot run as saved", "reasons": exc.reasons})
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
 
 
 @router.get("/api/nn/walkforward/jobs")

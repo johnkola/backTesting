@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-9** · 2026-11-16 14:24 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-10** · 2026-11-16 14:37 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -212,10 +212,12 @@ time order. Tab: **Pipeline → Split**.
 
 **Done when**
 
-- [ ] **app**: no block is empty, each block starts after the one before it
-  ends, and none overlap. The Split tab shows passed (the tab only, not the
+- [ ] **app**: the Split tab shows the chosen strategy's split as a run of it makes it,
+  from the runner's own code: its windows with the rows of its feature set in each, and
+  each walk-forward fold's training and scored spans (G37). No block is empty, each
+  starts after the one before it ends, and the tab shows passed (the tab only, not the
   status call).
-- [ ] **review**: the boundaries are where the strategy and config put them.
+- [ ] **review**: the boundaries are where the strategy puts them.
 - [ ] **review**: the training and validation blocks each include at least one
   rough market, such as 2008, 2020 or 2022. The design asks for it, and nothing
   checks it yet.
@@ -600,6 +602,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-10 | 2026-11-16 14:37 | Claude Code (Claude Opus 5.5) | G37: step 4's split is the chosen strategy's, as a run makes it |
 | 2026-11-16-9 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38 and G48: steps 4, 7 and 8 gain their app conditions |
 | 2026-11-16-8 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9 done; step 6's engine condition and step 7's tree-model condition are app conditions |
 | 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5 done |

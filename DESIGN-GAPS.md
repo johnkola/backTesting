@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-17** · 2026-11-16 14:24 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-19** · 2026-11-16 14:37 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -613,6 +613,37 @@ Checklist:
 
 
 
+**G37 plan, 2026-11-16.** The author: do G37. The Split tab cuts the newest feature set on two API constants (`SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`), so it shows no strategy's split, and its footnote says a run sets its own boundaries on the command line, which has not been true since runs read saved strategies.
+
+The shape:
+- **The runner's split, from the runner's code.** `walkforward.plan_folds` builds a run's folds: the expanding train windows, the purge, and the last fold's stop at the window end (G38). The runner calls it, and so does `nn/split.py`. That module reports a saved strategy's split: its windows, the rows of its own feature set in each (after its columns' gaps drop bars, as the run reads them), and each fold's train and validation spans and rows. It runs through `strategy_setup`, the same check a run makes, so a strategy that cannot run says why. Served as `GET /api/nn/walkforward/split?strategyId=N`.
+- **The tab shows a strategy's split.** It offers a selector of saved strategies, the blocks and the folds, and checks that no block is empty and each starts after the one before it ends. The constants, their query and the footnote go.
+- **Nothing stored changes.**
+
+Checklist:
+- [x] Plan here
+- [x] `plan_folds` in the runner; `nn/split.py` and its route; tests
+- [x] The Split tab; the API's constants removed; Postman
+- [x] All four CI jobs; rebuild
+- [x] README, `AGENTS.md`, G37 and this record say done
+
+*Done, 2026-11-16 14:37.*
+- **Tests:** Python 849, API 119, client 174. New tests:
+  - the runner and the report plan the same folds;
+  - each window counts its rows;
+  - with early stopping, the network's fitted span and its stopping year come from the runner's `stop_split`;
+  - the route serves the report, 400 with the reasons for a strategy that cannot run, 404 for an unknown one;
+  - the tab's checks.
+
+  Java is unchanged.
+- **Live, phase1-full v5:** set 28, 29 columns, 6,433 rows from 2001-04-18.
+  - Train holds 3,273 rows (2003-01-02 to 2015-12-31), validation 1,511, test 1,126 (2022-01-03 to 2026-06-30). The old tab started train at the first stored bar and ran test to today.
+  - Six folds. The 2021 fold scores 247 rows, to 2021-12-23 (G38).
+  - Each fold's scored span and rows, and the network's fitted span and rows under early stopping, match what run 709 stored, fold by fold. For example fold 1 fits 3,016 rows to 2014-12-23 and stops on 2015.
+- **Removed:** `SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`, their query, and `/api/features`' `split`. Nothing else read them.
+
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -754,7 +785,7 @@ wrong today.
 
 | # | Gap | Found in | Evidence | Stored data | Effort | Status |
 |---|---|---|---|---|---|---|
-| G37 | The Split tab shows no strategy's split. It cuts the newest set on two API constants (`SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`, defaults 2016-01-01 and 2022-01-01, undocumented), with no train start and no test end. So its train block starts 1999-03-10 where the strategies train from 2003 or 2007, and its test block runs to today where they stop at 2026-06-30. Its comment says "train from 2003", and the tab's footnote says runs set their boundaries on the command line; both are wrong | step 4 | `web/api/server.js` lines 47-48 and the `split` query near line 1159; `SplitStage.tsx` footnote | none: runs record their own windows | S | open |
+| G37 | The Split tab shows no strategy's split. It cuts the newest set on two API constants (`SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`, defaults 2016-01-01 and 2022-01-01, undocumented), with no train start and no test end. So its train block starts 1999-03-10 where the strategies train from 2003 or 2007, and its test block runs to today where they stop at 2026-06-30. Its comment says "train from 2003", and the tab's footnote says runs set their boundaries on the command line; both are wrong | step 4 | `web/api/server.js` lines 47-48 and the `split` query near line 1159; `SplitStage.tsx` footnote | none: runs record their own windows | S | done 2026-11-16: see the G37 record in Pass 4 |
 | G38 | Nothing separates the last validation year from the test block. Training is purged before validation (`purged`), but the 2021 fold's labels read closes to 2022-01-07 and its score includes the 2021-12-31 to 2022-01-03 return | step 4 | every run's `span_to` is 2022-01-07; benchmark 208 ends 2022-01-03; `walkforward.make_folds` | the 2021 fold of all 9 runs and benchmark 208, by one session | S | done 2026-11-16: see the G38 and G48 record in Pass 4 |
 | G39 | The Normalization check passes what it cannot see. A NaN or infinite value reaches the client as a null statistic, and `checkColumn` returns no problem on a null, although the design asks this gate to catch NaNs. Six columns (four `ratio_to_prev_close`, two `daily_change`) have no rule at all and always show ok. The design's before/after previews are not built | step 3 | `NormalizationStage.tsx` `checkColumn` (`if (min === null ...) return null`) | none: set 27 holds no NaN or infinite value | S | done 2026-11-15: `lib/normalizationCheck.ts` (NaN and infinite values counted by the API, flags checked for 0/1, rules for returns and changes, no silent pass) and the previews (`GET /api/nn/features/preview`, the Normalization tab's Preview) |
 | G40 | A stored backtest result does not keep its run settings: no strategy parameters, no requested from/to (`start_date` is the first bar after warm-up), no commission or slippage. "Rerun with the same settings" (step 7) has to rebuild them by hand, and for the ta4j results it cannot | step 7 | `BacktestResultRepository` INSERT columns | all 16 results | M | open |
@@ -1418,6 +1449,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-19 | 2026-11-16 14:37 | Claude Code (Claude Opus 5.5) | G37 done: the Split tab shows a strategy's split, as a run makes it |
+| 2026-11-16-18 | 2026-11-16 14:28 | Claude Code (Claude Opus 5.5) | G37 plan |
 | 2026-11-16-17 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38 and G48 done: nothing scores past its window; every look at a test window recorded; 8 runs rerun as 703-710; 81 looks backfilled |
 | 2026-11-16-16 | 2026-11-16 14:03 | Claude Code (Claude Opus 5.5) | G38 and G48 plan |
 | 2026-11-16-15 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9 done: the three engines; G35 done; R23 done, R21 and R74 partial; new gap G70 |
