@@ -282,28 +282,13 @@ describe('validateStrategy — objective', () => {
     );
   });
 
-  it('trains untaxed unless asked, even when scoring after tax', () => {
-    const o = objective({ taxScore: true, taxRatePct: 25 }).value.objective;
-    assert.equal(o.taxTrain, false);
-  });
-
-  it('keeps train with tax for a money loss scored after tax', () => {
-    const o = objective({ loss: 'return', taxScore: true, taxRatePct: 25, taxTrain: true })
-      .value.objective;
-    assert.equal(o.taxTrain, true);
-  });
-
-  it('refuses train with tax without scoring after tax', () => {
-    assert.match(
-      errorsFor(body({ objective: { loss: 'return', taxTrain: true } })), /needs score after tax/,
-    );
-  });
-
-  it('refuses train with tax on the ce loss, which has no gains to tax', () => {
-    assert.match(
-      errorsFor(body({ objective: { taxScore: true, taxRatePct: 25, taxTrain: true } })),
-      /money-trained loss/,
-    );
+  it('refuses train with tax with D9 as the reason, and stores no switch', () => {
+    // D9 (R75): engines are blind; tax is the profit step's, recalculated on demand.
+    const on = objective({ loss: 'return', taxScore: true, taxRatePct: 25, taxTrain: true });
+    assert.match(on.errors.join(' '), /taxTrain \(train with tax\) is gone: .*D9, R75/);
+    const off = objective({ taxScore: true, taxRatePct: 25, taxTrain: false }).value.objective;
+    assert.equal('taxTrain' in off, false);
+    assert.match(objective({ taxTrain: 'yes' }).errors.join(' '), /taxTrain must be false/);
   });
 
   it('refuses a rate of 0 or above 100', () => {
@@ -465,27 +450,19 @@ describe('validateStrategy — Strategy 2 (G5)', () => {
   });
 });
 
-describe('validateStrategy — train with margin (G5 step 2)', () => {
+describe('validateStrategy — train with margin is gone (D9)', () => {
   const objective = (o) => validateStrategy(body({ objective: o }));
 
-  it('defaults off, and stays off under Strategy 1', () => {
-    assert.equal(objective({}).value.objective.marginTrain, false);
-    assert.equal(objective({ execution: 'margin', loss: 'return' }).value.objective.marginTrain, false);
+  it('is refused with D9 as the reason, under either strategy', () => {
+    for (const execution of ['signals', 'margin']) {
+      const r = objective({ execution, loss: 'return', marginTrain: true });
+      assert.match(r.errors.join(' '), /marginTrain \(train with margin\) is gone: .*D9/);
+    }
   });
 
-  it('is kept for Strategy 2 with a money loss', () => {
-    const o = objective({ execution: 'margin', loss: 'return', marginTrain: true }).value.objective;
-    assert.equal(o.marginTrain, true);
-  });
-
-  it('is refused under Strategy 1, with ce, and beside train with tax', () => {
-    assert.match(objective({ marginTrain: true }).errors.join(' '), /needs execution 'margin'/);
-    assert.match(objective({ execution: 'margin', marginTrain: true }).errors.join(' '),
-      /money-trained loss/);
-    const both = objective({
-      execution: 'margin', loss: 'return', marginTrain: true,
-      taxScore: true, taxRatePct: 25, taxTrain: true,
-    });
-    assert.match(both.errors.join(' '), /not supported yet/);
+  it('is accepted off, and never stored', () => {
+    const o = objective({ execution: 'margin', loss: 'return', marginTrain: false }).value.objective;
+    assert.equal('marginTrain' in o, false);
+    assert.equal(o.execution, 'margin');
   });
 });

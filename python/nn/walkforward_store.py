@@ -36,6 +36,14 @@ columns dropped and why, the partial ones kept, and the first fold's train windo
 as the matrix held it (`train_first`, `train_bars_used` of `train_bars`), which
 a partial column moves. All NULL on a run from flags alone.
 
+EACH FOLD STORES ITS SIGNALS, IN THE SAME TRANSACTION AS ITS FIGURES (B10).
+One `walkforward_signals` row per scored bar: the date, the date its return
+runs to, the model's raw output, the call and the label. They are what the
+profit step scored, and what `nn/recalculate.py` reads to score them again
+under other settings without retraining (D9, R75). Written with the fold, so a
+fold's figures never exist without the signals that made them; replaced when a
+fold is rewritten, deleted with the run.
+
 COLUMNS THAT EXIST GET COLUMNS, NOT JSON. `objective`, `loss`, `cost_bps`,
 `park` and `threshold` are queryable columns because the UI filters and compares
 on them. `hyperparams_json` carries only the knobs that have no column of their
@@ -49,6 +57,10 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from nn import profit
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, types only
     from nn.walkforward import FoldResult
@@ -72,19 +84,19 @@ HYPERPARAM_KEYS = (
 _INSERT_RUN = """
 INSERT INTO walkforward_runs
     (label, instrument_id, source_id, timeframe, feature_set_id, input_width,
-     objective, loss, cost_bps, park, threshold, tax_rate, tax_train, purge_bars,
+     objective, loss, cost_bps, park, threshold, tax_rate, purge_bars,
      train_start, first_val, last_val, is_test, hyperparams_json, columns_json,
      strategy_id, strategy_name, strategy_version, dropped_json, partial_json,
      train_first, train_bars_used, train_bars, test_end,
      feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
      execution, leverage_pct, hedge_pct, margin_spread_pct, maintenance_pct, long_threshold,
-     margin_train, span_from, span_to, last_used, window_end, span_snapshot, span_parts_json,
-     span_backfilled)
+     span_from, span_to, last_used, window_end, span_snapshot, span_parts_json,
+     span_backfilled, recalculated_from)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
      %(objective)s, %(loss)s, %(cost_bps)s, %(park)s, %(threshold)s, %(tax_rate)s,
-     %(tax_train)s, %(purge_bars)s,
+     %(purge_bars)s,
      %(train_start)s, %(first_val)s, %(last_val)s, %(is_test)s,
      %(hyperparams_json)s, %(columns_json)s,
      %(strategy_id)s, %(strategy_name)s, %(strategy_version)s,
@@ -93,9 +105,9 @@ VALUES
      %(feature_run_id)s, %(input_snapshot)s, %(snapshot_json)s, %(code_hash)s,
      %(git_sha)s, %(lib_versions_json)s,
      %(execution)s, %(leverage_pct)s, %(hedge_pct)s, %(margin_spread_pct)s,
-     %(maintenance_pct)s, %(long_threshold)s, %(margin_train)s,
+     %(maintenance_pct)s, %(long_threshold)s,
      %(span_from)s, %(span_to)s, %(last_used)s, %(window_end)s, %(span_snapshot)s,
-     %(span_parts_json)s, %(span_backfilled)s)
+     %(span_parts_json)s, %(span_backfilled)s, %(recalculated_from)s)
 RETURNING id
 """
 
@@ -216,9 +228,6 @@ def run_row(args: Any, set_id: int, input_width: int,
         # Percent on realized gains, or NULL for a run scored before tax. NULL
         # rather than 0 so "off" and "a 0% rate" never read the same.
         "tax_rate": float(args.tax_rate) if getattr(args, "tax_rate", None) else None,
-        # True when the loss was charged the tax as well, so the model (and its
-        # signals) differ from an untaxed run of the same strategy.
-        "tax_train": bool(getattr(args, "tax_train", False)),
         # Bars dropped from the end of each training window because their
         # targets look past it. NULL on a run from before the purge, which
         # trained on them: such a run's folds are slightly optimistic.
@@ -253,9 +262,6 @@ def execution_columns(args: Any) -> dict[str, Any]:
         "maintenance_pct": dial("maintenance_pct"),
         "long_threshold": (float(args.long_threshold)
                            if margin and getattr(args, "loss", "ce") != "ce" else None),
-        # True when the loss was Strategy 2's curve too, so the signals differ
-        # from a run of the same strategy that was only scored with it.
-        "margin_train": bool(margin and getattr(args, "margin_train", False)),
     }
 
 
@@ -311,6 +317,9 @@ NO_LINEAGE: dict[str, Any] = {
     # G12: the dates the run read and a snapshot over just them (nn/staleness.py).
     "span_from": None, "span_to": None, "last_used": None, "window_end": None,
     "span_snapshot": None, "span_parts_json": None, "span_backfilled": False,
+    # B10: the run whose stored signals this one was scored from, without
+    # retraining (`nn/recalculate.py`). None on a run that trained.
+    "recalculated_from": None,
 }
 
 
@@ -411,17 +420,64 @@ def find_or_create_benchmark(conn, set_id: int, timeframe: str, w: Any,
                            int(row[4]))
 
 
-def save_fold(conn, run_id: int, r: FoldResult) -> None:
-    """Store one fold as soon as it is scored, and commit.
+_DELETE_SIGNALS = "DELETE FROM walkforward_signals WHERE run_id = %s AND fold = %s"
+
+_INSERT_SIGNAL = """
+INSERT INTO walkforward_signals (run_id, fold, bar_date, exit_date, output, call_class, label)
+VALUES (%s, %s, %s, %s, %s, %s, %s)
+"""
+
+
+def signal_rows(run_id: int, fold: int, sig: profit.Signals,
+                settings: profit.Settings) -> list[tuple]:
+    """One fold's signals as rows. The call is the one the run's own threshold
+    makes; a recalculation derives its own from `output`. Pure."""
+    calls = profit.calls(sig.output, settings.loss, settings.threshold)
+    return [
+        (run_id, fold, d, e, [float(v) for v in out], int(c), int(label))
+        for d, e, out, c, label in zip(sig.dates, sig.exits, sig.output, calls, sig.labels,
+                                       strict=True)
+    ]
+
+
+def save_fold(conn, run_id: int, r: FoldResult, sig: profit.Signals | None = None,
+              settings: profit.Settings | None = None) -> None:
+    """Store one fold as soon as it is scored, with its signals, and commit.
 
     Upserts rather than inserts so a re-run of the same fold number corrects it
     instead of failing on the primary key — which matters when a run is resumed
-    rather than restarted.
+    rather than restarted. Without `sig` the fold's figures are rewritten and
+    its stored signals left as they are: a recalculation in place.
     """
     with conn.cursor() as cur:
         set_actor(cur)
         cur.execute(_INSERT_FOLD, fold_row(run_id, r))
+        if sig is not None:
+            if settings is None:
+                raise ValueError("storing signals needs the settings that made the call")
+            cur.execute(_DELETE_SIGNALS, (run_id, r.fold))
+            cur.executemany(_INSERT_SIGNAL, signal_rows(run_id, r.fold, sig, settings))
     conn.commit()
+
+
+def load_signals(cur, run_id: int) -> dict[int, profit.Signals]:
+    """A run's stored signals, by fold; empty for a run that stored none."""
+    cur.execute(
+        "SELECT fold, bar_date, exit_date, output, label FROM walkforward_signals "
+        "WHERE run_id = %s ORDER BY fold, bar_date",
+        (run_id,),
+    )
+    by_fold: dict[int, list[tuple]] = {}
+    for fold, d, e, out, label in cur.fetchall():
+        by_fold.setdefault(int(fold), []).append((d, e, out, label))
+    return {
+        fold: profit.Signals(
+            dates=[r[0] for r in rows], exits=[r[1] for r in rows],
+            output=np.array([r[2] for r in rows], dtype=np.float64),
+            labels=np.array([r[3] for r in rows], dtype=np.int64),
+        )
+        for fold, rows in by_fold.items()
+    }
 
 
 def close_run(conn, run_id: int) -> None:

@@ -47,11 +47,6 @@ export const fieldHints: Record<string, string> = {
     + 'the position is sold, losses offset later gains in the same year, and buy-and-hold, '
     + 'which never sells, pays nothing. Scoring only: the model and its signals are the '
     + 'same either way, so leave it off for a strategy published as a signal.',
-  'objective.taxTrain':
-    'Also charge the tax while training, so the model learns that a trade has to clear '
-    + 'the tax to be worth making. This changes the model and its signals: use it for '
-    + 'your own taxable account, not for a strategy published as a signal. Money-trained '
-    + 'losses only.',
   'objective.execution':
     'How the signals are acted on. Strategy 1 (signals): long unless the model says sell, '
     + 'which also broadcasts as a plain signal. Strategy 2 (margin): the QQQ bought with your '
@@ -74,12 +69,6 @@ export const fieldHints: Record<string, string> = {
     'Strategy 2: if equity falls below this percent of the account\'s assets, the broker '
     + 'issues a margin call and the margin position is closed at that day\'s price. FINRA\'s '
     + 'floor is 25; brokers commonly ask 30.',
-  'objective.marginTrain':
-    'Strategy 2: also train against its curve (the margin legs, PSQ, interest and '
-    + 'commission), so the model learns to borrow only when a trade clears its cost. This '
-    + 'changes the model and its signals: not for a strategy published as a signal. '
-    + 'Money-trained losses only, not together with train with tax yet, and every training '
-    + 'bar must have PSQ, so training starts in 2007 or later.',
   'objective.longThreshold':
     'Strategy 2 with a money-trained loss: the position the model must reach before it '
     + 'borrows to go long. Below the position threshold it hedges with PSQ; between the two '

@@ -106,8 +106,9 @@ class WalkforwardRepositoryTest {
              + " WHERE id = " + strategyRunId);
         // Scored after tax at 25%: one fold paid 2 points, the other nothing.
         taxedRunId = insertRun(LABEL, false, "return", "ce", null);
-        exec("UPDATE walkforward_runs SET tax_rate = 25, tax_train = true WHERE id = "
-             + taxedRunId);
+        // ...and recalculated from the first run's stored signals (B10).
+        exec("UPDATE walkforward_runs SET tax_rate = 25, recalculated_from = " + runId
+             + " WHERE id = " + taxedRunId);
         insertFold(taxedRunId, 1, 2016, 3.0, 7.0, 0.5, 0.6, 9.0, 11.0, 4, -0.5, -0.2, +1.0);
         insertFold(taxedRunId, 2, 2017, 2.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, -1.5, -0.5, -2.0);
         exec("UPDATE walkforward_folds SET gains_tax = -2.0, best_epoch = 7, epochs_run = 12"
@@ -298,7 +299,7 @@ class WalkforwardRepositoryTest {
     void untaxedRunHasNoRate() {
         WalkforwardRun run = theRun(runId);
         assertNull(run.taxRate(), "null is 'off'; 0 would read as a 0% rate that was applied");
-        assertFalse(run.taxTrain());
+        assertNull(run.recalculatedFrom(), "a run that trained has no source run");
         assertNull(run.purgeBars(), "a run from before the purge says so");
         assertEquals(0.0, run.meanGainsTax(), 1e-9);
         assertEquals(0.0, repo.findFolds(runId).get(0).gainsTax(), 1e-9);
@@ -309,7 +310,7 @@ class WalkforwardRepositoryTest {
     void taxedRunCarriesRateAndTax() {
         WalkforwardRun run = theRun(taxedRunId);
         assertEquals(25.0, run.taxRate(), 1e-9);
-        assertTrue(run.taxTrain());
+        assertEquals(Long.valueOf(runId), run.recalculatedFrom());
         assertEquals(-1.0, run.meanGainsTax(), 1e-9); // (-2 + 0) / 2
         List<WalkforwardFold> folds = repo.findFolds(taxedRunId);
         assertEquals(-2.0, folds.get(0).gainsTax(), 1e-9);
@@ -459,7 +460,6 @@ class WalkforwardRepositoryTest {
         assertEquals(1.5, e.marginSpreadPct());
         assertEquals(30.0, e.maintenancePct());
         assertNull(e.longThreshold());
-        assertFalse(e.marginTrain());
         assertEquals(-0.3, e.meanMarginInterest(), 1e-12);
         assertEquals(1, e.marginCalls());
         assertEquals(2, e.trims());

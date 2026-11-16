@@ -61,6 +61,8 @@ from datetime import date, timedelta
 from types import MappingProxyType
 from typing import Any
 
+from nn.profit import D9_REASON
+
 #: Saved hyperparameter -> walk-forward argument. Mirrors PARAM_SPEC in
 #: web/api/strategies.js; `test_strategy_spec` holds the two together.
 RUNNER_ARGS = {
@@ -95,6 +97,10 @@ OBJECTIVE_ARGS = {
     "longThreshold": "long_threshold",
 }
 
+#: The objective's old training switches (D9 removed them), as a saved row may
+#: still hold them, with what each did.
+TRAINING_SWITCHES = {"taxTrain": "train with tax", "marginTrain": "train with margin"}
+
 #: What a row saved before `objective_json` existed ran with: walkforward.py's
 #: own flag defaults. Mirrors OBJECTIVE_DEFAULTS in web/api/strategies.js;
 #: `test_strategy_spec` holds the two together. Every save since stores every
@@ -109,14 +115,12 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
     "park": "cash",
     "taxScore": False,
     "taxRatePct": None,
-    "taxTrain": False,
     "execution": "signals",
     "leveragePct": None,
     "hedgePct": None,
     "marginSpreadPct": None,
     "maintenancePct": None,
     "longThreshold": None,
-    "marginTrain": False,
 })
 
 #: The design's hard rule for Strategy 2 (G5), as web/api/strategies.js holds it.
@@ -315,6 +319,13 @@ def runner_args(s: Strategy) -> dict[str, Any]:
     kind = s.label.get("kind")
     if kind not in LABEL_KINDS:
         errors.append(f"label kind {kind!r} has no runner; only {', '.join(LABEL_KINDS)}")
+    # Saved before D9 (2026-11-15): the API refuses these switches now, and a
+    # row that still has one is refused here rather than silently run blind,
+    # which would record a run its strategy did not ask for.
+    for key, what in TRAINING_SWITCHES.items():
+        if s.objective.get(key):
+            errors.append(f"{key} ({what}) is set: {D9_REASON}. Save a new version "
+                          f"without it")
     if errors:
         raise StrategyRefused(errors)
     out = {RUNNER_ARGS[k]: v for k, v in s.hyperparams.items() if k in RUNNER_ARGS}
@@ -330,15 +341,6 @@ def runner_args(s: Strategy) -> dict[str, Any]:
         if not rate or rate <= 0:
             raise StrategyRefused(["score after tax is on but the tax rate is not set"])
         out["tax_rate"] = float(rate)
-    # Train with tax changes the model, so it is its own switch and never
-    # implied by the rate. It needs the rate and a money loss; the API refuses
-    # saving it otherwise, and this guards a row written any other way.
-    if s.objective.get("taxTrain"):
-        if "tax_rate" not in out:
-            raise StrategyRefused(["train with tax needs score after tax and a rate"])
-        if out.get("loss", "ce") == "ce":
-            raise StrategyRefused(["train with tax needs a money-trained loss, not ce"])
-        out["tax_train"] = True
     if out.get("execution", "signals") == "margin":
         # Strategy 2. The API refuses saving any of these; this guards a row
         # written any other way, which would otherwise run on flag defaults.
@@ -355,16 +357,8 @@ def runner_args(s: Strategy) -> dict[str, Any]:
                               f"never exceeds {MARGIN_CEILING_PCT:g}% of the holding")
         if out.get("loss", "ce") != "ce" and s.objective.get("longThreshold") is None:
             errors.append("Strategy 2 with a money-trained loss needs longThreshold")
-        if s.objective.get("marginTrain"):
-            if out.get("loss", "ce") == "ce":
-                errors.append("train with margin needs a money-trained loss, not ce")
-            if s.objective.get("taxTrain"):
-                errors.append("train with margin and train with tax together are not supported yet")
-            out["margin_train"] = True
         if errors:
             raise StrategyRefused(errors)
-    elif s.objective.get("marginTrain"):
-        raise StrategyRefused(["train with margin needs execution 'margin' (Strategy 2)"])
     horizon = s.label.get("horizonBars")
     if horizon is not None:
         if "forward" in out and out["forward"] != horizon:

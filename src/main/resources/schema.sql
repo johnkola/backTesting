@@ -481,10 +481,6 @@ CREATE TABLE IF NOT EXISTS walkforward_folds (
 -- sitting out of the market.
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS tax_rate DOUBLE PRECISION;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS gains_tax DOUBLE PRECISION NOT NULL DEFAULT 0;
--- Train with tax: the loss was charged the same tax while training, so the
--- model learned to skip trades that do not clear it. Unlike tax_rate alone
--- this changes the signals, which is why it is recorded on its own.
-ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS tax_train BOOLEAN NOT NULL DEFAULT false;
 
 -- Purge and early stopping (G19). purge_bars is how many bars were dropped from
 -- the end of each training window because their targets look past it into the
@@ -655,9 +651,6 @@ ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS hedge_pct DOUBLE PRECISION
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS margin_spread_pct DOUBLE PRECISION;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS maintenance_pct DOUBLE PRECISION;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS long_threshold DOUBLE PRECISION;
--- G5 step 2: the money loss was Strategy 2's curve as well, so the model (and
--- its signals) differ from a run that was only scored with it, like tax_train.
-ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS margin_train BOOLEAN NOT NULL DEFAULT false;
 -- Per fold under Strategy 2: interest charged (negative points of starting
 -- capital, beside the other cost terms), forced closes, cuts back to the 50%
 -- ceiling, bars held long and hedged, and bars below maintenance with nothing
@@ -673,6 +666,39 @@ ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS core_at_risk INT;
 -- benchmark; strat_return - levered_return is what the model's timing added
 -- over borrowing alone. NULL under Strategy 1.
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS levered_return DOUBLE PRECISION;
+
+-- Signals, then profit (D9 = R75, build step B10). Engines learn signals only;
+-- the profit step (python/nn/profit.py) turns them into the fold figures above.
+-- One row per scored bar, so a run can be scored again under other cost, tax,
+-- park or margin settings without retraining (python -m nn.recalculate).
+--   bar_date    the bar the signal was computed on
+--   exit_date   the next date of the run's matrix, whose close ends the bar's
+--               return; NULL on the last labelled date, which earns nothing.
+--               Every market input of the bar is a function of these two dates.
+--   output      the model's raw output: a money model's position in [0, 1], or
+--               a classifier's BUY, HOLD and SELL probabilities
+--   call_class  the call the run's own threshold made (0 BUY, 1 HOLD, 2 SELL)
+--   label       the class the bar was labelled, so accuracy can be recomputed
+-- Written with the fold in one transaction, deleted with the run. No audit
+-- columns, like candles: the fold row written beside them carries who and when.
+CREATE TABLE IF NOT EXISTS walkforward_signals (
+    run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
+    fold INT NOT NULL,
+    bar_date DATE NOT NULL,
+    exit_date DATE,
+    output DOUBLE PRECISION[] NOT NULL,
+    call_class SMALLINT NOT NULL,
+    label SMALLINT NOT NULL,
+    PRIMARY KEY (run_id, bar_date)
+);
+-- The run whose stored signals this one was scored from, without retraining;
+-- NULL on a run that trained. SET NULL so deleting the source keeps the copy.
+ALTER TABLE walkforward_runs
+    ADD COLUMN IF NOT EXISTS recalculated_from BIGINT REFERENCES walkforward_runs(id) ON DELETE SET NULL;
+-- Train with tax and train with margin are gone with D9: an engine never sees
+-- a cost, so no run can have been trained with one.
+ALTER TABLE walkforward_runs DROP COLUMN IF EXISTS tax_train;
+ALTER TABLE walkforward_runs DROP COLUMN IF EXISTS margin_train;
 
 -- ---------------------------------------------------------------------------
 -- The feature catalogue

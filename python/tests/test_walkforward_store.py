@@ -182,10 +182,14 @@ class TestTaxRate:
     def test_patience_is_a_hyperparameter(self):
         assert '"patience": 4' in ws.run_row(an_args(patience=4), 6, 580, 47, 2)["hyperparams_json"]
 
-    def test_whether_it_trained_with_tax_is_stored(self):
-        assert ws.run_row(an_args(), 6, 580, 47, 2)["tax_train"] is False
+    def test_no_training_switch_is_recorded_and_a_trained_run_has_no_source(self):
+        # D9: an engine never sees a cost, so there is nothing to record; a run
+        # that trained was not recalculated from another.
         row = ws.run_row(an_args(tax_rate=25.0, tax_train=True), 6, 580, 47, 2)
-        assert row["tax_train"] is True
+        assert "tax_train" not in row and "margin_train" not in row
+        assert row["recalculated_from"] is None
+        assert ws.run_row(an_args(), 6, 580, 47, 2,
+                          lineage={"recalculated_from": 396})["recalculated_from"] == 396
 
 
 # --------------------------------------------------------------------------
@@ -258,8 +262,7 @@ class TestExecutionColumns:
     def test_strategy1_records_signals_and_null_dials(self):
         cols = ws.execution_columns(an_args())
         assert cols["execution"] == "signals"
-        assert cols["margin_train"] is False
-        assert all(v is None for k, v in cols.items() if k not in ("execution", "margin_train"))
+        assert all(v is None for k, v in cols.items() if k != "execution")
 
     def test_strategy2_records_every_dial_and_no_long_threshold_for_ce(self):
         cols = ws.execution_columns(an_args(execution="margin", leverage_pct=30,
@@ -465,6 +468,94 @@ class TestRoundTrip:
         finally:
             self._cleanup(db, run_id)
 
+    def test_signals_round_trip_and_a_rewrite_replaces_them(self, db, a_set):
+        # B10: what the profit step scored is what a recalculation reads back,
+        # float for float; rewriting a fold replaces its signals, and a
+        # rewrite without signals (a recalculation in place) keeps them.
+        from nn import profit
+        run_id = ws.open_run(db, an_args(label="pytest-signals"), a_set, 580)
+        money = profit.Settings(loss="return", threshold=0.5)
+        try:
+            sig = a_signals([[0.1234567890123], [0.5], [0.987654321]])
+            ws.save_fold(db, run_id, FakeFold(fold=1), sig, money)
+            with db.cursor() as cur:
+                back = ws.load_signals(cur, run_id)[1]
+            assert back.dates == sig.dates and back.exits == sig.exits
+            assert back.output.tolist() == sig.output.tolist()
+            assert back.labels.tolist() == [0, 1, 2]
+
+            ws.save_fold(db, run_id, FakeFold(fold=1), a_signals([[0.9], [0.9], [0.9]]), money)
+            ws.save_fold(db, run_id, FakeFold(fold=1))
+            with db.cursor() as cur:
+                cur.execute("SELECT count(*), array_agg(call_class ORDER BY bar_date) "
+                            "FROM walkforward_signals WHERE run_id = %s", (run_id,))
+                assert cur.fetchone() == (3, [0, 0, 0])
+        finally:
+            self._cleanup(db, run_id)
+        with db.cursor() as cur:
+            cur.execute("SELECT count(*) FROM walkforward_signals WHERE run_id = %s", (run_id,))
+            assert cur.fetchone()[0] == 0, "signals are deleted with their run"
+
+    def test_a_recalculation_in_place_reproduces_the_run_and_repairs_its_figures(
+            self, db, a_set):
+        # B10 against the store: the run writes its signals, and rescoring them
+        # at its own settings gives back exactly what it stored.
+        import numpy as np
+
+        from nn import profit, recalculate
+        from nn import walkforward as wf
+        with db.cursor() as cur:
+            cur.execute("SELECT i.symbol, ds.name FROM feature_sets fs "
+                        "JOIN instruments i ON i.id = fs.instrument_id "
+                        "JOIN data_sources ds ON ds.id = fs.source_id WHERE fs.id = %s", (a_set,))
+            symbol, source = cur.fetchone()
+            closes = wf.load_closes(cur, symbol, source, "D1")
+        days = sorted(closes)[-4:]
+        if len(days) < 4:
+            pytest.skip(f"no D1 candles for {symbol}/{source}, which the set is of")
+        sig = profit.Signals(days[:3], days[1:], np.array([[0.9], [0.1], [0.9]]),
+                             np.array([0, 2, 1]))
+        settings = profit.Settings(loss="return", cost_bps=5.0)
+        money = profit.score(sig.output, profit.market(closes, sig.dates, sig.exits, None,
+                                                       "cash"), settings)
+        fold = wf.FoldResult(fold=1, train_from=days[0], train_to=days[0], val_year=days[0].year,
+                             n_train=1, n_val=3, accuracy=0.5, baseline_acc=0.5,
+                             **money.fields())
+        run_id = ws.open_run(db, an_args(loss="return", label="pytest-recalc"), a_set, 580)
+        try:
+            ws.save_fold(db, run_id, fold, sig, settings)
+            ws.close_run(db, run_id)
+
+            dry = recalculate.recalculate(db, run_id, dry_run=True)
+            assert (dry.mode, dry.run_id) == ("in place", None)
+            for name in profit.PROFIT_FIELDS:
+                assert getattr(dry.after[0], name) == getattr(fold, name), name
+
+            with db.cursor() as cur:
+                cur.execute("UPDATE walkforward_folds SET strat_return = -99 WHERE run_id = %s",
+                            (run_id,))
+            db.commit()
+            done = recalculate.recalculate(db, run_id)
+            assert done.run_id == run_id
+            with db.cursor() as cur:
+                cur.execute("SELECT strat_return FROM walkforward_folds WHERE run_id = %s",
+                            (run_id,))
+                assert cur.fetchone()[0] == fold.strat_return
+        finally:
+            self._cleanup(db, run_id)
+
+    def test_a_run_without_signals_is_refused_with_the_reason(self, db, a_set):
+        from nn import recalculate
+        run_id = ws.open_run(db, an_args(label="pytest-nosignals"), a_set, 580)
+        try:
+            ws.save_fold(db, run_id, FakeFold(fold=1))
+            ws.close_run(db, run_id)
+            with pytest.raises(recalculate.Refused, match="stored no signals") as exc:
+                recalculate.recalculate(db, run_id, dry_run=True)
+            assert exc.value.status == 409
+        finally:
+            self._cleanup(db, run_id)
+
     def test_rescoring_a_fold_corrects_it_instead_of_failing(self, db, a_set):
         run_id = ws.open_run(db, an_args(), a_set, 580)
         try:
@@ -561,14 +652,81 @@ class TestRunProvenance:
         assert wanted == set(ws.run_row(an_args(), 6, 580, 47, 2, columns=["a"]))
 
 
-def test_margin_train_is_recorded_only_under_strategy2():
-    assert ws.execution_columns(an_args())["margin_train"] is False
-    assert ws.execution_columns(an_args(margin_train=True))["margin_train"] is False
-    cols = ws.execution_columns(an_args(execution="margin", loss="return", leverage_pct=20,
-                                        hedge_pct=20, margin_spread_pct=1.5,
-                                        maintenance_pct=30, long_threshold=0.75,
-                                        margin_train=True))
-    assert cols["margin_train"] is True
+# --------------------------------------------------------------------------
+# Signals (B10)
+# --------------------------------------------------------------------------
+
+
+def a_signals(output, labels=(0, 1, 2)):
+    from datetime import date
+
+    import numpy as np
+
+    from nn import profit
+    days = [date(2021, 1, 4), date(2021, 1, 5), date(2021, 1, 6)]
+    return profit.Signals(days, [*days[1:], None], np.asarray(output, dtype=np.float64),
+                          np.asarray(labels, dtype=np.int64))
+
+
+def test_signal_rows_store_the_raw_output_and_the_call_the_run_made():
+    from nn import profit
+    sig = a_signals([[0.2], [0.5], [0.9]])
+    rows = ws.signal_rows(7, 3, sig, profit.Settings(loss="return", threshold=0.5))
+    assert [r[:4] for r in rows] == [(7, 3, sig.dates[0], sig.dates[1]),
+                                     (7, 3, sig.dates[1], sig.dates[2]),
+                                     (7, 3, sig.dates[2], None)]
+    assert [r[4] for r in rows] == [[0.2], [0.5], [0.9]]
+    assert [r[5] for r in rows] == [2, 0, 0]       # SELL below the threshold
+    assert [r[6] for r in rows] == [0, 1, 2]
+
+
+def test_a_classifier_s_call_is_its_most_probable_class():
+    from nn import profit
+    sig = a_signals([[0.6, 0.3, 0.1], [0.2, 0.7, 0.1], [0.1, 0.2, 0.7]])
+    rows = ws.signal_rows(7, 1, sig, profit.Settings(loss="ce"))
+    assert [r[5] for r in rows] == [0, 1, 2]
+    assert rows[0][4] == [0.6, 0.3, 0.1]
+
+
+def test_load_signals_groups_rows_by_fold_in_date_order():
+    from datetime import date
+
+    class Cur:
+        def execute(self, sql, params):
+            assert "ORDER BY fold, bar_date" in sql and params == (5,)
+
+        def fetchall(self):
+            return [(1, date(2020, 1, 2), date(2020, 1, 3), [0.4], 2),
+                    (1, date(2020, 1, 3), None, [0.6], 0),
+                    (2, date(2021, 1, 4), date(2021, 1, 5), [0.8], 1)]
+
+    got = ws.load_signals(Cur(), 5)
+    assert sorted(got) == [1, 2]
+    assert got[1].exits == [date(2020, 1, 3), None]
+    assert got[1].output.shape == (2, 1) and got[1].labels.tolist() == [2, 0]
+
+
+def test_storing_signals_needs_the_settings_that_made_the_call():
+    import pytest as _pytest
+
+    class Conn:
+        def cursor(self):
+            class C:
+                def __enter__(s):
+                    return s
+
+                def __exit__(s, *a):
+                    return False
+
+                def execute(s, *a):
+                    pass
+            return C()
+
+        def commit(self):
+            pass
+
+    with _pytest.raises(ValueError, match="settings"):
+        ws.save_fold(Conn(), 1, FakeFold(), a_signals([[0.2], [0.5], [0.9]]))
 
 
 def test_a_strategy2_fold_carries_its_always_long_baseline():

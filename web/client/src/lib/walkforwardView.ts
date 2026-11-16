@@ -174,7 +174,6 @@ export function executionLine(run: WalkforwardRun): string | null {
     `call below ${e.maintenancePct}%`,
   ]
   if (e.longThreshold !== null) parts.push(`long at position >= ${e.longThreshold}`)
-  if (e.marginTrain) parts.push('trained on this curve')
   let line = `Strategy 2: ${parts.join(', ')}`
   if (run.folds > 0) {
     line += ` · interest ${pp(e.meanMarginInterest)} pts a fold`

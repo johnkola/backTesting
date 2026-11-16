@@ -1343,6 +1343,128 @@
               }
             }
           ]
+        },
+        {
+          "name": "Recalculate a walk-forward run at its own settings (dry run)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward/runs/{{wfRunId}}/recalculate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward",
+                "runs",
+                "{{wfRunId}}",
+                "recalculate"
+              ]
+            },
+            "description": "The loader's route (B10, D9 = R75). Rescores a run from its stored signals without retraining. Without strategyId it uses the run's own settings, so on unchanged code every fold reproduces exactly. dryRun writes nothing. With strategyId, another version of the strategy that trains the same model, it writes a new run linked by recalculatedFrom.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dryRun\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('a dry run in place writes nothing', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.mode).to.eql('in place');",
+                  "    pm.expect(d.dryRun).to.be.true;",
+                  "    pm.expect(d.runId).to.be.null;",
+                  "    pm.expect(d.sourceRunId).to.eql(Number(pm.collectionVariables.get('wfRunId')));",
+                  "});",
+                  "",
+                  "pm.test('at its own settings every fold reproduces what is stored', function () {",
+                  "    // The run and the recalculation build the market from the same two dates",
+                  "    // per bar and score the same stored outputs, so nothing may move.",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.folds.length).to.be.above(0);",
+                  "    for (const f of d.folds) {",
+                  "        for (const k of ['strat_return', 'strat_sharpe', 'strat_maxdd', 'trades', 'gains_tax', 'accuracy']) {",
+                  "            pm.expect(f.after[k], `fold ${f.fold} ${k}`).to.eql(f.before[k]);",
+                  "        }",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recalculating a run that does not exist is 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward/runs/999999999/recalculate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward",
+                "runs",
+                "999999999",
+                "recalculate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which run it could not find', function () {",
+                  "    pm.expect(pm.response.json().reasons.join(' ')).to.include('999999999');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1680,6 +1802,58 @@
                   "    const d = pm.response.json();",
                   "    pm.expect(d).to.have.property('error');",
                   "    pm.expect(d.error.toLowerCase()).to.include('at least one feature');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Train with tax is refused (D9)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved"
+              ]
+            },
+            "description": "D9 = R75: engines learn signals only and know nothing about costs, tax or margin. The profit step applies them afterwards, so the old train-with-tax and train-with-margin switches are refused on save.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-smoke\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [\n    \"price_close\"\n  ],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2016-01-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\",\n  \"objective\": {\n    \"loss\": \"return\",\n    \"taxScore\": true,\n    \"taxRatePct\": 25,\n    \"taxTrain\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('gives D9 as the reason', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.error).to.include('taxTrain (train with tax) is gone');",
+                  "    pm.expect(d.error).to.include('D9, R75');",
                   "});"
                 ]
               }

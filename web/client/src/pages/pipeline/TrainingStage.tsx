@@ -178,6 +178,15 @@ export default function TrainingStage() {
                       holdout
                     </span>
                   )}
+                  {r.recalculatedFrom != null && (
+                    <span
+                      className="badge badge-xs badge-info ml-2 tooltip tooltip-right"
+                      data-tip={`Scored from run #${r.recalculatedFrom}'s stored signals under `
+                        + 'this strategy version\'s settings. Nothing was retrained (D9).'}
+                    >
+                      from #{r.recalculatedFrom}
+                    </span>
+                  )}
                   {r.execution?.kind === 'margin' && (
                     <span
                       className="badge badge-xs badge-secondary ml-2 tooltip tooltip-right"
@@ -217,11 +226,9 @@ export default function TrainingStage() {
                   className="text-right font-mono text-xs"
                   title={r.taxRate === null
                     ? 'Scored before tax'
-                    : `${r.taxRate}% on realized gains`
-                      + (r.taxTrain ? ', trained with it too' : ', scoring only')}
+                    : `${r.taxRate}% on realized gains, scoring only`}
                 >
                   {r.taxRate === null ? 'off' : pp(r.meanGainsTax)}
-                  {r.taxTrain && <span className="badge badge-xs badge-warning ml-1">trained</span>}
                 </td>
                 <td className={`text-right font-mono text-xs ${
                   r.execution?.kind === 'margin' || r.meanTiming == null ? ''

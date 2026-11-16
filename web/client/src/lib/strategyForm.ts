@@ -294,14 +294,12 @@ export type ObjectiveForm = {
   park: StrategyObjective['park']
   taxScore: boolean
   taxRatePct: string
-  taxTrain: boolean
   execution: StrategyObjective['execution']
   leveragePct: string
   hedgePct: string
   marginSpreadPct: string
   maintenancePct: string
   longThreshold: string
-  marginTrain: boolean
 }
 
 const text = (v: number | null) => (v === null ? '' : String(v))
@@ -317,14 +315,12 @@ export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
     park: o.park,
     taxScore: o.taxScore,
     taxRatePct: o.taxRatePct === null ? '' : String(o.taxRatePct),
-    taxTrain: o.taxTrain,
     execution: o.execution ?? 'signals',
     leveragePct: text(o.leveragePct ?? null),
     hedgePct: text(o.hedgePct ?? null),
     marginSpreadPct: text(o.marginSpreadPct ?? null),
     maintenancePct: text(o.maintenancePct ?? null),
     longThreshold: text(o.longThreshold ?? null),
-    marginTrain: o.marginTrain ?? false,
   }
 }
 
@@ -334,9 +330,9 @@ export function objectiveToForm(o: StrategyObjective): ObjectiveForm {
  * a strategy that claims a setting no run would apply, and the form hides
  * those fields, so a value left behind in a hidden field must not reach it.
  * The tax rate is cleared the same way when scoring after tax is off; a blank
- * rate with it on is sent as null, for the server to refuse by name. Train
- * with tax is cleared unless scoring after tax is on and the loss is a money
- * loss, the only case where the form shows it.
+ * rate with it on is sent as null, for the server to refuse by name. There
+ * is no train-with-tax or train-with-margin switch: engines are blind to
+ * costs, tax and margin (D9, R75), which the profit step applies afterwards.
  */
 export function objectiveFromForm(f: ObjectiveForm, spec: ObjectiveSpec): StrategyObjective {
   const money = f.loss !== 'ce'
@@ -352,7 +348,6 @@ export function objectiveFromForm(f: ObjectiveForm, spec: ObjectiveSpec): Strate
     park: f.park,
     taxScore: f.taxScore,
     taxRatePct: f.taxScore && f.taxRatePct.trim() !== '' ? Number(f.taxRatePct) : null,
-    taxTrain: f.taxScore && money ? f.taxTrain : false,
     ...executionFromForm(f, spec),
   }
 }
@@ -373,9 +368,6 @@ function executionFromForm(f: ObjectiveForm, spec: ObjectiveSpec) {
     marginSpreadPct: dial(f.marginSpreadPct, d.marginSpreadPct),
     maintenancePct: dial(f.maintenancePct, d.maintenancePct),
     longThreshold: margin && f.loss !== 'ce' ? dial(f.longThreshold, spec.defaultLongThreshold) : null,
-    // Shown, and so sent, only for Strategy 2 with a money loss and without
-    // train with tax, which the server refuses beside it.
-    marginTrain: margin && f.loss !== 'ce' && !f.taxTrain ? f.marginTrain : false,
   }
 }
 

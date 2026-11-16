@@ -14,7 +14,7 @@ import {
 
 const SIGNALS: WalkforwardExecution = {
   kind: 'signals', leveragePct: null, hedgePct: null, marginSpreadPct: null,
-  maintenancePct: null, longThreshold: null, marginTrain: false, meanMarginInterest: null,
+  maintenancePct: null, longThreshold: null, meanMarginInterest: null,
   marginCalls: null,
   trims: null, coreAtRisk: null, meanDaysLong: null, meanDaysHedged: null,
   meanLeveredReturn: null, foldsBeatLevered: null,
@@ -37,7 +37,7 @@ function aRun(over: Partial<WalkforwardRun> = {}): WalkforwardRun {
     park: 'cash',
     threshold: null,
     taxRate: null,
-    taxTrain: false,
+    recalculatedFrom: null,
     purgeBars: 5,
     trainStart: 2003,
     firstVal: 2016,
@@ -274,11 +274,6 @@ describe('executionLine (G5)', () => {
     const line = executionLine(aRun({ execution: { ...margin, marginCalls: 1, coreAtRisk: 2 } }))
     expect(line).toContain('1 margin call,')
     expect(line).toContain('core at risk on 2 days')
-  })
-
-  it('says when the model was trained on the margin curve', () => {
-    expect(executionLine(aRun({ execution: { ...margin, marginTrain: true } })))
-      .toContain('call below 30%, trained on this curve ·')
   })
 
   it('gives a money model its long threshold, and no costs before a fold lands', () => {

@@ -332,7 +332,7 @@ public class EngineApi {
         out.put("park", run.park());
         out.put("threshold", run.threshold());
         out.put("taxRate", run.taxRate());
-        out.put("taxTrain", run.taxTrain());
+        out.put("recalculatedFrom", run.recalculatedFrom());
         out.put("purgeBars", run.purgeBars());
         out.put("trainStart", run.trainStart());
         out.put("firstVal", run.firstVal());

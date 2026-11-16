@@ -913,11 +913,6 @@ export type StrategyObjective = {
   /** Percent on realized gains; null unless `taxScore`. */
   taxRatePct: number | null
   /**
-   * Train against the after-tax curve too. Unlike `taxScore` this changes the
-   * model and so its signals; needs `taxScore` and a money-trained loss.
-   */
-  taxTrain: boolean
-  /**
    * How the signals are acted on (Design Notes, Trading Strategies). 'signals'
    * is Strategy 1, long unless SELL. 'margin' is Strategy 2: a QQQ core that is
    * never sold, margin QQQ on an up signal, margin PSQ on a down one.
@@ -933,11 +928,6 @@ export type StrategyObjective = {
   maintenancePct: number | null
   /** Strategy 2, money-trained loss: position needed to go long on margin; null for ce. */
   longThreshold: number | null
-  /**
-   * Train against Strategy 2's curve too. Like `taxTrain` this changes the
-   * model and so its signals; needs Strategy 2 and a money-trained loss.
-   */
-  marginTrain: boolean
 }
 
 /** The rules the form draws the objective section from, served by the API. */
@@ -1205,8 +1195,6 @@ export type WalkforwardExecution = {
   marginSpreadPct: number | null
   maintenancePct: number | null
   longThreshold: number | null
-  /** The loss was Strategy 2's curve too, so the signals differ. */
-  marginTrain: boolean
   meanMarginInterest: number | null
   marginCalls: number | null
   trims: number | null
@@ -1248,8 +1236,11 @@ export type WalkforwardRun = {
   threshold: number | null
   /** Percent on realized gains when scored after tax; null when scored before tax. */
   taxRate: number | null
-  /** True when the model was trained against the tax too, so its signals differ. */
-  taxTrain: boolean
+  /**
+   * The run whose stored signals this one was scored from, without retraining
+   * (B10, `python -m nn.recalculate`); null on a run that trained.
+   */
+  recalculatedFrom: number | null
   /**
    * Bars dropped from the end of each training window because their targets
    * look into the scored window. Null on a run from before the purge, whose

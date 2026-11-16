@@ -173,23 +173,21 @@ class TestRunnerArgs:
         s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxRatePct": 30})
         assert "tax_rate" not in ss.runner_args(s)
 
-    def test_train_with_tax_is_passed_for_a_money_loss_scored_after_tax(self):
+    @pytest.mark.parametrize("switch", ["taxTrain", "marginTrain"])
+    def test_a_row_with_a_training_switch_is_refused_with_d9(self, switch):
+        # Saved before D9 (2026-11-15). Run blind it would record a run its
+        # strategy did not ask for, so it is refused with the reason.
         s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "loss": "return",
                                   "positionThreshold": 0.5, "taxScore": True,
-                                  "taxRatePct": 25, "taxTrain": True})
-        args = ss.runner_args(s)
-        assert args["tax_train"] is True and args["tax_rate"] == 25.0
-
-    def test_train_with_tax_without_scoring_after_tax_is_refused(self):
-        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "loss": "return", "taxTrain": True})
-        with pytest.raises(ss.StrategyRefused, match="score after tax"):
+                                  "taxRatePct": 25, switch: True})
+        with pytest.raises(ss.StrategyRefused, match="D9") as exc:
             ss.runner_args(s)
+        assert "new version without it" in exc.value.reasons[0]
 
-    def test_train_with_tax_on_ce_is_refused(self):
-        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxScore": True,
-                                  "taxRatePct": 25, "taxTrain": True})
-        with pytest.raises(ss.StrategyRefused, match="money-trained"):
-            ss.runner_args(s)
+    def test_a_row_with_a_switch_saved_off_still_runs(self):
+        s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxTrain": False,
+                                  "marginTrain": False})
+        assert "tax_train" not in ss.runner_args(s)
 
     def test_scoring_after_tax_alone_does_not_train_with_it(self):
         s = a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "taxScore": True, "taxRatePct": 25})
@@ -413,23 +411,17 @@ class TestStrategy2Args:
                                                  "loss": "return", "positionThreshold": 0.5}))
 
 
-class TestMarginTrainArgs:
+class TestMarginTrainRefused:
     MARGIN = {"execution": "margin", "leveragePct": 20, "hedgePct": 20,
               "marginSpreadPct": 1.5, "maintenancePct": 30}
 
     def obj(self, **over):
         return {**ss.OBJECTIVE_DEFAULTS, **self.MARGIN, **over}
 
-    def test_passes_margin_train_for_strategy2_with_a_money_loss(self):
-        out = ss.runner_args(a_strategy(objective=self.obj(
-            loss="return", positionThreshold=0.5, longThreshold=0.75, marginTrain=True)))
-        assert out["margin_train"] is True
-
     def test_off_by_default(self):
         assert "margin_train" not in ss.runner_args(a_strategy(objective=self.obj()))
 
-    def test_refused_under_strategy1_and_with_ce(self):
-        with pytest.raises(ss.StrategyRefused, match="execution 'margin'"):
-            ss.runner_args(a_strategy(objective={**ss.OBJECTIVE_DEFAULTS, "marginTrain": True}))
-        with pytest.raises(ss.StrategyRefused, match="money-trained"):
-            ss.runner_args(a_strategy(objective=self.obj(marginTrain=True)))
+    def test_refused_with_d9(self):
+        with pytest.raises(ss.StrategyRefused, match="D9"):
+            ss.runner_args(a_strategy(objective=self.obj(
+                loss="return", positionThreshold=0.5, longThreshold=0.75, marginTrain=True)))

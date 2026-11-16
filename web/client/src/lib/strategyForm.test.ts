@@ -282,8 +282,8 @@ describe('newestVersions', () => {
     objective: {
       loss: 'ce', classWeights: false, positionThreshold: null,
       verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
-      taxTrain: false, execution: 'signals', leveragePct: null, hedgePct: null,
-      marginSpreadPct: null, maintenancePct: null, longThreshold: null, marginTrain: false,
+      execution: 'signals', leveragePct: null, hedgePct: null,
+      marginSpreadPct: null, maintenancePct: null, longThreshold: null,
     },
     objectiveDefaulted: false,
     notes: null, createdAt: '', createdBy: 'web', updatedAt: '', updatedBy: 'web',
@@ -309,8 +309,8 @@ const SPEC: ObjectiveSpec = {
   defaults: {
     loss: 'ce', classWeights: false, positionThreshold: null,
     verdict: 'return', costBps: 5, park: 'cash', taxScore: false, taxRatePct: null,
-    taxTrain: false, execution: 'signals', leveragePct: null, hedgePct: null,
-    marginSpreadPct: null, maintenancePct: null, longThreshold: null, marginTrain: false,
+    execution: 'signals', leveragePct: null, hedgePct: null,
+    marginSpreadPct: null, maintenancePct: null, longThreshold: null,
   },
   losses: ['ce', 'return', 'sharpe', 'calmar'],
   verdicts: ['return', 'sharpe', 'drawdown'],
@@ -375,17 +375,12 @@ describe('objectiveFromForm', () => {
       .toBeNull()
   })
 
-  it('keeps train with tax for a money loss scored after tax', () => {
-    const f = { ...form, loss: 'return' as const, taxScore: true, taxRatePct: '25', taxTrain: true }
-    expect(objectiveFromForm(f, SPEC).taxTrain).toBe(true)
-  })
-
-  it('drops train with tax left ticked once scoring after tax is off or the loss is ce', () => {
-    expect(objectiveFromForm({ ...form, loss: 'return', taxTrain: true }, SPEC).taxTrain)
-      .toBe(false)
-    expect(objectiveFromForm(
-      { ...form, taxScore: true, taxRatePct: '25', taxTrain: true }, SPEC,
-    ).taxTrain).toBe(false)
+  it('sends no training switch: engines are blind to tax and margin (D9)', () => {
+    const f = { ...form, loss: 'return' as const, taxScore: true, taxRatePct: '25',
+      execution: 'margin' as const }
+    const sent = objectiveFromForm(f, SPEC) as Record<string, unknown>
+    expect('taxTrain' in sent).toBe(false)
+    expect('marginTrain' in sent).toBe(false)
   })
 
   it('round-trips a saved after-tax objective', () => {
@@ -431,22 +426,5 @@ describe('Strategy 2 in the objective (G5)', () => {
     expect(marginProblems({ ...margin, leveragePct: '50' }, SPEC, 'QQQ')).toEqual([])
     expect(marginProblems(margin, SPEC, 'AAPL')[0]).toMatch(/QQQ only/)
     expect(marginProblems({ ...form, hedgePct: '90' }, SPEC, 'AAPL')).toEqual([])
-  })
-})
-
-describe('train with margin (G5 step 2)', () => {
-  const form = { ...objectiveToForm(SPEC.defaults), execution: 'margin' as const, marginTrain: true }
-
-  it('is sent for Strategy 2 with a money loss', () => {
-    expect(objectiveFromForm({ ...form, loss: 'return' }, SPEC).marginTrain).toBe(true)
-  })
-
-  it('is cleared for ce, under Strategy 1, and beside train with tax', () => {
-    expect(objectiveFromForm(form, SPEC).marginTrain).toBe(false)
-    expect(objectiveFromForm({ ...form, loss: 'return', execution: 'signals' }, SPEC).marginTrain)
-      .toBe(false)
-    expect(objectiveFromForm({
-      ...form, loss: 'return', taxScore: true, taxRatePct: '25', taxTrain: true,
-    }, SPEC).marginTrain).toBe(false)
   })
 })

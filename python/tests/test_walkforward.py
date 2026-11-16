@@ -196,35 +196,11 @@ def test_with_tax_the_loop_tracks_the_vectorised_curve_until_the_first_sale():
 # --------------------------------------------------------------------------
 
 
-def _args(**over):
-    from argparse import Namespace
-    base = dict(tax_train=False, tax_rate=None, loss="return")
-    base.update(over)
-    return Namespace(**base)
-
-
-def test_scoring_after_tax_alone_trains_untaxed():
-    assert wf.train_tax_rate(_args(tax_rate=25.0)) == 0.0
-
-
-def test_train_with_tax_charges_the_loss_the_rate_as_a_fraction():
-    assert wf.train_tax_rate(_args(tax_rate=25.0, tax_train=True)) == 0.25
-
-
-def test_train_with_tax_needs_a_rate_and_a_money_loss():
-    assert "needs --tax-rate" in wf.tax_train_problem(_args(tax_train=True))
-    assert "money-trained" in wf.tax_train_problem(_args(tax_train=True, tax_rate=25.0, loss="ce"))
-    assert wf.tax_train_problem(_args(tax_train=True, tax_rate=25.0)) is None
-    assert wf.tax_train_problem(_args()) is None
-
-
-def test_the_runner_refuses_train_with_tax_on_ce_before_reading_data(monkeypatch):
-    class NoDb:
-        def cursor(self):
-            return object()
-    monkeypatch.setattr(wf, "connect", lambda: NoDb())
-    monkeypatch.setattr(wf.feature_store, "latest_set_id", lambda *a: 1)
-    assert wf.main(["--tax-train", "--tax-rate", "25"]) == 2
+@pytest.mark.parametrize("flag", ["--tax-train", "--margin-train"])
+def test_the_runner_refuses_a_training_switch_with_d9_before_touching_the_db(monkeypatch, flag):
+    # D9 (R75): engines are blind, so the old switches are refused by name.
+    monkeypatch.setattr(wf, "connect", lambda: pytest.fail("touched the database"))
+    assert wf.main([flag, "--tax-rate", "25"]) == 2
 
 
 @pytest.mark.parametrize("tf", ["M30", "H1", "W1"])
@@ -239,7 +215,8 @@ def test_the_runner_refuses_a_non_daily_timeframe_before_touching_the_db(monkeyp
 def test_simulate_matches_the_money_loss_convention():
     """The trainer and the evaluator must shift identically. If they drift, a
     model is optimised against one timing and scored against another, and the
-    gap looks like a modelling result."""
+    gap looks like a modelling result. The loss is blind to costs (D9), so the
+    two are compared before any."""
     import torch
 
     from nn import money_loss as ml
@@ -249,11 +226,10 @@ def test_simulate_matches_the_money_loss_convention():
     pos = rng.integers(0, 2, 40).astype(float)
     preds = np.where(pos < 0.5, 2, 0)  # SELL where flat
 
-    eq, _ = wf.simulate(preds, rets, cost_bps=7.0)
+    eq, _ = wf.simulate(preds, rets, cost_bps=0.0)
     daily = ml.portfolio_returns(
         torch.tensor(pos, dtype=torch.float64),
         torch.tensor(rets, dtype=torch.float64),
-        cost_bps=7.0,
     ).numpy()
     assert eq[-1] == pytest.approx(float(np.cumprod(1 + daily)[-1]), rel=1e-9)
 
@@ -603,32 +579,6 @@ class TestMarginRefusals:
     def test_past_the_ceiling(self):
         assert any("50%" in o for o in
                    wf.margin_refusals(self.args(hedge_pct=55), [(2007, [], [1])], self.M))
-
-
-class TestMarginTrainRefusals:
-    M = wf.MarginInputs(np.array([np.nan, 0.01, 0.0, 0.01]), np.array([0.05] * 4),
-                        np.ones(4), date(2006, 6, 21))
-
-    def args(self, **over):
-        from argparse import Namespace
-        base = dict(symbol="QQQ", leverage_pct=20, hedge_pct=20, margin_spread_pct=1.5,
-                    maintenance_pct=30, cost_bps=5, tax_rate=None, loss="return",
-                    threshold=0.5, long_threshold=0.75, margin_train=True, tax_train=False)
-        base.update(over)
-        return Namespace(**base)
-
-    def test_a_training_window_before_psq_is_refused(self):
-        out = wf.margin_refusals(self.args(), [(2008, [0, 1], [2, 3])], self.M)
-        assert any("train from 2007" in o for o in out)
-
-    def test_a_training_window_after_psq_runs(self):
-        assert wf.margin_refusals(self.args(), [(2008, [1], [2, 3])], self.M) == []
-
-    def test_ce_and_tax_train_are_refused(self):
-        assert any("money-trained" in o for o in
-                   wf.margin_refusals(self.args(loss="ce"), [(2008, [1], [2])], self.M))
-        assert any("not supported yet" in o for o in
-                   wf.margin_refusals(self.args(tax_train=True), [(2008, [1], [2])], self.M))
 
 
 # --------------------------------------------------------------------------

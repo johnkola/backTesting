@@ -52,9 +52,9 @@ import java.time.ZonedDateTime;
  * @param taxRate             percent charged on realized gains when the run was scored
  *                            after tax; null when it was scored before tax. Scoring
  *                            only: the model and its signals are the same either way
- * @param taxTrain            true when the loss was charged the tax while training too;
- *                            unlike {@code taxRate} alone, that changes the model and
- *                            its signals
+ * @param recalculatedFrom    the run whose stored signals this one was scored from,
+ *                            without retraining (B10, {@code python -m nn.recalculate});
+ *                            null on a run that trained
  * @param purgeBars           bars dropped from the end of each training window because
  *                            their targets look into the scored window; null on a run
  *                            from before the purge, which trained on them
@@ -104,7 +104,7 @@ public record WalkforwardRun(
         String park,
         Double threshold,
         Double taxRate,
-        boolean taxTrain,
+        Long recalculatedFrom,
         Integer purgeBars,
         int trainStart,
         int firstVal,
@@ -229,8 +229,6 @@ public record WalkforwardRun(
      * @param marginSpreadPct    points over Fed funds the margin rate charges
      * @param maintenancePct     equity / assets below which the margin position is closed
      * @param longThreshold      a money model's position needed to go long; null for ce
-     * @param marginTrain        the loss was Strategy 2's curve too, so the signals differ
-     *                           from a run only scored with it (G5 step 2)
      * @param meanMarginInterest interest per fold, negative points of starting capital
      * @param marginCalls        forced closes across the folds
      * @param trims              cuts back to the 50% ceiling across the folds
@@ -248,7 +246,6 @@ public record WalkforwardRun(
             Double marginSpreadPct,
             Double maintenancePct,
             Double longThreshold,
-            boolean marginTrain,
             Double meanMarginInterest,
             Integer marginCalls,
             Integer trims,

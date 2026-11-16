@@ -1,5 +1,7 @@
 # Postman collection
 
+> **Revision 2026-11-15-1** · 2026-11-15 14:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+
 Every endpoint the API origin serves, with assertions on status, shape and key
 values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
 
@@ -11,7 +13,7 @@ values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
 
 | File | What it is |
 |------|------------|
-| `backtest.postman_collection.json` | 44 requests in 8 folders, 145 assertions |
+| `backtest.postman_collection.json` | 57 requests in 9 folders, 175 assertions |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://api:8001` — from inside the compose network |
 
@@ -52,6 +54,11 @@ Nothing in the collection trains a model: training is synchronous and writes to
 disk, so `POST /api/nn/train` is exercised with an unknown symbol and asserted
 to be refused quickly.
 
+**Engine → Recalculate a walk-forward run at its own settings** is a dry run
+(`dryRun: true`): it rescores the run from its stored signals, writes nothing,
+and asserts every fold reproduces what is stored. Without `dryRun` the same
+request rewrites the run's folds in place.
+
 ## Order matters inside a folder
 
 A POST captures the id the GET after it uses, via collection variables
@@ -72,3 +79,11 @@ cd web/api && npm test
 
 Adding a route without a request fails with the route named, e.g.
 `routes with no Postman request: GET /api/brand-new-endpoint`.
+
+## Revision history
+
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules).
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-15-1 | 2026-11-15 14:14 | Claude Code (Claude Opus 5.5) | Revision stamp added; counts brought up to date (57 requests, 9 folders, 175 assertions); the recalculate dry run (B10) |

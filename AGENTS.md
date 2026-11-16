@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-15-6** · 2026-11-15 12:52 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-15-7** · 2026-11-15 20:21 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -258,6 +258,10 @@ Tab: **Pipeline → Training**.
 
 - [ ] **app**: the run is recorded with every fold finished. Each run stores its
   lineage and the span of dates it read.
+- [ ] **app**: every fold stores its per-bar signals, and a run's figures can be
+  recalculated from them on demand under other cost, tax, park or margin settings,
+  without retraining (B10): `POST /api/nn/walkforward/runs/:id/recalculate` or
+  `python -m nn.recalculate`. At the run's own settings it reproduces every fold.
 - [ ] **app**: each strategy's newest run is still fresh: the Training tab shows
   passed. No saved strategy has a newer version, no input inside the run's dates
   has changed, and its window has gained no days it never scored.
@@ -495,19 +499,20 @@ profit step; the two can share one rerun.
 
 **Done when**
 
-- [ ] Every walk-forward fold stores its per-bar signals for the bars it scored: date,
+- [x] Every walk-forward fold stores its per-bar signals for the bars it scored: date,
   the model's raw output, and the call it was turned into. They are linked to the run.
-- [ ] One profit step turns stored signals into a fold's results under the strategy's
+- [x] One profit step turns stored signals into a fold's results under the strategy's
   settings: costs, tax, Strategy 2's margin, and later dividends and currency. The
   scorer calls it, and nothing else computes profit.
-- [ ] Recalculate on demand: a CLI and an API route recompute a run's results from its
+- [x] Recalculate on demand: a CLI and an API route recompute a run's results from its
   stored signals under the strategy's current settings, without retraining. A test
   shows that changing the tax rate this way gives the same figures as a full rerun at
   that rate.
-- [ ] Engines are blind. The money losses train without commission, tax or margin
+- [x] Engines are blind. The money losses train without commission, tax or margin
   terms. `taxTrain` and `marginTrain` are refused on save, with D9 as the reason.
-  Strategy versions that used them get new versions without them.
-- [ ] The runs trained with costs, tax or margin (374, 375, 394, 395, 396) are handled
+  Strategy versions that used them get new versions without them. (phase1-full got
+  v5. The author dropped the other two, which blind were copies of their siblings.)
+- [x] The runs trained with costs, tax or margin (374, 375, 394, 395, 396) are handled
   by the stale-records rule.
 
 ### B9. XGBoost and LightGBM engines (G35)
@@ -568,7 +573,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B7. Faber and dual momentum | G33 | B6 | not started | |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
-| B10. Signals, then profit | D9 | | not started | Decided 2026-11-15: R75. Comes before B1 |
+| B10. Signals, then profit | D9 | | done | 2026-11-15. `nn/profit.py` is the one profit step; each fold stores its signals (`walkforward_signals`); `nn/recalculate.py` and its route rescore a run without retraining; the money losses are blind and the training switches refused (D9). G68 fixed on the way. Python 765, Java 128, API 110, client 138. Seven runs rerun as 434-440: the classifiers reproduced, the money runs retrained blind; 375 and 395 dropped as duplicates. Run 434 recalculated at 25% tax equals the full rerun 435 in all 60 fields (DESIGN-GAPS, B10 record) |
 
 ---
 
@@ -578,6 +583,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-15-7 | 2026-11-15 20:21 | Claude Code (Claude Opus 5.5) | B10 done; step 6 gains the stored-signals condition |
 | 2026-11-15-6 | 2026-11-15 12:52 | Claude Code (Claude Opus 5.5) | Working rule: anything derivable is recalculable on demand, and raw data repopulates from its CSV or API; build step B10 (signals, then profit) for D9 |
 | 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added; working rule: stamp every doc you change |
 | 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3 done; step 7's metrics limit became an app condition; step 7 review row updated (`e7c94a8`) |

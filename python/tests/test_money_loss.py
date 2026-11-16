@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
-
 import pytest
 import torch
 
@@ -38,8 +36,8 @@ def test_position_cannot_earn_its_own_bar():
     day k's close is acted on the next session.
     """
     r = t(0.10, 0.10, 0.10, 0.10)
-    base = ml.portfolio_returns(t(0.0, 0.0, 0.0, 0.0), r, cost_bps=0.0)
-    bumped = ml.portfolio_returns(t(0.0, 1.0, 0.0, 0.0), r, cost_bps=0.0)
+    base = ml.portfolio_returns(t(0.0, 0.0, 0.0, 0.0), r)
+    bumped = ml.portfolio_returns(t(0.0, 1.0, 0.0, 0.0), r)
 
     assert bumped[1] == base[1], "position[1] changed day 1's return — lookahead"
     assert bumped[2] != base[2], "position[1] must affect day 2"
@@ -54,7 +52,7 @@ def test_an_oracle_position_cannot_profit_from_the_bar_it_sees():
     """
     returns = t(0.05, -0.05, 0.05, -0.05, 0.05, -0.05)
     oracle = (returns > 0).float()  # knows today's move, today
-    daily = ml.portfolio_returns(oracle, returns, cost_bps=0.0)
+    daily = ml.portfolio_returns(oracle, returns)
     # Acting a day late on a strict alternation means always being wrong.
     assert float(ml.log_wealth(daily)) < 0.0
 
@@ -62,41 +60,35 @@ def test_an_oracle_position_cannot_profit_from_the_bar_it_sees():
 def test_first_position_is_carried_not_dropped():
     """Day 0 has no prior position; the series must still be full length and
     must not silently start from zero exposure on day 1."""
-    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), t(0.01, 0.01, 0.01), cost_bps=0.0)
+    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), t(0.01, 0.01, 0.01))
     assert len(out) == 3
     assert out[0] == pytest.approx(0.01)
 
 
 # --------------------------------------------------------------------------
-# Costs
+# Blind (D9, R75): the loss charges nothing for trading
 # --------------------------------------------------------------------------
 
 
-def test_costs_are_charged_only_when_the_position_moves():
-    flat = ml.portfolio_returns(t(1.0, 1.0, 1.0, 1.0), t(0.0, 0.0, 0.0, 0.0), cost_bps=100.0)
-    # One entry (0 -> 1) at day 0, nothing after.
-    assert float(flat[0]) == pytest.approx(-0.01)
-    assert float(flat[1:].abs().sum()) == pytest.approx(0.0)
+def test_the_loss_charges_nothing_for_changing_position():
+    """Engines know nothing about costs, tax or margin; the profit step applies
+    them afterwards. A loss that charged for a change would make the signals
+    depend on a cost setting again."""
+    churn = ml.portfolio_returns(t(1.0, 0.0, 1.0, 0.0), t(0.0, 0.0, 0.0, 0.0))
+    assert float(churn.abs().sum()) == 0.0
 
 
-def test_round_trip_costs_twice():
-    """Enter then exit = two charges."""
-    out = ml.portfolio_returns(t(1.0, 0.0, 0.0, 0.0), t(0.0, 0.0, 0.0, 0.0), cost_bps=100.0)
-    assert float(out.sum()) == pytest.approx(-0.02)
+def test_the_loss_takes_no_cost_tax_or_margin():
+    import inspect
+    assert list(inspect.signature(ml.objective).parameters) == ["name", "positions", "returns"]
+    assert list(inspect.signature(ml.portfolio_returns).parameters) == ["positions", "returns"]
+    for gone in ("portfolio_returns_taxed", "MarginTerms", "margin_returns"):
+        assert not hasattr(ml, gone)
 
 
-def test_the_final_position_is_never_charged():
-    """A position decided on the last bar would be executed the session after
-    the window ends, so it costs nothing here. Worth pinning: it is the reason
-    a naive count of position changes over-states turnover by one, and the
-    reason a 3-bar [1,0,1] series charges twice rather than three times."""
-    out = ml.portfolio_returns(t(1.0, 0.0, 1.0), t(0.0, 0.0, 0.0), cost_bps=100.0)
-    assert float(out.sum()) == pytest.approx(-0.02)  # in, out — the re-entry never happens
-
-
-def test_zero_cost_leaves_returns_untouched():
+def test_a_held_position_earns_the_return_exactly():
     r = t(0.01, -0.02, 0.03)
-    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), r, cost_bps=0.0)
+    out = ml.portfolio_returns(t(1.0, 1.0, 1.0), r)
     assert torch.allclose(out, r)
 
 
@@ -157,7 +149,7 @@ def test_every_objective_is_differentiable(name):
     logits = torch.zeros(20, 1, requires_grad=True)
     pos = ml.positions_from_logits(logits)
     r = torch.linspace(-0.02, 0.02, 20)
-    loss, _ = ml.objective(name, pos, r, cost_bps=5.0)
+    loss, _ = ml.objective(name, pos, r)
     loss.backward()
     assert logits.grad is not None
     assert float(logits.grad.abs().sum()) > 0.0
@@ -170,26 +162,26 @@ def test_calmar_is_not_won_by_doing_nothing():
     r = torch.tensor([0.01] * 50 + [-0.02] * 10 + [0.01] * 40, dtype=torch.float32)
     flat = torch.zeros(100)
     invested = torch.ones(100)
-    loss_flat, _ = ml.objective("calmar", flat, r, cost_bps=0.0)
-    loss_invested, _ = ml.objective("calmar", invested, r, cost_bps=0.0)
+    loss_flat, _ = ml.objective("calmar", flat, r)
+    loss_invested, _ = ml.objective("calmar", invested, r)
     assert float(loss_invested) < float(loss_flat)
 
 
 def test_return_objective_prefers_more_money():
     r = torch.full((50,), 0.01)
-    more, _ = ml.objective("return", torch.ones(50), r, cost_bps=0.0)
-    less, _ = ml.objective("return", torch.full((50,), 0.5), r, cost_bps=0.0)
+    more, _ = ml.objective("return", torch.ones(50), r)
+    less, _ = ml.objective("return", torch.full((50,), 0.5), r)
     assert float(more) < float(less)  # loss is negated, so lower is better
 
 
 def test_objective_rejects_an_unknown_name():
     with pytest.raises(ValueError, match="unknown money objective"):
-        ml.objective("profit", torch.ones(3), torch.zeros(3), cost_bps=0.0)
+        ml.objective("profit", torch.ones(3), torch.zeros(3))
 
 
 def test_metrics_are_reported_alongside_the_loss():
     r = torch.full((30,), 0.01)
-    _, m = ml.objective("return", torch.ones(30), r, cost_bps=0.0)
+    _, m = ml.objective("return", torch.ones(30), r)
     assert set(m) == {"total_return_pct", "sharpe", "max_drawdown_pct",
                       "mean_position", "turnover"}
     assert m["mean_position"] == pytest.approx(1.0)
@@ -202,230 +194,3 @@ def test_positions_are_bounded_to_long_or_flat():
     pos = ml.positions_from_logits(torch.tensor([[-100.0], [0.0], [100.0]]))
     assert float(pos.min()) >= 0.0
     assert float(pos.max()) <= 1.0
-
-
-# The torch-op implementation the fast one replaced, kept as the reference
-# both its values and its gradients are held to.
-def reference_taxed(
-    positions: torch.Tensor, returns: torch.Tensor, cost_bps: float, tax_rate: float,
-) -> torch.Tensor:
-    """`portfolio_returns`, with tax charged on each realized gain, differentiably.
-
-    This is "train with tax" (Design Notes, Tax and Trading Costs: "the tax
-    must be inside the signal the model learns from"). Trained on this, a
-    marginal in-and-out trade costs the model its tax as well as its
-    commission, so it learns to hold through moves that do not clear both.
-    It changes what the model learns, and so the signals it emits; scoring
-    after tax alone (`walkforward.simulate_taxed`) does not.
-
-    The position is continuous here, so the cost basis is an average: holding
-    value `h` and basis `b`, in units of starting wealth. Cutting the position
-    from `p` to `q` sells `(p - q) / p` of the holding, which realizes that
-    share of its unrealized gain and leaves the basis of the rest in
-    proportion. The tax rule is the
-    scoring rule: a realized loss is carried and offsets later gains, and
-    only a positive net is taxed (`relu`, subdifferentiable at zero like the
-    turnover's `abs`). Nothing is taxed while held, so a position held
-    throughout pays nothing, as buy-and-hold does.
-
-    A loop over bars, because each day's basis depends on the last. At
-    `tax_rate == 0` it equals `portfolio_returns` to rounding; the tests hold
-    the two together.
-    """
-    n = returns.shape[0]
-    dtype, device = returns.dtype, returns.device
-    traded = torch.cat([positions[:1], positions[:-1]]).to(dtype)
-    cost = cost_bps / 10_000.0
-    zero = torch.zeros((), dtype=dtype, device=device)
-    # w: wealth; h: value held in equities; b: its cost basis. Units of
-    # starting wealth. A sale is the position going DOWN, not wealth drifting:
-    # the plain curve holds a fixed fraction of wealth every day, and taxing
-    # that implicit daily rebalancing would tax every commission as a sale.
-    w = torch.ones((), dtype=dtype, device=device)
-    h, b, carry, prev = zero, zero, zero, zero
-    daily = []
-    for t in range(n):
-        w_start = w
-        share = torch.relu(prev - traded[t]) / (prev + ml._EPS)
-        bought = torch.relu(traded[t] - prev) * w_start
-        net = share * (h - b) + carry
-        tax = tax_rate * torch.relu(net)
-        carry = net - torch.relu(net)
-        b = b * (1.0 - share) + bought
-        h = h * (1.0 - share) + bought
-        # The day's move, on the plain curve's terms, so 0% tax is that curve.
-        h = h * (1.0 + returns[t])
-        w = w_start * (1.0 + traded[t] * returns[t] - torch.abs(traded[t] - prev) * cost) - tax
-        daily.append(w / w_start - 1.0)
-        prev = traded[t]
-    return torch.stack(daily)
-
-
-# --------------------------------------------------------------------------
-# train with tax: the after-tax curve inside the loss
-# --------------------------------------------------------------------------
-
-
-def test_taxed_curve_at_zero_rate_is_the_plain_curve():
-    """The loop is a second implementation of the same bookkeeping; at 0% it
-    must agree with the vectorised one, or training would drift from scoring."""
-    g = torch.Generator().manual_seed(1)
-    pos = torch.rand(300, generator=g, dtype=torch.float64)
-    r = torch.randn(300, generator=g, dtype=torch.float64) * 0.01
-    plain = ml.portfolio_returns(pos, r, 5.0)
-    taxed = ml.portfolio_returns_taxed(pos, r, 5.0, 0.0)
-    assert torch.allclose(plain, taxed, atol=1e-12)
-
-
-def _wealth(daily):
-    return float(torch.prod(1.0 + daily))
-
-
-def test_a_binary_round_trip_is_taxed_like_the_scorer():
-    """At 0/1 positions the average basis is the entry price, so the loss
-    charges exactly what `walkforward.simulate_taxed` charges."""
-    from nn import walkforward as wf
-
-    pos = torch.tensor([1.0, 1.0, 0.0, 0.0], dtype=torch.float64)
-    r = torch.tensor([0.10, 0.10, 0.10, 0.10], dtype=torch.float64)
-    daily = ml.portfolio_returns_taxed(pos, r, 0.0, 0.25)
-    preds = np.array([0, 0, 2, 2])
-    eq, _, _ = wf.simulate_taxed(preds, r.numpy(), cost_bps=0.0, tax_rate=0.25)
-    # Not 1e-12: the share sold divides by the position plus a 1e-8 epsilon.
-    assert _wealth(daily) == pytest.approx(float(eq[-1]), rel=1e-8)
-
-
-def test_holding_throughout_pays_no_tax():
-    pos = torch.ones(50, dtype=torch.float64)
-    r = torch.full((50,), 0.01, dtype=torch.float64)
-    assert torch.allclose(ml.portfolio_returns_taxed(pos, r, 5.0, 0.4),
-                          ml.portfolio_returns(pos, r, 5.0), atol=1e-12)
-
-
-def test_selling_half_realizes_half_the_gain():
-    # In at 1.0, up 20%, then cut to half: 0.6 sold carries 0.1 of gain.
-    pos = torch.tensor([1.0, 0.5, 0.5], dtype=torch.float64)
-    r = torch.tensor([0.20, 0.0, 0.0], dtype=torch.float64)
-    taxed = _wealth(ml.portfolio_returns_taxed(pos, r, 0.0, 0.5))
-    plain = _wealth(ml.portfolio_returns(pos, r, 0.0))
-    # Position change acts the next bar, so the sale is on bar 2.
-    assert plain - taxed == pytest.approx(0.5 * 0.1, rel=1e-7)  # epsilon in the share
-
-
-def test_the_tax_reaches_the_gradient():
-    """Trained with tax, the loss must see a churning position as worse: the
-    whole point is that the gradient carries the tax."""
-    g = torch.Generator().manual_seed(2)
-    logits = torch.randn(120, generator=g, dtype=torch.float64, requires_grad=True)
-    r = torch.full((120,), 0.004, dtype=torch.float64)
-    pos = ml.positions_from_logits(logits.unsqueeze(-1))
-    untaxed, _ = ml.objective("return", pos, r, cost_bps=0.0)
-    taxed, _ = ml.objective("return", pos, r, cost_bps=0.0, tax_rate=0.3)
-    assert float(taxed) > float(untaxed)  # a loss to minimise: tax makes it worse
-    taxed.backward()
-    assert torch.isfinite(logits.grad).all() and logits.grad.abs().sum() > 0
-
-
-# --------------------------------------------------------------------------
-# the fast taxed curve is the reference, values and gradients
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("scale", [0.5, 2.0, 8.0], ids=["soft", "mixed", "near-binary"])
-@pytest.mark.parametrize("rate", [0.0, 0.25, 0.5])
-def test_the_fast_taxed_curve_matches_the_reference(scale, rate):
-    g = torch.Generator().manual_seed(int(scale * 10 + rate * 100))
-    r = torch.randn(250, generator=g, dtype=torch.float64) * 0.015 + 0.0004
-    x = (torch.randn(250, generator=g, dtype=torch.float64) * scale).requires_grad_()
-
-    fast = ml.portfolio_returns_taxed(torch.sigmoid(x), r, 5.0, rate)
-    (g_fast,) = torch.autograd.grad(-torch.log1p(fast).sum(), x)
-    ref = reference_taxed(torch.sigmoid(x), r, 5.0, rate)
-    (g_ref,) = torch.autograd.grad(-torch.log1p(ref).sum(), x)
-
-    assert torch.allclose(fast, ref, atol=1e-13)
-    assert torch.allclose(g_fast, g_ref, atol=1e-12)
-
-
-def test_the_fast_taxed_gradient_passes_gradcheck():
-    """Against finite differences, not just against the other implementation,
-    so a mistake shared by both would still be caught."""
-    g = torch.Generator().manual_seed(9)
-    r = torch.randn(40, generator=g, dtype=torch.float64) * 0.02
-    x = torch.randn(40, generator=g, dtype=torch.float64, requires_grad=True)
-    assert torch.autograd.gradcheck(
-        lambda z: ml.portfolio_returns_taxed(torch.sigmoid(z), r, 5.0, 0.3), (x,),
-        eps=1e-7, atol=1e-6,
-    )
-
-
-def test_the_taxed_curve_keeps_the_dtype_it_is_given():
-    pos = torch.rand(10)
-    r = torch.full((10,), 0.01)
-    assert ml.portfolio_returns_taxed(pos, r, 5.0, 0.25).dtype == torch.float32
-
-
-# --------------------------------------------------------------------------
-# Strategy 2 inside the loss (G5 step 2)
-# --------------------------------------------------------------------------
-
-
-def _terms(n, *, psq=None, rate=0.0, days=1.0, leverage=0.2, hedge=0.2, spread=0.0,
-           threshold=0.5, long_threshold=0.75):
-    t = lambda v: torch.full((n,), float(v), dtype=torch.float64)  # noqa: E731
-    return ml.MarginTerms(
-        psq=t(0.0) if psq is None else torch.tensor(psq, dtype=torch.float64),
-        rates=t(rate), days=t(days), leverage=leverage, hedge=hedge, spread=spread,
-        threshold=threshold, long_threshold=long_threshold)
-
-
-class TestMarginReturns:
-    def test_fully_long_adds_leverage_times_the_move(self):
-        r = torch.tensor([0.01, 0.02, -0.01], dtype=torch.float64)
-        p = torch.ones(3, dtype=torch.float64)
-        daily = ml.margin_returns(p, r, 0.0, _terms(3))
-        up, _ = ml.margin_legs(p, _terms(3))
-        assert float(up[0]) > 0.99
-        torch.testing.assert_close(daily, r * (1 + 0.2 * up), rtol=0, atol=1e-12)
-
-    def test_fully_hedged_adds_psq(self):
-        r = torch.tensor([-0.02, -0.01], dtype=torch.float64)
-        p = torch.zeros(2, dtype=torch.float64)
-        m = _terms(2, psq=[0.02, 0.01])
-        up, down = ml.margin_legs(p, m)
-        assert float(down[0]) > 0.99
-        # The shut leg is not exactly zero under a smooth step (~1e-8 here).
-        torch.testing.assert_close(ml.margin_returns(p, r, 0.0, m),
-                                   r + 0.2 * up * r + 0.2 * down * m.psq, rtol=0, atol=1e-15)
-
-    def test_charges_interest_per_calendar_day_while_borrowed(self):
-        r = torch.zeros(2, dtype=torch.float64)
-        p = torch.ones(2, dtype=torch.float64)
-        m = _terms(2, rate=0.05, spread=0.015, days=3.0)
-        up, down = ml.margin_legs(p, m)
-        expected = -(0.2 * up + 0.2 * down) * 0.065 * 3 / 360
-        torch.testing.assert_close(ml.margin_returns(p, r, 0.0, m), expected,
-                                   rtol=0, atol=1e-15)
-
-    def test_a_position_is_acted_on_the_next_session(self):
-        # Long decided on day 0 only: held over day 1, not day 0... except the
-        # first bar, which holds its own signal (the runner's convention).
-        r = torch.tensor([0.0, 0.10, 0.10], dtype=torch.float64)
-        p = torch.tensor([0.6, 1.0, 0.6], dtype=torch.float64)
-        daily = ml.margin_returns(p, r, 0.0, _terms(3))
-        assert float(daily[2]) > float(daily[1])  # the long leg is open on day 2
-
-    def test_interest_pushes_the_gradient_away_from_borrowing(self):
-        r = torch.zeros(4, dtype=torch.float64)
-        p = torch.full((4,), 0.75, dtype=torch.float64, requires_grad=True)
-        loss, _ = ml.objective("return", p, r, cost_bps=0.0,
-                                       margin=_terms(4, rate=0.05, spread=0.015, days=1.0))
-        loss.backward()
-        # Raising the position opens the long leg further and costs more interest.
-        assert float(p.grad[:-1].sum()) > 0
-
-    def test_tax_and_margin_together_are_refused(self):
-        r = torch.zeros(2, dtype=torch.float64)
-        with pytest.raises(ValueError, match="not supported yet"):
-            ml.objective("return", torch.ones(2, dtype=torch.float64), r,
-                                 cost_bps=0.0, tax_rate=0.25, margin=_terms(2))

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-15-8** · 2026-11-15 12:54 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-15-11** · 2026-11-15 20:19 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -46,7 +46,7 @@ chain). The pass waits for the author's go.
 
 | # | Conflict | One side | The other side | Stored data it touches |
 |---|---|---|---|---|
-| D9 | Do engines learn costs, tax and margin? **Decided 2026-11-15 by the author: R75**, engines blind, profit recalculated on demand (build step B10) | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `Design Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
+| D9 | Do engines learn costs, tax and margin? **Decided 2026-11-15 by the author: R75**, engines blind, profit recalculated on demand. **Built 2026-11-15 (B10)**: see the B10 record | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `Design Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
 | D2 (updated) | Null padding | R3: "no trimming to overlap, no null padding" | `schema.sql`: "value is NULLABLE on purpose". The database confirms what D2 called unconfirmed: set 27 holds 9,565 NULL rows of 264,670, every column spans the whole calendar from 1999-03-10, and the NULLs include padding before each series starts (`ndx_net_income_qoq` 3,013, `earnings_season_*` 1,166, `vxn_*` 532), not only warm-up. Waived for step 2 on 2026-11-14 | every feature set |
 | D10 | Is raw data immutable? **Decided 2026-11-15 by the author: every archived CSV version is kept**, so any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider (G66, G67) | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `data/csv-archive` |
 | D11 | Do checks stop the chain? | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
@@ -77,7 +77,7 @@ stored run.
 | G47 | **Look-ahead: features join on the date a value describes, not the date it was published.** A row for day D holds FRED's DGS10, DGS2, BAA10Y and DFF, the Bank of Canada's CORRA and EIA's WTI for D. These arrive the next day or later, while the trade is decided after D's close. The live system cannot see them at 18:30 on D (they are carried forward), so history and live disagree, and every backtest used values it could not have had. Also: `holiday_proximity` reads the next stored session, so an unscheduled closure leaks | R17 | `feature_build._fetch_field` (`c.timestamp::date`), `normalize.align_forward_fill`. QQQ's 11-12 bar was stored 2026-11-12 18:30 (import 366); DGS10, DFF and CORRA for 11-12 arrived 2026-11-13 21:25 (imports 420, 425, 428) | every feature set; runs 374 to 378 (phase1-full and both Strategy 2 variants select `treasury_10y`, `treasury_2y`, `yield_curve_10y2y`, `oil_wti`) | M | done 2026-11-15: `[alignment.available_after]` and `normalize.shift_to_availability`; `holiday_proximity` from the scheduled holidays; set 28; runs 376-378 rerun as 394-396 |
 | G48 | The test block has been scored, and nothing guards it. The Run tab fills a saved strategy's window from its test block, and results 686, 697, 698 and 706 score 2022-04-13 to 2026-06-30 (inside every strategy's 2022-01-01 to 2026-06-30 test block) with `nn-feedforward` models. No run is marked as having seen the test window | R69 | `RunPage.tsx` `applySaved` ("the window defaults to the strategy's **test** block") | results 686, 697-699, 706, 711-713 | S | open |
 | G49 | Prediction targets are a fixed 3-class label. Only `forward_return_3class` (±2% over 5 bars) is registered, and its thresholds are runner defaults. There is no direction target (P(next bar up), buy and sell thresholds) or return target (N-bar forecast, minimum return). So R72's baselines ("always up", "historical mean return") have nothing to attach to | R71, R72 | `strategy_spec.LABEL_KINDS`; `strategies.js` ("the only one registered") | all 9 runs | M | open |
-| G50 | A walk-forward run keeps neither its models nor its scaler nor its predictions. `run_fold` discards each fold's model and fitted scaler, no per-bar prediction is stored, the windows are kept as years, and the prediction window is never predicted over | R34, R68, R25, R38 | `walkforward.run_fold`, `train_one` ("the feature store deliberately does not persist" the scaler) | all 9 runs | M | open |
+| G50 | A walk-forward run keeps neither its models nor its scaler nor its predictions. `run_fold` discards each fold's model and fitted scaler, no per-bar prediction is stored, the windows are kept as years, and the prediction window is never predicted over | R34, R68, R25, R38 | `walkforward.run_fold`, `train_one` ("the feature store deliberately does not persist" the scaler) | all 9 runs | M | open. The per-bar predictions are stored since B10 (`walkforward_signals`: raw output, call, label); the models, the scaler, the windows and the prediction window are not |
 | G51 | Data verification as the design has it: Pandera and exchange_calendars as fixed steps, a `data_checks` table, raw and adjusted candle tables with split detection against imported split history, ydata-profiling and Evidently, one verification column per tool per row, and the OK/warning/error rule (see D11). Today: a hand-written cohesion check, a rule-based NYSE calendar, findings in the response only, one cross-check (the yield curve) | R12, R55, R63, R64, R65, R49 | `loader/cohesion.py`, `loader/market_calendar.py`, `nn/data_checks.py`; no such tables; none of the tools in `pyproject.toml` | none until built | XL | open |
 | G52 | Non-price series are stored as degenerate candles, at the calendar's cadence. There is no raw series table at native cadence; quarterly SEC net income is carried daily; feature values are stored aligned and normalized per set instead of once at native cadence | R15, R17, R49 | `feeds/fred.py` ("each observation becomes a degenerate bar"); all 17 fred, boc and computed series are in `candles` | all non-price series | L | open |
 | G53 | Strategy settings the design adds: commission, slippage and other expenses as separate items with on/off flags (today one `costBps`), a capital-gains inclusion rate, the superficial-loss rule, a minimum trades per year with a "near buy-and-hold" flag, dividends (ex-date payments, reinvest flag, own tax rate, 15% US withholding), account currency (CAD default, Bank of Canada USD/CAD, results in both, conversion fee), a capital setting, and the panel of settings that also drive the benchmarks | R28, R29, R30, R31, R56, R57, R58 | `strategies.js` objective fields; `StrategyPage.tsx` section 7; no USD/CAD series; scoring uses `yahoo-adj` total-return prices, so dividends are reinvested gross and never taxed | none until built | L | open |
@@ -95,6 +95,7 @@ stored run.
 | G65 | Signal voting (Phase 2): per-bar votes per signal, a voting setup with a minimum count, and its backtest | R73 | none in code | none | L | gated: after Phase 1 |
 | G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `data/csv-archive` | none | S | open |
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
+| G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
 
@@ -143,9 +144,62 @@ Result ids after the rerun (older rows in this file use the old ones): 686→714
 
 Also recorded against existing rows: G14 (R45) now covers a third charting approach, the hand-written SVG preview added 2026-11-15 (`FeaturePreview.tsx`). G10 (R46) is unchanged. G34 and B8 should follow R72: the baseline is scored on the test window, it is "always up" or the historical mean return per target, and it shows on Results. B6 (R36) does not cover dividends, currency or the superficial-loss rule, which wait on G53.
 
+**B10 plan (D9, R75), 2026-11-15.** The author: do B10. The conditions are in `AGENTS.md`, build step B10.
+
+The shape:
+- **Signals.** A new table `walkforward_signals`, one row per scored bar, linked to the run and deleted with it. Each row holds the bar's date, the date its return runs to, the model's raw output, the call and the bar's label. The raw output is a money model's position, or a classifier's three class probabilities.
+- **The profit step, `nn/profit.py`.** It takes one fold's stored signals, the market over those bars and the strategy's settings: cost, tax, park, execution with Strategy 2's dials, and the thresholds that cut the output into a call. It returns every money figure of the fold: returns, Sharpe, drawdown, trades, the attribution, tax, Strategy 2's figures and always-long. `simulate`, `simulate_taxed`, `sharpe`, `max_drawdown` and the park series move there. `run_fold` keeps training and prediction, and calls it.
+- **The market** for a bar comes from its two dates: the close-to-close return, the parked return, PSQ's return, Fed funds and the calendar days. So a run and a recalculation build it the same way, and G68 is fixed there.
+- **Blind engines.** The money losses take positions and returns only: commission, the taxed curve and the margin curve go. `--tax-train` and `--margin-train` are removed. A strategy row with `taxTrain` or `marginTrain` is refused with D9's reason, and `strategies.js` answers 422. The switches leave the Strategy page, and the run columns `tax_train` and `margin_train` go (schema, Java reader, client).
+- **Recalculate on demand.** `python -m nn.recalculate --run N [--strategy-id M] [--dry-run]` and `POST /api/nn/walkforward/runs/:id/recalculate`.
+  - Same settings: the run's folds are rewritten in place, which is what a code change to the profit step needs.
+  - A strategy version that differs only in profit settings: a new run, linked by `recalculated_from`, with the signals copied. Nothing is retrained.
+  - A difference on the model side is refused, because that needs a run: features, windows, label, loss, hyperparameters, seed, feature set.
+
+Checklist:
+- [x] Plan here; G68 row
+- [x] `nn/profit.py`, with the scoring moved out of `walkforward.py` unchanged except G68; existing tests pass, plus a G68 test
+- [x] Signals stored per fold (`schema.sql`, `walkforward_store`); round-trip test against the database
+- [x] Blind engines: `money_loss`, the runner's flags, `strategy_spec`, `strategies.js` (422, D9), the Strategy page, the dropped run columns; tests on each side
+- [x] Recalculate: CLI and route, Postman request. The test B10 asks for: one run at tax 0 and one at 25 give the same signals, and the profit step at 25 from the first run's signals gives the second run's figures
+- [x] All four CI jobs; rebuild engine (schema), loader, api, client
+
+*Built, 2026-11-15 14:18, up to the checkpoint.*
+- Tests: Python 765 (751 before), Java 128, API 110, client 138. Postman has 57 requests and 175 assertions.
+- The B10 test is `test_profit.TestBlindTraining`. A fold run at tax 0 and cost 5 and the same fold run at 25% and cost 12 store identical outputs. The profit step at 25% and 12 on the first run's outputs equals the second run in every money field. It passes for the classifier and both money losses, under Strategy 1 and Strategy 2.
+- `test_walkforward_store` checks the store: signals round-trip float for float; a recalculation in place reproduces a run and repairs a damaged figure; a run without signals is refused with 409. G68 has its own tests in `test_profit.TestParkedReturn`.
+- Found live, not by the unit tests: the recalculation read every query through a dict-row cursor, which the shared loaders cannot unpack (500). Fixed; the database test above now covers it.
+- The schema change is applied: the Java tests run `schema.sql` on the dev database. `walkforward_signals` and `recalculated_from` exist, and `tax_train` and `margin_train` are dropped. They were backed up first, data and schema, to `rerun-b10-20261115/` in the session scratchpad.
+- Live: run 396 is refused recalculation with 409, since it stored no signals. Strategy 34 (phase1-full v4, `taxTrain`) is refused a run with 400 and D9. Saving `taxTrain: true` is refused with 422.
+
+- [x] **Checkpoint, the author's go:**
+  - New strategy versions without the switches: postman-smoke v11 (from v9), phase1-full v5 (from v4), strategy2-trained v2 (from v1).
+  - Back up, delete and rerun all nine runs. 374, 375, 394, 395 and 396 trained with costs, tax or margin. 255, 256, 259 and 299 are classifiers and should reproduce exactly, and they get stored signals, so they can be recalculated too.
+  - *The author, 2026-11-15: drop the duplicates.* 375 (postman-smoke v9) differs from 374 (v8) only by `taxTrain`, and 395 (strategy2-trained v1) from 394 (strategy2-scored v1) only by `marginTrain`. Blind, each would rerun as an exact copy, so they were deleted and not rerun, and only phase1-full got a new version.
+- [x] Live: recalculating a rerun at its own settings reproduces its folds; another tax rate by recalculation equals a rerun at it (on postman-smoke v6 and v7, see below, rather than a new phase1-full version, which would have made run 440 stale)
+- [x] README (the recalculate command and route, the removed flags), `AGENTS.md` B10 ticked and step 6 conditions, the G68 row and this record say done
+
+*Done, 2026-11-15 20:19.*
+- **Strategy and backup.** phase1-full v5 (strategy 38) is v4 without `taxTrain`, saved through the API. The four tables, now including `walkforward_signals`, were backed up to `rerun-b10-20261115/before-delete.sql.gz`. The nine runs (54 folds) were deleted in one transaction and seven rerun, each with its own feature set and label.
+
+| Was | Now | Strategy | Set | Mean excess | Against the old run |
+|---|---|---|---|---|---|
+| 255 | 434 | postman-smoke v6 (ce) | 10 | −2.21 | reproduced exactly |
+| 256 | 435 | postman-smoke v7 (ce, tax 25%) | 10 | −7.51 | reproduced exactly |
+| 259 | 436 | postman-smoke v10 (ce) | 10 | +3.99 | reproduced exactly |
+| 299 | 437 | strategy2-defaults v1 (ce, Strategy 2) | 10 | −0.56 | calls identical. Only the figures priced in PSQ moved, by at most 3.3 parts in a million, because PSQ's adjusted history was re-imported on 2026-11-12 (imports 7528-7548). The always-long return, which reads no PSQ, is identical |
+| 374 | 438 | postman-smoke v8 (return loss) | 27 | −0.87 → −0.71 | retrained blind: fold 5 trades 3 times instead of once |
+| 394 | 439 | strategy2-scored v1 (return loss) | 28 | +3.59 → +2.96 | retrained blind; still −1.78 pp a fold against always long, 1 of 6 folds: leverage, not timing |
+| 396 | 440 | phase1-full v4 → v5 (return loss, tax 25%) | 28 | −0.06 → −2.09 | retrained blind; 0 of 6, the verdict stands |
+
+- **Signals.** All seven runs store them: 10,577 bars.
+- **Recalculating in place reproduces.** Each run, recalculated at its own settings through the live route, gives back every fold field exactly.
+- **Recalculating at another tax rate equals a rerun.** postman-smoke v7 is v6 plus a 25% tax, with the model side identical. Run 434 (v6, before tax) recalculated as a dry run under v7 matches run 435, the full rerun at 25%, in all 60 fields compared: return, Sharpe, drawdown, trades, tax, days out, drift, commission, timing and accuracy.
+- **Why the money runs moved.** Training without commission lets the return loss change position more often: 374's fold 5 trades 3 times instead of once, and 394's fold 1 trades 19 times instead of 9. That is the training-side change D9 intends, not a scoring one. 374 gained 0.16 pp a fold; 394 lost 0.63 and phase1-full 2.03.
+
 ### Status per requirement
 
-Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R35, R47, R59.
+Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
 
 | R | Status | Tracked as |
 |---|---|---|
@@ -171,7 +225,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R35, R47, R59.
 | R29 | partial | G53, G32 (B6), D8 |
 | R30 | missing | G53 |
 | R31 | missing | G53 |
-| R32 | conflicts | D9 |
+| R32 | done 2026-11-15 (B10) | D9 |
 | R33 | conflicts | G58 |
 | R34 | partial | G50, G45 |
 | R36 | partial | G32 (B6), G33 (B7), G53 |
@@ -211,7 +265,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R35, R47, R59.
 | R72 | partial | G34 (B8), G49 |
 | R73 | missing | G65 |
 | R74 | missing | G63, G35 (B9) |
-| R75 | conflicts | D9 |
+| R75 | partial: engines blind and profit recalculated on demand (B10). Slippage, superficial loss, dividends and currency are not in the profit step yet, and the benchmarks do not go through it (B6, B7, G53) | D9 |
 | R76 | missing | G27 (B1) |
 
 ---
@@ -948,6 +1002,9 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-15-11 | 2026-11-15 20:19 | Claude Code (Claude Opus 5.5) | B10 done: the reruns, the live checks, G68 done, D9 resolved; R32 done and R75 partial; G50's predictions are stored |
+| 2026-11-15-10 | 2026-11-15 14:18 | Claude Code (Claude Opus 5.5) | B10 built and tested, up to the checkpoint |
+| 2026-11-15-9 | 2026-11-15 13:01 | Claude Code (Claude Opus 5.5) | B10 plan (D9, R75); new gap G68 (the parked return is a bar early) |
 | 2026-11-15-8 | 2026-11-15 12:54 | Claude Code (Claude Opus 5.5) | D10 and D12 decided by the author (keep every archived CSV version; rebuild feature values on demand); new gaps G66 (reload from the archive in one action) and G67 (the archive overwrites old versions) |
 | 2026-11-15-7 | 2026-11-15 12:52 | Claude Code (Claude Opus 5.5) | D9 decided (R75); the author's recalculate-and-repopulate-on-demand principle, and what it means for D10 and D12 |
 | 2026-11-15-6 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added |

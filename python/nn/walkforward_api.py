@@ -2,6 +2,8 @@
 
   POST /api/nn/walkforward       {strategyId, label?} -> 202 job | 400 | 404 | 409
   GET  /api/nn/walkforward/jobs  jobs started since this process came up
+  POST /api/nn/walkforward/runs/{id}/recalculate  {strategyId?, dryRun?}
+                                 -> 200 figures | 400 | 404 | 409 (`nn/recalculate.py`)
 
 This is the Train tab's "Runs a saved strategy and records the run. No choices
 are made here" (Architecture §8.1a). It adds no second way to run one: the job
@@ -33,6 +35,10 @@ Invariants a change must keep:
 
 * **No holdout from here.** `--test` spends the 2022-onward block once, and
   a button is too easy to press twice. It stays a deliberate terminal command.
+
+* **A recalculation runs in the request.** It trains nothing: it reads a
+  run's stored signals and scores them (D9, R75), seconds even for a long run,
+  so it needs no job, and it does not wait for a training run to finish.
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from loader.db import pool
-from nn import strategy_spec, walkforward
+from nn import recalculate, strategy_spec, walkforward
 
 router = APIRouter()
 
@@ -212,3 +218,24 @@ def jobs() -> dict[str, Any]:
     with _lock:
         items = [j.to_json() for j in _jobs]
     return {"items": items, "running": next((i["id"] for i in items if i["running"]), None)}
+
+
+class RecalculateRequest(BaseModel):
+    strategyId: int | None = Field(None, ge=1)
+    dryRun: bool = False
+
+
+@router.post("/api/nn/walkforward/runs/{run_id}/recalculate")
+def recalculate_run(run_id: int, req: RecalculateRequest | None = None):
+    """Rescore a run from its stored signals. Without `strategyId` the run is
+    rescored at its own settings and its folds rewritten; with one, a new run
+    is written for that version, which must train the same model."""
+    req = req or RecalculateRequest()
+    try:
+        with pool().connection() as conn:
+            outcome = recalculate.recalculate(conn, run_id, req.strategyId, req.dryRun)
+    except recalculate.Refused as exc:
+        return JSONResponse(status_code=exc.status, content={
+            "error": f"run {run_id} cannot be recalculated", "reasons": exc.reasons,
+        })
+    return outcome.to_json()

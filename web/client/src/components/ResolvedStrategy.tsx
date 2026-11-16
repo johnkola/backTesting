@@ -109,8 +109,7 @@ export default function ResolvedStrategy(
             `cost=${s.objective.costBps} bps`,
             `park=${s.objective.park}`,
             s.objective.taxScore
-              ? `tax=${s.objective.taxRatePct}% on realized gains`
-                + (s.objective.taxTrain ? ', trained with it (signals differ)' : ', scoring only')
+              ? `tax=${s.objective.taxRatePct}% on realized gains, scoring only`
               : 'tax=off',
           ].join('  ·  ')}
         </p>

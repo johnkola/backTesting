@@ -72,14 +72,12 @@ const OBJECTIVE_DEFAULTS = {
   park: 'cash',
   taxScore: false,
   taxRatePct: null,
-  taxTrain: false,
   execution: 'signals',
   leveragePct: null,
   hedgePct: null,
   marginSpreadPct: null,
   maintenancePct: null,
   longThreshold: null,
-  marginTrain: false,
 };
 /**
  * How the signals are acted on (Design Notes, Trading Strategies; G5).
@@ -87,6 +85,18 @@ const OBJECTIVE_DEFAULTS = {
  * core never sold, margin QQQ on an up signal, margin PSQ on a down one.
  */
 const EXECUTIONS = new Set(['signals', 'margin']);
+/**
+ * The objective's old training switches. D9 (R75, decided 2026-11-15): engines
+ * learn signals only and know nothing about costs, tax or margin; the profit
+ * step (python/nn/profit.py) applies them afterwards, so changing them
+ * recalculates a run instead of retraining it. A client may still send a
+ * switch off, which is ignored; on, it is refused with the reason. Neither is
+ * stored.
+ */
+const TRAINING_SWITCHES = { taxTrain: 'train with tax', marginTrain: 'train with margin' };
+const D9_REASON = 'engines learn signals only and know nothing about costs, tax or margin '
+  + '(D9, R75): the profit step applies them afterwards, and changing them '
+  + 'recalculates a run without retraining';
 /** Strategy 2's dials, filled when absent. Percent of the core; spread in points over Fed funds. */
 const MARGIN_DEFAULTS = { leveragePct: 20, hedgePct: 20, marginSpreadPct: 1.5, maintenancePct: 30 };
 /** A money model's position at or above this is the conviction to go long on margin. */
@@ -119,10 +129,13 @@ function validateObjective(raw, errors) {
     return null;
   }
   const o = { ...OBJECTIVE_DEFAULTS, ...(raw ?? {}) };
-  for (const key of Object.keys(raw ?? {})) {
-    if (!(key in OBJECTIVE_DEFAULTS)) errors.push(`unknown objective setting: ${key}`);
-  }
   const before = errors.length;
+  for (const key of Object.keys(raw ?? {})) {
+    if (key in TRAINING_SWITCHES) {
+      if (raw[key] === true) errors.push(`objective.${key} (${TRAINING_SWITCHES[key]}) is gone: ${D9_REASON}`);
+      else if (raw[key] !== false) errors.push(`objective.${key} must be false`);
+    } else if (!(key in OBJECTIVE_DEFAULTS)) errors.push(`unknown objective setting: ${key}`);
+  }
 
   if (!LOSSES.has(o.loss)) errors.push(`objective.loss must be one of ${[...LOSSES].join(', ')}`);
   if (!VERDICTS.has(o.verdict)) {
@@ -160,15 +173,6 @@ function validateObjective(raw, errors) {
   } else if (o.taxScore === false && taxRate !== null) {
     errors.push('a tax rate only applies when scoring after tax');
   }
-  // Train with tax changes the model and so its signals: its own switch, on
-  // top of scoring after tax, and only for a loss that trains on money.
-  if (typeof o.taxTrain !== 'boolean') errors.push('objective.taxTrain must be true or false');
-  else if (o.taxTrain && o.taxScore !== true) {
-    errors.push('train with tax needs score after tax');
-  } else if (o.taxTrain && o.loss === 'ce') {
-    errors.push('train with tax needs a money-trained loss, not ce');
-  }
-
   if (o.loss === 'ce') {
     if (threshold !== null) {
       errors.push('a position threshold only applies to a money-trained loss, not ce');
@@ -184,7 +188,7 @@ function validateObjective(raw, errors) {
   return {
     loss: o.loss, classWeights: o.classWeights, positionThreshold: threshold,
     verdict: o.verdict, costBps: cost, park: o.park,
-    taxScore: o.taxScore, taxRatePct: taxRate, taxTrain: o.taxTrain,
+    taxScore: o.taxScore, taxRatePct: taxRate,
     ...margin,
   };
 }
@@ -198,12 +202,6 @@ function validateObjective(raw, errors) {
  */
 function validateExecution(o, threshold, errors) {
   const dials = ['leveragePct', 'hedgePct', 'marginSpreadPct', 'maintenancePct', 'longThreshold'];
-  // Train with margin changes the model and so its signals, like train with
-  // tax: its own switch, Strategy 2 and a money loss only.
-  if (typeof o.marginTrain !== 'boolean') {
-    errors.push('objective.marginTrain must be true or false');
-    return {};
-  }
   const num = (v) => (v === '' || v === undefined ? null
     : typeof v === 'string' ? Number(v) : v);
   if (!EXECUTIONS.has(o.execution)) {
@@ -214,17 +212,9 @@ function validateExecution(o, threshold, errors) {
     for (const d of dials) {
       if (num(o[d]) !== null) errors.push(`objective.${d} only applies to execution 'margin'`);
     }
-    if (o.marginTrain) errors.push("train with margin needs execution 'margin' (Strategy 2)");
-    return {
-      ...Object.fromEntries([['execution', 'signals'], ...dials.map((d) => [d, null])]),
-      marginTrain: false,
-    };
+    return Object.fromEntries([['execution', 'signals'], ...dials.map((d) => [d, null])]);
   }
-  const out = { execution: 'margin', marginTrain: o.marginTrain };
-  if (o.marginTrain && o.loss === 'ce') errors.push('train with margin needs a money-trained loss, not ce');
-  if (o.marginTrain && o.taxTrain) {
-    errors.push('train with margin and train with tax together are not supported yet');
-  }
+  const out = { execution: 'margin' };
   for (const [d, def] of Object.entries(MARGIN_DEFAULTS)) {
     const v = num(o[d]) ?? def;
     out[d] = v;
