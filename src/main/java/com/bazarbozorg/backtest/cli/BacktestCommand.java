@@ -159,8 +159,13 @@ public class BacktestCommand implements Runnable {
 
             // Save the result to the database
             BacktestResultRepository resultRepo = new BacktestResultRepository(dbManager);
-            resultRepo.save(result);
+            long resultId = resultRepo.save(result);
             System.out.println("Result saved to database.");
+            // G48, R69: not refused, since the final exam is a deliberate act,
+            // but every look at a saved test window is recorded and said.
+            for (var look : resultRepo.testWindowLooks(resultId)) {
+                System.err.println("WARNING: " + look.describe(instrumentSymbol));
+            }
 
         } catch (ModelNotCachedException e) {
             System.err.println(e.getMessage());

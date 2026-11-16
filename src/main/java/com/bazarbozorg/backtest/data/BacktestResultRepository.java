@@ -62,7 +62,12 @@ public class BacktestResultRepository {
         }
     }
 
-    public void save(BacktestResult result) {
+    /**
+     * Stores a result and records any saved test window it scores (G48, R69).
+     *
+     * @return the new row's id
+     */
+    public long save(BacktestResult result) {
         BacktestResultRow row = toRow(result);
 
         String sql = "INSERT INTO backtest_results " +
@@ -71,7 +76,7 @@ public class BacktestResultRepository {
                 "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, " +
                 "model_version_id, result_json, model_train_from, model_train_to, " +
                 "model_train_symbol, model_window) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -128,9 +133,26 @@ public class BacktestResultRepository {
             ps.setString(20, w == null ? null : w.symbol());
             ps.setString(21, w == null ? null : w.status());
 
-            ps.executeUpdate();
-            logger.info("Saved backtest result: {} on {} ({})",
-                    row.strategyName(), row.instrumentSymbol(), row.timeframe());
+            long id;
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                id = rs.getLong(1);
+            }
+            logger.info("Saved backtest result {}: {} on {} ({})",
+                    id, row.strategyName(), row.instrumentSymbol(), row.timeframe());
+            if (row.startDate() != null && row.endDate() != null) {
+                // The one rule for what a look is lives in the database, shared
+                // with the walk-forward runner (schema.sql).
+                try (PreparedStatement look = conn.prepareStatement(
+                        "SELECT record_test_window_looks('backtest', ?, ?, ?, ?)")) {
+                    look.setLong(1, id);
+                    look.setString(2, row.instrumentSymbol());
+                    look.setObject(3, row.startDate().toLocalDate());
+                    look.setObject(4, row.endDate().toLocalDate());
+                    look.execute();
+                }
+            }
+            return id;
 
         } catch (SQLException e) {
             logger.error("Failed to save backtest result", e);
@@ -369,5 +391,45 @@ public class BacktestResultRepository {
                 .modelWindow(rs.getString("model_window"))
                 .createdAt(createdAt)
                 .build();
+    }
+
+    /**
+     * The saved test windows a result scores, each with the looks before it
+     * (G48, R69); empty when it scores none. Derived from the order of the
+     * looks at each window, so a reuse is never stored.
+     */
+    public List<com.bazarbozorg.backtest.engine.TestWindowLook> testWindowLooks(long resultId) {
+        String sql = """
+                SELECT l.test_from, l.test_to,
+                       (SELECT count(*) FROM test_window_looks e
+                         WHERE e.instrument = l.instrument AND e.test_from = l.test_from
+                           AND e.test_to = l.test_to
+                           AND (e.looked_at, e.id) < (l.looked_at, l.id)) AS before,
+                       (SELECT min(e.looked_at) FROM test_window_looks e
+                         WHERE e.instrument = l.instrument AND e.test_from = l.test_from
+                           AND e.test_to = l.test_to) AS first_at
+                  FROM test_window_looks l
+                 WHERE l.kind = 'backtest' AND l.ref_id = ?
+                 ORDER BY l.test_from
+                """;
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, resultId);
+            List<com.bazarbozorg.backtest.engine.TestWindowLook> out = new java.util.ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new com.bazarbozorg.backtest.engine.TestWindowLook(
+                            rs.getDate("test_from").toLocalDate(),
+                            rs.getDate("test_to").toLocalDate(),
+                            rs.getInt("before"),
+                            rs.getObject("first_at", java.time.OffsetDateTime.class)
+                                    .atZoneSameInstant(java.time.ZoneOffset.UTC)));
+                }
+            }
+            return out;
+        } catch (SQLException e) {
+            logger.error("Failed to read the test-window looks of result {}", resultId, e);
+            throw new RuntimeException("Failed to read test-window looks", e);
+        }
     }
 }

@@ -147,10 +147,12 @@ def span_columns(span: Span, parts: dict[str, str], backfilled: bool = False) ->
 def new_days_in_window(dates: Sequence[dt.date], last_used: dt.date,
                        window_end: dt.date | None, forward: int) -> list[dt.date]:
     """Days after the run's last scored day, inside its window, that a rerun
-    could now score (each needs `forward` more rows for its label)."""
+    could now score: each needs `forward` more rows for its label, and that
+    row inside the window, since no fold reads past its window (G38)."""
     n = len(dates)
     return [d for i, d in enumerate(dates)
-            if d > last_used and (window_end is None or d <= window_end) and i + forward <= n - 1]
+            if d > last_used and i + forward <= n - 1
+            and (window_end is None or dates[i + forward] <= window_end)]
 
 
 def fix_days(diff_json: str | None, prices_only: bool = False) -> tuple[set[dt.date], set[int]]:

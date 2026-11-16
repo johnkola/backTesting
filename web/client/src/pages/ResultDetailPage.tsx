@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import { sampleNote, sampleOf } from '../lib/inSample'
+import { testWindowMark, testWindowNote } from '../lib/testWindow'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import TradeChart from '../components/TradeChart'
 import BenchmarkTable from '../components/BenchmarkTable'
@@ -192,6 +193,14 @@ export default function ResultDetailPage() {
           : sampleOf(detail) === 'unknown' ? 'alert-warning' : ''} text-sm`}
         >
           {sampleNote(detail)}
+        </div>
+      )}
+
+      {testWindowMark(detail) && (
+        <div className={`alert ${testWindowMark(detail) === 'reused' ? 'alert-error'
+          : 'alert-warning'} text-sm`}
+        >
+          {testWindowNote(detail)}
         </div>
       )}
 

@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-8** · 2026-11-16 13:47 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-9** · 2026-11-16 14:24 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -219,9 +219,14 @@ time order. Tab: **Pipeline → Split**.
 - [ ] **review**: the training and validation blocks each include at least one
   rough market, such as 2008, 2020 or 2022. The design asks for it, and nothing
   checks it yet.
+- [ ] **app**: no run reads past its window: a walk-forward run's last fold stops
+  before its labels and returns reach the next block, so a validation run never reads
+  the test block (G38).
 - [ ] **review**: the test block has not been used: no walk-forward run with
-  `--test` has read it (the Training tab's "include test" filter shows any).
-  Using it is step 8, and it can be done only once.
+  `--test` has read it (the Training tab's "include test" filter shows any), and no
+  backtest result is marked "test window" on Results. Every look is logged
+  (`test_window_looks`, G48), deleted results included. Using it is step 8, and it can
+  be done only once.
 
 ## 5. Strategy
 
@@ -330,6 +335,9 @@ Tab: **Pipeline → Backtest**.
 - [ ] **app**: an entry never spends more than the cash: it is sized on the slipped
   fill price with the commission inside the cash, so cash is zero or more after every
   entry, long or short (B2).
+- [ ] **app**: a result that scores a saved strategy's test window is logged as a look
+  and marked on Results and the result page, "test window reused" when the window was
+  looked at before; `run` warns. The Run tab defaults to the validation window (G48, R69).
 - [ ] **app**: a saved model of each engine type backtests here: `nn-feedforward`,
   `xgboost` and `lightgbm`, each trained by the loader on the same purged rows (B9).
 
@@ -345,7 +353,8 @@ API and the web app do not offer it.
 
 - [ ] **review**: steps 1–7 are done for this strategy, and the author has said go.
 - [ ] **app**: the test run is recorded. It shows in the Training tab under
-  "include test".
+  "include test", is logged as a look at the test window, and prints the looks before
+  it (G48). A test run that would record nothing is refused.
 - [ ] **review**: its verdict is written in the review table, and the strategy is
   not changed afterwards. A changed strategy is a new strategy, and its test block
   is spent.
@@ -591,6 +600,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-9 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38 and G48: steps 4, 7 and 8 gain their app conditions |
 | 2026-11-16-8 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9 done; step 6's engine condition and step 7's tree-model condition are app conditions |
 | 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5 done |
 | 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done; step 7's in-sample check is now an app condition |

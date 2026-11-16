@@ -753,3 +753,43 @@ def test_a_strategy2_fold_carries_its_always_long_baseline():
     assert row["levered_return"] == 12.06
     assert "%(levered_return)s" in ws._INSERT_FOLD
     assert ws.fold_row(1, FakeFold())["levered_return"] is None
+
+
+def test_a_look_at_a_test_window_is_recorded_and_a_second_is_a_reuse(db):
+    """G48, R69: the shared rule records a run over a saved test window as a
+    look at it; the next look at the same window counts the one before."""
+    conn = db
+    symbol, name = "ZZG48PY", "zz-g48-py"
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('strategies') IS NOT NULL")
+            if not cur.fetchone()[0]:
+                pytest.skip("the web layer's strategies table is not there yet")
+            cur.execute(
+                "INSERT INTO strategies (name, version, instrument, source, timeframe, model_type,"
+                " validation_scheme, features_json, windows_json, label_json, hyperparams_json)"
+                " VALUES (%s, 1, %s, 'yahoo', 'D1', 'mlp', 'walkforward', '[]', %s, '{}', '{}')",
+                (name, symbol, '{"test": {"from": "2022-01-01", "to": "2022-12-31"}}'))
+        conn.commit()
+        from datetime import date
+        first = ws.record_look(conn, "walkforward", -901, symbol, date(2022, 1, 3),
+                               date(2022, 12, 30))
+        assert [(f.isoformat(), t.isoformat(), b) for f, t, b, _ in first] == [
+            ("2022-01-01", "2022-12-31", 0)]
+        second = ws.record_look(conn, "backtest", -902, symbol, date(2022, 6, 1),
+                                date(2023, 3, 1))
+        assert second[0][2] == 1
+        assert ws.record_look(conn, "backtest", -903, symbol, date(2021, 1, 4),
+                              date(2021, 12, 31)) == []      # outside the window: no look
+    finally:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM test_window_looks WHERE instrument = %s", (symbol,))
+            cur.execute("DELETE FROM strategies WHERE name = %s", (name,))
+        conn.commit()
+
+
+def test_a_holdout_run_that_records_nothing_is_refused(capsys):
+    from nn import walkforward as wf
+    assert wf.main(["--test", "--no-save"]) == 2
+    assert "always recorded" in capsys.readouterr().out

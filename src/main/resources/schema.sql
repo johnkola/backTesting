@@ -944,3 +944,57 @@ BEGIN
     END LOOP;
 END
 $audit_triggers$;
+
+-- G48, R69: every run that reports on a saved strategy's test window, kept so
+-- tuning on the test block is visible. The test block is the design's final
+-- exam, scored once; a look at it is a fact that outlives the run that made it,
+-- so ref_id is a plain number with no foreign key, and deleting or rerunning a
+-- result never erases that the window was seen. Whether a look is the first or
+-- a reuse is derived on read, from the order of the looks at one window.
+--   kind         'backtest' (backtest_results.id) or 'walkforward' (a holdout run)
+--   test_from/to the saved test window looked at (strategies.windows_json)
+--   looked_from/to the bars the run scored
+CREATE TABLE IF NOT EXISTS test_window_looks (
+    id BIGSERIAL PRIMARY KEY,
+    instrument VARCHAR(32) NOT NULL,
+    test_from DATE NOT NULL,
+    test_to DATE NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    ref_id BIGINT NOT NULL,
+    looked_from DATE NOT NULL,
+    looked_to DATE NOT NULL,
+    looked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by VARCHAR(64) NOT NULL DEFAULT audit_actor()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_test_window_looks
+    ON test_window_looks (kind, ref_id, instrument, test_from, test_to);
+CREATE INDEX IF NOT EXISTS idx_test_window_looks_window
+    ON test_window_looks (instrument, test_from, test_to, looked_at);
+-- The one rule for what a look is, so the engine and the runner cannot differ:
+-- a run on an instrument over [looked_from, looked_to] looks at every saved test
+-- window of that instrument it overlaps, whichever strategy saved it. Returns
+-- how many looks it recorded. The strategies table is the web layer's; before
+-- it exists there is nothing to look at.
+CREATE OR REPLACE FUNCTION record_test_window_looks(
+    p_kind TEXT, p_ref BIGINT, p_instrument TEXT, p_from DATE, p_to DATE,
+    p_at TIMESTAMPTZ DEFAULT now()
+) RETURNS INT AS $test_window_looks$
+DECLARE
+    n INT;
+BEGIN
+    IF to_regclass('strategies') IS NULL THEN
+        RETURN 0;
+    END IF;
+    INSERT INTO test_window_looks
+        (instrument, test_from, test_to, kind, ref_id, looked_from, looked_to, looked_at)
+    SELECT DISTINCT p_instrument, w.f, w.t, p_kind, p_ref, p_from, p_to, p_at
+      FROM (SELECT (windows_json::jsonb -> 'test' ->> 'from')::date AS f,
+                   (windows_json::jsonb -> 'test' ->> 'to')::date AS t
+              FROM strategies
+             WHERE instrument = p_instrument AND windows_json::jsonb ? 'test') w
+     WHERE w.f <= p_to AND w.t >= p_from
+    ON CONFLICT DO NOTHING;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END
+$test_window_looks$ LANGUAGE plpgsql;

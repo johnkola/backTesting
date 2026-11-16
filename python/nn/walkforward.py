@@ -204,6 +204,38 @@ def make_folds(
     return out
 
 
+def trim_to_window(
+    folds: list[tuple[int, list[int], list[int]]], label_dates: list[date], forward: int,
+    window_end: date | None,
+) -> list[tuple[int, list[int], list[int]]]:
+    """Each fold minus the scored bars that read past the run's window (G38).
+
+    A bar's label reads the close `forward` rows later, and its return runs to
+    the next row's prices, so the last `forward` bars of a window read the
+    window after it. Between validation years that is harmless, since the next
+    year is validation too. At the run's window end it is not: the last
+    validation fold would read the test block, which is scored once, at the
+    end; a holdout fold would read the strategy's prediction window. So a bar
+    is scored only when the row its label reads, `label_dates[i + forward]`,
+    is on or before `window_end`. It is the purge, at the other end of the
+    window. Only the last fold loses bars.
+
+    `label_dates` is the stacked rows' date axis before trailing rows were cut
+    for want of a label, so the row a label reads always has a date. No
+    `window_end` (a holdout run set up by flags, which runs to the end of the
+    data) trims nothing.
+    """
+    if window_end is None:
+        return folds
+    out = []
+    for year, tr, va in folds:
+        kept = [i for i in va
+                if i + forward < len(label_dates) and label_dates[i + forward] <= window_end]
+        if kept:
+            out.append((year, tr, kept))
+    return out
+
+
 def stop_split(tr: list[int], dates: list[date], purge: int) -> tuple[list[int], list[int]]:
     """(fit, stop): a fold's training indices split for early stopping.
 
@@ -1039,6 +1071,10 @@ def main(argv: list[str] | None = None) -> int:
             conn.close()
     # A strategy's timeframe is refused by `strategy_spec.fold_plan`, with its
     # other reasons; this is the same rule for a run set up by flags.
+    if args.test and args.no_save:
+        print("refused: a holdout run is always recorded. The test block is scored once, "
+              "and a look nobody can see afterwards is what R69 rules out (G48)")
+        return 2
     if args.strategy_id is None:
         # Flags name the engines; a strategy's rows do, through `strategy_setup`.
         args.engines = {n.strip(): {} for n in str(args.engines).split(",") if n.strip()}
@@ -1103,6 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
 
     x_all = feature_store.stack_lookback(fm.values, args.lookback)
     wdates = fm.dates[args.lookback - 1 :]
+    label_dates = list(wdates)    # every stacked row's date, before the label cut
     y_all, _ = build_labels(wdates, closes, forward=args.forward,
                             buy_threshold=args.buy_threshold,
                             sell_threshold=args.sell_threshold)
@@ -1120,6 +1157,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         folds = make_folds(wdates, args.train_start, args.first_val, args.last_val,
                            purge=args.forward)
+    # No fold reads past the run's window (G38): the last validation fold
+    # stops before its labels and returns reach the test block.
+    window_end = staleness.window_end_of(args.last_val, bool(args.test),
+                                         setup.plan.test_end if setup is not None else None)
+    folds = trim_to_window(folds, label_dates, args.forward, window_end)
     args.purge_bars = args.forward
     if args.patience:
         short = [y for y, tr, _ in folds if not all(stop_split(tr, wdates, args.forward))]
@@ -1163,6 +1205,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"folds        train from {args.train_start}, validate "
           f"{args.first_val}..{args.last_val}   "
           f"(test block {args.last_val + 1}+ untouched)")
+    if window_end is not None:
+        print(f"scoring      nothing past {window_end}: the last fold's last {args.forward} "
+              f"bars are not scored, as their labels and returns would read past it")
     print(f"training     last {args.forward} bars of each train window purged (their "
           f"targets look past it); "
           + (f"early stopping, patience {args.patience}, on the last train year "
@@ -1214,6 +1259,18 @@ def main(argv: list[str] | None = None) -> int:
                                             {**run_lineage(cur, set_id, parts), **span_cols})
         print(f"recording    walkforward_runs id={run_id} "
               f"(folds committed as they finish)")
+        if args.test:
+            # G48, R69: the holdout is the final exam. The look is recorded
+            # before anything is scored, and any look before it is said.
+            scored = folds[0][2]
+            for f, t, before, first_at in walkforward_store.record_look(
+                    conn, "walkforward", run_id, args.symbol, wdates[scored[0]],
+                    wdates[scored[-1]]):
+                print(f"test window  {args.symbol} {f} to {t}: "
+                      + ("first look" if before == 0 else
+                         f"TEST WINDOW REUSED: looked at {before} time(s) before, first "
+                         f"{first_at:%Y-%m-%d}. A changed strategy is a new strategy, and "
+                         f"its test block is spent"))
 
     # Buy-and-hold for every fold, before anything trains (B6, D6): one buy at
     # the fold's first open and one sale at its end, under this run's costs and

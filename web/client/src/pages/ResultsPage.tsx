@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { sampleNote, sampleOf } from '../lib/inSample'
+import { testWindowMark, testWindowNote } from '../lib/testWindow'
 import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import DeleteResultRowButton from '../components/DeleteResultRowButton'
@@ -146,6 +147,15 @@ export default function ResultsPage() {
                             data-tip={sampleNote(r) ?? ''}
                           >
                             in-sample
+                          </span>
+                        )}
+                        {testWindowMark(r) && (
+                          <span
+                            className={`badge badge-xs ml-1 ${testWindowMark(r) === 'reused'
+                              ? 'badge-error' : 'badge-warning'} ${tipClass}`}
+                            data-tip={testWindowNote(r) ?? ''}
+                          >
+                            {testWindowMark(r) === 'reused' ? 'test window reused' : 'test window'}
                           </span>
                         )}
                         {sampleOf(r) === 'unknown' && (

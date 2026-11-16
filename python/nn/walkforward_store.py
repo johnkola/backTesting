@@ -452,6 +452,37 @@ def load_signals(cur, run_id: int, engine: str = "mlp") -> dict[int, profit.Sign
     return load_engine_signals(cur, run_id).get(engine, {})
 
 
+_LOOKS = """
+SELECT l.test_from, l.test_to,
+       (SELECT count(*) FROM test_window_looks e
+         WHERE e.instrument = l.instrument AND e.test_from = l.test_from
+           AND e.test_to = l.test_to AND (e.looked_at, e.id) < (l.looked_at, l.id)),
+       (SELECT min(e.looked_at) FROM test_window_looks e
+         WHERE e.instrument = l.instrument AND e.test_from = l.test_from
+           AND e.test_to = l.test_to)
+  FROM test_window_looks l
+ WHERE l.kind = %s AND l.ref_id = %s
+ ORDER BY l.test_from
+"""
+
+
+def record_look(conn, kind: str, ref_id: int, instrument: str, first, last) -> list[tuple]:
+    """Record that run `ref_id` scored `instrument` over [first, last], as a
+    look at every saved test window it overlaps (G48, R69), and return each as
+    (test_from, test_to, looks before this one, first look's time).
+
+    The rule for what a look is lives in the database
+    (`record_test_window_looks`, schema.sql), shared with the Java engine."""
+    with conn.cursor() as cur:
+        set_actor(cur)
+        cur.execute("SELECT record_test_window_looks(%s, %s, %s, %s, %s)",
+                    (kind, ref_id, instrument, first, last))
+        cur.execute(_LOOKS, (kind, ref_id))
+        rows = cur.fetchall()
+    conn.commit()
+    return [(f, t, int(before), first_at) for f, t, before, first_at in rows]
+
+
 def close_run(conn, run_id: int) -> None:
     """Stamp `finished_at`. Until this runs, the row reads as in progress."""
     with conn.cursor() as cur:

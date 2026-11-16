@@ -6,6 +6,7 @@ const path = require('path');
 const { marked } = require('marked');
 const { pool } = require('./db');
 const { normaliseMetadata } = require('./modelMetadata');
+const testWindows = require('./testWindows');
 const featureCatalogue = require('./featureCatalogue');
 const docs = require('./docs');
 const strategies = require('./strategies');
@@ -596,6 +597,8 @@ app.get('/api/results', async (req, res) => {
       pool.query(itemsSql, [...params, limit, offset]),
     ]);
 
+    // G48, R69: which saved test windows each result scores, first look or reuse.
+    const looks = await testWindows.testWindowsOf(pool, items.map((r) => r.id));
     res.json({
       items: items.map((r) => ({
         id: r.id,
@@ -619,6 +622,7 @@ app.get('/api/results', async (req, res) => {
         modelVersionId: r.model_version_id,
         createdAt: r.created_at,
         ...modelWindowOf(r),
+        ...testWindows.testWindowFields(looks.get(String(r.id))),
       })),
       total: Number(countRows[0].total),
       limit,
@@ -705,6 +709,7 @@ app.get('/api/results/:id', async (req, res) => {
       modelVersionId: r.model_version_id,
       createdAt: r.created_at,
       ...modelWindowOf(r),
+      ...testWindows.testWindowFields((await testWindows.testWindowsOf(pool, [r.id])).get(String(r.id))),
       // One value per equity history point, in the same order; null with
       // holdEquityNote saying why.
       holdEquity: curve.values,

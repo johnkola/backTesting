@@ -576,3 +576,47 @@ def test_a_money_model_is_scored_on_out_or_long_against_always_long():
     assert acc == 1.0 and base == 0.75
     # The old reading: "not SELL" compared as BUY with the 3-class label.
     assert float((always_long == y_va).mean()) == 0.25
+
+
+class TestNothingReadsPastTheWindow:
+    """G38: the last validation fold stops before its labels and returns read
+    the test block; folds inside the window are untouched."""
+
+    def dates(self):
+        from datetime import date as d
+        from datetime import timedelta as td
+        out, day = [], d(2019, 12, 1)
+        while day < d(2022, 2, 1):
+            if day.weekday() < 5:
+                out.append(day)
+            day += td(days=1)
+        return out
+
+    def test_only_the_last_fold_loses_its_last_forward_bars(self):
+        from datetime import date as d
+        dates = self.dates()
+        folds = wf.make_folds(dates, 2019, 2020, 2021, purge=5)
+        trimmed = wf.trim_to_window(folds, dates, 5, d(2021, 12, 31))
+        assert trimmed[0] == folds[0]                      # 2020 reads into 2021: fine
+        year, tr, va = trimmed[1]
+        assert (year, tr) == (2021, folds[1][1])           # training is untouched
+        assert va == folds[1][2][:-5]
+        assert dates[va[-1] + 5] == d(2021, 12, 31)       # the last label reads the year's end
+        assert all(dates[i + 5] <= d(2021, 12, 31) for i in va)
+
+    def test_no_window_end_trims_nothing(self):
+        dates = self.dates()
+        folds = wf.make_folds(dates, 2019, 2020, 2021, purge=5)
+        assert wf.trim_to_window(folds, dates, 5, None) == folds
+
+    def test_the_span_then_ends_inside_the_window(self):
+        from datetime import date as d
+
+        from nn import staleness
+        dates = self.dates()
+        folds = wf.trim_to_window(wf.make_folds(dates, 2019, 2020, 2021, purge=5), dates, 5,
+                                  d(2021, 12, 31))
+        span = staleness.run_span(dates, folds, 1, 5, d(2021, 12, 31))
+        assert span.end == d(2021, 12, 31) and span.last_used < d(2021, 12, 31)
+        # ...and freshness does not then see the purged days as unscored.
+        assert staleness.new_days_in_window(dates, span.last_used, d(2021, 12, 31), 5) == []

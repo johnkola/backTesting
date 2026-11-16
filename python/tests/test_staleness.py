@@ -100,7 +100,12 @@ def test_new_days_count_only_inside_the_window_and_only_once_labelable():
     last_used = dates[5]
     later = staleness.new_days_in_window(dates, last_used, dt.date(2026, 12, 31), forward=5)
     assert later and all(last_used < d <= dt.date(2026, 12, 31) for d in later)
-    assert later == [d for d in dates[6:] if d.year == 2026]
+    # G38: a day counts only when the row its label reads is inside the window
+    # too; the last five days of the year are not scored, so never "new".
+    assert later == [d for i, d in enumerate(dates)
+                     if i > 5 and i + 5 < len(dates) and dates[i + 5] <= dt.date(2026, 12, 31)]
+    assert dates[dates.index(later[-1]) + 5] <= dt.date(2026, 12, 31) < dates[
+        dates.index(later[-1]) + 6]
 
 
 def test_a_finished_window_gains_nothing_from_new_days():

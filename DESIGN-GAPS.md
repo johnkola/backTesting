@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-15** · 2026-11-16 13:47 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-17** · 2026-11-16 14:24 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -75,7 +75,7 @@ stored run.
 |---|---|---|---|---|---|---|
 | G46 | **Undo can delete current data.** Undo deletes a series' whole calendar year and only the audit row it was pressed on. Each daily feeds refresh adds an audit row for the current year, so 116 archive paths have several (`computed/NDXAD/2026/D1.csv`: rows 801, 7492, 7524, 7670, 7717). Undo on the oldest deletes all 219 current 2026 bars, leaves four rows pointing at nothing, and the older version cannot come back because its archive file was overwritten. Re-importing the archive restores the current data only | R11 | `imports_api.py` `delete_import` (`DELETE FROM candles … timestamp >= since AND < until`, then the one audit row); the Imports page lists every row with Undo | at risk: any series the feeds refresh | S | done 2026-11-15: an older version answers 409 `superseded` (the dry run too); undoing the current one removes every audit row of the slice; the Imports page shows Superseded instead of Undo |
 | G47 | **Look-ahead: features join on the date a value describes, not the date it was published.** A row for day D holds FRED's DGS10, DGS2, BAA10Y and DFF, the Bank of Canada's CORRA and EIA's WTI for D. These arrive the next day or later, while the trade is decided after D's close. The live system cannot see them at 18:30 on D (they are carried forward), so history and live disagree, and every backtest used values it could not have had. Also: `holiday_proximity` reads the next stored session, so an unscheduled closure leaks | R17 | `feature_build._fetch_field` (`c.timestamp::date`), `normalize.align_forward_fill`. QQQ's 11-12 bar was stored 2026-11-12 18:30 (import 366); DGS10, DFF and CORRA for 11-12 arrived 2026-11-13 21:25 (imports 420, 425, 428) | every feature set; runs 374 to 378 (phase1-full and both Strategy 2 variants select `treasury_10y`, `treasury_2y`, `yield_curve_10y2y`, `oil_wti`) | M | done 2026-11-15: `[alignment.available_after]` and `normalize.shift_to_availability`; `holiday_proximity` from the scheduled holidays; set 28; runs 376-378 rerun as 394-396 |
-| G48 | The test block has been scored, and nothing guards it. The Run tab fills a saved strategy's window from its test block, and results 686, 697, 698 and 706 score 2022-04-13 to 2026-06-30 (inside every strategy's 2022-01-01 to 2026-06-30 test block) with `nn-feedforward` models. No run is marked as having seen the test window | R69 | `RunPage.tsx` `applySaved` ("the window defaults to the strategy's **test** block") | results 686, 697-699, 706, 711-713 | S | open |
+| G48 | The test block has been scored, and nothing guards it. The Run tab fills a saved strategy's window from its test block, and results 686, 697, 698 and 706 score 2022-04-13 to 2026-06-30 (inside every strategy's 2022-01-01 to 2026-06-30 test block) with `nn-feedforward` models. No run is marked as having seen the test window | R69 | `RunPage.tsx` `applySaved` ("the window defaults to the strategy's **test** block") | results 686, 697-699, 706, 711-713 | S | done 2026-11-16: see the G38 and G48 record in Pass 4 |
 | G49 | Prediction targets are a fixed 3-class label. Only `forward_return_3class` (±2% over 5 bars) is registered, and its thresholds are runner defaults. There is no direction target (P(next bar up), buy and sell thresholds) or return target (N-bar forecast, minimum return). So R72's baselines ("always up", "historical mean return") have nothing to attach to | R71, R72 | `strategy_spec.LABEL_KINDS`; `strategies.js` ("the only one registered") | all 9 runs | M | open |
 | G50 | A walk-forward run keeps neither its models nor its scaler nor its predictions. `run_fold` discards each fold's model and fitted scaler, no per-bar prediction is stored, the windows are kept as years, and the prediction window is never predicted over | R34, R68, R25, R38 | `walkforward.run_fold`, `train_one` ("the feature store deliberately does not persist" the scaler) | all 9 runs | M | open. The per-bar predictions are stored since B10 (`walkforward_signals`: raw output, call, label); the models, the scaler, the windows and the prediction window are not |
 | G51 | Data verification as the design has it: Pandera and exchange_calendars as fixed steps, a `data_checks` table, raw and adjusted candle tables with split detection against imported split history, ydata-profiling and Evidently, one verification column per tool per row, and the OK/warning/error rule (see D11). Today: a hand-written cohesion check, a rule-based NYSE calendar, findings in the response only, one cross-check (the yield curve) | R12, R55, R63, R64, R65, R49 | `loader/cohesion.py`, `loader/market_calendar.py`, `nn/data_checks.py`; no such tables; none of the tools in `pyproject.toml` | none until built | XL | open |
@@ -567,6 +567,52 @@ Checklist:
 
 
 
+**G38 and G48 plan, 2026-11-16.** The author: do G38 and G48. Both protect the test block, which step 8 scores once (Design Notes: "never touched until the end"; R69).
+
+*G38: a run reads past its window.* Every stored run (456-462, 684) reads closes to 2022-01-07. The 2021 fold's last five labels read 2022 closes, and its last bar's return runs to 2022-01-03's prices, so a validation run takes a look at the test block. Between validation years this is harmless: the next year is validation too.
+- **No fold reads past the window it scores.** `walkforward.trim_to_window` drops a fold's bars whose label or return reaches past the run's window end: 31 December of the last validation year, or the strategy's `test.to` on a holdout run. Only the last fold loses bars, its last `forward`. It is the purge at the other end.
+- **Freshness agrees.** `staleness.new_days_in_window` stops counting a day whose label would read past the window end as a day a rerun could still score. Otherwise every run would read as stale.
+- **Stored runs** read the boundary. The models do not change, because no fold trains on validation bars, so a rerun differs only in the last fold. They are rerun at the checkpoint, and folds 1-5 are checked unchanged.
+
+*G48: nothing records a look at a test window, or guards one.* Backtest results 813-820, 835 and 836 score QQQ inside every QQQ strategy's 2022-2026 test block, and earlier results did the same before the reruns replaced them. R69: "a strategy's test window is marked as seen once a run reports on it; later runs reusing that window after changes are flagged 'test window reused' on Results".
+- **A log of looks**, `test_window_looks`. One row per run that reports on a saved strategy's test window:
+  - a backtest result whose window overlaps one, on the same instrument (the engine writes it as it stores the result);
+  - a walk-forward holdout run (the runner writes it as it opens the run).
+
+  It keeps no foreign key to the result, so deleting or rerunning a result never erases the fact that the window was seen. Whether a look is the first or a reuse is derived on read from the log's order.
+- **Shown.** The Results list and the result page mark a result that reads a test window: "test window" on the first look, "test window reused" after, naming the window and how many looks came before. `run` prints the same as a warning; it does not refuse. A holdout run prints the looks before it.
+- **Guarded.** The Run tab fills a saved strategy's window from its validation block, not its test block. The test block is one deliberate click that says it spends the holdout.
+- **Stored before.** The log is backfilled from the results stored now, and from the results the B-step reruns deleted, read from the backups taken before each deletion, with their own dates. That way the first look keeps its real date.
+
+Checklist:
+- [x] Plan here
+- [x] G38: `trim_to_window` in the runner, freshness; tests
+- [x] G48: the log, written by the engine and the runner; read by the API; tests
+- [x] G48: the Results marks, the result-page banner, the `run` warning and the Run tab's default; tests; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go:** rerun the stored runs (G38); backfill the log (G48)
+- [x] README, `AGENTS.md`, G38, G48 and this record say done
+
+*Done, 2026-11-16 14:24.* The author chose: back up, rerun and delete the 8 runs; backfill all 81 looks.
+- **Tests:** Python 844, Java 165, API 119, client 172. New tests:
+  - only the last fold loses its last `forward` bars, the span then ends inside the window, and freshness does not count the purged days as unscored;
+  - against the database: a look recorded by the shared function, a second one a reuse, and none outside the window;
+  - in Java, the engine's save path, where deleting a result keeps its look;
+  - a holdout run with `--no-save` is refused;
+  - the API's and the client's marks.
+- **G38, runs 456-462 and 684 rerun as 703-710** (backup `rerun-g38-20261116/before.sql.gz`, originals deleted in one transaction).
+  - In every pair, folds 1-5 are identical and the 2021 fold is 5 bars shorter. Its last scored bar is 2021-12-23, exiting 2021-12-27, so nothing reads 2022. Each run's span ends 2021-12-31, not 2022-01-07.
+  - Verdicts moved by at most 0.02 pp a fold and none changed sign. For example strategy2-scored is +3.611 pp (5 of 6) where it was +3.591, and LightGBM in phase1-engines is −1.528 where it was −1.527.
+  - Every strategy's newest run reads fresh.
+- **G48 backfill** (backup `backfill-g48-20261116/before.sql.gz`).
+  - 131 results were read from the backups taken before each deletion since 2026-11-12, plus the ones stored now. 81 of them scored QQQ's saved test window, 2022-01-01 to 2026-06-30, and were logged with their own dates, attributed to `claude-code:g48-backfill`.
+  - The first look was result 686 on 2026-10-25. Nothing older than the oldest backup is known.
+  - On Results, every stored QQQ result in the window now reads "test window reused": 813-820, 835, 836 and the four `sma-crossover` results 782-785, with 62 to 78 looks before each.
+- **The test block has been looked at 81 times** by backtests, mostly reruns of the same models over 2022-2026. No walk-forward holdout run has been made. Whether that block can still serve as step 8's final exam is the author's call. A changed strategy is a new strategy, but the bars have been seen.
+- **Deliberate:** a look counts any result on the instrument that overlaps a saved test window, rule-based strategies included, since the bars are seen either way. A walk-forward holdout run is logged and printed, but walk-forward runs do not reach Results (G57), so R69 stays partial.
+
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -629,7 +675,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R66 | missing | D14 |
 | R67 | missing | G16 |
 | R68 | partial | G50 |
-| R69 | missing | G48 |
+| R69 | partial | G57 (walk-forward runs, logged and printed, do not reach Results) |
 | R70 | missing | G16 |
 | R71 | missing | G49 |
 | R72 | partial: every run is scored against its naive predictor, and one that does not beat it is flagged (B8); a label kind cannot exist without its baseline. Direction and return targets are not registered yet (G49), and Results do not show walk-forward runs (G57) | G49, G57 |
@@ -709,7 +755,7 @@ wrong today.
 | # | Gap | Found in | Evidence | Stored data | Effort | Status |
 |---|---|---|---|---|---|---|
 | G37 | The Split tab shows no strategy's split. It cuts the newest set on two API constants (`SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`, defaults 2016-01-01 and 2022-01-01, undocumented), with no train start and no test end. So its train block starts 1999-03-10 where the strategies train from 2003 or 2007, and its test block runs to today where they stop at 2026-06-30. Its comment says "train from 2003", and the tab's footnote says runs set their boundaries on the command line; both are wrong | step 4 | `web/api/server.js` lines 47-48 and the `split` query near line 1159; `SplitStage.tsx` footnote | none: runs record their own windows | S | open |
-| G38 | Nothing separates the last validation year from the test block. Training is purged before validation (`purged`), but the 2021 fold's labels read closes to 2022-01-07 and its score includes the 2021-12-31 to 2022-01-03 return | step 4 | every run's `span_to` is 2022-01-07; benchmark 208 ends 2022-01-03; `walkforward.make_folds` | the 2021 fold of all 9 runs and benchmark 208, by one session | S | open |
+| G38 | Nothing separates the last validation year from the test block. Training is purged before validation (`purged`), but the 2021 fold's labels read closes to 2022-01-07 and its score includes the 2021-12-31 to 2022-01-03 return | step 4 | every run's `span_to` is 2022-01-07; benchmark 208 ends 2022-01-03; `walkforward.make_folds` | the 2021 fold of all 9 runs and benchmark 208, by one session | S | done 2026-11-16: see the G38 and G48 record in Pass 4 |
 | G39 | The Normalization check passes what it cannot see. A NaN or infinite value reaches the client as a null statistic, and `checkColumn` returns no problem on a null, although the design asks this gate to catch NaNs. Six columns (four `ratio_to_prev_close`, two `daily_change`) have no rule at all and always show ok. The design's before/after previews are not built | step 3 | `NormalizationStage.tsx` `checkColumn` (`if (min === null ...) return null`) | none: set 27 holds no NaN or infinite value | S | done 2026-11-15: `lib/normalizationCheck.ts` (NaN and infinite values counted by the API, flags checked for 0/1, rules for returns and changes, no silent pass) and the previews (`GET /api/nn/features/preview`, the Normalization tab's Preview) |
 | G40 | A stored backtest result does not keep its run settings: no strategy parameters, no requested from/to (`start_date` is the first bar after warm-up), no commission or slippage. "Rerun with the same settings" (step 7) has to rebuild them by hand, and for the ta4j results it cannot | step 7 | `BacktestResultRepository` INSERT columns | all 16 results | M | open |
 | G41 | The backtest staleness check sees only the result's own series at its own timeframe or D1. An nn-feature-store result reads ~20 series through the feature table, and a fix to any of them would leave it fresh; a fix to a finer base timeframe (M30 rolled up to D1) is not seen either | step 7 | `nn/staleness.py` `backtest_stage` (`fixes.get((sym, src))`, `ftf not in (tf, "D1")`) | none today: no nn-feature-store result, no synthetic fix | S | open |
@@ -1372,6 +1418,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-17 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38 and G48 done: nothing scores past its window; every look at a test window recorded; 8 runs rerun as 703-710; 81 looks backfilled |
+| 2026-11-16-16 | 2026-11-16 14:03 | Claude Code (Claude Opus 5.5) | G38 and G48 plan |
 | 2026-11-16-15 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9 done: the three engines; G35 done; R23 done, R21 and R74 partial; new gap G70 |
 | 2026-11-16-14 | 2026-11-16 13:13 | Claude Code (Claude Opus 5.5) | B9 plan (G35) |
 | 2026-11-16-13 | 2026-11-16 13:06 | Claude Code (Claude Opus 5.5) | B5 done: the trainers purge; 6 models retrained, 8 results rerun; G31 done; B4's backfill test scoped |

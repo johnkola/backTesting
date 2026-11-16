@@ -1556,6 +1556,14 @@
                   "        if (r.modelWindow === null) pm.expect(r.inSample).to.be.null;",
                   "        if (r.modelWindow !== null && r.modelWindow !== 'known') pm.expect(r.inSample).to.be.null;",
                   "    }",
+                  "});",
+                  "",
+                  "pm.test('a result says whether it scored a saved test window, first look or reuse (G48, R69)', function () {",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(r.testWindows).to.be.an('array');",
+                  "        if (r.testWindows.length === 0) pm.expect(r.testWindowReused).to.be.null;",
+                  "        else pm.expect(r.testWindowReused).to.eql(r.testWindows.some(w => w.looksBefore > 0));",
+                  "    }",
                   "});"
                 ]
               }

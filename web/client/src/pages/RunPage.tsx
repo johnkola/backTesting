@@ -134,7 +134,9 @@ export default function RunPage() {
     setSymbol(chosen.instrument)
     setSource(chosen.source)
     setTimeframe(chosen.timeframe)
-    const scoring = chosen.windows.test ?? chosen.windows.prediction
+    // The validation block, where variants are compared, never the test block
+    // (G48): that is the final exam, scored once, and is one deliberate click.
+    const scoring = chosen.windows.validation ?? chosen.windows.prediction
     setFrom(scoring?.from ?? '')
     setTo(scoring?.to ?? '')
     setParams((prev) => ({
@@ -203,20 +205,37 @@ export default function RunPage() {
                 </select>
               </label>
               {chosenSaved && (
-                <p className="text-xs text-base-content/70 mt-2">
-                  Scoring over the{' '}
-                  <span className="font-medium">
-                    {chosenSaved.windows.test ? 'test' : 'prediction'}
-                  </span>{' '}
-                  window the strategy reserved
+                <div className="text-xs text-base-content/70 mt-2 space-y-2">
+                  <p>
+                    Scoring over the strategy&apos;s validation window, where variants are
+                    compared
+                    {chosenSaved.windows.validation && (
+                      <> (<span className="font-mono">
+                        {chosenSaved.windows.validation.from} → {chosenSaved.windows.validation.to}
+                      </span>)</>
+                    )}
+                    . A model trained on these bars is marked in-sample on Results.
+                  </p>
                   {chosenSaved.windows.test && (
-                    <> (<span className="font-mono">
-                      {chosenSaved.windows.test.from} → {chosenSaved.windows.test.to}
-                    </span>)</>
+                    <p>
+                      The test window (<span className="font-mono">
+                        {chosenSaved.windows.test.from} → {chosenSaved.windows.test.to}
+                      </span>) is the final exam, scored once to confirm a variant already
+                      chosen. Every look at it is recorded, and a second is flagged
+                      &quot;test window reused&quot; on Results (R69).{' '}
+                      <button
+                        type="button"
+                        className="btn btn-xs btn-outline btn-warning"
+                        onClick={() => {
+                          setFrom(chosenSaved.windows.test?.from ?? '')
+                          setTo(chosenSaved.windows.test?.to ?? '')
+                        }}
+                      >
+                        Score the test window instead
+                      </button>
+                    </p>
                   )}
-                  . Those bars were held out of training, so this is an out-of-sample read
-                  rather than a score on the bars the model was fitted on.
-                </p>
+                </div>
               )}
             </div>
           )}

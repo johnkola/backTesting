@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-8** · 2026-11-16 13:47 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-9** · 2026-11-16 14:24 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -291,7 +291,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/sources` | — | `{items: [...]}` — data sources |
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
 | `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable |
-| `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries |
+| `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries. Each carries `testWindows`, the saved test windows it scores as `{from, to, looksBefore, firstLookAt}` (empty when none), and `testWindowReused`, true when one was looked at before it (G48, R69); the result page has the same |
 | `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}` |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
@@ -518,6 +518,23 @@ train the class label only, so a money-trained loss (`return`, `sharpe`, `calmar
 tree engine on is refused with the reason. A run from flags names its engines with
 `--engines mlp,xgboost,lightgbm` (default `mlp`), the tree engines on their defaults. Each
 run records every engine's settings, library version and seed.
+
+**Nothing scores past its window** (G38). A bar's label reads the close `forwardBars`
+later and its return runs to the next bar's prices, so the last bars of a window read the
+window after it. A walk-forward run's last fold therefore stops `forwardBars` bars before
+the run's window ends (31 December of the last validation year, or the strategy's
+`test.to` on a holdout run), the purge at the other end: a validation run never reads the
+test block.
+
+**Every look at a test window is recorded** (G48, R69). The test block is the final exam,
+scored once to confirm a variant already chosen. A backtest result that scores a saved
+strategy's test window, on the same instrument, and a walk-forward holdout run are each
+logged as a look in `test_window_looks`, which keeps the record after the result is
+deleted or rerun. The Results list and the result page mark such a result "test window" on
+the window's first look and "test window reused" after, `run` prints the same as a
+warning, and a holdout run prints the looks before it. Nothing is refused, but a holdout
+run that would record nothing (`--test --no-save`) is. The Run tab fills a saved strategy's
+window from its validation block; the test block is one deliberate click.
 
 **A model result says whether it is in-sample** (build step B4). A model is found by its
 configuration, not its data window, so nothing stops a backtest over the very bars it
@@ -1100,6 +1117,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-9 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38: nothing scores past its window; G48: every look at a test window is recorded and marked; results' `testWindows` |
 | 2026-11-16-8 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9: the engines (network, XGBoost, LightGBM); `GET /api/nn/engines`; engine fields on train, predict and walk-forward runs; the `xgboost` and `lightgbm` strategies |
 | 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5: the single-split trainers purge; what a model's training window records |
 | 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4: in-sample model results marked; `GET /api/nn/models/window`; the backfill command |

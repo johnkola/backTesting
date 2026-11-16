@@ -345,6 +345,22 @@ export type ResultSummary = {
   modelTrainSymbol?: string | null
   /** True when the result covers bars its model was trained on; null unless known. */
   inSample?: boolean | null
+  /**
+   * The saved strategies' test windows this result scores (G48, R69), each with
+   * the looks recorded before it; empty when it scores none.
+   */
+  testWindows?: TestWindowLook[]
+  /** True when a window it scores was looked at before; null when it scores none. */
+  testWindowReused?: boolean | null
+}
+
+/** One look at a saved test window (`test_window_looks`), as Results shows it. */
+export type TestWindowLook = {
+  from: string
+  to: string
+  /** Looks at this window recorded before this one: 0 is the first look. */
+  looksBefore: number
+  firstLookAt: string
 }
 
 export type Trade = {
