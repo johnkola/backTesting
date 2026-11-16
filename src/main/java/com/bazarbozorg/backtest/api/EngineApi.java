@@ -290,8 +290,14 @@ public class EngineApi {
             List<WalkforwardFold> folds = repo.findFolds(id);
 
             Map<String, Object> body = new LinkedHashMap<>();
-            body.put("run", runPayload(run));
+            Map<String, Object> payload = runPayload(run);
+            if (run.inProgress()) {
+                payload.put("progress", repo.progress(run));
+            }
+            body.put("run", payload);
             body.put("folds", folds);
+            // G11: every engine's loss curve, fold by fold.
+            body.put("epochs", repo.findEpochCurves(id));
             // One line per engine over its folds (B9); the run's own figures
             // above are its first engine's.
             body.put("engineSummaries", com.bazarbozorg.backtest.model.EngineSummary.of(folds));
@@ -305,7 +311,13 @@ public class EngineApi {
 
         List<WalkforwardRun> runs = repo.findRuns(timeframe, includeTest, limit);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", runs.stream().map(EngineApi::runPayload).toList());
+        body.put("items", runs.stream().map(r -> {
+            Map<String, Object> payload = runPayload(r);
+            if (r.inProgress()) {
+                payload.put("progress", repo.progress(r));   // G11: the live line
+            }
+            return payload;
+        }).toList());
         // Echoed back so a client can tell a filtered list from a complete one
         // -- an empty list means something different under each.
         body.put("timeframe", timeframe);
@@ -358,6 +370,8 @@ public class EngineApi {
         out.put("startedAt", run.startedAt());
         out.put("finishedAt", run.finishedAt());
         out.put("inProgress", run.inProgress());
+        // G11: why a run stopped short (a NaN or infinite loss), or null.
+        out.put("failedReason", run.failedReason());
         out.put("folds", run.folds());
         out.put("foldsWon", run.foldsWon());
         out.put("meanExcess", run.meanExcess());

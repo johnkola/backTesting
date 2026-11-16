@@ -34,6 +34,12 @@ and the profit step scores each engine's signals with the same costs and tax.
 The benchmarks are the fold's, computed once. A fold has one stored row and
 one set of signals per engine.
 
+EVERY EPOCH IS RECORDED (G11). Each engine reports its training loss epoch by
+epoch (a tree engine, round by round) to the run's `walkforward_epochs`, the
+network as it trains, so the Training tab can draw the loss curve while a run is
+going. A NaN or infinite loss means training diverged: it stops the run, which
+records why (`failed_reason`), rather than scoring a model that learned nothing.
+
 SIGNALS HERE, MONEY IN `nn/profit.py` (D9, R75). This module trains and
 predicts; the model never sees a cost, a tax or a margin term. Each fold's
 per-bar signals (the raw output, the call, the label, and the two dates the
@@ -47,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from collections import Counter
@@ -306,9 +313,23 @@ class Stopper:
             model.load_state_dict(self.state)
 
 
+class NonFiniteLoss(RuntimeError):
+    """A NaN or infinite loss: training diverged, and the run stops (G11)."""
+
+
+def report_epoch(on_epoch, epoch: int, train_loss: float, stop_loss: float | None) -> None:
+    """Hand one epoch's losses to `on_epoch`, after checking they are finite."""
+    for name, v in (("training", train_loss), ("early-stopping", stop_loss)):
+        if v is not None and not math.isfinite(v):
+            raise NonFiniteLoss(f"epoch {epoch}: {name} loss is {v}")
+    if on_epoch is not None:
+        on_epoch(epoch, train_loss, stop_loss)
+
+
 def train_money(
     x_tr: np.ndarray, seg_tr: tuple[np.ndarray, np.ndarray], args,
     stop: tuple[np.ndarray, tuple[np.ndarray, np.ndarray]] | None = None,
+    on_epoch=None,
 ) -> tuple[nn.Module, object, Stopper | None]:
     """Fit a position model by optimising the market's own returns directly.
 
@@ -347,6 +368,7 @@ def train_money(
         loss, _ = money_loss.objective(args.loss, pos, gap, intra)
         loss.backward()
         opt.step()
+        held = None
         if stopper is not None:
             # The same objective on bars the weights never saw.
             model.eval()
@@ -354,8 +376,10 @@ def train_money(
                 held, _ = money_loss.objective(
                     args.loss, money_loss.positions_from_logits(model(xs_stop)),
                     gap_stop, intra_stop)
-            if stopper.step(epoch, float(held), model):
-                break
+            held = float(held)
+        report_epoch(on_epoch, epoch, float(loss), held)
+        if stopper is not None and stopper.step(epoch, held, model):
+            break
     if stopper is not None:
         stopper.restore(model)
     return model, scaler, stopper
@@ -364,6 +388,7 @@ def train_money(
 def train_one(
     x_tr: np.ndarray, y_tr: np.ndarray, args,
     stop: tuple[np.ndarray, np.ndarray] | None = None,
+    on_epoch=None,
 ) -> tuple[nn.Module, object, Stopper | None]:
     """Fit a scaler and a network on one fold's training slice.
 
@@ -401,17 +426,23 @@ def train_one(
         ys_stop = torch.from_numpy(stop[1])
     for epoch in range(1, args.epochs + 1):
         model.train()
+        total, rows = 0.0, 0
         for xb, yb in loader:
             opt.zero_grad()
             loss = loss_fn(model(xb), yb)
             loss.backward()
             opt.step()
+            total += float(loss) * len(yb)
+            rows += len(yb)
+        held = None
         if stopper is not None:
             model.eval()
             with torch.no_grad():
                 held = float(loss_fn(model(xs_stop), ys_stop))
-            if stopper.step(epoch, held, model):
-                break
+        # The epoch's training loss: the mean over its batches, as they trained.
+        report_epoch(on_epoch, epoch, total / max(rows, 1), held)
+        if stopper is not None and stopper.step(epoch, held, model):
+            break
     if stopper is not None:
         stopper.restore(model)
     return model, scaler, stopper
@@ -525,7 +556,7 @@ def predict(model: nn.Module, scaler, x: np.ndarray, loss: str) -> np.ndarray:
 
 def fit_network(
     tr: list[int], va: list[int], x_all: np.ndarray, y_all: np.ndarray,
-    full: profit.Market, dates: list[date], args,
+    full: profit.Market, dates: list[date], args, on_epoch=None,
 ) -> tuple[np.ndarray, list[int], Stopper | None]:
     """The network on one fold: (output over `va`, rows fitted, stopper).
 
@@ -539,13 +570,15 @@ def fit_network(
     x_tr, y_tr = x_all[tr], y_all[tr]
     if args.loss == "ce":
         model, scaler, stopper = train_one(
-            x_tr, y_tr, args, stop=(x_all[stop_ix], y_all[stop_ix]) if patience else None)
+            x_tr, y_tr, args, stop=(x_all[stop_ix], y_all[stop_ix]) if patience else None,
+            on_epoch=on_epoch)
     else:
         def seg(ix):
             return full.gap[ix], full.intra[ix]
 
         model, scaler, stopper = train_money(
-            x_tr, seg(tr), args, stop=(x_all[stop_ix], seg(stop_ix)) if patience else None)
+            x_tr, seg(tr), args, stop=(x_all[stop_ix], seg(stop_ix)) if patience else None,
+            on_epoch=on_epoch)
     return predict(model, scaler, x_all[va], args.loss), tr, stopper
 
 
@@ -553,6 +586,7 @@ def run_fold(
     fold_no: int, year: int, tr: list[int], va: list[int],
     x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
     dates: list[date], args, decisions: rules.Decisions | None = None,
+    record=None,
 ) -> list[tuple[FoldResult, profit.Signals]]:
     """Train every enabled engine on `tr`, predict `va`, and hand each engine's
     signals to the profit step.
@@ -562,6 +596,11 @@ def run_fold(
     engine in registry order, the fold and the signals it stored, which the
     profit step scored and a recalculation reads back. Every engine gets the
     same rows and labels; only the network is scaled (R68).
+
+    `record(engine, rows)` receives each engine's (epoch, training loss,
+    early-stopping loss) rows (G11): the network's one epoch at a time as it
+    trains, a tree engine's rounds once its model is fitted. A non-finite loss
+    raises `NonFiniteLoss` naming the fold, engine and epoch.
     """
     y_va = y_all[va]
     settings = profit.Settings.from_args(args)
@@ -572,12 +611,24 @@ def run_fold(
     out: list[tuple[FoldResult, profit.Signals]] = []
     for name, saved in walkforward_store.engines_of(args).items():
         stopper = None
-        if name == "mlp":
-            output, fitted, stopper = fit_network(tr, va, x_all, y_all, full, dates, args)
-        else:
-            model = trees.train(name, x_all[tr], y_all[tr], engines.ENGINES[name].resolve(saved),
-                                weighted=bool(getattr(args, "class_weights", False)))
-            output, fitted = model.predict(x_all[va]), tr
+        try:
+            if name == "mlp":
+                def on_epoch(epoch, train_loss, stop_loss, _name=name):
+                    if record is not None:
+                        record(_name, [(epoch, train_loss, stop_loss)])
+                output, fitted, stopper = fit_network(tr, va, x_all, y_all, full, dates, args,
+                                                      on_epoch=on_epoch)
+            else:
+                model = trees.train(name, x_all[tr], y_all[tr],
+                                    engines.ENGINES[name].resolve(saved),
+                                    weighted=bool(getattr(args, "class_weights", False)))
+                for epoch, v in enumerate(model.curve or [], 1):
+                    report_epoch(None, epoch, v, None)
+                if record is not None and model.curve:
+                    record(name, [(i, v, None) for i, v in enumerate(model.curve, 1)])
+                output, fitted = model.predict(x_all[va]), tr
+        except NonFiniteLoss as exc:
+            raise NonFiniteLoss(f"fold {fold_no} ({year}), {name}, {exc}") from exc
         sig = profit.Signals(
             dates=va_dates,
             exits=[dates[i + 1] if i + 1 < len(dates) else None for i in va],
@@ -1302,8 +1353,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"data check   {check.summary()}")
     print(header_line())
     results: list[FoldResult] = []
+
+    def recorder(fold_no: int):
+        """Store each engine's epochs as they come (G11) and print the network's
+        every tenth one, and a tree engine's first and last round."""
+        def record(engine: str, rows: list[tuple[int, float, float | None]]) -> None:
+            if run_id is not None:
+                walkforward_store.save_epochs(conn, run_id, fold_no, engine, rows)
+            if engine == "mlp":
+                for e, tl, sl in rows:
+                    if e == 1 or e % 10 == 0:
+                        print(f"  {engine:<9}{fold_no:>4}  epoch {e:>4}  loss {tl:.4f}"
+                              + ("" if sl is None else f"  stop {sl:.4f}"), flush=True)
+            elif rows:
+                print(f"  {engine:<9}{fold_no:>4}  {len(rows)} rounds, loss {rows[0][1]:.4f} "
+                      f"-> {rows[-1][1]:.4f}", flush=True)
+        return record
+
     for i, (year, tr, va) in enumerate(folds, 1):
-        for r, sig in run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions):
+        try:
+            fold_results = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions,
+                                    record=recorder(i))
+        except NonFiniteLoss as exc:
+            print(f"FAILED       {exc}: training diverged, so the run stops here (G11)")
+            if run_id is not None:
+                walkforward_store.fail_run(conn, run_id, str(exc))
+                print(f"recorded     run {run_id} as failed, its {len(results)} fold row(s) kept")
+            conn.close()
+            return 1
+        for r, sig in fold_results:
             results.append(r)
             if run_id is not None:
                 walkforward_store.save_fold(conn, run_id, r, sig,

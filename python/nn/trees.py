@@ -44,6 +44,9 @@ class TreeModel:
 
     engine: str
     booster: Any
+    #: The training loss after each round (multi-class log loss on the training
+    #: rows), for the run's loss curve (G11); None for a model loaded from disk.
+    curve: list[float] | None = None
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float32)
@@ -94,9 +97,11 @@ def train(engine: str, x: np.ndarray, y: np.ndarray, settings: Mapping[str, Any]
             "min_child_weight": float(settings["minChildWeight"]),
             "verbosity": 0,
         }
-        booster = xgb.train(params, xgb.DMatrix(x, label=y, weight=w, nthread=THREADS),
-                            num_boost_round=rounds)
-        return TreeModel(engine, booster)
+        dtrain = xgb.DMatrix(x, label=y, weight=w, nthread=THREADS)
+        evals: dict = {}
+        booster = xgb.train({**params, "eval_metric": "mlogloss"}, dtrain, num_boost_round=rounds,
+                            evals=[(dtrain, "train")], evals_result=evals, verbose_eval=False)
+        return TreeModel(engine, booster, [float(v) for v in evals["train"]["mlogloss"]])
     if engine == "lightgbm":
         import lightgbm as lgb
         subsample = float(settings["subsample"])
@@ -110,6 +115,10 @@ def train(engine: str, x: np.ndarray, y: np.ndarray, settings: Mapping[str, Any]
             "feature_fraction": float(settings["colsampleBytree"]),
             "min_data_in_leaf": int(settings["minChildSamples"]),
         }
-        booster = lgb.train(params, lgb.Dataset(x, label=y, weight=w), num_boost_round=rounds)
-        return TreeModel(engine, booster)
+        data = lgb.Dataset(x, label=y, weight=w)
+        evals: dict = {}
+        booster = lgb.train({**params, "metric": "multi_logloss"}, data, num_boost_round=rounds,
+                            valid_sets=[data], valid_names=["train"],
+                            callbacks=[lgb.record_evaluation(evals)])
+        return TreeModel(engine, booster, [float(v) for v in evals["train"]["multi_logloss"]])
     raise ValueError(f"{engine!r} is not a tree engine")

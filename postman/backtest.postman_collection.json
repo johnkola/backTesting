@@ -1228,6 +1228,14 @@
                   "            pm.expect(r.beatsNaive).to.eql(r.meanAccuracy > r.meanBaselineAcc);",
                   "        }",
                   "    }",
+                  "});",
+                  "",
+                  "pm.test('a run says why it failed, and a running one where it is (G11)', function () {",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(r).to.have.property('failedReason');",
+                  "        if (r.failedReason) pm.expect(r.inProgress).to.be.false;",
+                  "        if (r.inProgress) pm.expect(r.progress).to.include.keys('unitsDone', 'unitsPlanned', 'elapsedSeconds');",
+                  "    }",
                   "});"
                 ]
               }
@@ -1337,6 +1345,18 @@
                   "    pm.expect(d.engineSummaries.map(s => s.engine).sort()).to.eql([...engines].sort());",
                   "    if (d.run.engines !== null) {",
                   "        pm.expect(d.run.engines.map(e => e.engine).sort()).to.eql([...engines].sort());",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('every epoch is served, each fold with its loss (G11)', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.epochs).to.be.an('array');",
+                  "    for (const c of d.epochs) {",
+                  "        pm.expect(c).to.include.keys('fold', 'engine', 'train', 'stop');",
+                  "        pm.expect(c.train.every(Number.isFinite)).to.be.true;",
+                  "    }",
+                  "    for (const f of d.folds) {",
+                  "        if (f.loss) pm.expect(f.loss.decreased).to.eql(f.loss.last < f.loss.first);",
                   "    }",
                   "});"
                 ]

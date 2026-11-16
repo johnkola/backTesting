@@ -86,7 +86,7 @@ public class WalkforwardRepository {
                        AS folds_beat_levered,
                    fr_then.values_hash AS then_values_hash,
                    fr_now.values_hash AS now_values_hash,
-                   r.started_at, r.finished_at,
+                   r.started_at, r.finished_at, r.failed_reason,
                    count(f.fold) AS folds,
                    count(f.fold) FILTER (WHERE f.strat_return > f.hold_return) AS folds_won,
                    avg(f.strat_return - f.hold_return) AS mean_excess,
@@ -192,9 +192,21 @@ public class WalkforwardRepository {
                        f.days_out, f.drift_tax, f.commissions, f.timing, f.gains_tax,
                        f.best_epoch, f.epochs_run, f.hold_commissions, f.hold_gains_tax,
                        f.margin_interest, f.margin_calls, f.trims, f.days_long, f.days_hedged,
-                       f.core_at_risk, f.levered_return
+                       f.core_at_risk, f.levered_return,
+                       l.epochs, l.first_loss, l.lowest_loss, l.last_loss
                   FROM walkforward_folds f
                   JOIN walkforward_runs r ON r.id = f.run_id
+                  -- G11: the engine's loss over the fold, from its epochs; a
+                  -- recalculated run trained nothing, so its source's.
+                  LEFT JOIN LATERAL (
+                      SELECT count(*) AS epochs,
+                             (array_agg(e.train_loss ORDER BY e.epoch))[1] AS first_loss,
+                             min(e.train_loss) AS lowest_loss,
+                             (array_agg(e.train_loss ORDER BY e.epoch DESC))[1] AS last_loss
+                        FROM walkforward_epochs e
+                       WHERE e.run_id = COALESCE(r.recalculated_from, f.run_id)
+                         AND e.fold = f.fold AND e.engine = f.engine
+                  ) l ON true
                  WHERE f.run_id = ?
                  -- Each fold's engines in the order the run recorded them (B9).
                  ORDER BY f.fold,
@@ -252,7 +264,7 @@ public class WalkforwardRepository {
                     f.timing(), f.gainsTax(), f.bestEpoch(), f.epochsRun(), f.holdCommissions(),
                     f.holdGainsTax(), f.marginInterest(), f.marginCalls(), f.trims(),
                     f.daysLong(), f.daysHedged(), f.coreAtRisk(), f.leveredReturn(),
-                    byFold.getOrDefault(f.fold(), List.of())));
+                    byFold.getOrDefault(f.fold(), List.of()), f.loss()));
         }
         return out;
     }
@@ -379,6 +391,7 @@ public class WalkforwardRepository {
                 mapExecution(rs),
                 nullableTimestamp(rs, "started_at"),
                 nullableTimestamp(rs, "finished_at"),
+                rs.getString("failed_reason"),
                 rs.getInt("folds"),
                 rs.getInt("folds_won"),
                 nullableDouble(rs, "mean_excess"),
@@ -433,6 +446,100 @@ public class WalkforwardRepository {
                 nullableInt(rs, "days_hedged"),
                 nullableInt(rs, "core_at_risk"),
                 nullableDouble(rs, "levered_return"),
-                List.of());
+                List.of(),
+                rs.getInt("epochs") == 0 ? null : com.bazarbozorg.backtest.model.FoldLoss.of(
+                        rs.getInt("epochs"), rs.getDouble("first_loss"),
+                        rs.getDouble("lowest_loss"), rs.getDouble("last_loss")));
+    }
+
+    /**
+     * Each engine's loss curve over each fold of run {@code runId}, epoch by
+     * epoch (G11); a recalculated run's are its source's, since it trained
+     * nothing. Empty for a run from before epochs were recorded.
+     */
+    public List<com.bazarbozorg.backtest.model.EpochCurve> findEpochCurves(long runId) {
+        String sql = """
+                SELECT e.fold, e.engine,
+                       array_agg(e.train_loss ORDER BY e.epoch) AS train,
+                       array_agg(e.stop_loss ORDER BY e.epoch) AS stop,
+                       bool_or(e.stop_loss IS NOT NULL) AS stopped
+                  FROM walkforward_epochs e
+                  JOIN walkforward_runs r ON r.id = ?
+                 WHERE e.run_id = COALESCE(r.recalculated_from, r.id)
+                 GROUP BY e.fold, e.engine
+                 ORDER BY e.fold, e.engine
+                """;
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, runId);
+            List<com.bazarbozorg.backtest.model.EpochCurve> out = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new com.bazarbozorg.backtest.model.EpochCurve(
+                            rs.getInt("fold"), rs.getString("engine"), doubles(rs, "train"),
+                            rs.getBoolean("stopped") ? doubles(rs, "stop") : null));
+                }
+            }
+            return out;
+        } catch (SQLException e) {
+            logger.error("Failed to read the epochs of walk-forward run {}", runId, e);
+            throw new RuntimeException("Failed to read epochs for run " + runId, e);
+        }
+    }
+
+    private static List<Double> doubles(ResultSet rs, String column) throws SQLException {
+        java.sql.Array a = rs.getArray(column);
+        if (a == null) {
+            return List.of();
+        }
+        List<Double> out = new ArrayList<>();
+        for (Object o : (Object[]) a.getArray()) {
+            out.add(o == null ? null : ((Number) o).doubleValue());
+        }
+        return out;
+    }
+
+    /**
+     * Where a run that is still going has got to (G11): its last recorded
+     * epoch, the fold rows done of those planned (one per engine per fold), the
+     * time since it started, and the rest estimated from the pace so far.
+     */
+    public com.bazarbozorg.backtest.model.RunProgress progress(WalkforwardRun run) {
+        String sql = """
+                SELECT (SELECT count(*) FROM walkforward_folds WHERE run_id = ?) AS done,
+                       e.fold, e.engine, e.epoch, e.train_loss, e.recorded_at
+                  FROM (SELECT 1) one
+                  LEFT JOIN LATERAL (
+                      SELECT fold, engine, epoch, train_loss, recorded_at
+                        FROM walkforward_epochs WHERE run_id = ?
+                       ORDER BY recorded_at DESC, fold DESC, epoch DESC LIMIT 1) e ON true
+                """;
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, run.id());
+            ps.setLong(2, run.id());
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                int done = rs.getInt("done");
+                int engines = 1;
+                if (run.enginesJson() != null && !run.enginesJson().isBlank()) {
+                    try {
+                        engines = Math.max(1, com.google.gson.JsonParser
+                                .parseString(run.enginesJson()).getAsJsonArray().size());
+                    } catch (RuntimeException ignored) { /* the network alone */ }
+                }
+                int planned = engines * (run.isTest() ? 1 : run.lastVal() - run.firstVal() + 1);
+                long elapsed = run.startedAt() == null ? 0
+                        : java.time.Duration.between(run.startedAt(), ZonedDateTime.now()).getSeconds();
+                Long eta = done == 0 ? null : Math.max(0, elapsed * (planned - done) / done);
+                return new com.bazarbozorg.backtest.model.RunProgress(
+                        nullableInt(rs, "fold"), rs.getString("engine"), nullableInt(rs, "epoch"),
+                        nullableDouble(rs, "train_loss"), nullableTimestamp(rs, "recorded_at"),
+                        done, planned, elapsed, eta);
+            }
+        } catch (SQLException e) {
+            logger.error("Failed to read the progress of walk-forward run {}", run.id(), e);
+            throw new RuntimeException("Failed to read progress for run " + run.id(), e);
+        }
     }
 }

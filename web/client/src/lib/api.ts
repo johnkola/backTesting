@@ -1353,6 +1353,44 @@ export type WalkforwardFold = {
   coreAtRisk: number | null
   /** G25: the same fold always long on margin (no model), percent. Null under Strategy 1. */
   leveredReturn: number | null
+  /**
+   * The engine's training loss over the fold, from its recorded epochs (G11);
+   * null for a run from before epochs were recorded.
+   */
+  loss?: FoldLoss | null
+}
+
+/** One engine's training loss over a fold: decreased when the last is below the first. */
+export type FoldLoss = {
+  epochs: number
+  first: number
+  lowest: number
+  last: number
+  decreased: boolean
+}
+
+/** One engine's loss curve over a fold, epoch by epoch (a tree engine's rounds). */
+export type EpochCurve = {
+  fold: number
+  engine: string
+  train: number[]
+  /** The early-stopping slice's loss; null without early stopping. */
+  stop: (number | null)[] | null
+}
+
+/** Where a run that is still going has got to (G11). */
+export type RunProgress = {
+  fold: number | null
+  engine: string | null
+  epoch: number | null
+  trainLoss: number | null
+  recordedAt: string | null
+  /** Fold rows finished, one per engine per fold, of those planned. */
+  unitsDone: number
+  unitsPlanned: number
+  elapsedSeconds: number
+  /** From the pace so far; null before the first fold row lands. */
+  etaSeconds: number | null
 }
 
 /**
@@ -1447,6 +1485,10 @@ export type WalkforwardRun = {
   startedAt: string
   finishedAt: string | null
   inProgress: boolean
+  /** Why the run stopped short: a NaN or infinite loss (G11); null otherwise. */
+  failedReason?: string | null
+  /** Set while the run is going (G11). */
+  progress?: RunProgress
   folds: number
   foldsWon: number
   meanExcess: number | null
@@ -1565,6 +1607,8 @@ export type WalkforwardRunDetail = {
   folds: WalkforwardFold[]
   /** One line per engine, in the run's order (B9); absent before B9. */
   engineSummaries?: EngineSummary[]
+  /** Every engine's loss curve, fold by fold (G11); empty before epochs were recorded. */
+  epochs?: EpochCurve[]
 }
 
 // ---------------------------------------------------------------------------

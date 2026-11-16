@@ -1,6 +1,6 @@
 # Postman collection
 
-> **Revision 2026-11-16-7** · 2026-11-16 15:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-8** · 2026-11-16 15:43 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 Every endpoint the API origin serves, with assertions on status, shape and key
 values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
@@ -13,7 +13,7 @@ values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
 
 | File | What it is |
 |------|------------|
-| `backtest.postman_collection.json` | 63 requests in 9 folders, 195 assertions |
+| `backtest.postman_collection.json` | 63 requests in 9 folders, 197 assertions |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://api:8001` — from inside the compose network |
 
@@ -86,6 +86,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-8 | 2026-11-16 15:43 | Claude Code (Claude Opus 5.5) | Counts (63 requests, 197 assertions): epochs, loss, failure and progress (G11) |
 | 2026-11-16-7 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | Counts (63 requests, 195 assertions): a refused tax rate, and results' `taxRate` (G20) |
 | 2026-11-16-6 | 2026-11-16 14:37 | Claude Code (Claude Opus 5.5) | Counts (62 requests, 192 assertions): a strategy's split (G37) |
 | 2026-11-16-5 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | Counts (60 requests, 189 assertions): a result's test-window looks (G48) |

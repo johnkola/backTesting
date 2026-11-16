@@ -121,6 +121,7 @@ public record WalkforwardRun(
         Execution execution,
         ZonedDateTime startedAt,
         ZonedDateTime finishedAt,
+        String failedReason,
         int folds,
         int foldsWon,
         Double meanExcess,
@@ -287,9 +288,13 @@ public record WalkforwardRun(
         }
     }
 
-    /** True while the run has not stamped {@code finishedAt}. */
+    /**
+     * True while the run has not stamped {@code finishedAt} and has not failed.
+     * A run that stopped on a NaN or infinite loss records why (G11) and is
+     * failed, not still going.
+     */
     public boolean inProgress() {
-        return finishedAt == null;
+        return finishedAt == null && failedReason == null;
     }
 
     /**

@@ -95,7 +95,8 @@ public record WalkforwardFold(
         Integer daysHedged,
         Integer coreAtRisk,
         Double leveredReturn,
-        List<FoldBenchmark> benchmarks
+        List<FoldBenchmark> benchmarks,
+        FoldLoss loss
 ) {
 
     /** The headline: did the model beat holding over this fold, in points. */

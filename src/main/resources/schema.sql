@@ -1003,3 +1003,25 @@ BEGIN
     RETURN n;
 END
 $test_window_looks$ LANGUAGE plpgsql;
+
+-- G11: every epoch of every engine on every fold, so the Training tab can show
+-- the loss curve as it trains and the run can be held to "the loss decreases,
+-- and is never NaN". The network writes a row per epoch as it trains; a tree
+-- engine its boosting rounds once a fold's model is fitted. Deleted with the run.
+--   train_loss  the epoch's training loss: the mean over its batches, the full-
+--               batch objective for a money-trained loss, or a tree's
+--               multi-class log loss on its training rows
+--   stop_loss   the early-stopping slice's loss, NULL without early stopping
+CREATE TABLE IF NOT EXISTS walkforward_epochs (
+    run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
+    fold INT NOT NULL,
+    engine VARCHAR(16) NOT NULL,
+    epoch INT NOT NULL,
+    train_loss DOUBLE PRECISION,
+    stop_loss DOUBLE PRECISION,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, fold, engine, epoch)
+);
+-- Why a run stopped short (G11): a NaN or infinite loss, naming the fold, engine
+-- and epoch. NULL for a run that finished or is still going.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS failed_reason TEXT;

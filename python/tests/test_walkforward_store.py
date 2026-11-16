@@ -537,6 +537,26 @@ class TestRoundTrip:
         finally:
             self._cleanup(db, run_id)
 
+    def test_epochs_are_stored_as_they_come_and_a_failed_run_says_why(self, db, a_set):
+        # G11: the rows the Training tab draws the loss curve from, and the
+        # reason a diverging run stopped.
+        run_id = ws.open_run(db, an_args(label="pytest-epochs"), a_set, 580)
+        try:
+            ws.save_epochs(db, run_id, 1, "mlp", [(1, 1.10, 1.12)])
+            ws.save_epochs(db, run_id, 1, "mlp", [(2, 1.05, 1.11)])
+            ws.save_epochs(db, run_id, 1, "xgboost", [(1, 1.09, None), (2, 1.02, None)])
+            ws.fail_run(db, run_id, "fold 2 (2017), mlp, epoch 4: training loss is nan")
+            with db.cursor() as cur:
+                cur.execute("SELECT engine, epoch, train_loss, stop_loss FROM walkforward_epochs "
+                            "WHERE run_id = %s ORDER BY engine, epoch", (run_id,))
+                assert cur.fetchall() == [("mlp", 1, 1.10, 1.12), ("mlp", 2, 1.05, 1.11),
+                                          ("xgboost", 1, 1.09, None), ("xgboost", 2, 1.02, None)]
+                cur.execute("SELECT failed_reason, finished_at FROM walkforward_runs WHERE id = %s",
+                            (run_id,))
+                assert cur.fetchone() == ("fold 2 (2017), mlp, epoch 4: training loss is nan", None)
+        finally:
+            self._cleanup(db, run_id)
+
     def test_a_run_without_signals_is_refused_with_the_reason(self, db, a_set):
         from nn import recalculate
         run_id = ws.open_run(db, an_args(label="pytest-nosignals"), a_set, 580)

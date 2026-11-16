@@ -483,6 +483,33 @@ def record_look(conn, kind: str, ref_id: int, instrument: str, first, last) -> l
     return [(f, t, int(before), first_at) for f, t, before, first_at in rows]
 
 
+_INSERT_EPOCH = """
+INSERT INTO walkforward_epochs (run_id, fold, engine, epoch, train_loss, stop_loss)
+VALUES (%s, %s, %s, %s, %s, %s)
+ON CONFLICT (run_id, fold, engine, epoch) DO UPDATE SET
+    train_loss = EXCLUDED.train_loss, stop_loss = EXCLUDED.stop_loss, recorded_at = now()
+"""
+
+
+def save_epochs(conn, run_id: int, fold: int, engine: str,
+                rows: list[tuple[int, float, float | None]]) -> None:
+    """Store an engine's (epoch, training loss, early-stopping loss) rows for a
+    fold and commit, so the Training tab sees them while the run goes (G11)."""
+    with conn.cursor() as cur:
+        cur.executemany(_INSERT_EPOCH, [(run_id, fold, engine, e, tl, sl) for e, tl, sl in rows])
+    conn.commit()
+
+
+def fail_run(conn, run_id: int, reason: str) -> None:
+    """Record why a run stopped short (G11). It stays unfinished, its completed
+    folds intact, and reads as failed rather than still running."""
+    with conn.cursor() as cur:
+        set_actor(cur)
+        cur.execute("UPDATE walkforward_runs SET failed_reason = %s, updated_at = now(), "
+                    "updated_by = audit_actor() WHERE id = %s", (reason, run_id))
+    conn.commit()
+
+
 def close_run(conn, run_id: int) -> None:
     """Stamp `finished_at`. Until this runs, the row reads as in progress."""
     with conn.cursor() as cur:

@@ -644,4 +644,56 @@ class WalkforwardRepositoryTest {
         assertEquals(List.of("mlp", "mlp"),
                 repo.findFolds(runId).stream().map(WalkforwardFold::engine).toList());
     }
+
+    @Test
+    @DisplayName("G11: each fold carries its loss from the epochs, the detail its curves")
+    void foldsCarryTheirLossAndCurves() {
+        long id = insertRun(LABEL, false, "return", "ce", null);
+        insertFold(id, 1, 2016, 12.0, 7.0, 0.8, 0.6, 9.0, 11.0, 4, 0, 0, 0);
+        insertFold(id, 2, 2017, 1.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, 0, 0, 0);
+        // Fold 1 learns; fold 2's loss ends above where it began.
+        exec("INSERT INTO walkforward_epochs (run_id, fold, engine, epoch, train_loss, stop_loss)"
+             + " VALUES (" + id + ", 1, 'mlp', 1, 1.10, 1.20), (" + id + ", 1, 'mlp', 2, 0.95, 1.15),"
+             + " (" + id + ", 1, 'mlp', 3, 0.90, 1.18), (" + id + ", 2, 'mlp', 1, 1.00, NULL),"
+             + " (" + id + ", 2, 'mlp', 2, 1.05, NULL)");
+        List<WalkforwardFold> folds = repo.findFolds(id);
+        var first = folds.get(0).loss();
+        assertEquals(3, first.epochs());
+        assertEquals(1.10, first.first(), 1e-12);
+        assertEquals(0.90, first.lowest(), 1e-12);
+        assertEquals(0.90, first.last(), 1e-12);
+        assertTrue(first.decreased());
+        assertFalse(folds.get(1).loss().decreased());
+
+        var curves = repo.findEpochCurves(id);
+        assertEquals(2, curves.size());
+        assertEquals(List.of(1.10, 0.95, 0.90), curves.get(0).train());
+        assertEquals(List.of(1.20, 1.15, 1.18), curves.get(0).stop());
+        assertNull(curves.get(1).stop());                     // no early stopping in fold 2
+    }
+
+    @Test
+    @DisplayName("G11: a run going says where it is; one that failed says why and is not going")
+    void progressAndFailure() {
+        long id = insertRun(LABEL, false, "return", "ce", null);
+        insertFold(id, 1, 2016, 12.0, 7.0, 0.8, 0.6, 9.0, 11.0, 4, 0, 0, 0);
+        exec("UPDATE walkforward_runs SET started_at = now() - interval '60 seconds' WHERE id = " + id);
+        exec("INSERT INTO walkforward_epochs (run_id, fold, engine, epoch, train_loss)"
+             + " VALUES (" + id + ", 2, 'mlp', 7, 1.01)");
+        WalkforwardRun going = theRun(id);
+        assertTrue(going.inProgress());
+        var p = repo.progress(going);
+        assertEquals(Integer.valueOf(2), p.fold());
+        assertEquals(Integer.valueOf(7), p.epoch());
+        assertEquals(1, p.unitsDone());
+        assertEquals(2, p.unitsPlanned());                    // 2016 and 2017, the network alone
+        assertTrue(p.elapsedSeconds() >= 59);
+        assertTrue(p.etaSeconds() >= 59);                     // one more unit at the same pace
+
+        exec("UPDATE walkforward_runs SET failed_reason = 'fold 2 (2017), mlp, epoch 8: training"
+             + " loss is nan' WHERE id = " + id);
+        WalkforwardRun failed = theRun(id);
+        assertFalse(failed.inProgress());
+        assertTrue(failed.failedReason().contains("loss is nan"));
+    }
 }

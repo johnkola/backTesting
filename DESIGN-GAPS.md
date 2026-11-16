@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-21** · 2026-11-16 15:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-23** · 2026-11-16 15:43 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -680,6 +680,46 @@ Checklist:
 
 
 
+**G11 plan, 2026-11-16.** The author: do G11, and with it G44. Design Notes, Staged Pipeline Architecture, step 5: "loss actually decreases, no NaN loss, each fold completes ... Report live progress — current fold, epoch, loss curve, elapsed time"; the Training tab: "current fold and epoch, the loss curve updating as it trains, elapsed and estimated time". Today only the stopping epoch is stored, and the tab says the runner prints per-epoch loss, which it does not (G44).
+
+The shape:
+- **Every epoch recorded as it trains.** `walkforward_epochs (run_id, fold, engine, epoch, train_loss, stop_loss)`.
+  - The network writes a row per epoch as it goes: its training loss (the mean over the epoch's batches, or the full-batch objective for a money-trained loss), and the early-stopping slice's loss when it stops early.
+  - The tree engines record their per-round training loss (multi-class log loss) when a fold's model is trained.
+  - The runner prints every tenth epoch.
+- **A NaN or infinite loss fails the run.** The engine stops, the run records `failed_reason` (fold, engine, epoch), and the Training tab shows it failed, not still running.
+- **Loss decreasing, derived on read.** Each fold row is served with its first, lowest and last training loss. Its loss decreased when the last is below the first.
+- **The live view.** The run payload carries `progress` while a run is going: the latest fold, engine and epoch, elapsed time, and an estimate from the folds done so far. The detail carries each fold's loss curve, drawn as small inline charts. The tab's "not wired" note and its claim about the terminal go (G44).
+- **Stored runs** (703-710) have no epochs. Whether to rerun them for their curves is the checkpoint; the models and figures would not change.
+
+Checklist:
+- [x] Plan here
+- [x] The epochs table and `failed_reason`; the runner records the network's epochs live, the tree engines' rounds, and fails on a non-finite loss; tests
+- [x] Java: each fold's loss summary, the curves in the detail, `progress` and `failedReason`; tests
+- [x] Client: the live progress line, the loss curves, the fold table's loss column, a failed run; the old notes go; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go:** rerun the stored runs for their curves
+- [x] README, `AGENTS.md`, G11, G44 and this record say done
+
+*Done, 2026-11-16 15:43.* The author chose: back up, rerun, delete.
+- **Tests:** Python 855, Java 173, API 119, client 179. New tests:
+  - a finite epoch handed on, a NaN or infinite one refused;
+  - every engine reports its epochs for a fold, the network's each epoch and a tree's each round, its loss falling;
+  - early stopping reports its slice's loss;
+  - a NaN input makes a fold fail, naming the fold, engine and epoch;
+  - against the database: epochs stored as they come, and a failed run's reason, with the run left unfinished;
+  - Java: each fold's loss from its epochs, the curves, a running run's progress, a failed run not in progress;
+  - the client's curve, duration and progress helpers.
+- **Live:** while the reruns went, the run list read "fold 1, network epoch 7, loss 0.9335 · 0 of 6 fold rows · 3s", then "5 of 6 ... about 7s left".
+- **Runs 703-710 rerun as 779-786** (backup `rerun-g11-20261116/before.sql.gz`, originals deleted in one transaction).
+  - Every fold row is identical to its original, the early-stopping epochs included. The models did not change.
+  - The 8 runs carry 3,965 epoch rows: the network 46 to 300 a run (early stopping ends some sooner), and XGBoost and LightGBM 200 rounds a fold each.
+  - The training loss fell in all 66 fold and engine pairs, and none was NaN. Every strategy's newest run is fresh.
+- **G44:** the tab's claim that the runner prints per-epoch loss is gone, along with the "not wired" note. The runner now prints every tenth epoch, and a tree engine's first and last round.
+- **Step 6** has no unbuilt condition left, and its review row reads done. Its verdict stands: no strategy passes.
+
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -828,7 +868,7 @@ wrong today.
 | G41 | The backtest staleness check sees only the result's own series at its own timeframe or D1. An nn-feature-store result reads ~20 series through the feature table, and a fix to any of them would leave it fresh; a fix to a finer base timeframe (M30 rolled up to D1) is not seen either | step 7 | `nn/staleness.py` `backtest_stage` (`fixes.get((sym, src))`, `ftf not in (tf, "D1")`) | none today: no nn-feature-store result, no synthetic fix | S | open |
 | G42 | The span backfill bakes in fixes made after a run. It hashes closes, park and margin as stored at backfill time, without checking for a fix between the run and the backfill. Runs 299, 300 and 301 (finished 2026-11-10) were backfilled on 2026-11-12 18:19, 39 minutes after the PSQ fix (import 351), so they read fresh while `--check-snapshot` says their margin input changed. The G12 plan calls the backfill exact; its proof covered the matrix only | step 6 | `nn/staleness.py` `backfill`; `walkforward_runs.updated_at` against `import_files` 351 | `span_snapshot` of run 299 (300 and 301 were rerun on 2026-11-14 as 376 and 377, whose spans are recorded at run time) | S | open |
 | G43 | The accuracy of a money-trained run is measured against the wrong labels. Its prediction is stored as SELL or 0 (BUY) and compared with the 3-class label, so a long day counts only when labelled BUY and the majority HOLD can never match. Runs 300, 301 and 348 show identical accuracy in 2016, 2017, 2018 and 2021 (the share of BUY labels), whatever they traded. B8 as written would flag every money-trained run | step 6 | `nn/walkforward.py` `pred = np.where(pos < args.threshold, CLASS_SELL, 0)` and `accuracy=float((pred == y_va).mean())` | `walkforward_folds.accuracy` of runs 257, 258, 300, 301, 348 | S | done (`fb6c5fe`): `walkforward.fold_accuracy`; the five runs were rerun on 2026-11-14 as 374 to 378. 257 and 258 reproduced every fold's return and trades exactly, and only their accuracy changed (2016: 17.1% against 69.8% became 86.9% against an always-long 86.9%) |
-| G44 | The Training tab says the runner prints per-epoch loss to its terminal. The walk-forward runner prints nothing per epoch; only `nn/train_features.py` does | step 6 | `TrainingStage.tsx` near line 106 | none | S | open |
+| G44 | The Training tab says the runner prints per-epoch loss to its terminal. The walk-forward runner prints nothing per epoch; only `nn/train_features.py` does | step 6 | `TrainingStage.tsx` near line 106 | none | S | done 2026-11-16: see the G11 record in Pass 4 |
 | G45 | `git_sha` is never recorded on the stack. Lineage reads `$GIT_SHA`, but no Dockerfile or compose file sets it and the image has no `.git`, so no run can be tied to a commit (`code_hash` still is) | step 6 | `nn/lineage.py`; `python/Dockerfile`; `docker-compose.yml` | `git_sha` NULL on all 9 runs and 13 feature builds | S | open |
 
 **G36 and G43 plan, 2026-11-14.** The author's order: these two first, then step 3.
@@ -1383,7 +1423,7 @@ earnings calendar (announced dates), which matters if the app is a signal provid
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
 | G10 | No Verify tab and no way to follow a number back to its raw row. This is the design's governing principle | Architecture §1, §8.1 | no route in `Layout.tsx`, no endpoint | L | open |
-| G11 | Training shows folds as they land, but not epoch, loss curve or time remaining | Design Notes, Web Monitoring App | `TrainingStage.tsx:21`, `:78-81` | M | partial |
+| G11 | Training shows folds as they land, but not epoch, loss curve or time remaining | Design Notes, Web Monitoring App | `TrainingStage.tsx:21`, `:78-81` | M | done 2026-11-16: see the G11 record in Pass 4 |
 | G12 | Stage gates and staleness are thin. Only the Features stage can report `stale`, and a changed parameter does not mark later stages | Design Notes, Staged Pipeline | `StageShell.tsx:5-9` | L | done (`35c0076`, see G12 plan) |
 
 **G12 plan, 2026-11-12.** The design's rule (Design Notes, Staged Pipeline): when a
@@ -1485,6 +1525,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-23 | 2026-11-16 15:43 | Claude Code (Claude Opus 5.5) | G11 and G44 done: every epoch recorded, a NaN loss fails the run, the live view; runs rerun as 779-786 |
+| 2026-11-16-22 | 2026-11-16 15:28 | Claude Code (Claude Opus 5.5) | G11 plan (with G44) |
 | 2026-11-16-21 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | G20 done: a backtest can be scored after tax, its benchmarks alike; result 876 |
 | 2026-11-16-20 | 2026-11-16 15:00 | Claude Code (Claude Opus 5.5) | G20 plan |
 | 2026-11-16-19 | 2026-11-16 14:37 | Claude Code (Claude Opus 5.5) | G37 done: the Split tab shows a strategy's split, as a run makes it |

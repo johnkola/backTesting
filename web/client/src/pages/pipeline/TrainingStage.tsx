@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import BenchmarkTable from '../../components/BenchmarkTable'
 import {
   api,
@@ -20,7 +20,9 @@ import {
 import StartWalkforward from '../../components/StartWalkforward'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
 import { mergeState } from '../../lib/stageStatus'
-import StageShell, { NotWired } from './StageShell'
+import StageShell from './StageShell'
+import LossCurves from '../../components/LossCurves'
+import { progressLine } from '../../lib/epochs'
 
 type Loaded = { items: TrainedModel[], modelsDir: string }
 
@@ -31,8 +33,9 @@ type Loaded = { items: TrainedModel[], modelsDir: string }
  * loss curve updating, and validation-fold results against buy-and-hold as they
  * land. The last of those is now real — the runner writes each fold to
  * `walkforward_folds` as it finishes, Java serves them, and the tables below are
- * that record. Per-epoch progress and the loss curve are still not persisted
- * anywhere, so the live view is still called out as missing rather than implied.
+ * that record. Every epoch is recorded too (G11): the run list says where a
+ * running run is and how long it has left, an open run draws each fold's loss
+ * curve, and both re-read every ten seconds while a run is going.
  *
  * The cost attribution is the reason this is worth a table rather than a
  * sentence. A fold's gap to buy-and-hold splits into the price of being out of
@@ -54,16 +57,24 @@ export default function TrainingStage() {
   const [runsKey, setRunsKey] = useState(0)
   const bumpRuns = useCallback(() => setRunsKey((k) => k + 1), [])
 
+  // G11: while a run is going, the list and an open run re-read on a clock.
+  const [tick, setTick] = useState(0)
   const { data: runsData, error: runsError, loading: runsLoading } = useApiData(
     (signal) => api.walkforwardRuns({ timeframe: tf, includeTest, limit: 50 }, signal),
-    [tf, includeTest, runsKey],
+    [tf, includeTest, runsKey, tick],
   )
+  const anyRunning = runsData?.items.some((r) => r.inProgress) ?? false
+  useEffect(() => {
+    if (!anyRunning) return
+    const t = setInterval(() => setTick((x) => x + 1), 10_000)
+    return () => clearInterval(t)
+  }, [anyRunning])
 
   const { data: detail, loading: detailLoading } = useApiData(
     (signal) => (openRun === null
       ? Promise.resolve(null)
       : api.walkforwardRun(openRun, signal)),
-    [openRun],
+    [openRun, anyRunning ? tick : 0],
   )
   // Strategy 2 (G5): the fold table swaps Strategy 1's attribution for margin figures.
   const margin = detail?.run.execution?.kind === 'margin'
@@ -107,20 +118,14 @@ export default function TrainingStage() {
             <>
               {' '}
               The verdict covers one of this stage&apos;s gates — beating buy-and-hold on the
-              validation folds. The others the design asks for (loss actually decreasing, no
-              NaN loss) are not recorded per epoch, so they are not claimed here.
+              validation folds. The others are recorded epoch by epoch (G11): each fold says
+              whether its training loss fell, and a NaN or infinite loss stops a run and says
+              where.
             </>
           )}
         </>
       }
     >
-      <NotWired
-        what="The live view — current epoch and the loss curve"
-        how={'Fold results are recorded as they land and are listed below, but the runner '
-          + 'still prints per-epoch loss to its terminal and persists none of it. A '
-          + 'progress row written per epoch would be what this tab reads to draw a curve.'}
-      />
-
       <StartWalkforward onRunChange={bumpRuns} />
 
       <div className="flex items-center justify-between flex-wrap gap-3 mt-6 mb-2">
@@ -252,33 +257,48 @@ export default function TrainingStage() {
                   {r.execution?.kind === 'margin' ? <NotStrategy1 /> : pp(r.meanTiming)}
                 </td>
                 <td>
-                  {r.inProgress
-                    ? <span className="badge badge-sm badge-info">running</span>
-                    : r.beatsHoldOnReturn === true
+                  {r.failedReason
+                    ? (
+                      <span className="badge badge-sm badge-error tooltip tooltip-left" data-tip={r.failedReason}>
+                        failed
+                      </span>
+                    )
+                    : r.inProgress
                       ? (
                         <>
-                          <span className="badge badge-sm badge-success">beat hold</span>
-                          {naiveFlag(r) && (
-                            <span
-                              className="badge badge-sm badge-error ml-1 tooltip tooltip-left"
-                              data-tip={naiveFlag(r) ?? ''}
-                            >
-                              below naive
-                            </span>
-                          )}
-                          {isLeverageOnly(r) && (
-                            <span
-                              className="badge badge-sm badge-warning ml-1 tooltip tooltip-left"
-                              data-tip="Always long on margin, with no model, earned more: the excess is the borrowing, not the timing"
-                            >
-                              leverage, not timing
-                            </span>
+                          <span className="badge badge-sm badge-info">running</span>
+                          {r.progress && (
+                            <div className="text-xs text-base-content/70 mt-1">
+                              {progressLine(r.progress, (e) => engineTitle(e))}
+                            </div>
                           )}
                         </>
                       )
-                      : r.beatsHoldOnReturn === false
-                        ? <span className="badge badge-sm badge-error">lost to hold</span>
-                        : <span className="badge badge-sm badge-ghost">not decided</span>}
+                      : r.beatsHoldOnReturn === true
+                        ? (
+                          <>
+                            <span className="badge badge-sm badge-success">beat hold</span>
+                            {naiveFlag(r) && (
+                              <span
+                                className="badge badge-sm badge-error ml-1 tooltip tooltip-left"
+                                data-tip={naiveFlag(r) ?? ''}
+                              >
+                                below naive
+                              </span>
+                            )}
+                            {isLeverageOnly(r) && (
+                              <span
+                                className="badge badge-sm badge-warning ml-1 tooltip tooltip-left"
+                                data-tip="Always long on margin, with no model, earned more: the excess is the borrowing, not the timing"
+                              >
+                                leverage, not timing
+                              </span>
+                            )}
+                          </>
+                        )
+                        : r.beatsHoldOnReturn === false
+                          ? <span className="badge badge-sm badge-error">lost to hold</span>
+                          : <span className="badge badge-sm badge-ghost">not decided</span>}
                   {staleness.get(r.id)?.state === 'stale' && (
                     <span
                       className="badge badge-sm badge-warning ml-1 tooltip tooltip-left"
@@ -396,6 +416,12 @@ export default function TrainingStage() {
                       >
                         Epochs
                       </th>
+                      <th
+                        className="text-right tooltip tooltip-left"
+                        data-tip="Training loss, first epoch to last (G11); ✓ when it fell. Recorded since 2026-11-16."
+                      >
+                        Loss
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -505,6 +531,15 @@ export default function TrainingStage() {
                               ? '—'
                               : `${f.bestEpoch}/${f.epochsRun}`}
                           </td>
+                          <td
+                            className={`text-right font-mono text-xs ${f.loss == null ? ''
+                              : f.loss.decreased ? 'text-success' : 'text-error'}`}
+                            title={f.loss == null ? 'No epochs recorded: run before G11'
+                              : `Lowest ${f.loss.lowest.toFixed(4)} over ${f.loss.epochs} epochs`}
+                          >
+                            {f.loss == null ? '—'
+                              : `${f.loss.first.toFixed(3)} → ${f.loss.last.toFixed(3)} ${f.loss.decreased ? '✓' : '✗'}`}
+                          </td>
                         </tr>
                       )
                     })}
@@ -518,6 +553,7 @@ export default function TrainingStage() {
                 attribution terms approximate Excess rather than summing to it exactly,
                 because they are additive and the returns are geometric.
               </p>
+              {detail.epochs && <LossCurves curves={detail.epochs} folds={detail.folds} />}
               {(detail.run.hyperparams || detail.run.engines) && (
                 <details className="mt-3">
                   <summary className="cursor-pointer text-sm">
