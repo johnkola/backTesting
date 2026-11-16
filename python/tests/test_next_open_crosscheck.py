@@ -64,5 +64,5 @@ def test_the_scorer_trades_on_the_fixture_s_days_at_its_prices(fx):
     got = [{"entry": a[0], "entryPrice": a[1], "exit": b[0], "exitPrice": b[1]}
            for a, b in zip(fills[::2], fills[1::2], strict=True)]
     assert got == f["expected"]["trades"]
-    # Each trade is two changes, but the last one's exit is the end-of-run mark.
-    assert trades == 2 * len(got) - (1 if pos[-1] == 1.0 else 0)
+    # Each trade is two fills, the last one's sale being the end of the window.
+    assert trades == 2 * len(got)

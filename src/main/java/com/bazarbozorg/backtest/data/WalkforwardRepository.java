@@ -184,7 +184,7 @@ public class WalkforwardRepository {
                        strat_return, hold_return, strat_sharpe, hold_sharpe,
                        strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
                        days_out, drift_tax, commissions, timing, gains_tax,
-                       best_epoch, epochs_run, benchmark_id,
+                       best_epoch, epochs_run, hold_commissions, hold_gains_tax,
                        margin_interest, margin_calls, trims, days_long, days_hedged, core_at_risk,
                        levered_return
                   FROM walkforward_folds
@@ -370,7 +370,8 @@ public class WalkforwardRepository {
                 rs.getDouble("gains_tax"),
                 nullableInt(rs, "best_epoch"),
                 nullableInt(rs, "epochs_run"),
-                rs.getObject("benchmark_id", Long.class),
+                rs.getDouble("hold_commissions"),
+                rs.getDouble("hold_gains_tax"),
                 nullableDouble(rs, "margin_interest"),
                 nullableInt(rs, "margin_calls"),
                 nullableInt(rs, "trims"),

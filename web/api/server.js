@@ -1,4 +1,5 @@
 const express = require('express');
+const { holdCurve } = require('./holdCurve');
 const fs = require('fs');
 const http = require('node:http');
 const path = require('path');
@@ -10,7 +11,6 @@ const docs = require('./docs');
 const strategies = require('./strategies');
 const importFiles = require('./importFiles');
 const { rangeEnd } = require('./dateRange');
-const { holdCurve } = require('./holdCurve');
 const { DOCS, DOC_BY_SLUG } = require('./docsRegistry');
 
 // CSV upload is owned by the Python loader. In docker-compose this is the
@@ -638,7 +638,7 @@ app.get('/api/results/:id', async (req, res) => {
              start_date, end_date, initial_capital, final_equity,
              total_return_pct, sharpe_ratio, max_drawdown_pct,
              total_trades, win_rate, model_cache_key, model_cache_hit,
-             model_version_id, result_json, created_at, benchmark_id
+             model_version_id, result_json, created_at
         FROM backtest_results
        WHERE id = $1`;
     const { rows } = await pool.query(sql, [id]);
@@ -659,42 +659,11 @@ app.get('/api/results/:id', async (req, res) => {
       }
     }
 
-    // The stored buy-and-hold row (§6.3) and the curve it summarises (G24).
-    // The curve is rebuilt from the row's own window of candles and drawn only
-    // while it still reproduces the row; see holdCurve.js.
-    let benchmark = null;
-    if (r.benchmark_id != null) {
-      const { rows: b } = await pool.query(
-        `SELECT id, instrument_id, source_id, timeframe, start_date, end_date,
-                initial_capital, return_pct, final_equity, first_close, last_close, bar_count
-           FROM benchmarks WHERE id = $1`,
-        [r.benchmark_id],
-      );
-      if (b.length) {
-        const row = b[0];
-        const { rows: candles } = await pool.query(
-          `SELECT close FROM candles
-            WHERE instrument_id = $1 AND source_id = $2 AND timeframe = $3
-              AND timestamp >= $4 AND timestamp <= $5
-            ORDER BY timestamp`,
-          [row.instrument_id, row.source_id, row.timeframe, row.start_date, row.end_date],
-        );
-        benchmark = {
-          id: row.id,
-          startDate: row.start_date,
-          endDate: row.end_date,
-          initialCapital: Number(row.initial_capital),
-          returnPct: Number(row.return_pct),
-          finalEquity: Number(row.final_equity),
-          firstClose: Number(row.first_close),
-          lastClose: Number(row.last_close),
-          barCount: row.bar_count,
-          closes: candles.map((c) => Number(c.close)),
-        };
-      }
-    }
-    const curve = holdCurve(benchmark, benchmark?.closes ?? [], result?.equityHistory?.length ?? 0);
-    if (benchmark) delete benchmark.closes;
+    // Buy-and-hold, scored with this run under its own costs and stored in
+    // result_json (B6, D6): its metrics, its one trade and one equity value
+    // per point of the run's equity history, in the same order. A result
+    // stored before B6 has none.
+    const curve = holdCurve(result?.buyAndHold, result?.equityHistory?.length ?? 0);
 
     res.json({
       id: r.id,
@@ -715,9 +684,8 @@ app.get('/api/results/:id', async (req, res) => {
       modelCacheHit: r.model_cache_hit,
       modelVersionId: r.model_version_id,
       createdAt: r.created_at,
-      benchmark,
       // One value per equity history point, in the same order; null with
-      // holdEquityNote saying why when the stored row can't be reproduced.
+      // holdEquityNote saying why.
       holdEquity: curve.values,
       holdEquityNote: curve.reason,
       result,

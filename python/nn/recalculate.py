@@ -33,9 +33,9 @@ Three outcomes, and the rules that pick them:
   once, for a variant already chosen; rescoring it under new settings is a
   second look at it, which is how it turns into training data.
 
-Buy-and-hold is not recalculated: each fold keeps the stored benchmark row it
-was compared with (§6.3), which depends on the window alone, and the signals
-do not move the window.
+Buy-and-hold is recalculated with everything else (B6, D6): it is scored by
+the same profit step under the same settings, so a change of cost or tax moves
+it too.
 """
 
 from __future__ import annotations
@@ -282,11 +282,8 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
         sig = signals[r.fold]
         money = profit.score(sig.output, markets[r.fold], settings)
         pred = profit.calls(sig.output, settings.loss, settings.threshold)
-        new = dataclasses.replace(r, accuracy=profit.accuracy(pred, sig.labels, settings.loss),
-                                  **money.fields())
-        # The stored benchmark row: fixed, keyed on the window alone.
-        new.hold_return = r.hold_return
-        after.append(new)
+        after.append(dataclasses.replace(
+            r, accuracy=profit.accuracy(pred, sig.labels, settings.loss), **money.fields()))
 
     outcome = Outcome(run_id, None, "in place" if in_place else "new run", dry_run,
                       target, settings, verdict, before, after)

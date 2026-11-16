@@ -39,14 +39,11 @@ public class BacktestResult {
     private final Boolean modelCacheHit;
     private final String modelVersionId;
     /**
-     * Which stored benchmark this run was measured against.
-     *
-     * <p>Null only for a run whose window predates the benchmarks table.
-     * Recording the id rather than copying the figure is the point: the
-     * comparison is to a shared row, so two runs over one window cannot drift
-     * apart, and a reader can follow the id to the closes it came from.
+     * Buy-and-hold over the same window under the same costs, scored with this
+     * run and stored with it (B6, D6). Null on a result stored before B6, which
+     * pointed at a shared row instead.
      */
-    private final Long benchmarkId;
+    private final BuyAndHold buyAndHold;
 
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
                           String dataSource,
@@ -56,7 +53,7 @@ public class BacktestResult {
                           double initialCapital, double finalEquity,
                           String modelCacheKey, Boolean modelCacheHit,
                           String modelVersionId,
-                          Long benchmarkId) {
+                          BuyAndHold buyAndHold) {
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
@@ -71,7 +68,7 @@ public class BacktestResult {
         this.modelCacheKey = modelCacheKey;
         this.modelCacheHit = modelCacheHit;
         this.modelVersionId = modelVersionId;
-        this.benchmarkId = benchmarkId;
+        this.buyAndHold = buyAndHold;
     }
 
     public String getDataSource() {
@@ -137,8 +134,8 @@ public class BacktestResult {
         return modelVersionId;
     }
 
-    /** The stored benchmark row this run is judged against, or null for legacy runs. */
-    public Long getBenchmarkId() {
-        return benchmarkId;
+    /** Buy-and-hold beside this run, or null on a result stored before B6. */
+    public BuyAndHold getBuyAndHold() {
+        return buyAndHold;
     }
 }

@@ -396,8 +396,17 @@ export default function TrainingStage() {
                           <td className="text-right font-mono text-xs">
                             {margin ? <NotStrategy1 /> : pp(f.driftTax)}
                           </td>
-                          <td className="text-right font-mono text-xs">{pp(f.commissions)}</td>
-                          <td className="text-right font-mono text-xs">
+                          <td
+                            className="text-right font-mono text-xs"
+                            title={`Buy-and-hold paid ${pp(f.holdCommissions)} (B6)`}
+                          >
+                            {pp(f.commissions)}
+                          </td>
+                          <td
+                            className="text-right font-mono text-xs"
+                            title={detail.run.taxRate === null ? undefined
+                              : `Buy-and-hold paid ${pp(f.holdGainsTax)} on its final sale (D8)`}
+                          >
                             {detail.run.taxRate === null ? 'off' : pp(f.gainsTax)}
                           </td>
                           <td className={`text-right font-mono text-xs ${

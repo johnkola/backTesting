@@ -1569,12 +1569,17 @@
                   "    pm.expect(d.result.equityHistory).to.be.an('array');",
                   "});",
                   "",
-                  "pm.test('records which stored benchmark it was judged against', function () {",
-                  "    // ARCHITECTURE.md 6.1: a run record stores the fixed buy-and-hold",
-                  "    // benchmark row it is measured against. Null only for a run whose",
-                  "    // window predates the benchmarks table.",
-                  "    const r = pm.response.json().result;",
-                  "    pm.expect(r).to.have.property('benchmarkId');",
+                  "pm.test('carries its own buy-and-hold, scored under the same costs', function () {",
+                  "    // B6 (D6): buy-and-hold is scored with each run and stored in it, one",
+                  "    // buy and one sale, with one equity value per point of the run's.",
+                  "    const d = pm.response.json();",
+                  "    const bh = d.result.buyAndHold;",
+                  "    pm.expect(bh).to.include.keys('metrics', 'finalEquity', 'trades', 'equity');",
+                  "    pm.expect(bh.trades).to.have.lengthOf(1);",
+                  "    pm.expect(bh.equity).to.have.lengthOf(d.result.equityHistory.length);",
+                  "    pm.expect(d.holdEquity).to.eql(bh.equity);",
+                  "    pm.expect(d.result.metrics.buyAndHoldReturnPct).to.be.closeTo(bh.metrics.totalReturnPct, 1e-9);",
+                  "    pm.expect(d).to.not.have.property('benchmark');",
                   "});"
                 ]
               }

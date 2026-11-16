@@ -135,10 +135,11 @@ def test_score_is_the_long_flat_simulation_and_its_attribution():
     eq, trades = profit.simulate(profit.calls(out, "return", 0.5), m.gap, m.intra,
                                  cost_bps=10.0)
     assert got.strat_return == pytest.approx((eq[-1] - 1) * 100)
-    # Long, out, out, long, each from the next open: in, out, in again.
-    assert got.trades == trades == 3
+    # Long, out, out, long, each from the next open: in, out, in again, and the
+    # sale at the end (D8).
+    assert got.trades == trades == 4
     assert got.days_out == 2
-    assert got.commissions == pytest.approx(-3 * 0.1)
+    assert got.commissions == pytest.approx(-4 * 0.1)
     assert got.margin_interest is None and got.levered_return is None
 
 
@@ -149,16 +150,53 @@ def test_drift_and_timing_add_to_the_shortfall_before_costs():
     got = profit.score(out, m, profit.Settings(loss="return", cost_bps=0.0))
     prev, pos = profit.positions(profit.calls(out, "return", 0.5))
     gross = (1 + prev * m.gap) * (1 + pos * m.intra) - 1
-    assert got.drift_tax + got.timing == pytest.approx(-(m.r - gross).sum() * 100, rel=1e-12)
+    hold = np.concatenate([[m.intra[0]], m.r[1:]])     # buy-and-hold, from the first open
+    assert got.drift_tax + got.timing == pytest.approx(-(hold - gross).sum() * 100, rel=1e-12)
 
 
-def test_a_model_that_never_leaves_has_no_timing():
-    # Its only shortfall is the first overnight, which nothing could hold: drift.
+def test_a_model_that_never_leaves_is_buy_and_hold():
+    # Both buy at the first open and sell at the end, paying the same: no gap at all.
     m = a_market([0.01, 0.02, -0.01], [0.005, 0.0, 0.01])
-    got = profit.score(np.full((3, 1), 0.9), m, profit.Settings(loss="return", cost_bps=0.0))
-    assert got.days_out == 0
-    assert got.timing == pytest.approx(0.0, abs=1e-12)
-    assert got.drift_tax == pytest.approx(-0.01 * 1.005 * 100)
+    s = profit.Settings(loss="return", cost_bps=5.0, tax_rate=25.0)
+    got = profit.score(np.full((3, 1), 0.9), m, s)
+    assert got.strat_return == pytest.approx(got.hold_return, rel=1e-12)
+    assert (got.days_out, got.drift_tax, got.timing) == (0, 0.0, 0.0)
+    assert got.commissions == got.hold_commissions
+    assert got.gains_tax == pytest.approx(got.hold_gains_tax)
+
+
+class TestBuyAndHold:
+    """B6: buy-and-hold under the run's own settings, stored with the run."""
+
+    M = a_market([0.004, -0.01, 0.002, 0.003, 0.0], [0.01, -0.02, 0.03, 0.01, 0.02])
+
+    def test_it_buys_at_the_first_open_and_sells_at_the_end_paying_costs_and_tax(self):
+        s = profit.Settings(loss="ce", cost_bps=10.0, tax_rate=25.0)
+        held, trades, tax = profit.hold(self.M, s)
+        before_tax = float(np.prod(1 + self.M.r[1:]) * (1 + self.M.intra[0])) * 0.999 * 0.999
+        gain = before_tax - 1.0
+        assert trades == 2
+        assert tax == pytest.approx(-25.0 * gain)
+        assert held[-1] == pytest.approx(before_tax - 0.25 * gain)
+
+    def test_it_depends_on_the_market_and_the_settings_alone(self):
+        # Two runs over the same window with the same settings report the same
+        # figure, whatever their signals (D6).
+        s = profit.Settings(loss="return", cost_bps=5.0, tax_rate=25.0)
+        a = profit.score(np.full((5, 1), 0.9), self.M, s)
+        b = profit.score(np.array([[0.1], [0.9], [0.2], [0.8], [0.3]]), self.M, s)
+        for f in ("hold_return", "hold_sharpe", "hold_maxdd", "hold_commissions",
+                  "hold_gains_tax"):
+            assert getattr(a, f) == getattr(b, f), f
+
+    def test_it_moves_with_the_settings(self):
+        free = profit.score(np.full((5, 1), 0.9), self.M, profit.Settings(loss="return",
+                                                                          cost_bps=0.0))
+        taxed = profit.score(np.full((5, 1), 0.9), self.M, profit.Settings(
+            loss="return", cost_bps=10.0, tax_rate=25.0))
+        assert taxed.hold_return < free.hold_return
+        assert (free.hold_commissions, free.hold_gains_tax) == (0.0, 0.0)
+        assert taxed.hold_commissions == pytest.approx(-0.2)
 
 
 def test_tax_changes_the_money_and_never_the_calls():

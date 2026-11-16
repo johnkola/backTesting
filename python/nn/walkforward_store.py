@@ -54,8 +54,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
-from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -117,7 +115,8 @@ INSERT INTO walkforward_folds
      strat_return, hold_return, strat_sharpe, hold_sharpe,
      strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
      days_out, drift_tax, commissions, timing, gains_tax, best_epoch, epochs_run,
-     benchmark_id, margin_interest, margin_calls, trims, days_long, days_hedged, core_at_risk,
+     hold_commissions, hold_gains_tax, margin_interest, margin_calls, trims, days_long,
+     days_hedged, core_at_risk,
      levered_return)
 VALUES
     (%(run_id)s, %(fold)s, %(val_year)s, %(train_from)s, %(train_to)s,
@@ -125,7 +124,7 @@ VALUES
      %(strat_return)s, %(hold_return)s, %(strat_sharpe)s, %(hold_sharpe)s,
      %(strat_maxdd)s, %(hold_maxdd)s, %(trades)s, %(accuracy)s, %(baseline_acc)s,
      %(days_out)s, %(drift_tax)s, %(commissions)s, %(timing)s, %(gains_tax)s,
-     %(best_epoch)s, %(epochs_run)s, %(benchmark_id)s,
+     %(best_epoch)s, %(epochs_run)s, %(hold_commissions)s, %(hold_gains_tax)s,
      %(margin_interest)s, %(margin_calls)s, %(trims)s, %(days_long)s, %(days_hedged)s,
      %(core_at_risk)s, %(levered_return)s)
 ON CONFLICT (run_id, fold) DO UPDATE SET
@@ -150,7 +149,8 @@ ON CONFLICT (run_id, fold) DO UPDATE SET
     gains_tax = EXCLUDED.gains_tax,
     best_epoch = EXCLUDED.best_epoch,
     epochs_run = EXCLUDED.epochs_run,
-    benchmark_id = EXCLUDED.benchmark_id,
+    hold_commissions = EXCLUDED.hold_commissions,
+    hold_gains_tax = EXCLUDED.hold_gains_tax,
     margin_interest = EXCLUDED.margin_interest,
     margin_calls = EXCLUDED.margin_calls,
     trims = EXCLUDED.trims,
@@ -291,7 +291,8 @@ def fold_row(run_id: int, r: FoldResult) -> dict[str, Any]:
         "gains_tax": r.gains_tax,
         "best_epoch": getattr(r, "best_epoch", None),
         "epochs_run": getattr(r, "epochs_run", None),
-        "benchmark_id": getattr(r, "benchmark_id", None),
+        "hold_commissions": getattr(r, "hold_commissions", 0.0),
+        "hold_gains_tax": getattr(r, "hold_gains_tax", 0.0),
         **{k: getattr(r, k, None) for k in MARGIN_FOLD_FIELDS},
     }
 
@@ -341,83 +342,6 @@ def open_run(conn, args: Any, set_id: int, input_width: int,
         run_id = int(cur.fetchone()[0])
     conn.commit()
     return run_id
-
-
-#: A walk-forward fold is scored as the growth of 1, not of an account, so its
-#: benchmark rows are keyed on a capital of 1. The return is the same at any
-#: capital; the key keeps these rows apart from the Java backtest's, which are
-#: keyed on the account it ran with.
-FOLD_CAPITAL = 1.0
-
-
-@dataclass(frozen=True)
-class StoredBenchmark:
-    id: int
-    return_pct: float
-    first_close: float
-    last_close: float
-    bar_count: int
-
-    def closes_differ(self, w: Any) -> bool:
-        """Do today's candles still reproduce this row? A stored row is never
-        recalculated, so a revised close shows up here and nowhere else."""
-        return (abs(self.first_close - w.first_close) > 1e-9 * max(1.0, abs(w.first_close))
-                or abs(self.last_close - w.last_close) > 1e-9 * max(1.0, abs(w.last_close))
-                or self.bar_count != w.bar_count)
-
-
-_FIND_BENCHMARK = """
-SELECT id, return_pct, first_close, last_close, bar_count FROM benchmarks
- WHERE instrument_id = %s AND source_id = %s AND timeframe = %s
-   AND start_date = %s AND end_date = %s AND initial_capital = %s
-"""
-
-
-def day_start(d: date) -> datetime:
-    """A D1 bar's timestamp: its date at 00:00 UTC, which is how candles and the
-    Java engine's benchmark rows store it."""
-    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
-
-
-def find_or_create_benchmark(conn, set_id: int, timeframe: str, w: Any,
-                             capital: float = FOLD_CAPITAL) -> StoredBenchmark:
-    """The stored buy-and-hold row for this window, storing it only on a miss.
-
-    The same shape as Java's `BenchmarkRepository.findOrCreate`, and for the
-    same reasons: read first; insert with ON CONFLICT DO NOTHING; re-read when a
-    concurrent run won. An existing row is never recalculated -- it is the fixed
-    yardstick, and moving it would invalidate every comparison drawn against it.
-    Instrument and source come from the feature set, as the run's own do.
-    """
-    if timeframe != "D1":
-        # Walk-forward is D1-only (strategy_spec); a bar's key would need its
-        # real timestamp otherwise, not its date.
-        raise ValueError(f"benchmark keys are built for D1 bars, not {timeframe}")
-    start, end = day_start(w.start), day_start(w.end)
-    with conn.cursor() as cur:
-        set_actor(cur)
-        instrument_id, source_id = owner_of_set(cur, set_id)
-        key = (instrument_id, source_id, timeframe, start, end, capital)
-        cur.execute(_FIND_BENCHMARK, key)
-        row = cur.fetchone()
-        if row is None:
-            ret = w.return_pct
-            cur.execute(
-                "INSERT INTO benchmarks (instrument_id, source_id, timeframe, start_date, "
-                "end_date, initial_capital, return_pct, final_equity, first_close, "
-                "last_close, bar_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (instrument_id, source_id, timeframe, start_date, end_date, "
-                "initial_capital) DO NOTHING",
-                (*key, ret, capital * (1.0 + ret / 100.0),
-                 w.first_close, w.last_close, w.bar_count),
-            )
-            cur.execute(_FIND_BENCHMARK, key)
-            row = cur.fetchone()
-    conn.commit()
-    if row is None:
-        raise RuntimeError(f"benchmark insert for {key} left no row")
-    return StoredBenchmark(int(row[0]), float(row[1]), float(row[2]), float(row[3]),
-                           int(row[4]))
 
 
 _DELETE_SIGNALS = "DELETE FROM walkforward_signals WHERE run_id = %s AND fold = %s"

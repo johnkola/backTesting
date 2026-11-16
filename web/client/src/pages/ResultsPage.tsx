@@ -204,7 +204,7 @@ function VsHold({ result }: { result: ResultSummary }) {
       className={tipClass}
       data-tip={beat
         ? `Beat buy-and-hold by ${diff.toFixed(1)} points over the same bars.`
-        : `Lost to buy-and-hold by ${Math.abs(diff).toFixed(1)} points. Holding the instrument over the same bars would have returned more, with no trading and no costs.`}
+        : `Lost to buy-and-hold by ${Math.abs(diff).toFixed(1)} points. Holding the instrument over the same bars, paying the same costs, would have returned more.`}
     >
       <span className={`badge badge-sm cursor-help ${beat ? 'badge-success' : 'badge-warning'}`}>
         {diff >= 0 ? '+' : ''}{diff.toFixed(1)}

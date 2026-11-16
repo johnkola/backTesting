@@ -42,7 +42,7 @@ export function isTradeable(instrument: { type: string }): boolean {
  * The one question a backtest exists to answer, and the easiest to skip past: a
  * result showing +136% looks like a success until you see that holding returned
  * +314% over the same bars. Returns `null` when there is nothing to compare
- * against — an older result saved before the benchmark was recorded.
+ * against. Buy-and-hold pays the same costs as the strategy since B6.
  *
  * Both figures are measured over the period the strategy could actually trade,
  * so the comparison is like-for-like; the engine used to start the benchmark
@@ -406,28 +406,24 @@ export type TrainedModel = {
 }
 
 /**
- * The stored buy-and-hold row a result is measured against (Architecture §6.3):
- * buy at the first close of the traded window, sell at the last, frictionless.
+ * Buy-and-hold beside a result (B6, D6): the always-long strategy over the same
+ * bars, scored with the run under the same costs and stored in it. One buy at
+ * the first fill (the open after the first evaluated bar), one sale at the last
+ * close. Absent on results stored before B6.
  */
-export type Benchmark = {
-  id: string
-  startDate: string
-  endDate: string
-  initialCapital: number
-  returnPct: number
+export type BuyAndHold = {
+  metrics: PerformanceMetrics
   finalEquity: number
-  firstClose: number
-  lastClose: number
-  barCount: number
+  trades: Trade[]
+  /** One value per `equityHistory` point, in the same order. */
+  equity: number[]
 }
 
 export type ResultDetail = ResultSummary & {
-  /** Null on results saved before benchmarks were stored. */
-  benchmark?: Benchmark | null
   /**
    * Buy-and-hold equity, one value per `result.equityHistory` point and in the
-   * same order. Null when the stored row can no longer be reproduced from the
-   * candles; `holdEquityNote` says why.
+   * same order: `result.buyAndHold.equity`. Null on a result stored before B6,
+   * or one whose curve cannot be paired; `holdEquityNote` says why.
    */
   holdEquity?: number[] | null
   holdEquityNote?: string | null
@@ -443,6 +439,7 @@ export type ResultDetail = ResultSummary & {
     metrics: PerformanceMetrics
     trades: Trade[]
     equityHistory: EquityPoint[]
+    buyAndHold?: BuyAndHold | null
   } | null
 }
 
@@ -1168,8 +1165,9 @@ export type WalkforwardFold = {
   bestEpoch: number | null
   /** Epochs actually trained before stopping; null likewise. */
   epochsRun: number | null
-  /** The stored buy-and-hold row `holdReturn` was read from (§6.3); null on older folds. */
-  benchmarkId: number | null
+  /** Buy-and-hold's own commission and tax, scored with the fold under the same settings (B6). */
+  holdCommissions: number
+  holdGainsTax: number
   /** Strategy 2: interest charged, negative points; this and the five below are null under Strategy 1. */
   marginInterest: number | null
   marginCalls: number | null

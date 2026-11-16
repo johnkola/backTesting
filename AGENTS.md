@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-1** · 2026-11-16 00:04 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-2** · 2026-11-16 00:23 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -304,9 +304,10 @@ Tab: **Pipeline → Backtest**.
   computed from, and a signal on the last bar is never filled. The walk-forward scorer
   trades the same way, so a result here and a step 6 fold of the same signals trade the
   same days at the same prices (B1; `NextOpenCrossCheckTest`).
-- [ ] **app**: the result has its stored buy-and-hold benchmark. The equity chart
-  draws the hold curve, which ends on the benchmark's stored final equity, or says
-  why it can't.
+- [ ] **app**: the result carries its own buy-and-hold, scored with it under the
+  same commission and slippage: one buy at the first open the strategy could trade
+  at, one sale at the last close (B6). The equity chart draws that curve beside the
+  strategy's, one point per equity point.
 - [ ] **review**: the result reproduces. Rerun it with the same settings and
   window, and check the trades, return, final equity and Sharpe are unchanged.
   This was last confirmed for results 709–713 on 2026-11-12.
@@ -317,15 +318,11 @@ Tab: **Pipeline → Backtest**.
   in-sample. B4 makes this an app check (G30).
 - [ ] **not built (G20)**: after-tax results. The engine's backtest is before
   tax, while walk-forward scoring includes it.
-- [ ] **not built (G32, G33)**: the three benchmarks beside the result, under the
-  strategy's own costs and tax. Today it is buy-and-hold alone, with no costs.
+- [ ] **not built (G33)**: Faber and dual momentum beside buy-and-hold, under the
+  strategy's own costs. Today it is buy-and-hold alone (costed since B6).
 
 Known limits, each with a build step that removes it:
 
-- Buy-and-hold is still bought at the window's first close, while a strategy can
-  first buy at the next open. A strategy that is long throughout therefore differs
-  from buy-and-hold by that first overnight, which can read as a win or a loss with no
-  timing behind it (B6, G32).
 - Entries are sized at all of cash on the close, before slippage and commission
   are added. With costs on, cash goes slightly negative on every entry (G28, B2).
 
@@ -445,17 +442,17 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 **Done when**
 
-- [ ] Buy-and-hold is one buy at the window's first open (B1) and one sale at its end,
+- [x] Buy-and-hold is one buy at the window's first open (B1) and one sale at its end,
   charged the same enabled commission, slippage and tax as the strategy it stands
   beside, in the engine's results and in walk-forward folds.
-- [ ] It is recalculated on every run, before training starts, under that run's cost
+- [x] It is recalculated on every run, before training starts, under that run's cost
   and tax settings, and stored with the run (D6). Two runs with the same window and
   settings report the same figure.
-- [ ] No run reads another run's benchmark. The shared `benchmarks` rows and their
+- [x] No run reads another run's benchmark. The shared `benchmarks` rows and their
   lookups (`BenchmarkRepository.findOrCreate`,
   `walkforward_store.find_or_create_benchmark`) are gone, and the hold curve on the
   result page is drawn from the run's own benchmark.
-- [ ] With tax on, a position still open at the end of the window is sold and taxed,
+- [x] With tax on, a position still open at the end of the window is sold and taxed,
   for the strategy and for buy-and-hold alike (D8). In walk-forward the window is the
   fold.
 
@@ -573,7 +570,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B3. Engine metrics | G29 | | done | 2026-11-15. Sortino over the downside deviation, total slippage summed over every fill, break-even trades outside the win rate and streaks, and not-available metrics as null and a dash. Java 128 (9 new), client 142. All 16 stored results were rerun with rebuilt requests and reproduced exactly, apart from the fixed metrics, and replaced: 686-713 are now 714-729 (DESIGN-GAPS, B3 record) |
 | B4. In-sample flag | G30 | | not started | |
 | B5. Trainer purge | G31 | | not started | |
-| B6. Buy-and-hold costs | G32 | | not started | |
+| B6. Buy-and-hold costs | G32 | | done | 2026-11-16. Buy-and-hold is the always-long strategy through the same code: in the profit step for walk-forward (commission and tax, D8 sale at the end) and through `BacktestEngine.trade` for results (commission and slippage). Stored with each run (fold `hold_*` columns, `result_json.buyAndHold`); the `benchmarks` table, both `benchmark_id` columns and their lookups are gone. A position open at the end is sold and taxed, strategy and Strategy 2's core alike. Python 767, Java 121, API 107, client 138. Walk-forward 456-462 recalculated in place from stored signals (nothing retrained); phase1-full v5 went from +0.55 to +0.00 pp, as it is buy-and-hold. The 16 results rerun as 746-761 with the same strategy figures (DESIGN-GAPS, B6 record) |
 | B7. Faber and dual momentum | G33 | B6 | not started | |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
@@ -587,6 +584,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-2 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done; step 7's buy-and-hold condition rewritten as an app condition |
 | 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done; step 7's next-open condition replaces its known limit |
 | 2026-11-15-7 | 2026-11-15 20:21 | Claude Code (Claude Opus 5.5) | B10 done; step 6 gains the stored-signals condition |
 | 2026-11-15-6 | 2026-11-15 12:52 | Claude Code (Claude Opus 5.5) | Working rule: anything derivable is recalculable on demand, and raw data repopulates from its CSV or API; build step B10 (signals, then profit) for D9 |

@@ -97,13 +97,13 @@ class FoldResult:
     commissions: float = 0.0
     timing: float = 0.0
     gains_tax: float = 0.0
+    # Buy-and-hold's own commission and tax under the same settings (B6).
+    hold_commissions: float = 0.0
+    hold_gains_tax: float = 0.0
     # Early stopping: the epoch whose weights were kept, and how many ran. None
     # when the run trained for a fixed number of epochs.
     best_epoch: int | None = None
     epochs_run: int | None = None
-    # The stored buy-and-hold row (`benchmarks`, Architecture §6.3) that
-    # `hold_return` was read from. None on a run that saved nothing.
-    benchmark_id: int | None = None
     # Strategy 2 (G5), None under Strategy 1.
     margin_interest: float | None = None
     margin_calls: int | None = None
@@ -120,8 +120,10 @@ class FoldResult:
     @property
     def attributed(self) -> float:
         """The parts. Approximates `excess`; the gap is compounding, since the
-        attribution is additive and the returns are geometric."""
-        return self.drift_tax + self.commissions + self.gains_tax + self.timing
+        attribution is additive and the returns are geometric. Costs count by
+        what the strategy paid beyond buy-and-hold, which pays its own."""
+        return (self.drift_tax + self.timing + (self.commissions - self.hold_commissions)
+                + (self.gains_tax - self.hold_gains_tax))
 
 
 def purged(tr: list[int], purge: int) -> list[int]:
@@ -405,57 +407,6 @@ def margin_refusals(args, folds, margin: MarginInputs) -> list[str]:
     return out
 
 
-@dataclass(frozen=True)
-class HoldWindow:
-    """The bars a fold's buy-and-hold covers, as the `benchmarks` row keys them.
-
-    Buy at the close of the first validation bar, sell at the close of the bar
-    the last validation day's return runs to: that is what `cumprod(1 + r)`
-    over the fold telescopes to, since `r[i]` is `close[i+1] / close[i] - 1`.
-    """
-    start: date
-    end: date
-    first_close: float
-    last_close: float
-    bar_count: int
-
-    @property
-    def return_pct(self) -> float:
-        """Same formula as Java's `Benchmark.returnPct`, so a row stored by
-        either side reads the same."""
-        if self.first_close <= 0:
-            return 0.0
-        return (self.last_close - self.first_close) / self.first_close * 100.0
-
-
-def hold_window(wdates: list[date], va: list[int],
-                closes: dict[date, float]) -> HoldWindow:
-    """The window `rets[va]` actually spans.
-
-    The exit is the next date after the last validation day, as `rets` defines
-    it; when there is none (the last labelled date), its return is 0.0 and the
-    window ends on that day.
-    """
-    end = wdates[va[-1] + 1] if va[-1] + 1 < len(wdates) else wdates[va[-1]]
-    return window_between(wdates[va[0]], end, closes)
-
-
-def signals_window(sig: profit.Signals, closes: dict[date, float]) -> HoldWindow:
-    """The same window, from a fold's stored signals: the first bar's date to
-    the last bar's exit, or its own date when it has none."""
-    return window_between(sig.dates[0], sig.exits[-1] or sig.dates[-1], closes)
-
-
-def window_between(start: date, end: date, closes: dict[date, float]) -> HoldWindow:
-    """`bar_count` counts every stored close in the window, not the matrix
-    dates, so it is what the candles hold."""
-    return HoldWindow(
-        start=start, end=end,
-        first_close=closes[start], last_close=closes[end],
-        bar_count=sum(1 for d in closes if start <= d <= end),
-    )
-
-
 def fold_accuracy(pred: np.ndarray, y_va: np.ndarray, y_tr: np.ndarray,
                   loss: str) -> tuple[float, float]:
     """(accuracy, naive baseline) of one fold, each on the decision the model
@@ -555,27 +506,6 @@ def park_series(cur, dates: list[date], mode: str) -> np.ndarray:
                                profit.next_dates(dates), mode)
 
 
-def stored_hold(conn, set_id: int, timeframe: str, window: HoldWindow,
-                fold_no: int, log=print) -> tuple[float, int]:
-    """The fold's buy-and-hold return and the stored row it was read from.
-
-    Buy-and-hold is LOOKED UP, not computed (Design Notes, "Buy-and-hold is one
-    fixed benchmark"; Architecture §6.3): the first run over a window stores
-    it, every later one reads that row, the same rule the Java backtest
-    follows. Unsaved runs write nothing, so they use the same formula directly.
-    Sharpe and drawdown stay per fold: the row holds the return only.
-    """
-    bench = walkforward_store.find_or_create_benchmark(conn, set_id, timeframe, window)
-    if bench.closes_differ(window):
-        log(f"WARN   fold {fold_no}: the stored benchmark {bench.id} was made from "
-            f"closes {bench.first_close:g}..{bench.last_close:g} "
-            f"({bench.bar_count} bars); the candles now read "
-            f"{window.first_close:g}..{window.last_close:g} "
-            f"({window.bar_count}). Using the stored figure, as §6.3 says; "
-            f"correcting it is a deliberate act")
-    return bench.return_pct, bench.id
-
-
 def header_line() -> str:
     return (f"\n{'fold':>4} {'val':>5} {'strat%':>8} {'hold%':>8} {'excess':>8} "
             f"{'shrp':>6} {'maxdd':>7} {'trd':>4} │ {'out':>4} {'drift':>7} {'comm':>6} "
@@ -636,20 +566,24 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
     mean_comm = float(np.mean([r.commissions for r in results]))
     mean_timing = float(np.mean([r.timing for r in results]))
     mean_tax = float(np.mean([r.gains_tax for r in results]))
+    mean_hold_comm = float(np.mean([r.hold_commissions for r in results]))
+    mean_hold_tax = float(np.mean([r.hold_gains_tax for r in results]))
     print("\nWHERE THE GAP COMES FROM  (pp per fold; only `timing` is the model)")
     print(f"  days out of the market     {mean_out:>8.0f}")
     verdict = ("the skipped days really were worse than average" if mean_timing > 0.05
                else "the skipped days were no worse than random")
     print(f"  drift tax                  {mean_drift:>+8.2f}   "
           f"equity return forfeited net of the {args.park} earned while out")
-    print(f"  commissions                {mean_comm:>+8.2f}   "
-          f"{args.cost_bps:.0f} bps x {total_trades / len(results):.0f} changes")
+    print(f"  commissions                {mean_comm - mean_hold_comm:>+8.2f}   "
+          f"{args.cost_bps:.0f} bps x {total_trades / len(results):.0f} trades, less "
+          f"buy-and-hold's {-mean_hold_comm:.2f}")
     if args.tax_rate:
-        print(f"  gains tax                  {mean_tax:>+8.2f}   "
-              f"{args.tax_rate:g}% of realized gains; buy-and-hold realized none")
+        print(f"  gains tax                  {mean_tax - mean_hold_tax:>+8.2f}   "
+              f"{args.tax_rate:g}% of realized gains, less the {-mean_hold_tax:.2f} "
+              f"buy-and-hold pays on its final sale")
     print(f"  timing                     {mean_timing:>+8.2f}   {verdict}")
     print(f"  {'-' * 56}")
-    costs = mean_drift + mean_comm + mean_tax
+    costs = mean_drift + (mean_comm - mean_hold_comm) + (mean_tax - mean_hold_tax)
     print(f"  attributed total           {costs + mean_timing:>+8.2f}   "
           f"(vs measured excess {mean_excess:+.2f}; gap is compounding)")
     if costs != 0:
@@ -1135,7 +1069,6 @@ def main(argv: list[str] | None = None) -> int:
                              if args.tax_rate else "off: scored before tax"))
     print("engine       blind (D9): trained on returns alone; costs, tax, park and "
           "margin are the profit step's")
-    print(header_line())
 
     # Opened before the first fold so the row exists while the run is still
     # going: fourteen retrains is minutes to hours, and a run that only appears
@@ -1161,13 +1094,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"recording    walkforward_runs id={run_id} "
               f"(folds committed as they finish)")
 
+    # Buy-and-hold for every fold, before anything trains (B6, D6): one buy at
+    # the fold's first open and one sale at its end, under this run's costs and
+    # tax. The profit step scores it again beside each fold, the same way.
+    settings = profit.Settings.from_args(args)
+    for i, (year, _tr, va) in enumerate(folds, 1):
+        held, _, tax = profit.hold(full.take(va), settings)
+        print(f"buy & hold   fold {i} ({year}): {(held[-1] - 1.0) * 100.0:+.2f}%"
+              + (f" after {-tax:.2f} pts tax" if tax else "") + ", costs paid")
+    print(header_line())
     results: list[FoldResult] = []
     for i, (year, tr, va) in enumerate(folds, 1):
         r, sig = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args)
-        r.hold_return = hold_window(wdates, va, closes).return_pct
-        if run_id is not None:
-            r.hold_return, r.benchmark_id = stored_hold(
-                conn, set_id, args.timeframe, hold_window(wdates, va, closes), i)
         results.append(r)
         if run_id is not None:
             walkforward_store.save_fold(conn, run_id, r, sig, profit.Settings.from_args(args))

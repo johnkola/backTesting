@@ -6,8 +6,10 @@ they are acted on, and so what they earn, differs (DESIGN-GAPS G5, step 1).
 
 The account, in units of the owner's own money (1.0 at the start):
 
-* The CORE is QQQ bought with that money. It is never sold, so it never
-  realizes a gain and is never taxed. Its value moves with QQQ.
+* The CORE is QQQ bought with that money at the window's first open, paying
+  commission. It is not traded while the window runs, so it realizes nothing
+  until the end, where it is sold at the last close, paying commission and tax
+  on its gain (D8), as buy-and-hold is. Its value moves with QQQ.
 * One MARGIN position at most, bought with borrowed money beside the core:
   an up signal holds extra QQQ, a down signal holds PSQ (the one-to-one inverse;
   its fee and its decay are already in its price), a neutral signal holds none.
@@ -25,7 +27,9 @@ The account, in units of the owner's own money (1.0 at the start):
   margin, the core itself is at risk; that day is counted, never hidden.
 
 Equity = core + margin position - debit. Buy-and-hold is the core alone, so a
-run whose signals are all neutral reproduces buy-and-hold exactly.
+run whose signals are all neutral reproduces buy-and-hold exactly, under the
+same commission and tax (B6). At the end of the window the margin position is
+closed and the core sold, each a taxed sale, and equity is what is left.
 
 Signals trade at the next session's open (B1, R76), as in `profit.simulate`.
 Bar i runs from its date's close to its exit's close in two segments: overnight
@@ -33,9 +37,9 @@ to the next open, then intraday to the exit's close. Over the overnight the bar
 holds the margin position from before, and the debit carried overnight accrues
 interest for the calendar days to the exit. At the open the signal computed at
 the bar's close is acted on, a sale taxed at that open. Over the intraday the
-new position is held. The core is held from the fold's first close, like
-buy-and-hold. Nothing is on margin before the first bar, so no bar trades at its
-own close. The trim and the margin call are checked at the close.
+new position is held. The core is bought at the first open, like buy-and-hold.
+Nothing is held before it, so no bar trades at its own close. The trim and the
+margin call are checked at the close.
 """
 
 from __future__ import annotations
@@ -119,7 +123,9 @@ def simulate_margin(
     can_trade = np.ones(n, dtype=bool) if tradable is None else np.asarray(tradable, dtype=bool)
 
     c = cfg.cost_bps / 10_000.0
-    core = 1.0
+    cash = 1.0          # own money not yet in the core
+    core = 0.0          # the core's market value, bought at the first open
+    core_basis = 0.0    # its cost, entry commission included, for tax
     kind = NEUTRAL      # what the margin position is
     pos = 0.0           # its market value
     basis = 0.0         # its cost, entry commission included, for tax
@@ -139,14 +145,19 @@ def simulate_margin(
         debit -= amount - fee
         r.commissions -= fee * 100.0
         r.trades += 1
+        debit += tax_on(gain)
+
+    def tax_on(gain: float) -> float:
+        """Tax due on a realized gain, after losses carried in the window."""
+        nonlocal carried_loss
         if gain < 0:
             carried_loss += -gain
-        else:
-            taxable = max(0.0, gain - carried_loss)
-            carried_loss = max(0.0, carried_loss - gain)
-            tax = taxable * cfg.tax_rate
-            debit += tax
-            r.gains_tax -= tax * 100.0
+            return 0.0
+        taxable = max(0.0, gain - carried_loss)
+        carried_loss = max(0.0, carried_loss - gain)
+        tax = taxable * cfg.tax_rate
+        r.gains_tax -= tax * 100.0
+        return tax
 
     def close() -> None:
         nonlocal kind, pos, basis
@@ -172,7 +183,13 @@ def simulate_margin(
             debit += interest
             r.interest -= interest * 100.0
 
-        # At the open: act on the signal computed at this bar's close.
+        # At the open: the core is bought at the first one it can trade at...
+        if can_trade[i] and core == 0.0 and cash > 0.0:
+            fee = cash * c
+            core, core_basis, cash = cash - fee, cash, 0.0
+            r.commissions -= fee * 100.0
+            r.trades += 1
+        # ...and the signal computed at this bar's close is acted on.
         want = int(signals[i]) if can_trade[i] else kind
         if want != kind:
             close()
@@ -200,10 +217,23 @@ def simulate_margin(
             if kind != NEUTRAL:
                 close()
                 r.margin_calls += 1
-            if debit > 0 and (core - debit) / core < cfg.maintenance:
+            if debit > 0 and core > 0 and (core - debit) / core < cfg.maintenance:
                 r.core_at_risk += 1
 
-        r.equity[i] = core + pos - debit
+        r.equity[i] = cash + core + pos - debit
+
+    # The end of the window (D8): the margin position is closed and the core
+    # sold at the last close, each a taxed sale; equity is what is left.
+    if n:
+        close()
+        if core > 0.0:
+            fee = core * c
+            proceeds = core - fee
+            r.commissions -= fee * 100.0
+            r.trades += 1
+            cash += proceeds - tax_on(proceeds - core_basis)
+            core = 0.0
+        r.equity[-1] = cash - debit
     return r
 
 

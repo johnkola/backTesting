@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-1** · 2026-11-16 00:04 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-3** · 2026-11-16 00:23 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -255,6 +255,56 @@ Checklist:
   - The Training stage reads all four strategies' newest runs as fresh.
 - **Found:** G69, the Known limitations and How to read a result links go to `/docs/architecture`, a page that no longer exists.
 
+**B6 plan (G32, D6, D8), 2026-11-16.** The author: do B6. The conditions are in `AGENTS.md`, build step B6. R36 asks for buy-and-hold to be stored with each run and recalculated every time, under that run's own cost and tax settings.
+
+The shape:
+- **Buy-and-hold is a strategy that is always long, scored by the same code.**
+  - Walk-forward: the profit step's long/flat simulation with every call long. It buys at the fold's first open (B1), pays the strategy's commission, and is sold at the fold's last close, paying commission and tax on the gain (D8).
+  - Engine: `BacktestEngine.trade` with a strategy that enters on the first bar. It fills at the next open through the same commission and slippage models and is closed at the last close. The engine has no tax yet (G20), so neither side pays any.
+- **D8 for the strategy too.** A position still open at the end of the window is sold at the last close: commission, and tax on the gain. Under Strategy 2 the core is bought at the first open and sold at the end, and the margin position is closed and taxed. The core alone stays exactly buy-and-hold, and the always-long baseline gets the same end.
+- **Stored with the run, recalculated every time (D6).**
+  - Walk-forward: each fold's `hold_*` columns, computed by the profit step before the first fold trains, plus two new ones, `hold_commissions` and `hold_gains_tax`. So the cost terms of the gap stay exact: strategy costs minus the hold's.
+  - Engine: `result_json` carries a `buyAndHold` block: return, final equity, Sharpe, drawdown, fills, and an equity value per bar.
+  - A recalculation recomputes buy-and-hold too.
+- **The shared rows go.** The `benchmarks` table, `backtest_results.benchmark_id` and `walkforward_folds.benchmark_id` are dropped, along with `BenchmarkRepository`, `find_or_create_benchmark`, the hold-window lookup and `holdCurve.js`. The result page draws the run's own buy-and-hold curve.
+- **The gap's attribution.** The shortfall is measured against buy-and-hold's own path, so the first overnight, which neither side holds, drops out of drift. The cost terms are the strategy's minus buy-and-hold's.
+
+Checklist:
+- [x] Plan here
+- [x] Profit step: buy-and-hold under the run's settings; the end-of-window sale (D8) for Strategy 1 and 2 and the always-long baseline; attribution against buy-and-hold; tests, including one that two runs with the same window and settings give the same figure
+- [x] Runner and store: buy-and-hold before training; the hold columns; no benchmark lookup; recalculation recomputes it
+- [x] Engine: buy-and-hold through `trade` under the same costs, in `result_json`; `benchmarks` and both `benchmark_id` columns dropped; repositories and API; tests
+- [x] API and client: the result's own curve and figures; text that says what buy-and-hold paid; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go.**
+  - Walk-forward 456-462: recalculated in place from their stored signals, with nothing retrained, since B6 changes only the profit step.
+  - Backtest results 730-745: backed up, rerun and the originals deleted.
+- [x] README, `AGENTS.md`, G32 and this record say done
+
+*Done, 2026-11-16 00:23.* The author chose: recalculate the walk-forward runs, rerun the results.
+- **Tests:** Python 767, Java 121, API 107, client 138. New tests:
+  - buy-and-hold buys at the first open and sells at the end paying commission and tax;
+  - it depends on the market and settings alone, so two runs over the same window with the same settings report the same figure;
+  - a strategy that never leaves equals it exactly;
+  - an open position is sold and taxed at the end, Strategy 2's core included;
+  - in the engine, it fills at the next open through the same commission and slippage, starts after the warmup, and repeats exactly.
+- **Backup.** The tables were backed up to `rerun-b6-20261116/before.sql.gz` before the schema change. The Java tests applied it to the dev database: `benchmarks` and both `benchmark_id` columns dropped, `hold_commissions` and `hold_gains_tax` added.
+- **Walk-forward, recalculated in place** from the stored signals, with nothing retrained. Each matches its dry run in every field. Mean excess, pp a fold, and buy-and-hold:
+
+| Run | Strategy | Excess before → after | Buy-and-hold a fold |
+|---|---|---|---|
+| 456 | postman-smoke v6 | −5.30 → −5.84 | +26.31% → +26.79% |
+| 457 | postman-smoke v7 (tax 25%) | −9.74 → −5.24 | +26.31% → +20.03% after tax |
+| 458 | postman-smoke v10 | +3.25 → +2.70 | +26.79% |
+| 459 | strategy2-defaults v1 | −0.11 → −0.11 | +26.79% |
+| 460 | postman-smoke v8 (tax 25%) | −0.32 → −0.71 | +20.03% |
+| 461 | strategy2-scored v1 | +3.58 → +3.59 | +26.79%; still loses to always long |
+| 462 | phase1-full v5 (tax 25%) | +0.55 → **+0.00** | +20.03% |
+
+- **phase1-full v5 is buy-and-hold.** Long throughout, it buys at the same open and pays the same costs and tax, so its excess is exactly 0 and timing 0. B1's +0.55 was the first-overnight artifact, as recorded there. The verdict "does not beat buy-and-hold" stands for every strategy.
+- **Buy-and-hold under tax.** It now pays tax on its final sale (D8): 6.77 pts a fold at 25%. That is why the taxed classifier (457) gains 4.5 pp against it.
+- **Backtest results.** 730-745 were rerun as 746-761 from their stored requests. Every strategy return and trade count is identical. Only buy-and-hold moved: it now buys at the first fill's open and pays commission and slippage (761: 1,252.10% → 1,240.79%). The originals were deleted in one transaction. The result page draws each run's own buy-and-hold curve, 6,860 points for 761, one per equity point.
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -286,7 +336,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R32 | done 2026-11-15 (B10) | D9 |
 | R33 | conflicts | G58 |
 | R34 | partial | G50, G45 |
-| R36 | partial | G32 (B6), G33 (B7), G53 |
+| R36 | partial: buy-and-hold is stored with each run, recalculated under its cost and tax settings and pays the same (B6). Faber and dual momentum (B7, G33), dividends and currency (G53) and superficial loss are not built | G32, G33, G53 |
 | R37 | partial | G32 (B6) |
 | R38 | partial | G50, G57 |
 | R39 | partial | G33 (B7), G57 |
@@ -365,7 +415,7 @@ rule in `AGENTS.md`.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | open (D6 and D8 decided) |
+| G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | done 2026-11-16 (B6): see the B6 record in Pass 4 |
 | G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | open (D7 decided) |
 | G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | partial |
 | G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | open |
@@ -378,9 +428,9 @@ say so; `readonly-doc/` will say so once it is refreshed.
 
 | # | Question | What exists today | Status |
 |---|---|---|---|
-| D6 | How is a benchmark kept? The design says both. Design Notes ("Buy-and-hold is one fixed benchmark") and Architecture §6.3: computed once for a window, stored, reused, "never recomputed per run". Requirement 36: "recalculated on every run, never cached", under the strategy's cost, tax, dividend and currency settings, and stored with the run | The first: `BenchmarkRepository.findOrCreate` and `walkforward_store.find_or_create_benchmark` never recalculate a stored row (G23) | decided 2026-11-14: recalculated on every run, under that run's settings, and stored with the run. The same window and settings must still give the same figure. The shared stored row and its lookups go (G32) |
+| D6 | How is a benchmark kept? The design says both. Design Notes ("Buy-and-hold is one fixed benchmark") and Architecture §6.3: computed once for a window, stored, reused, "never recomputed per run". Requirement 36: "recalculated on every run, never cached", under the strategy's cost, tax, dividend and currency settings, and stored with the run | The first: `BenchmarkRepository.findOrCreate` and `walkforward_store.find_or_create_benchmark` never recalculate a stored row (G23) | decided 2026-11-14: recalculated on every run, under that run's settings, and stored with the run. The same window and settings must still give the same figure. The shared stored row and its lookups go (G32). **Built 2026-11-16 (B6)** |
 | D7 | What exactly is dual momentum here? One line of the design holds the asset when its 12-month return beats T-bills "and the alternative, else switch"; another holds it while its 12-month return beats cash. Which asset is the alternative for QQQ, and what is held when the rule is out | DTB3 (T-bills) and SPY are stored; nothing is chosen | decided 2026-11-14: at each month's last bar take whichever of the instrument and SPY has the higher 12-month return. Hold it for the next month if that return beats T-bills over the same 12 months, otherwise hold cash at the T-bill rate. When the instrument is SPY there is no alternative and only the T-bill test applies (G33) |
-| D8 | With tax on, is a position still open at the end of the window sold and taxed? The design has buy-and-hold pay tax "on its single buy and final sell". The scorer taxes neither the strategy's open position nor buy-and-hold at the end of a fold | `walkforward.simulate_taxed` ("A position still open when the fold ends is not taxed") | decided 2026-11-14: sold and taxed, for the strategy and every benchmark alike, at the end of the window a result is scored over. In walk-forward that window is the fold (G32) |
+| D8 | With tax on, is a position still open at the end of the window sold and taxed? The design has buy-and-hold pay tax "on its single buy and final sell". The scorer taxes neither the strategy's open position nor buy-and-hold at the end of a fold | `walkforward.simulate_taxed` ("A position still open when the fold ends is not taxed") | decided 2026-11-14: sold and taxed, for the strategy and every benchmark alike, at the end of the window a result is scored over. In walk-forward that window is the fold (G32). **Built 2026-11-16 (B6)** |
 
 ## Pass 2 — 2026-11-07 (HEAD `84acc6e`, plus uncommitted G1 section 1)
 
@@ -1060,6 +1110,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-3 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done: buy-and-hold costed and stored with each run; G32 done, D6 and D8 built, R36 partial |
+| 2026-11-16-2 | 2026-11-16 00:07 | Claude Code (Claude Opus 5.5) | B6 plan (G32, D6, D8) |
 | 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done: the reruns and checks; G27 done, R76 partial (benchmarks: B6); new gap G69 (dead Known limitations links) |
 | 2026-11-15-13 | 2026-11-15 20:48 | Claude Code (Claude Opus 5.5) | B1 built and tested, up to the checkpoint |
 | 2026-11-15-12 | 2026-11-15 20:29 | Claude Code (Claude Opus 5.5) | B1 plan (G27, R76) |

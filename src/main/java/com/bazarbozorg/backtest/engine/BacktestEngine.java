@@ -1,7 +1,6 @@
 package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.data.BarSeriesConverter;
-import com.bazarbozorg.backtest.data.BenchmarkRepository;
 import com.bazarbozorg.backtest.data.CandleRepository;
 import com.bazarbozorg.backtest.data.DataSourceRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
@@ -40,7 +39,6 @@ public class BacktestEngine {
     private static final Logger logger = LoggerFactory.getLogger(BacktestEngine.class);
 
     private final DatabaseManager databaseManager;
-    private final BenchmarkRepository benchmarkRepo;
     private final CommissionModel commissionModel;
     private final SlippageModel slippageModel;
     private final double initialCapital;
@@ -56,7 +54,6 @@ public class BacktestEngine {
     public BacktestEngine(DatabaseManager databaseManager, CommissionModel commissionModel,
                           SlippageModel slippageModel, double initialCapital) {
         this.databaseManager = databaseManager;
-        this.benchmarkRepo = new BenchmarkRepository(databaseManager);
         this.commissionModel = commissionModel;
         this.slippageModel = slippageModel;
         this.initialCapital = initialCapital;
@@ -186,17 +183,13 @@ public class BacktestEngine {
         ZonedDateTime endDate = barDate(lastBar2);
         double lastClose = lastBar2.getClosePrice().doubleValue();
 
-        // Buy-and-hold is the benchmark the strategy is judged against, so it has
-        // to be measured over the period the strategy could actually trade in.
-        // It used to start at bar 0 while the loop starts at `warmupBars`, which
-        // credited the benchmark with every point of a move the strategy was
-        // structurally unable to hold anything through -- it has no indicator
-        // values yet. The error scaled with the warmup, so it silently punished
-        // exactly the longer-period configurations: a 200-bar warmup over a
-        // one-year window handed buy-and-hold 9 of its 17 points.
+        // The traded window starts at the first evaluated bar. Buy-and-hold has
+        // to be measured over the period the strategy could actually trade in:
+        // it used to start at bar 0 while the loop starts at `warmupBars`, which
+        // credited it with every point of a move the strategy was structurally
+        // unable to hold anything through -- it has no indicator values yet.
         int benchmarkStart = benchmarkStartIndex(series.getBarCount(), warmupBars);
         Bar firstBar = series.getBar(benchmarkStart);
-        double firstClose = firstBar.getClosePrice().doubleValue();
 
         // The reported range is the traded range, for the same reason: a result
         // claiming to cover a period its own numbers exclude is a result nobody
@@ -208,32 +201,14 @@ public class BacktestEngine {
         // bar dated the 15th ends on the 16th. Reporting the end instant made
         // the range unreproducible: /api/candles filters on a bar's timestamp,
         // so re-deriving buy-and-hold from the reported start silently dropped
-        // the first bar and came out low -- on one stored run, 40.42% against a
-        // correct 41.57%. The benchmark arithmetic was right all along; only
-        // the label disagreed with it.
+        // the first bar and came out low.
         ZonedDateTime startDate = barDate(firstBar);
 
-        // The benchmark is LOOKED UP, not computed. DESIGN.md: "buy-and-hold must
-        // be the same number for every comparison ... It is never recomputed per
-        // run, per feature set, or per strategy. If two runs report different
-        // buy-and-hold figures for the same window, that is a defect, not a
-        // result." So the first run over a window stores the figure and every
-        // later run reads that same row.
-        //
-        // Note what the window depends on: the warmup decides where it starts,
-        // so an SMA(200) strategy and an RSI(14) one over the same candles
-        // measure different windows and get different rows. That is correct --
-        // each is judged against holding over the period it could actually
-        // trade -- but it means "one fixed benchmark" makes two runs comparable
-        // only when their windows match, which is why the window is part of the
-        // key rather than just the instrument.
-        Benchmark benchmark = benchmarkRepo.findOrCreate(
-                // name(), not toString(): enum names are what candles.timeframe
-                // holds, so the benchmark keys on the same spelling the bars do.
-                instrument.id(), source.id(), timeframe.name(), startDate, endDate,
-                initialCapital, firstClose, lastClose,
-                series.getBarCount() - benchmarkStart);
-        double buyAndHoldReturnPct = benchmark.returnPct();
+        // Buy-and-hold, scored with this run under its own costs (B6, D6): the
+        // always-long strategy through the same loop, fill rule and cost
+        // models. Stored with the result; no run reads another's.
+        BuyAndHold buyAndHold = buyAndHold(series, timeframe, warmupBars, instrument.id(), lastClose);
+        double buyAndHoldReturnPct = buyAndHold.metrics().getTotalReturnPct();
 
         // Same reasoning for annualisation: the strategy's equity curve only
         // spans the post-warmup bars, so dividing by the whole series understated
@@ -289,7 +264,42 @@ public class BacktestEngine {
                 modelCacheKey,
                 modelCacheHit,
                 modelVersionId,
-                benchmark.id());
+                buyAndHold);
+    }
+
+    /** Always long: an entry on every bar, which a held position ignores. */
+    static final TradingStrategy ALWAYS_LONG = new TradingStrategy() {
+        public String getName() { return "buy-and-hold"; }
+        public String getDescription() { return "Long from the first fill to the end"; }
+        public Map<String, String> getDefaultParameters() { return Map.of(); }
+        public void initialize(BarSeries s, Map<String, String> p) { }
+        public int getWarmupBars() { return 0; }
+        public StrategySignal evaluate(StrategyContext context) { return StrategySignal.ENTRY_LONG; }
+    };
+
+    /**
+     * Buy-and-hold over the bars from {@code warmupBars}, through {@link #trade}
+     * with the engine's own cost models, and its metrics over the same bars as
+     * the strategy's. Package-private for the tests.
+     */
+    BuyAndHold buyAndHold(BarSeries series, Timeframe timeframe, int warmupBars, long instrumentId,
+                          double lastClose) {
+        PortfolioManager pm = new PortfolioManager(initialCapital);
+        ExecutionSimulator sim = new ExecutionSimulator(commissionModel, slippageModel);
+        trade(series, ALWAYS_LONG, warmupBars, instrumentId, pm, sim);
+        double finalEquity = pm.getEquity(lastClose);
+        double returnPct = (finalEquity / initialCapital - 1.0) * 100.0;
+
+        int start = benchmarkStartIndex(series.getBarCount(), warmupBars);
+        long bars = series.getBarCount() - start;
+        long days = java.util.stream.IntStream.range(start, series.getBarCount())
+                .mapToObj(i -> barDate(series.getBar(i)).toLocalDate()).distinct().count();
+        PerformanceMetrics metrics = MetricsCalculator.calculate(
+                pm.getCompletedTrades(), pm.getEquityHistory(), initialCapital, finalEquity,
+                returnPct, bars, days, MetricsCalculator.periodsPerYear(timeframe, bars, days),
+                sim.getTotalSlippage());
+        List<Double> equity = pm.getEquityHistory().stream().map(EquityPoint::equity).toList();
+        return new BuyAndHold(metrics, finalEquity, pm.getCompletedTrades(), equity);
     }
 
     /**

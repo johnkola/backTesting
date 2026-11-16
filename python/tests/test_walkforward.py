@@ -98,27 +98,27 @@ def test_no_bar_trades_at_the_close_it_was_computed_from():
     overnight after the fold's first close is never held (G27)."""
     eq, trades = sim([0], [0.05], [0.0])
     assert eq[0] == pytest.approx(1.0)
-    assert trades == 1
+    assert trades == 2           # bought at the next open, sold at the end (D8)
 
 
 def test_a_bar_that_cannot_trade_keeps_its_position():
     # The last labelled date has no next bar to trade at.
     eq, trades = sim([0, 2], [0.0, 0.0], [0.10, 0.0], tradable=np.array([True, False]))
-    assert trades == 1
+    assert trades == 2           # the buy, and the sale at the end, not the SELL
     assert eq[-1] == pytest.approx(1.10)
 
 
-def test_all_long_is_buy_and_hold_less_the_first_overnight_and_one_entry():
+def test_all_long_is_the_market_less_the_first_overnight_and_two_commissions():
     gap, intra = np.full(50, 0.0005), np.full(50, 0.0007)
     eq, trades = sim(np.zeros(50, dtype=int), gap, intra, cost_bps=10.0)
-    hold = float(np.prod((1 + gap) * (1 + intra)))
-    assert trades == 1
-    assert eq[-1] == pytest.approx(hold / 1.0005 * (1 - 0.001), rel=1e-12)
+    market = float(np.prod((1 + gap) * (1 + intra)))
+    assert trades == 2           # one buy at the first open, one sale at the end
+    assert eq[-1] == pytest.approx(market / 1.0005 * (1 - 0.001) ** 2, rel=1e-12)
 
 
 def test_trade_count_counts_changes_not_days_in_the_market():
     _, trades = sim([0, 0, 2, 2, 0, 0], np.zeros(6), np.zeros(6))
-    assert trades == 3  # enter, exit, re-enter
+    assert trades == 4  # enter, exit, re-enter, and the sale at the end
 
 
 # --------------------------------------------------------------------------
@@ -148,14 +148,17 @@ def test_a_loss_alone_pays_no_tax():
     assert tax == 0.0
 
 
-def test_an_open_position_is_not_taxed_so_holding_never_pays():
-    """Buy-and-hold never sells. Under the same rule the model pays nothing
-    while it holds either, which is what makes the comparison fair."""
-    gap, intra = np.full(30, 0.002), np.full(30, 0.01)
-    eq, _, tax = taxed(np.zeros(30, dtype=int), gap, intra, cost_bps=5.0, tax_rate=0.5)
-    plain, _ = sim(np.zeros(30, dtype=int), gap, intra, cost_bps=5.0)
-    assert tax == 0.0
-    np.testing.assert_allclose(eq, plain, rtol=1e-12)
+def test_an_open_position_is_sold_and_taxed_at_the_end():
+    """D8: a position still open when the window ends is sold at the last close
+    and its gain taxed, for the strategy and buy-and-hold alike. Before the
+    sale nothing is taxed."""
+    intra = np.full(30, 0.01)
+    eq, _, tax = taxed(np.zeros(30, dtype=int), np.zeros(30), intra, tax_rate=0.5)
+    plain, _ = sim(np.zeros(30, dtype=int), np.zeros(30), intra)
+    gain = 1.01 ** 30 - 1.0
+    assert tax == pytest.approx(-50.0 * gain)
+    assert eq[-1] == pytest.approx(1.0 + 0.5 * gain)
+    np.testing.assert_allclose(eq[:-1], plain[:-1], rtol=1e-12)
 
 
 def test_the_exit_commission_reduces_the_taxed_gain():
@@ -478,48 +481,6 @@ def test_without_patience_training_runs_every_epoch_and_reports_none():
     y = rng.integers(0, 3, 60).astype(np.int64)
     _, _, stopper = wf.train_one(x, y, _stop_args(epochs=3, patience=None))
     assert stopper is None
-
-
-# --------------------------------------------------------------------------
-# hold_window: the bars a fold's buy-and-hold spans (G23)
-# --------------------------------------------------------------------------
-
-
-class TestHoldWindow:
-    DATES = [date(2020, 12, 30), date(2020, 12, 31), date(2021, 1, 4),
-             date(2021, 1, 5), date(2021, 12, 31), date(2022, 1, 3)]
-    CLOSES = dict(zip(DATES, [90.0, 100.0, 104.0, 102.0, 120.0, 125.0]))
-
-    def test_runs_from_the_first_validation_close_to_the_close_after_the_last(self):
-        # val = 2021 (indices 2..4); r[4] runs to 2022-01-03, so that is the exit.
-        w = wf.hold_window(self.DATES, [2, 3, 4], self.CLOSES)
-        assert (w.start, w.end) == (date(2021, 1, 4), date(2022, 1, 3))
-        assert (w.first_close, w.last_close, w.bar_count) == (104.0, 125.0, 4)
-
-    def test_equals_what_the_fold_compounds(self):
-        va = [2, 3, 4]
-        rets = np.array([self.CLOSES[self.DATES[i + 1]] / self.CLOSES[self.DATES[i]] - 1.0
-                         for i in va])
-        compounded = (np.cumprod(1.0 + rets)[-1] - 1.0) * 100.0
-        assert wf.hold_window(self.DATES, va, self.CLOSES).return_pct == pytest.approx(
-            compounded, abs=1e-10)
-
-    def test_the_last_labelled_date_ends_on_itself(self):
-        # rets for the final date is 0.0: nothing after it was scored.
-        w = wf.hold_window(self.DATES, [4, 5], self.CLOSES)
-        assert (w.start, w.end, w.bar_count) == (date(2021, 12, 31), date(2022, 1, 3), 2)
-        assert w.return_pct == pytest.approx((125.0 / 120.0 - 1.0) * 100.0)
-
-    def test_counts_stored_closes_not_matrix_dates(self):
-        # A day missing from the feature matrix is still a bar of the window.
-        closes = dict(self.CLOSES)
-        closes[date(2021, 6, 1)] = 110.0
-        assert wf.hold_window(self.DATES, [2, 3, 4], closes).bar_count == 5
-
-    def test_matches_the_java_formula(self):
-        # Benchmark.returnPct: (last - first) / first * 100; 0 for a non-positive first.
-        w = wf.HoldWindow(date(2021, 1, 4), date(2022, 1, 3), 0.0, 5.0, 2)
-        assert w.return_pct == 0.0
 
 
 # --------------------------------------------------------------------------

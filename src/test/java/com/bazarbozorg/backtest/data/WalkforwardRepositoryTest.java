@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * a run with no folds yet reports null rather than a zero that reads like a
  * measurement.
  *
- * <p>DB-touching, like {@code BenchmarkRepositoryTest}, and
+ * <p>DB-touching, like the other repository tests, and
  * <strong>skipped</strong> when Postgres is unreachable so the ordinary
  * {@code gradlew test} stays green without the stack up. To run it:
  *

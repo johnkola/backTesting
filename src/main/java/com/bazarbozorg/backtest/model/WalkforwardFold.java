@@ -46,8 +46,10 @@ import java.time.LocalDate;
  * @param bestEpoch    the epoch whose weights early stopping kept; null when the run
  *                     trained a fixed number of epochs
  * @param epochsRun    epochs actually trained before stopping; null likewise
- * @param benchmarkId  the stored buy-and-hold row {@code holdReturn} was read from
- *                     (Architecture §6.3); null on folds scored before folds used it
+ * @param holdCommissions buy-and-hold's own commission, scored with the fold under
+ *                     the same settings (B6): a buy at the first open and a sale
+ *                     at the end, in negative points like {@code commissions}
+ * @param holdGainsTax buy-and-hold's tax on its final sale (D8), likewise
  * @param marginInterest Strategy 2: interest charged, negative points of starting
  *                     capital; this and the five below are null under Strategy 1
  * @param marginCalls  Strategy 2: forced closes
@@ -81,7 +83,8 @@ public record WalkforwardFold(
         double gainsTax,
         Integer bestEpoch,
         Integer epochsRun,
-        Long benchmarkId,
+        double holdCommissions,
+        double holdGainsTax,
         Double marginInterest,
         Integer marginCalls,
         Integer trims,
@@ -97,7 +100,8 @@ public record WalkforwardFold(
     }
 
     /**
-     * The three attribution terms summed.
+     * The attribution terms summed, costs counted by what the strategy paid
+     * beyond buy-and-hold, which pays its own (B6).
      *
      * <p>Approximates {@link #excess()} rather than equalling it: the
      * attribution is additive and the returns are geometric, so the gap is
@@ -105,6 +109,6 @@ public record WalkforwardFold(
      * that the linear split is a loose reading, not that a term is wrong.
      */
     public double attributed() {
-        return driftTax + commissions + timing;
+        return driftTax + timing + (commissions - holdCommissions) + (gainsTax - holdGainsTax);
     }
 }

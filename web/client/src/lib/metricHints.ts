@@ -25,7 +25,7 @@ export const metricHints: Record<string, string> = {
   trades:
     'Completed round trips — an entry paired with its exit. Under roughly 20, treat every other number here as unreliable rather than as a result.',
   'buy & hold':
-    'What buying at the first bar and holding to the last would have returned, with no trading. This is the benchmark the strategy has to beat to be worth running.',
+    'What buying at the first open the strategy could trade at and holding to the last close would have returned, paying the same commission and slippage. This is the benchmark the strategy has to beat to be worth running.',
   'final equity':
     'Account value at the last bar, after any open position is force-closed. Commission and slippage are already taken out, so this is money you would actually hold.',
   initial:

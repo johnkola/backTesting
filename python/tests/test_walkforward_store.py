@@ -228,12 +228,15 @@ class TestFoldRow:
         assert row["n_train"] == 3200
         assert row["n_val"] == 252
 
-    def test_carries_the_benchmark_row_it_read_hold_return_from(self):
-        # G23: absent on a fold that never looked one up (an unsaved run's shape).
-        assert ws.fold_row(99, FakeFold())["benchmark_id"] is None
+    def test_carries_buy_and_hold_s_own_costs_and_no_benchmark_row(self):
+        # B6: buy-and-hold is scored with the fold under its settings and stored
+        # with it; no shared row is read or pointed at.
         fold = FakeFold()
-        fold.benchmark_id = 146
-        assert ws.fold_row(99, fold)["benchmark_id"] == 146
+        fold.hold_commissions, fold.hold_gains_tax = -0.1, -2.5
+        row = ws.fold_row(99, fold)
+        assert (row["hold_commissions"], row["hold_gains_tax"]) == (-0.1, -2.5)
+        assert "benchmark_id" not in row and "benchmark" not in ws._INSERT_FOLD
+        assert not hasattr(ws, "find_or_create_benchmark")
 
     def test_every_fold_row_key_is_a_column_of_the_insert(self):
         for key in ws.fold_row(99, FakeFold()):
@@ -244,18 +247,6 @@ class TestFoldRow:
         # either side is corrected.
         assert "excess" not in ws.fold_row(99, FakeFold())
         assert "attributed" not in ws.fold_row(99, FakeFold())
-
-
-class Window:
-    """A HoldWindow's shape without importing walkforward (torch)."""
-
-    def __init__(self, start, end, first_close, last_close, bar_count):
-        self.start, self.end = start, end
-        self.first_close, self.last_close, self.bar_count = first_close, last_close, bar_count
-
-    @property
-    def return_pct(self):
-        return (self.last_close - self.first_close) / self.first_close * 100.0
 
 
 class TestExecutionColumns:
@@ -278,28 +269,6 @@ class TestExecutionColumns:
     def test_a_strategy1_fold_stores_null_margin_figures(self):
         row = ws.fold_row(1, FakeFold())
         assert all(row[k] is None for k in ws.MARGIN_FOLD_FIELDS)
-
-
-class TestStoredBenchmark:
-    def test_reproduced_closes_do_not_differ(self):
-        b = ws.StoredBenchmark(1, 25.0, 200.0, 250.0, 253)
-        assert not b.closes_differ(Window(None, None, 200.0, 250.0, 253))
-        assert not b.closes_differ(Window(None, None, 200.0 + 1e-12, 250.0, 253))
-
-    def test_a_revised_close_or_an_extra_bar_differs(self):
-        b = ws.StoredBenchmark(1, 25.0, 200.0, 250.0, 253)
-        assert b.closes_differ(Window(None, None, 200.01, 250.0, 253))
-        assert b.closes_differ(Window(None, None, 200.0, 249.99, 253))
-        assert b.closes_differ(Window(None, None, 200.0, 250.0, 254))
-
-    def test_a_d1_key_is_midnight_utc_like_the_candles(self):
-        t = ws.day_start(date(2022, 4, 13))
-        assert t.isoformat() == "2022-04-13T00:00:00+00:00"
-
-    def test_refuses_a_timeframe_it_cannot_key(self):
-        with pytest.raises(ValueError, match="D1"):
-            ws.find_or_create_benchmark(None, 1, "H1", Window(date(2020, 1, 2),
-                                        date(2020, 1, 3), 1.0, 1.0, 2))
 
 
 # --------------------------------------------------------------------------
@@ -370,45 +339,6 @@ def a_set(db):
             cur.execute("DELETE FROM instruments WHERE id = %s", (inst,))
             cur.execute("DELETE FROM data_sources WHERE id = %s", (src,))
         db.commit()
-
-
-class TestBenchmarkRoundTrip:
-    """Needs Postgres: one stored row per window, shared and never moved (§6.3)."""
-
-    # A window no real run will ever key on, so the test owns its rows.
-    START, END = date(2099, 1, 2), date(2099, 12, 31)
-
-    def _cleanup(self, conn, set_id):
-        conn.rollback()
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM benchmarks WHERE start_date = %s AND end_date = %s "
-                        "AND initial_capital = %s",
-                        (ws.day_start(self.START), ws.day_start(self.END), ws.FOLD_CAPITAL))
-        conn.commit()
-
-    def test_the_first_run_stores_it_and_later_runs_read_the_same_row(self, db, a_set):
-        self._cleanup(db, a_set)
-        try:
-            first = ws.find_or_create_benchmark(
-                db, a_set, "D1", Window(self.START, self.END, 200.0, 250.0, 251))
-            assert first.return_pct == pytest.approx(25.0)
-            # Same window, revised closes: the stored row is the yardstick and
-            # is not recalculated. The caller sees the difference and warns.
-            again = ws.find_or_create_benchmark(
-                db, a_set, "D1", Window(self.START, self.END, 200.0, 260.0, 251))
-            assert again.id == first.id
-            assert again.return_pct == pytest.approx(25.0)
-            assert again.closes_differ(Window(self.START, self.END, 200.0, 260.0, 251))
-            with db.cursor() as cur:
-                cur.execute("SELECT count(*), max(final_equity) FROM benchmarks "
-                            "WHERE start_date = %s AND end_date = %s AND initial_capital = %s",
-                            (ws.day_start(self.START), ws.day_start(self.END),
-                             ws.FOLD_CAPITAL))
-                count, final = cur.fetchone()
-            assert count == 1
-            assert final == pytest.approx(1.25)  # the growth of 1
-        finally:
-            self._cleanup(db, a_set)
 
 
 class TestRoundTrip:

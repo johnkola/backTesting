@@ -1,65 +1,39 @@
 /**
- * The buy-and-hold equity curve behind a result's stored benchmark (DESIGN-GAPS G24).
+ * The buy-and-hold curve beside a result's equity history (B6, G32).
  *
- * A result points at one `benchmarks` row (Architecture §6.3): buy at the first
- * close, sell at the last, over the traded window. That row is a figure, and
- * the design's Results view is the equity curve AGAINST it, so this rebuilds
- * the curve the figure summarises: `initial_capital * close / first_close` at
- * every bar of the row's window. The last point is the row's final equity by
- * construction.
+ * Buy-and-hold is scored with each run, under that run's own costs, and stored
+ * in its result_json as `buyAndHold`: its metrics, its one trade, and one
+ * equity value per point of the run's equity history (D6). There used to be a
+ * shared `benchmarks` row per window, frictionless, and this module rebuilt its
+ * curve from today's candles, refusing when they no longer reproduced the row.
+ * Nothing is rebuilt now: the curve is the one the engine stored.
  *
- * Two things are load-bearing:
- *
- * - The curve must still BE the stored benchmark. It is rebuilt from today's
- *   candles, and a later import can revise or extend them. So it is drawn only
- *   when the candles reproduce the row: the same bar count and the same first
- *   and last close. Otherwise it is null with a reason, never a line that ends
- *   somewhere other than the figure printed beside it.
- *
- * - It is paired with the equity history by POSITION, not by timestamp. The
- *   engine stamps an equity point at its bar's END (`BarSeriesConverter` sets
- *   endTime = timestamp + one period), so the 2022-04-13 D1 bar's point reads
- *   2022-04-14 and an H1 bar's reads an hour later. Equity points and benchmark
- *   bars are the same bars, one for one, so the counts must match and index i
- *   of one is index i of the other. Matching timestamps would need the period
- *   arithmetic per timeframe and would still be wrong for a month.
+ * It is paired with the equity history by POSITION, not by timestamp. The
+ * engine stamps both at each bar's END (`BarSeriesConverter` sets endTime =
+ * timestamp + one period) and records them over the same bars, one for one,
+ * so the counts must match and index i of one is index i of the other.
  */
 
-/** Same number, allowing for float noise only: both sides read one stored column. */
-function sameClose(a, b) {
-  return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
-}
-
 /**
- * @param {{initialCapital:number, firstClose:number, lastClose:number, barCount:number}|null} benchmark
- * @param {number[]} closes  the benchmark window's closes, oldest first
+ * @param {{equity?: number[]}|null|undefined} buyAndHold  the result's stored block
  * @param {number} equityCount  points in the result's equity history
  * @returns {{values: number[]|null, reason: string|null}}
  */
-function holdCurve(benchmark, closes, equityCount) {
-  if (!benchmark) {
-    return { values: null, reason: 'This result was saved before benchmarks were stored.' };
-  }
-  const { initialCapital, firstClose, lastClose, barCount } = benchmark;
-  if (closes.length !== barCount) {
+function holdCurve(buyAndHold, equityCount) {
+  if (!buyAndHold) {
     return {
       values: null,
-      reason: `The benchmark covered ${barCount} bars; the stored candles over the same window now hold ${closes.length}.`,
+      reason: 'This result was stored before buy-and-hold was scored with each run (B6).',
     };
   }
-  if (!sameClose(closes[0], firstClose) || !sameClose(closes[closes.length - 1], lastClose)) {
+  const equity = Array.isArray(buyAndHold.equity) ? buyAndHold.equity : [];
+  if (equity.length !== equityCount) {
     return {
       values: null,
-      reason: 'Prices in the benchmark window were revised after this run, so the curve would not end on the stored figure.',
+      reason: `Buy-and-hold has ${equity.length} points and the equity history ${equityCount}, so they cannot be paired bar for bar.`,
     };
   }
-  if (equityCount !== barCount) {
-    return {
-      values: null,
-      reason: `The equity history has ${equityCount} points and the benchmark ${barCount} bars, so they cannot be paired bar for bar.`,
-    };
-  }
-  return { values: closes.map((c) => initialCapital * (c / firstClose)), reason: null };
+  return { values: equity, reason: null };
 }
 
 module.exports = { holdCurve };

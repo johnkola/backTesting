@@ -218,10 +218,11 @@ export default function ResultDetailPage() {
         <h2 className="font-semibold mb-1">Equity curve</h2>
         {hold ? (
           <p className="text-sm text-base-content/70 mb-2">
-            Against the stored buy-and-hold benchmark over the same bars: bought at the first
-            close ({num(detail.benchmark?.firstClose)}), held to the last
-            ({num(detail.benchmark?.lastClose)}), no costs. Where the solid line is below the
-            dashed one, holding was ahead.
+            Against buy-and-hold over the same bars, under the same costs: bought at the first
+            open the strategy could trade at ({num(r?.buyAndHold?.trades?.[0]?.entryPrice ?? null)}),
+            sold at the last close ({num(r?.buyAndHold?.trades?.[0]?.exitPrice ?? null)}), paying
+            the same commission and slippage. Where the solid line is below the dashed one,
+            holding was ahead.
           </p>
         ) : detail.holdEquityNote ? (
           <p className="text-sm text-base-content/60 mb-2">

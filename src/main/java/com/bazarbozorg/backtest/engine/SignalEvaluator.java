@@ -1,6 +1,5 @@
 package com.bazarbozorg.backtest.engine;
 
-import com.bazarbozorg.backtest.model.Benchmark;
 import com.bazarbozorg.backtest.model.DataSource;
 import com.bazarbozorg.backtest.model.Instrument;
 import com.bazarbozorg.backtest.model.Portfolio;
@@ -11,6 +10,7 @@ import com.bazarbozorg.backtest.strategy.TradingStrategy;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelLoadPolicy;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
+import com.bazarbozorg.backtest.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.ta4j.core.Bar;
@@ -185,15 +185,16 @@ public class SignalEvaluator {
                     mean - baseline));
         }
 
-        // Buy-and-hold over the evaluated window, frictionless exactly as
-        // run() computes it, so both reports quote the same benchmark.
+        // The market's move over the evaluated window, first close to last.
+        // Frictionless: this report places no trades, so there is no cost or
+        // tax to charge. A backtest's buy-and-hold pays its costs (B6).
         double buyAndHold = 0.0;
         ZonedDateTime start = null;
         ZonedDateTime end = null;
         if (series.getBarCount() > 0 && firstBar < series.getBarCount()) {
             Bar first = series.getBar(firstBar);
             Bar last = series.getBar(series.getBarCount() - 1);
-            buyAndHold = Benchmark.returnPct(
+            buyAndHold = MathUtils.percentChange(
                     first.getClosePrice().doubleValue(), last.getClosePrice().doubleValue());
             start = BacktestEngine.barDate(first);
             end = BacktestEngine.barDate(last);

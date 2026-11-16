@@ -29,12 +29,17 @@ def run(signals, qqq, gap=None, psq=None, rate=0.0, days=1, tradable=None, **cfg
 
 class TestBuyAndHoldIsTheCore:
     def test_all_neutral_is_buy_and_hold_exactly(self):
-        # The core is held from the first close, overnights included.
+        # The core is bought at the first open and sold at the end, paying the
+        # same commission and tax as buy-and-hold (B6, D8).
+        from nn import profit
         q = np.array([0.01, -0.02, 0.03, 0.005])
         g = np.array([0.002, 0.004, -0.003, 0.001])
-        r = run([NEUTRAL] * 4, q, gap=g, rate=0.05, cost_bps=5, spread=0.015)
-        np.testing.assert_allclose(r.equity, np.cumprod((1 + g) * (1 + q)), rtol=1e-15)
-        assert (r.trades, r.interest, r.commissions, r.gains_tax) == (0, 0.0, 0.0, 0.0)
+        r = run([NEUTRAL] * 4, q, gap=g, rate=0.05, cost_bps=5, spread=0.015, tax_rate=0.25)
+        hold, trades, tax = profit.simulate_taxed(np.zeros(4, dtype=int), g, q,
+                                                  cost_bps=5, tax_rate=0.25)
+        np.testing.assert_allclose(r.equity, hold, rtol=1e-12)
+        assert (r.trades, r.interest) == (trades, 0.0) == (2, 0.0)
+        assert r.gains_tax == pytest.approx(tax)
 
 
 class TestMarginLong:
@@ -43,17 +48,17 @@ class TestMarginLong:
         r = run([UP, UP], q)
         growth = 1.21
         assert r.equity[-1] == pytest.approx(growth + 0.2 * (growth - 1))
-        assert r.days_long == 2 and r.trades == 1
+        # The core's buy, the margin open, and at the end its close and the core's sale.
+        assert r.days_long == 2 and r.trades == 4
 
     def test_is_sized_on_the_core_at_the_open_it_trades(self):
         # Neutral for one bar (core grows 10%), then long at the next open: 20% of 1.10.
         r = run([NEUTRAL, UP, UP], [0.10, 0.10, 0.0])
         assert r.days_long == 2
         assert r.equity[-1] == pytest.approx(1.21 + 0.2 * 1.10 * 0.10)
-        # The overnight before the open moves the core first.
+        # Nothing is held over the overnight before the first open, the core included.
         r = run([UP], [0.0], gap=[0.10])
-        assert r.equity[-1] == pytest.approx(1.10)
-        assert r.commissions == 0.0 and r.trades == 1
+        assert r.equity[-1] == pytest.approx(1.0)
 
 
 class TestInverse:
@@ -73,7 +78,7 @@ class TestInverse:
 
     def test_a_bar_that_cannot_trade_acts_on_nothing(self):
         r = run([NEUTRAL, UP], [0.0, 0.10], tradable=np.array([True, False]))
-        assert (r.trades, r.days_long) == (0, 0)
+        assert (r.trades, r.days_long) == (2, 0)   # the core's buy and its sale only
 
 
 class TestCeiling:
@@ -89,7 +94,8 @@ class TestCeiling:
         # Hedge 40%; QQQ -20%, PSQ +20%: PSQ 0.48 against a core of 0.80 is 60%.
         r = run([DOWN, DOWN], [-0.20, 0.0], hedge=0.4)
         assert r.trims == 1
-        assert r.trades == 2  # the open and the trim
+        # The core's buy, the open, the trim, and at the end the close and the core's sale.
+        assert r.trades == 5
         # Trimmed to 0.40; 0.08 sold repays debit; equity unchanged by the sale.
         assert r.equity[0] == pytest.approx(0.80 + 0.48 - 0.40)
 
@@ -116,20 +122,23 @@ class TestInterest:
 
 
 class TestTax:
-    def test_only_realized_margin_gains_are_taxed(self):
-        # Long on margin through +10%, then closed: gain 0.02 taxed at 25%.
+    def test_gains_are_taxed_when_realized_and_the_core_at_the_end(self):
+        # Long on margin through +10%, then closed: gain 0.02 taxed at 25%. The
+        # core rose 10% and is sold at the end (D8): 0.10 taxed too.
         r = run([UP, NEUTRAL, NEUTRAL], [0.10, 0.0, 0.0], tax_rate=0.25)
-        assert r.gains_tax == pytest.approx(-0.02 * 0.25 * 100)
-        # The core rose 10% and was never sold: untaxed.
-        assert r.equity[-1] == pytest.approx(1.10 + 0.02 - 0.005)
+        assert r.gains_tax == pytest.approx(-(0.02 + 0.10) * 0.25 * 100)
+        assert r.equity[1] == pytest.approx(1.10 + 0.02 - 0.005)
+        assert r.equity[-1] == pytest.approx(1.10 + 0.02 - 0.005 - 0.025)
 
     def test_a_loss_offsets_a_later_gain(self):
         # Long: -10% (loss 0.02), closed; long again: +10% on 0.2*0.9 (gain 0.018).
         r = run([UP, NEUTRAL, UP, NEUTRAL], [-0.10, 0.0, 0.10, 0.0], tax_rate=0.25)
         assert r.gains_tax == 0.0
 
-    def test_an_open_position_at_the_end_is_not_taxed(self):
-        assert run([UP, UP], [0.10, 0.10], tax_rate=0.25).gains_tax == 0.0
+    def test_an_open_position_at_the_end_is_sold_and_taxed(self):
+        # Margin 0.2 grew to 0.242, the core 1.0 to 1.21: both sold at the end (D8).
+        r = run([UP, UP], [0.10, 0.10], tax_rate=0.25)
+        assert r.gains_tax == pytest.approx(-(0.042 + 0.21) * 0.25 * 100)
 
 
 class TestMarginCall:
@@ -144,10 +153,12 @@ class TestMarginCall:
 
 
 class TestCommission:
-    def test_charged_on_the_open_and_the_close(self):
-        r = run([UP, NEUTRAL, NEUTRAL], [0.0, 0.0, 0.0], cost_bps=10)  # closes on bar 2
-        assert r.commissions == pytest.approx(-2 * 0.2 * 0.001 * 100)
-        assert r.trades == 2
+    def test_charged_on_every_fill_the_core_s_included(self):
+        # The core costs 0.001 to buy, so the margin leg is 20% of 0.999.
+        r = run([UP, NEUTRAL, NEUTRAL], [0.0, 0.0, 0.0], cost_bps=10)
+        margin = 0.2 * 0.999
+        assert r.commissions == pytest.approx(-(0.001 + 2 * margin * 0.001 + 0.999 * 0.001) * 100)
+        assert r.trades == 4
 
 
 class TestSignals:

@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-1** · 2026-11-16 00:01 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-2** · 2026-11-16 00:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -292,7 +292,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
 | `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable |
 | `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries |
-| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve, plus `benchmark` (the stored buy-and-hold row it is measured against, or `null` on results saved before benchmarks were stored) and `holdEquity`: buy-and-hold equity, one value per equity point, rebuilt from that row's candles. `holdEquity` is `null`, with `holdEquityNote` saying why, when the candles no longer reproduce the row (bars added or a first or last close revised since) |
+| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6 |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
 | `GET /api/docs/:slug` | `rev` | One doc as rendered HTML, headings anchored. Every fetch snapshots the file if its hash changed; `rev=N` returns a captured revision instead |
@@ -303,7 +303,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | Endpoint | Body / params | Does |
 |---|---|---|
 | `GET /api/walkforward/runs` | `timeframe` `includeTest` `limit` | `{items, timeframe, includeTest, limit}` — walk-forward runs, newest first, each with its folds summarised on read: `folds`, `foldsWon`, `meanExcess`, `worstStratDrawdown`, `totalTrades` and the cost attribution (`meanDriftTax`, `meanCommissions`, `meanTiming`). None of that is stored; it is aggregated from `walkforward_folds`, so it cannot disagree with the folds. A run with no folds yet reports `null` for each average rather than a zero that reads as a measurement, and `inProgress` is true until `finishedAt` is stamped. **Holdout runs are excluded** unless `includeTest=true` — spending the test block is a one-way door, and listing those runs beside the validation ones is how it becomes training data. `limit` defaults to 50, capped at 500 |
-| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. Every run carries `execution`: `kind` is `signals` (Strategy 1) or `margin` (Strategy 2), with its dials (`leveragePct`, `hedgePct`, `marginSpreadPct`, `maintenancePct`, `longThreshold`) and margin summary (`meanMarginInterest`, `marginCalls`, `trims`, `coreAtRisk`, `meanDaysLong`, `meanDaysHedged`), all `null` under Strategy 1; a Strategy 2 fold carries `marginInterest`, `marginCalls`, `trims`, `daysLong`, `daysHedged`, `coreAtRisk` and `leveredReturn` (the same fold always long on margin, no model), and the run `execution.meanLeveredReturn`, `execution.foldsBeatLevered` and `beatsLeveredOnReturn` (false beside a win over buy-and-hold means the win is the borrowing, not the timing); each fold carries its `benchmarkId`, the stored buy-and-hold row its `holdReturn` was read from. `recalculatedFrom` is the run whose stored signals this one was scored from without retraining, `null` on a run that trained. `404` for an unknown id, `400` for a non-numeric one |
+| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. Every run carries `execution`: `kind` is `signals` (Strategy 1) or `margin` (Strategy 2), with its dials (`leveragePct`, `hedgePct`, `marginSpreadPct`, `maintenancePct`, `longThreshold`) and margin summary (`meanMarginInterest`, `marginCalls`, `trims`, `coreAtRisk`, `meanDaysLong`, `meanDaysHedged`), all `null` under Strategy 1; a Strategy 2 fold carries `marginInterest`, `marginCalls`, `trims`, `daysLong`, `daysHedged`, `coreAtRisk` and `leveredReturn` (the same fold always long on margin, no model), and the run `execution.meanLeveredReturn`, `execution.foldsBeatLevered` and `beatsLeveredOnReturn` (false beside a win over buy-and-hold means the win is the borrowing, not the timing); each fold's buy-and-hold (`holdReturn`, `holdSharpe`, `holdMaxdd`) is scored with the fold under the run's own settings, with its own `holdCommissions` and `holdGainsTax`; the gap's cost terms are the strategy's minus these. `recalculatedFrom` is the run whose stored signals this one was scored from without retraining, `null` on a run that trained. `404` for an unknown id, `400` for a non-numeric one |
 | `GET /api/strategies` | — | `{items: [...]}` — every registered strategy with its description, default parameters, and `requiresTrainedModel`. What a strategy picker and parameter form are built from |
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing` | Runs a backtest, saves it, returns the full result. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range |
 | `DELETE /api/results/:id` | — | Deletes one saved result. `404` if it doesn't exist |
@@ -511,6 +511,13 @@ end is closed at the last close. The walk-forward scorer trades the same way, so
 backtest and a walk-forward fold of the same signals trade the same days at the same
 prices (`NextOpenCrossCheckTest` and `test_next_open_crosscheck.py` hold both to one
 fixture). Results stored before 2026-11-16 filled at the signal bar's own close.
+
+**Buy-and-hold pays what the strategy pays** (R36, build step B6). It is the strategy that
+is always long, run through the same loop: one buy at the first open the strategy could
+trade at, one sale at the last close, through the same commission and slippage (and, in
+walk-forward, the same tax, charged on the final sale). It is scored with every run and
+stored in it, so no run reads another run's figure. A position still open at the end of
+the window is sold the same way, for the strategy and for buy-and-hold (D8).
 
 **Three simplifications that flatter a result.** Deliberate, not bugs, and the full list
 with reasoning is
@@ -866,7 +873,7 @@ form, which generates its inputs from each strategy's declared defaults.
 
 **Warmup is not free.** The engine skips that many bars before the strategy may
 act, and they come out of the *front* of your date range. A 200-period setting on
-a one-year backtest leaves roughly fifty bars to trade in. The benchmark is
+a one-year backtest leaves roughly fifty bars to trade in. Buy-and-hold is
 measured over the same shortened window, so the comparison stays fair — but the
 run has far less to work with than the range suggests.
 
@@ -1037,6 +1044,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-2 | 2026-11-16 00:22 | Claude Code (Claude Opus 5.5) | B6: buy-and-hold pays the strategy's costs and tax and is stored with each run; the shared benchmark row is gone |
 | 2026-11-16-1 | 2026-11-16 00:01 | Claude Code (Claude Opus 5.5) | B1: fills at the next bar's open, in the engine and the walk-forward scorer; three simplifications left |
 | 2026-11-15-6 | 2026-11-15 14:17 | Claude Code (Claude Opus 5.5) | B10: recalculating a walk-forward run on demand (route and CLI), `recalculatedFrom`; train with tax and train with margin removed (D9) |
 | 2026-11-15-5 | 2026-11-15 12:44 | Claude Code (Claude Opus 5.5) | Revision stamps added |

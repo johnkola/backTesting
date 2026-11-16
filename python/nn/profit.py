@@ -419,13 +419,21 @@ def simulate(
     selloff — or far less in a rate shock, when they fall alongside equities
     and the hedge simply is not there. The parked return goes to the position
     held after the open, the one the bar ends in.
+
+    A position still open at the end of the window is sold at the last close
+    (D8), paying commission like any other sale; it is a trade.
     """
     prev, pos = positions(predictions, tradable)
     changes = np.abs(pos - prev)
+    c = cost_bps / 10_000.0
     park = np.zeros_like(gap) if park_returns is None else park_returns
-    growth = ((1.0 + prev * gap) * (1.0 - changes * (cost_bps / 10_000.0))
+    growth = ((1.0 + prev * gap) * (1.0 - changes * c)
               * (1.0 + pos * intra + (1.0 - pos) * park))
-    return np.cumprod(growth), int((changes > 0).sum())
+    trades = int((changes > 0).sum())
+    if len(pos) and pos[-1] == 1.0:
+        growth[-1] *= 1.0 - c
+        trades += 1
+    return np.cumprod(growth), trades
 
 
 def simulate_taxed(
@@ -441,7 +449,7 @@ def simulate_taxed(
     be a signal provider and still show a taxable account's view (Design Notes,
     Tax and Trading Costs: "only the scoring and presentation layer changes").
 
-    The rule, applied the same way to the model and to the benchmark:
+    The rule, applied the same way to the model and to buy-and-hold:
 
     * A gain is taxed when it is REALIZED, at the open where the position is
       sold. Basis is the equity at the open where it was bought, before the
@@ -449,11 +457,9 @@ def simulate_taxed(
       commissions reduce the gain the way they do on a real return.
     * A realized loss offsets later gains within the fold. A fold is scored on
       its own, so nothing carries into the next one.
-    * A position still open when the fold ends is not taxed: nothing was sold.
-      Buy-and-hold never sells, so it is never taxed under this rule. That is
-      the "same honest basis" the design asks for, and it is exactly the
-      handicap the design suspects is why timing loses to holding. (D8 sells
-      and taxes it at the end; that is B6.)
+    * A position still open when the window ends is sold at the last close and
+      taxed (D8). Buy-and-hold pays tax on its one final sale, which is the
+      "same honest basis" the design asks for.
     * Interest earned while parked is not taxed; only equity gains are.
 
     `tax_rate` is a fraction (0.25 for 25%). At 0 the result is `simulate`'s,
@@ -470,50 +476,72 @@ def simulate_taxed(
 
     out = np.empty(len(gap))
     e, basis, carry, paid = 1.0, 0.0, 0.0, 0.0
+
+    def sell() -> None:
+        nonlocal e, carry, paid
+        e *= 1.0 - cost
+        net = e - basis + carry
+        if net > 0.0:
+            tax = tax_rate * net
+            e -= tax
+            paid += tax
+            carry = 0.0
+        else:
+            carry = net
+
     for i in range(len(gap)):
         e *= 1.0 + prev[i] * gap[i]
         if pos[i] == 1.0 and prev[i] == 0.0:        # bought at the open
             basis = e
             e *= 1.0 - cost
         elif pos[i] == 0.0 and prev[i] == 1.0:      # sold at the open
-            e *= 1.0 - cost
-            net = e - basis + carry
-            if net > 0.0:
-                tax = tax_rate * net
-                e -= tax
-                paid += tax
-                carry = 0.0
-            else:
-                carry = net
+            sell()
         e *= 1.0 + pos[i] * intra[i] + (1.0 - pos[i]) * park[i]
         out[i] = e
+    if pos[-1] == 1.0:                              # sold at the last close (D8)
+        sell()
+        out[-1] = e
     return out, trades, -paid * 100.0
+
+
+def hold(m: Market, s: Settings) -> tuple[np.ndarray, int, float]:
+    """Buy-and-hold under the run's own settings (B6, D6): always long, so one
+    buy at the window's first open and one sale at its last close, paying the
+    strategy's commission and tax. Equity curve, trades and tax, like
+    `simulate_taxed`. The same under Strategy 1 and 2: Strategy 2's core alone
+    is exactly this."""
+    return simulate_taxed(np.full(len(m.gap), CLASS_BUY), m.gap, m.intra,
+                          cost_bps=s.cost_bps, tax_rate=s.tax_fraction, tradable=m.tradable)
 
 
 @dataclass
 class Profit:
     """A fold's money figures: the walk-forward fold columns this step owns.
 
-    The attribution is in percentage points of the fold. It is exact in
-    arithmetic terms. Let `forgone = equity return - parked return`, the true
-    opportunity cost of a day spent out. Summing each bar's shortfall against
-    buy-and-hold, segment by segment, gives what the fold forwent before costs,
-    and splitting that about the fold's own mean separates the price of being
-    out at all from the quality of the moments chosen:
+    Buy-and-hold is scored here too, under the same settings (B6): `hold_*`,
+    with its own commission and tax in negative points like the strategy's.
 
-      drift_tax = -(days_out * mean(forgone) + first overnight)  (sitting out)
-      timing    = -(shortfall) - drift_tax                        (the rest)
+    The attribution is in percentage points of the fold and explains the gap to
+    buy-and-hold. Before costs, each bar's shortfall is buy-and-hold's bar
+    minus the strategy's, segment by segment. Let `forgone` be buy-and-hold's
+    bar minus the parked return, the true opportunity cost of a day spent out.
+    Splitting the shortfall about the fold's mean forgone separates the price
+    of being out at all from the quality of the moments chosen:
 
-    A day out is a bar that ends out of the market. Before B1 every bar was
-    held whole, and timing was exactly -sum_out(forgone - mean(forgone)); the
-    trade now happens at the open, so a bar's overnight segment can be held
-    one way and its intraday the other, and timing takes those segments too.
+      drift_tax = -days_out * mean(forgone)     (cost of sitting out)
+      timing    = -(shortfall) - drift_tax      (the rest: the model)
 
-    Only `timing` is the model. A positive timing term means it picked days that
-    really were bad; zero means its exits were indistinguishable from closing
-    your eyes and pointing. `gains_tax` is tax on realized gains, in negative
-    points of starting capital (0 before tax); it has nothing to do with
-    `drift_tax`, the price of sitting out.
+    A day out is a bar that ends out of the market. With the costs on top, the
+    parts add up to the excess, up to compounding:
+
+      excess ~ drift_tax + timing + (commissions - hold_commissions)
+                                  + (gains_tax - hold_gains_tax)
+
+    Only `timing` is the model. A positive timing term means it picked moments
+    that really were bad; zero means its exits were indistinguishable from
+    closing your eyes and pointing. `gains_tax` is tax on realized gains, in
+    negative points of starting capital (0 before tax); it has nothing to do
+    with `drift_tax`, the price of sitting out.
 
     Under Strategy 2 (G5) the margin figures are set: interest in negative points
     like the other costs, the rest bar counts, and `levered_return` the same
@@ -532,6 +560,8 @@ class Profit:
     commissions: float = 0.0
     timing: float = 0.0
     gains_tax: float = 0.0
+    hold_commissions: float = 0.0
+    hold_gains_tax: float = 0.0
     margin_interest: float | None = None
     margin_calls: int | None = None
     trims: int | None = None
@@ -548,15 +578,20 @@ class Profit:
 PROFIT_FIELDS = tuple(Profit.__dataclass_fields__)
 
 
+def _daily(equity: np.ndarray) -> np.ndarray:
+    return np.diff(np.concatenate([[1.0], equity])) / np.concatenate([[1.0], equity[:-1]])
+
+
 def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
-    """Turn one fold's signals into its money figures under `s`."""
+    """Turn one fold's signals into its money figures under `s`, beside
+    buy-and-hold under the same `s`."""
     pred = calls(output, s.loss, s.threshold)
     margin = None
     if s.execution == "margin":
         if not m.strategy2 or m.rates is None or m.days is None:
             raise ValueError("Strategy 2 needs PSQ, Fed funds and the days between bars")
-        # The same signals, acted on with a margin position beside an untouched
-        # core.
+        # The same signals, acted on with a margin position beside a core that
+        # is bought at the first open and sold at the end.
         cfg = s.margin_config()
         margin = strategy2.simulate_margin(
             margin_signals(output, pred, s), m.gap, m.intra, m.psq_gap, m.psq_intra,
@@ -569,35 +604,29 @@ def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
         equity, trades, gains_tax = simulate_taxed(
             pred, m.gap, m.intra, cost_bps=s.cost_bps, park_returns=m.park,
             tax_rate=s.tax_fraction, tradable=m.tradable)
-    hold = np.cumprod(1.0 + m.r)
-    strat_daily = np.diff(np.concatenate([[1.0], equity])) / np.concatenate([[1.0], equity[:-1]])
+    held, hold_trades, hold_tax = hold(m, s)
+    cost = s.cost_bps / 10_000.0
 
     # The attribution, against the positions the simulator holds -- recomputed
     # here rather than returned from it, so the two cannot silently disagree
     # about what "out" means. A bar is out when it ends out of the market.
     prev, pos = positions(pred, m.tradable)
+    hprev, hpos = positions(np.full(len(pred), CLASS_BUY), m.tradable)
     days_out = int((pos == 0.0).sum())
-    # The opportunity cost of a day out is the equity return MINUS whatever the
-    # money earned while parked. With cash that is just the equity return; with
-    # bills or bonds it is smaller, and with bonds in a flight to quality it can
-    # be negative — the day out made money. Attributing against `r` alone would
-    # report the same drift tax whatever the park, which is how this was wrong
-    # the first time.
-    forgone = m.r - m.park
-    mean_forgone = float(forgone.mean()) if len(forgone) else 0.0
-    # What the bars forwent before any cost, segment by segment: drift and
-    # timing add up to exactly this.
+    hold_gross = (1.0 + hprev * m.gap) * (1.0 + hpos * m.intra) - 1.0
     gross = (1.0 + prev * m.gap) * (1.0 + pos * m.intra + (1.0 - pos) * m.park) - 1.0
-    shortfall = float((m.r - gross).sum())
-    # The first bar's overnight is spent out by construction: nothing can be
-    # bought before the first open, while buy-and-hold holds from the close
-    # before it (until B6 moves it to the same open). A cost of being out, so
-    # drift, not timing.
-    entry = (float(m.gap[0] * (1.0 + pos[0] * m.intra[0] + (1.0 - pos[0]) * m.park[0]))
-             if len(pos) else 0.0)
-    drift_tax = -(days_out * mean_forgone + entry) * 100.0
-    timing = -(shortfall - entry - days_out * mean_forgone) * 100.0
-    commissions = -trades * (s.cost_bps / 10_000.0) * 100.0
+    shortfall = float((hold_gross - gross).sum())
+    # The opportunity cost of a day out is buy-and-hold's bar MINUS whatever
+    # the money earned while parked. With cash that is just the bar; with bills
+    # or bonds it is smaller, and with bonds in a flight to quality it can be
+    # negative — the day out made money. Attributing against the bar alone
+    # would report the same drift tax whatever the park, which is how this was
+    # wrong the first time.
+    forgone = hold_gross - m.park
+    mean_forgone = float(forgone.mean()) if len(forgone) else 0.0
+    drift_tax = -days_out * mean_forgone * 100.0
+    timing = -(shortfall - days_out * mean_forgone) * 100.0
+    commissions = -trades * cost * 100.0
     if margin is not None:
         # The long/flat attribution describes days out of the market, and under
         # Strategy 2 the core is never out: it would describe a different run.
@@ -605,11 +634,12 @@ def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
 
     return Profit(
         strat_return=float((equity[-1] - 1.0) * 100.0),
-        hold_return=float((hold[-1] - 1.0) * 100.0),
-        strat_sharpe=sharpe(strat_daily), hold_sharpe=sharpe(m.r),
-        strat_maxdd=max_drawdown(equity), hold_maxdd=max_drawdown(hold),
+        hold_return=float((held[-1] - 1.0) * 100.0),
+        strat_sharpe=sharpe(_daily(equity)), hold_sharpe=sharpe(_daily(held)),
+        strat_maxdd=max_drawdown(equity), hold_maxdd=max_drawdown(held),
         trades=trades, days_out=days_out, drift_tax=drift_tax,
         commissions=commissions, timing=timing, gains_tax=gains_tax,
+        hold_commissions=-hold_trades * cost * 100.0, hold_gains_tax=hold_tax,
         **({} if margin is None else dict(
             margin_interest=margin.interest, margin_calls=margin.margin_calls,
             trims=margin.trims, days_long=margin.days_long, days_hedged=margin.days_hedged,
