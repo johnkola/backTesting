@@ -1263,6 +1263,12 @@
                   "    const run = pm.response.json().run;",
                   "    pm.expect(run.hyperparams).to.be.an('object');",
                   "    pm.expect(run.hyperparams).to.include.keys('seed', 'epochs', 'lookback');",
+                  "});",
+                  "",
+                  "pm.test('each fold carries Faber and dual momentum (B7)', function () {",
+                  "    for (const f of pm.response.json().folds) {",
+                  "        pm.expect(f.benchmarks.map((b) => b.name).sort()).to.eql(['dual_momentum', 'faber']);",
+                  "    }",
                   "});"
                 ]
               }
@@ -1580,6 +1586,17 @@
                   "    pm.expect(d.holdEquity).to.eql(bh.equity);",
                   "    pm.expect(d.result.metrics.buyAndHoldReturnPct).to.be.closeTo(bh.metrics.totalReturnPct, 1e-9);",
                   "    pm.expect(d).to.not.have.property('benchmark');",
+                  "});",
+                  "",
+                  "pm.test('carries Faber and dual momentum, each scored or not available with a reason', function () {",
+                  "    // B7: the published rules beside every result, traded with its costs.",
+                  "    const d = pm.response.json();",
+                  "    const names = d.result.benchmarks.map((b) => b.name);",
+                  "    pm.expect(names).to.eql(['faber', 'dual_momentum']);",
+                  "    for (const b of d.result.benchmarks) {",
+                  "        if (b.available) pm.expect(b.equity).to.have.lengthOf(d.result.equityHistory.length);",
+                  "        else pm.expect(b.reason).to.be.a('string').and.not.empty;",
+                  "    }",
                   "});"
                 ]
               }
@@ -2684,6 +2701,67 @@
                   "    const d = pm.response.json();",
                   "    pm.expect(d).to.have.property('items');",
                   "    pm.expect(d.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rule benchmark decisions (Faber, dual momentum)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/rules?symbol=QQQ&source=yahoo-adj&from=2016-01-04&to=2016-12-30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "rules"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "QQQ"
+                },
+                {
+                  "key": "source",
+                  "value": "yahoo-adj"
+                },
+                {
+                  "key": "from",
+                  "value": "2016-01-04"
+                },
+                {
+                  "key": "to",
+                  "value": "2016-12-30"
+                }
+              ]
+            },
+            "description": "B7: Faber's and dual momentum's call for every daily bar of the window, from python/nn/rules.py, with the T-bill carry dual momentum's cash earns. The engine trades them with its own costs. A rule without enough history before `from` is available: false with the reason."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('a call per bar for each rule, and the checks pass', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.dates.length).to.be.above(200);",
+                  "    for (const r of [d.faber, d.dualMomentum]) {",
+                  "        pm.expect(r.available).to.be.true;",
+                  "        pm.expect(r.calls).to.have.lengthOf(d.dates.length);",
+                  "    }",
+                  "    pm.expect(d.bills).to.have.lengthOf(d.dates.length);",
+                  "    pm.expect(d.checks.every((c) => c.ok)).to.be.true;",
                   "});"
                 ]
               }

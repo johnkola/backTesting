@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-2** · 2026-11-16 00:23 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-3** · 2026-11-16 00:57 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -275,9 +275,12 @@ Tab: **Pipeline → Training**.
   the stopping epoch is recorded. The Training tab says so.
 - [ ] **not built (G34)**: a run that does not beat the naive baseline is flagged.
   The fold view shows the baseline accuracy, but nothing flags the run.
-- [ ] **not built (G33, G35)**: each fold has a result line for every enabled
-  engine and for the three benchmarks. Today there is one engine, and
-  buy-and-hold alone.
+- [ ] **app**: each fold has buy-and-hold, Faber's 10-month average and dual
+  momentum beside the strategy, under the run's own costs and tax, or a benchmark
+  marked not available with the reason. The Training tab shows the four side by
+  side: return, trades, trades a year, holding time, drawdown and Sharpe (B7).
+- [ ] **not built (G35)**: a result line for every enabled engine. Today there is
+  one engine.
 
 ## 7. Backtest / scoring
 
@@ -318,8 +321,10 @@ Tab: **Pipeline → Backtest**.
   in-sample. B4 makes this an app check (G30).
 - [ ] **not built (G20)**: after-tax results. The engine's backtest is before
   tax, while walk-forward scoring includes it.
-- [ ] **not built (G33)**: Faber and dual momentum beside buy-and-hold, under the
-  strategy's own costs. Today it is buy-and-hold alone (costed since B6).
+- [ ] **app**: Faber and dual momentum beside buy-and-hold, traded with the
+  result's own commission and slippage, or not available with the reason (not
+  daily, too little history, no SPY on the source). The result page shows the four
+  side by side, and its chart draws all three benchmarks (B7).
 
 Known limits, each with a build step that removes it:
 
@@ -462,22 +467,22 @@ Comes after B6, so all three benchmarks are costed alike.
 
 **Done when**
 
-- [ ] Faber's rule: at each month's last bar, hold the instrument when its close is
+- [x] Faber's rule: at each month's last bar, hold the instrument when its close is
   above the average of the last 10 monthly closes, otherwise hold cash.
-- [ ] Dual momentum (D7): at each month's last bar, take whichever of the instrument
+- [x] Dual momentum (D7): at each month's last bar, take whichever of the instrument
   and SPY has the higher 12-month return. Hold it for the next month if that return
   beats T-bills (DTB3) over the same 12 months, otherwise hold cash at the T-bill
   rate. When the instrument is SPY, only the T-bill test applies.
-- [ ] Both trade by B1 and pay costs and tax by B6. Faber's cash earns what the
+- [x] Both trade by B1 and pay costs and tax by B6. Faber's cash earns what the
   strategy's own idle money earns.
-- [ ] Both are computed for every run's window with nothing to set up, and each is
+- [x] Both are computed for every run's window with nothing to set up, and each is
   stored as a result line linked to the run.
-- [ ] The strategy and each benchmark show the same figures side by side: return,
+- [x] The strategy and each benchmark show the same figures side by side: return,
   trades, trades a year, average holding time, max drawdown and Sharpe, on the
   Training tab and on the result page. The equity chart draws all three.
-- [ ] A window with too little history before it for the 10 or 12 months reports that
+- [x] A window with too little history before it for the 10 or 12 months reports that
   benchmark as not available, with the reason. It is never computed on fewer months.
-- [ ] The 10-month average and the 12-month return each pass a data check against an
+- [x] The 10-month average and the 12-month return each pass a data check against an
   independently computed copy (`nn/data_checks.py`).
 
 ### B8. The naive baseline, flagged (G34)
@@ -571,7 +576,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B4. In-sample flag | G30 | | not started | |
 | B5. Trainer purge | G31 | | not started | |
 | B6. Buy-and-hold costs | G32 | | done | 2026-11-16. Buy-and-hold is the always-long strategy through the same code: in the profit step for walk-forward (commission and tax, D8 sale at the end) and through `BacktestEngine.trade` for results (commission and slippage). Stored with each run (fold `hold_*` columns, `result_json.buyAndHold`); the `benchmarks` table, both `benchmark_id` columns and their lookups are gone. A position open at the end is sold and taxed, strategy and Strategy 2's core alike. Python 767, Java 121, API 107, client 138. Walk-forward 456-462 recalculated in place from stored signals (nothing retrained); phase1-full v5 went from +0.55 to +0.00 pp, as it is buy-and-hold. The 16 results rerun as 746-761 with the same strategy figures (DESIGN-GAPS, B6 record) |
-| B7. Faber and dual momentum | G33 | B6 | not started | |
+| B7. Faber and dual momentum | G33 | B6 | done | 2026-11-16. `nn/rules.py` decides both rules (Faber 10-month, dual momentum per D7) at month ends; the profit step trades them (`simulate_holdings`) with the run's costs and tax; walk-forward folds store them in `walkforward_benchmarks`; the engine trades the loader's decisions (`GET /api/nn/rules`) with its own costs and stores them in `result_json`. Not available, with the reason, when history is short, the result is not daily or SPY is missing. Data check against an independent copy: 0 disagreements. Python 786, Java 127, API 107, client 141. Walk-forward 456-462 recalculated in place; results rerun as 762-777 (DESIGN-GAPS, B7 record) |
 | B8. Naive baseline flag | G34 | | not started | |
 | B9. XGBoost and LightGBM | G35 | B7 | not started | |
 | B10. Signals, then profit | D9 | | done | 2026-11-15. `nn/profit.py` is the one profit step; each fold stores its signals (`walkforward_signals`); `nn/recalculate.py` and its route rescore a run without retraining; the money losses are blind and the training switches refused (D9). G68 fixed on the way. Python 765, Java 128, API 110, client 138. Seven runs rerun as 434-440: the classifiers reproduced, the money runs retrained blind; 375 and 395 dropped as duplicates. Run 434 recalculated at 25% tax equals the full rerun 435 in all 60 fields (DESIGN-GAPS, B10 record) |
@@ -584,6 +589,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-3 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done; steps 6 and 7 gain the rule-benchmark conditions |
 | 2026-11-16-2 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done; step 7's buy-and-hold condition rewritten as an app condition |
 | 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done; step 7's next-open condition replaces its known limit |
 | 2026-11-15-7 | 2026-11-15 20:21 | Claude Code (Claude Opus 5.5) | B10 done; step 6 gains the stored-signals condition |

@@ -110,6 +110,12 @@ class WalkforwardRepositoryTest {
         exec("UPDATE walkforward_runs SET tax_rate = 25, recalculated_from = " + runId
              + " WHERE id = " + taxedRunId);
         insertFold(taxedRunId, 1, 2016, 3.0, 7.0, 0.5, 0.6, 9.0, 11.0, 4, -0.5, -0.2, +1.0);
+        // B7: Faber scored over fold 1, dual momentum without enough history.
+        exec("INSERT INTO walkforward_benchmarks (run_id, fold, name, available, return_pct, sharpe, "
+             + "maxdd, trades, bars_held, commissions, gains_tax) VALUES (" + taxedRunId
+             + ", 1, 'faber', true, 5.5, 0.7, 8.0, 4, 200, -0.2, -1.0)");
+        exec("INSERT INTO walkforward_benchmarks (run_id, fold, name, available, reason) VALUES ("
+             + taxedRunId + ", 1, 'dual_momentum', false, 'needs 12 months')");
         insertFold(taxedRunId, 2, 2017, 2.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, -1.5, -0.5, -2.0);
         exec("UPDATE walkforward_folds SET gains_tax = -2.0, best_epoch = 7, epochs_run = 12"
              + " WHERE run_id = " + taxedRunId + " AND fold = 1");
@@ -319,6 +325,21 @@ class WalkforwardRepositoryTest {
         assertNull(folds.get(1).bestEpoch(), "a fold trained for fixed epochs has none");
         assertEquals(5, run.purgeBars());
         assertEquals(0.0, folds.get(1).gainsTax(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("a fold carries Faber and dual momentum, or why one is not available (B7)")
+    void foldsCarryTheRuleBenchmarks() {
+        List<WalkforwardFold> folds = repo.findFolds(taxedRunId);
+        List<com.bazarbozorg.backtest.model.FoldBenchmark> b = folds.get(0).benchmarks();
+        assertEquals(2, b.size());
+        assertEquals("faber", b.get(0).name());
+        assertEquals(5.5, b.get(0).returnPct(), 1e-12);
+        assertEquals(200, b.get(0).barsHeld());
+        assertEquals("dual_momentum", b.get(1).name());
+        assertEquals("needs 12 months", b.get(1).reason());
+        assertNull(b.get(1).returnPct());
+        assertEquals(List.of(), folds.get(1).benchmarks(), "a fold with none has an empty list");
     }
 
     // ---- the derived half ---------------------------------------------------

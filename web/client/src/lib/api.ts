@@ -411,6 +411,37 @@ export type TrainedModel = {
  * the first fill (the open after the first evaluated bar), one sale at the last
  * close. Absent on results stored before B6.
  */
+/**
+ * A rule benchmark over one walk-forward fold (B7): Faber's 10-month average or
+ * dual momentum, with the run's costs and tax. Figures are null when it is not
+ * available, and `reason` says why.
+ */
+export type FoldBenchmark = {
+  name: 'faber' | 'dual_momentum' | string
+  available: boolean
+  reason: string | null
+  returnPct: number | null
+  sharpe: number | null
+  maxdd: number | null
+  /** Position changes, as the fold's own `trades` counts them. */
+  trades: number | null
+  barsHeld: number | null
+  commissions: number | null
+  gainsTax: number | null
+}
+
+/** Faber or dual momentum beside a backtest result (B7), traded with the run's costs. */
+export type RuleBenchmark = {
+  name: 'faber' | 'dual_momentum' | string
+  available: boolean
+  reason: string | null
+  metrics: PerformanceMetrics | null
+  finalEquity: number | null
+  trades: Trade[] | null
+  /** One value per `equityHistory` point, in the same order. */
+  equity: number[] | null
+}
+
 export type BuyAndHold = {
   metrics: PerformanceMetrics
   finalEquity: number
@@ -440,6 +471,7 @@ export type ResultDetail = ResultSummary & {
     trades: Trade[]
     equityHistory: EquityPoint[]
     buyAndHold?: BuyAndHold | null
+    benchmarks?: RuleBenchmark[] | null
   } | null
 }
 
@@ -1168,6 +1200,8 @@ export type WalkforwardFold = {
   /** Buy-and-hold's own commission and tax, scored with the fold under the same settings (B6). */
   holdCommissions: number
   holdGainsTax: number
+  /** Faber and dual momentum over the fold (B7). */
+  benchmarks?: FoldBenchmark[]
   /** Strategy 2: interest charged, negative points; this and the five below are null under Strategy 1. */
   marginInterest: number | null
   marginCalls: number | null

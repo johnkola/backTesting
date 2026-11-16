@@ -487,6 +487,26 @@ class TestRoundTrip:
         finally:
             self._cleanup(db, run_id)
 
+    def test_a_fold_s_rule_benchmarks_are_rewritten_with_it(self, db, a_set):
+        # B7: one row per fold and rule; rewriting the fold replaces them.
+        from nn import profit
+        run_id = ws.open_run(db, an_args(label="pytest-rules"), a_set, 580)
+        try:
+            fold = FakeFold(fold=1)
+            faber = profit.RuleFigures("faber", True, None, 5.0, 0.6, 7.0, 4, 200, -0.2, 0.0)
+            fold.rules = (faber, profit.RuleFigures("dual_momentum", False, "needs 12 months"))
+            ws.save_fold(db, run_id, fold)
+            fold.rules = (profit.RuleFigures("faber", True, None, 6.0, 0.6, 7.0, 2, 150, -0.1,
+                                             0.0),)
+            ws.save_fold(db, run_id, fold)
+            with db.cursor() as cur:
+                cur.execute("SELECT name, available, return_pct, reason "
+                            "FROM walkforward_benchmarks WHERE run_id = %s ORDER BY name",
+                            (run_id,))
+                assert cur.fetchall() == [("faber", True, 6.0, None)]
+        finally:
+            self._cleanup(db, run_id)
+
     def test_rescoring_a_fold_corrects_it_instead_of_failing(self, db, a_set):
         run_id = ws.open_run(db, an_args(), a_set, 580)
         try:

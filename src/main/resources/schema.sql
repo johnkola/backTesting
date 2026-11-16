@@ -591,6 +591,30 @@ DROP TABLE IF EXISTS benchmarks;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS hold_commissions DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS hold_gains_tax DOUBLE PRECISION NOT NULL DEFAULT 0;
 
+-- Faber's 10-month moving average and Antonacci's dual momentum beside every
+-- fold (B7, G33): the published rules, decided in python/nn/rules.py and traded
+-- by the profit step with the run's own costs and tax. One row per fold and
+-- rule. A rule without enough history before the fold is not available, with
+-- the reason, and its figures are NULL; it is never computed on fewer months.
+-- Trades a year and the average holding time are derived on read from trades,
+-- bars_held and the fold's n_val. No audit columns: the fold row written in the
+-- same transaction carries who and when.
+CREATE TABLE IF NOT EXISTS walkforward_benchmarks (
+    run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
+    fold INT NOT NULL,
+    name VARCHAR(20) NOT NULL,
+    available BOOLEAN NOT NULL,
+    reason TEXT,
+    return_pct DOUBLE PRECISION,
+    sharpe DOUBLE PRECISION,
+    maxdd DOUBLE PRECISION,
+    trades INT,
+    bars_held INT,
+    commissions DOUBLE PRECISION,
+    gains_tax DOUBLE PRECISION,
+    PRIMARY KEY (run_id, fold, name)
+);
+
 -- Strategy 2, margin long and inverse (Design Notes, Trading Strategies; G5).
 -- How the run acted on its signals: 'signals' (Strategy 1, long unless SELL)
 -- or 'margin' (a QQQ core never sold, margin QQQ on an up signal, margin PSQ

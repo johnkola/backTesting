@@ -346,6 +346,22 @@ def open_run(conn, args: Any, set_id: int, input_width: int,
 
 _DELETE_SIGNALS = "DELETE FROM walkforward_signals WHERE run_id = %s AND fold = %s"
 
+_DELETE_RULES = "DELETE FROM walkforward_benchmarks WHERE run_id = %s AND fold = %s"
+
+_INSERT_RULE = """
+INSERT INTO walkforward_benchmarks
+    (run_id, fold, name, available, reason, return_pct, sharpe, maxdd, trades, bars_held,
+     commissions, gains_tax)
+VALUES (%(run_id)s, %(fold)s, %(name)s, %(available)s, %(reason)s, %(return_pct)s,
+        %(sharpe)s, %(maxdd)s, %(trades)s, %(bars_held)s, %(commissions)s, %(gains_tax)s)
+"""
+
+
+def rule_rows(run_id: int, fold: int, figures) -> list[dict[str, Any]]:
+    """A fold's rule benchmarks (B7) as rows. Pure."""
+    import dataclasses
+    return [{"run_id": run_id, "fold": fold, **dataclasses.asdict(f)} for f in figures]
+
 _INSERT_SIGNAL = """
 INSERT INTO walkforward_signals (run_id, fold, bar_date, exit_date, output, call_class, label)
 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -376,6 +392,11 @@ def save_fold(conn, run_id: int, r: FoldResult, sig: profit.Signals | None = Non
     with conn.cursor() as cur:
         set_actor(cur)
         cur.execute(_INSERT_FOLD, fold_row(run_id, r))
+        # Faber and dual momentum, rewritten with the fold (B7).
+        cur.execute(_DELETE_RULES, (run_id, r.fold))
+        rows = rule_rows(run_id, r.fold, getattr(r, "rules", ()))
+        if rows:
+            cur.executemany(_INSERT_RULE, rows)
         if sig is not None:
             if settings is None:
                 raise ValueError("storing signals needs the settings that made the call")

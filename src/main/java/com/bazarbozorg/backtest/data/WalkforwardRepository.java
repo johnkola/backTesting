@@ -199,12 +199,51 @@ public class WalkforwardRepository {
                 while (rs.next()) {
                     out.add(mapFold(rs));
                 }
-                return out;
+                return withBenchmarks(conn, runId, out);
             }
         } catch (SQLException e) {
             logger.error("Failed to read folds for walk-forward run {}", runId, e);
             throw new RuntimeException("Failed to read folds for run " + runId, e);
         }
+    }
+
+    /** Each fold with its Faber and dual momentum rows (B7). */
+    private static List<WalkforwardFold> withBenchmarks(Connection conn, long runId,
+                                                        List<WalkforwardFold> folds)
+            throws SQLException {
+        java.util.Map<Integer, List<com.bazarbozorg.backtest.model.FoldBenchmark>> byFold =
+                new java.util.HashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT fold, name, available, reason, return_pct, sharpe, maxdd, trades,
+                       bars_held, commissions, gains_tax
+                  FROM walkforward_benchmarks WHERE run_id = ? ORDER BY fold, name DESC
+                """)) {
+            ps.setLong(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    byFold.computeIfAbsent(rs.getInt("fold"), k -> new ArrayList<>()).add(
+                            new com.bazarbozorg.backtest.model.FoldBenchmark(
+                                    rs.getString("name"), rs.getBoolean("available"),
+                                    rs.getString("reason"), nullableDouble(rs, "return_pct"),
+                                    nullableDouble(rs, "sharpe"), nullableDouble(rs, "maxdd"),
+                                    nullableInt(rs, "trades"), nullableInt(rs, "bars_held"),
+                                    nullableDouble(rs, "commissions"),
+                                    nullableDouble(rs, "gains_tax")));
+                }
+            }
+        }
+        List<WalkforwardFold> out = new ArrayList<>();
+        for (WalkforwardFold f : folds) {
+            out.add(new WalkforwardFold(f.runId(), f.fold(), f.valYear(), f.trainFrom(),
+                    f.trainTo(), f.nTrain(), f.nVal(), f.stratReturn(), f.holdReturn(),
+                    f.stratSharpe(), f.holdSharpe(), f.stratMaxdd(), f.holdMaxdd(), f.trades(),
+                    f.accuracy(), f.baselineAcc(), f.daysOut(), f.driftTax(), f.commissions(),
+                    f.timing(), f.gainsTax(), f.bestEpoch(), f.epochsRun(), f.holdCommissions(),
+                    f.holdGainsTax(), f.marginInterest(), f.marginCalls(), f.trims(),
+                    f.daysLong(), f.daysHedged(), f.coreAtRisk(), f.leveredReturn(),
+                    byFold.getOrDefault(f.fold(), List.of())));
+        }
+        return out;
     }
 
     private static void setNullableString(PreparedStatement ps, int idx, String value)
@@ -378,6 +417,7 @@ public class WalkforwardRepository {
                 nullableInt(rs, "days_long"),
                 nullableInt(rs, "days_hedged"),
                 nullableInt(rs, "core_at_risk"),
-                nullableDouble(rs, "levered_return"));
+                nullableDouble(rs, "levered_return"),
+                List.of());
     }
 }

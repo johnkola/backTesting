@@ -12,6 +12,8 @@ import {
 } from 'recharts'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import TradeChart from '../components/TradeChart'
+import BenchmarkTable from '../components/BenchmarkTable'
+import { resultBenchmarkRows } from '../lib/benchmarks'
 import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
@@ -105,10 +107,19 @@ export default function ResultDetailPage() {
   // from the same bars, one for one (web/api/holdCurve.js). A length mismatch
   // can't come from the API, but a missing line beats a shifted one.
   const hold = detail.holdEquity?.length === equity.length ? detail.holdEquity : null
+  // Faber and dual momentum, the same way: one value per equity point (B7).
+  const ruleCurve = (name: string) => {
+    const b = r?.benchmarks?.find((x) => x.name === name)
+    return b?.available && b.equity?.length === equity.length ? b.equity : null
+  }
+  const faber = ruleCurve('faber')
+  const momentum = ruleCurve('dual_momentum')
   const chartData = equity.map((p, i) => ({
     t: new Date(p.timestamp).getTime(),
     equity: p.equity,
     hold: hold ? hold[i] : null,
+    faber: faber ? faber[i] : null,
+    momentum: momentum ? momentum[i] : null,
   }))
 
   const METRIC_LABEL = 'text-xs uppercase tracking-wide text-base-content/60'
@@ -215,6 +226,11 @@ export default function ResultDetailPage() {
       </div>
 
       <div className="bg-base-200 rounded-box p-4">
+        <h2 className="font-semibold mb-1">Beside the benchmarks</h2>
+        <BenchmarkTable
+          rows={resultBenchmarkRows(r)} unit="calendar days"
+          tradesNote="Round trips, every row alike: a buy and its sale, the last at the end of the window."
+        />
         <h2 className="font-semibold mb-1">Equity curve</h2>
         {hold ? (
           <p className="text-sm text-base-content/70 mb-2">
@@ -253,7 +269,7 @@ export default function ResultDetailPage() {
                   labelFormatter={(t) => new Date(t as number).toLocaleString()}
                   formatter={(v, name) => [money(typeof v === 'number' ? v : Number(v)), name]}
                 />
-                {hold && <Legend />}
+                {(hold || faber || momentum) && <Legend />}
                 <Line
                   type="monotone" dataKey="equity" name="Strategy"
                   stroke="oklch(60% 0.2 250)" dot={false} isAnimationActive={false}
@@ -262,6 +278,20 @@ export default function ResultDetailPage() {
                   <Line
                     type="monotone" dataKey="hold" name="Buy & hold"
                     stroke="currentColor" strokeOpacity={0.55} strokeDasharray="5 4"
+                    dot={false} isAnimationActive={false}
+                  />
+                )}
+                {faber && (
+                  <Line
+                    type="monotone" dataKey="faber" name="Faber 10-month"
+                    stroke="oklch(65% 0.15 150)" strokeDasharray="2 3"
+                    dot={false} isAnimationActive={false}
+                  />
+                )}
+                {momentum && (
+                  <Line
+                    type="monotone" dataKey="momentum" name="Dual momentum"
+                    stroke="oklch(65% 0.15 60)" strokeDasharray="8 3"
                     dot={false} isAnimationActive={false}
                   />
                 )}

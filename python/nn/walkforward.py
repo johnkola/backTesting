@@ -52,7 +52,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from nn import feature_store, lineage, profit, staleness, strategy_spec, walkforward_store
+from nn import (
+    data_checks,
+    feature_store,
+    lineage,
+    profit,
+    rules,
+    staleness,
+    strategy_spec,
+    walkforward_store,
+)
 from nn.labels import CLASS_SELL, NUM_CLASSES
 from nn.model import ArchSpec, build
 
@@ -112,6 +121,9 @@ class FoldResult:
     days_hedged: int | None = None
     core_at_risk: int | None = None
     levered_return: float | None = None
+    # Faber and dual momentum over the fold (B7), each a `profit.RuleFigures`:
+    # stored as rows of `walkforward_benchmarks`, not fold columns.
+    rules: tuple = ()
 
     @property
     def excess(self) -> float:
@@ -450,7 +462,7 @@ def predict(model: nn.Module, scaler, x: np.ndarray, loss: str) -> np.ndarray:
 def run_fold(
     fold_no: int, year: int, tr: list[int], va: list[int],
     x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
-    dates: list[date], args,
+    dates: list[date], args, decisions: rules.Decisions | None = None,
 ) -> tuple[FoldResult, profit.Signals]:
     """Train on `tr`, predict `va`, and hand the signals to the profit step.
 
@@ -483,6 +495,8 @@ def run_fold(
     )
     settings = profit.Settings.from_args(args)
     money = profit.score(sig.output, full.take(va), settings)
+    benchmarks = (score_rules(decisions, sig.dates, full.take(va), settings, args.symbol)
+                  if decisions is not None else ())
     pred = profit.calls(sig.output, settings.loss, settings.threshold)
     accuracy, baseline_acc = fold_accuracy(pred, y_va, y_tr, args.loss)
 
@@ -494,8 +508,29 @@ def run_fold(
         baseline_acc=baseline_acc,
         best_epoch=stopper.best_epoch if stopper else None,
         epochs_run=stopper.epochs_run if stopper else None,
+        rules=benchmarks,
         **money.fields(),
     ), sig
+
+
+def score_rules(decisions: rules.Decisions, dates: list[date], m: profit.Market,
+                s: profit.Settings, symbol: str) -> tuple:
+    """Faber and dual momentum over a fold's bars (B7), with the run's costs."""
+    return tuple(profit.score_rule(c.name, c.calls if c.available else None, c.reason, m, s,
+                                   symbol)
+                 for c in rules.window_calls(decisions, dates))
+
+
+def load_rule_inputs(cur, source: str) -> tuple[profit.Prices | None, dict | None]:
+    """SPY from the instrument's own price source and T-bills (DTB3) from FRED,
+    the two series the rule benchmarks read besides the instrument; None for
+    one not imported, which the rule then reports as not available."""
+    spy = load_prices(cur, "SPY", source, "D1")
+    try:
+        dtb3 = profit.load_park(cur, "bills")
+    except SystemExit:
+        dtb3 = None
+    return (spy if spy.closes else None), dtb3
 
 
 def park_series(cur, dates: list[date], mode: str) -> np.ndarray:
@@ -623,6 +658,17 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
                  if passed and mean_timing_m <= 0 else ""))
     if total_trades == 0:
         print("         (it never left the market — this is buy-and-hold with extra steps)")
+    # Faber and dual momentum beside it (B7), under the same costs and tax.
+    print(f"\nBENCHMARKS   mean return a fold, same costs and tax:  strategy "
+          f"{mean_return:+.2f}%  buy & hold {mean_hold_return:+.2f}%", end="")
+    for name in (rules.FABER, rules.DUAL_MOMENTUM):
+        figs = [f for r in results for f in r.rules if f.name == name]
+        if figs and all(f.available for f in figs):
+            print(f"  {name} {np.mean([f.return_pct for f in figs]):+.2f}%", end="")
+        elif figs:
+            why = next(f.reason for f in figs if not f.available)
+            print(f"\n             {name} not available: {why}", end="")
+    print()
     print("=" * 72)
 
 
@@ -1022,8 +1068,11 @@ def main(argv: list[str] | None = None) -> int:
     psq = dff = None
     if args.execution == "margin":
         psq, dff = load_margin_series(cur, args.source)
+    # The rule benchmarks (B7): decided once over the whole history, scored per fold.
+    spy, dtb3 = load_rule_inputs(cur, args.source)
+    decisions = rules.decide(args.symbol, px, spy, dtb3)
     full = profit.market(px, wdates, exits, profit.load_park(cur, args.park), args.park,
-                         psq, dff)
+                         psq, dff, spy=spy, dtb3=dtb3)
     holes = [d for d, g, h in zip(wdates, full.gap, full.intra, strict=True)
              if np.isnan(g) or np.isnan(h)]
     if holes:
@@ -1100,12 +1149,19 @@ def main(argv: list[str] | None = None) -> int:
     settings = profit.Settings.from_args(args)
     for i, (year, _tr, va) in enumerate(folds, 1):
         held, _, tax = profit.hold(full.take(va), settings)
-        print(f"buy & hold   fold {i} ({year}): {(held[-1] - 1.0) * 100.0:+.2f}%"
-              + (f" after {-tax:.2f} pts tax" if tax else "") + ", costs paid")
+        line = (f"buy & hold   fold {i} ({year}): {(held[-1] - 1.0) * 100.0:+.2f}%"
+                + (f" after {-tax:.2f} pts tax" if tax else "") + ", costs paid")
+        for f in score_rules(decisions, [wdates[j] for j in va], full.take(va), settings,
+                             args.symbol):
+            line += (f"; {f.name} {f.return_pct:+.2f}%" if f.available
+                     else f"; {f.name} not available")
+        print(line)
+    for check in data_checks.rule_checks(decisions, px.closes):
+        print(f"data check   {check.summary()}")
     print(header_line())
     results: list[FoldResult] = []
     for i, (year, tr, va) in enumerate(folds, 1):
-        r, sig = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args)
+        r, sig = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions)
         results.append(r)
         if run_id is not None:
             walkforward_store.save_fold(conn, run_id, r, sig, profit.Settings.from_args(args))

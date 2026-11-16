@@ -44,6 +44,11 @@ public class BacktestResult {
      * pointed at a shared row instead.
      */
     private final BuyAndHold buyAndHold;
+    /**
+     * Faber and dual momentum over the same window (B7), each available or not
+     * with the reason. Null on a result stored before B7.
+     */
+    private final List<RuleBenchmark> benchmarks;
 
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
                           String dataSource,
@@ -53,7 +58,8 @@ public class BacktestResult {
                           double initialCapital, double finalEquity,
                           String modelCacheKey, Boolean modelCacheHit,
                           String modelVersionId,
-                          BuyAndHold buyAndHold) {
+                          BuyAndHold buyAndHold,
+                          List<RuleBenchmark> benchmarks) {
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
@@ -69,6 +75,7 @@ public class BacktestResult {
         this.modelCacheHit = modelCacheHit;
         this.modelVersionId = modelVersionId;
         this.buyAndHold = buyAndHold;
+        this.benchmarks = benchmarks;
     }
 
     public String getDataSource() {
@@ -137,5 +144,10 @@ public class BacktestResult {
     /** Buy-and-hold beside this run, or null on a result stored before B6. */
     public BuyAndHold getBuyAndHold() {
         return buyAndHold;
+    }
+
+    /** Faber and dual momentum beside this run, or null on a result stored before B7. */
+    public List<RuleBenchmark> getBenchmarks() {
+        return benchmarks;
     }
 }

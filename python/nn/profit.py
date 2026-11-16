@@ -301,6 +301,11 @@ class Market:
     psq_intra: np.ndarray | None = None
     rates: np.ndarray | None = None
     days: np.ndarray | None = None
+    # The rule benchmarks (B7): SPY's two segments, dual momentum's alternative,
+    # and the T-bill carry its cash earns. None when not loaded.
+    spy_gap: np.ndarray | None = None
+    spy_intra: np.ndarray | None = None
+    bills: np.ndarray | None = None
 
     def take(self, idx) -> Market:
         """The bars at `idx`, from a market built over a whole date axis."""
@@ -315,15 +320,21 @@ class Market:
 def market(px: Prices, dates: list[date], exits: list[date | None],
            park_obs: dict[date, float] | None, park: str,
            psq: Prices | None = None,
-           dff: dict[date, float] | None = None) -> Market:
+           dff: dict[date, float] | None = None,
+           spy: Prices | None = None,
+           dtb3: dict[date, float] | None = None) -> Market:
     """The market over `dates` for the instrument priced by `px`. Pass `psq`
-    and `dff` for Strategy 2."""
+    and `dff` for Strategy 2, `spy` and `dtb3` for the rule benchmarks."""
     r = instrument_returns(px.closes, dates, exits)
     gap, intra, tradable = segments(px, dates, exits)
     p = park_returns(park_obs, dates, exits, park)
-    if psq is None or dff is None:
-        return Market(r, gap, intra, tradable, p)
-    return Market(r, gap, intra, tradable, p, *margin_inputs(psq, dff, dates, exits, px))
+    margin = (margin_inputs(psq, dff, dates, exits, px) if psq is not None and dff is not None
+              else (None, None, None, None))
+    spy_gap, spy_intra = (segments(spy, dates, exits, sessions=px)[:2] if spy is not None
+                          else (None, None))
+    bills = park_returns(dtb3, dates, exits, "bills") if dtb3 is not None else None
+    return Market(r, gap, intra, tradable, p, *margin, spy_gap=spy_gap, spy_intra=spy_intra,
+                  bills=bills)
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +523,111 @@ def hold(m: Market, s: Settings) -> tuple[np.ndarray, int, float]:
     is exactly this."""
     return simulate_taxed(np.full(len(m.gap), CLASS_BUY), m.gap, m.intra,
                           cost_bps=s.cost_bps, tax_rate=s.tax_fraction, tradable=m.tradable)
+
+
+def simulate_holdings(
+    held: list[str | None], segs: dict[str, tuple[np.ndarray, np.ndarray]],
+    cash: np.ndarray, *, cost_bps: float, tax_rate: float = 0.0,
+    tradable: np.ndarray | None = None,
+) -> tuple[np.ndarray, int, float, int]:
+    """Equity, trades, tax and bars held for a series of holdings: one asset at
+    a time (a key of `segs`) or cash (None), called at each bar's close.
+
+    The long/flat rule generalised to switching between assets, as dual
+    momentum does (B7). The same timing and accounting as `simulate_taxed`,
+    which it equals on one asset: a call trades at the next open (B1), the old
+    holding earns the overnight and the new one the intraday; a switch is a
+    sale and a buy, each paying commission, a sale taxed on its realized gain
+    after losses carried in the window; cash earns `cash` per bar, after the
+    open like the parked return; a holding still open at the end is sold at
+    the last close (D8). Flat before the first bar; a bar that cannot trade
+    keeps what it held. `bars held` counts bars that end in an asset.
+    """
+    n = len(held)
+    can = np.ones(n, dtype=bool) if tradable is None else np.asarray(tradable, dtype=bool)
+    c = cost_bps / 10_000.0
+    out = np.empty(n)
+    e, basis, carry, paid, trades, bars_in = 1.0, 0.0, 0.0, 0.0, 0, 0
+    prev: str | None = None
+
+    def sell() -> None:
+        nonlocal e, carry, paid, trades
+        e *= 1.0 - c
+        trades += 1
+        net = e - basis + carry
+        if net > 0.0 and tax_rate > 0.0:
+            tax = tax_rate * net
+            e -= tax
+            paid += tax
+            carry = 0.0
+        else:
+            carry = min(net, 0.0)
+
+    for i in range(n):
+        if prev is not None:
+            e *= 1.0 + segs[prev][0][i]
+        now = held[i] if can[i] else prev
+        if now != prev:
+            if prev is not None:
+                sell()
+            if now is not None:
+                basis = e
+                e *= 1.0 - c
+                trades += 1
+        if now is not None:
+            e *= 1.0 + segs[now][1][i]
+            bars_in += 1
+        else:
+            e *= 1.0 + cash[i]
+        out[i] = e
+        prev = now
+    if n and prev is not None:
+        sell()
+        out[-1] = e
+    return out, trades, -paid * 100.0, bars_in
+
+
+@dataclass
+class RuleFigures:
+    """A rule benchmark's figures for one window (B7): the same ones the
+    strategy and buy-and-hold get, or not available with the reason. Trades a
+    year and the average holding time are derived from these on read."""
+    name: str
+    available: bool
+    reason: str | None = None
+    return_pct: float | None = None
+    sharpe: float | None = None
+    maxdd: float | None = None
+    trades: int | None = None
+    bars_held: int | None = None
+    commissions: float | None = None
+    gains_tax: float | None = None
+
+
+def score_rule(name: str, calls: list[str | None] | None, reason: str | None, m: Market,
+               s: Settings, symbol: str) -> RuleFigures:
+    """One rule's figures over `m`, traded with the run's costs and tax.
+
+    Faber's cash earns what the strategy's idle money earns (the run's park);
+    dual momentum's earns T-bills, as the rule says."""
+    if reason is not None or calls is None:
+        return RuleFigures(name, False, reason or "not computed")
+    segs = {symbol: (m.gap, m.intra)}
+    if any(c is not None and c != symbol for c in calls):
+        if m.spy_gap is None or m.spy_intra is None:
+            return RuleFigures(name, False, "SPY is not loaded")
+        if np.isnan(m.spy_gap).any() or np.isnan(m.spy_intra).any():
+            return RuleFigures(name, False, "SPY has no price for part of the window")
+        segs["SPY"] = (m.spy_gap, m.spy_intra)
+    cash = m.park if name == "faber" else m.bills
+    if cash is None:
+        return RuleFigures(name, False, "T-bills (DTB3) are not loaded")
+    equity, trades, tax, held = simulate_holdings(
+        calls, segs, cash, cost_bps=s.cost_bps, tax_rate=s.tax_fraction, tradable=m.tradable)
+    return RuleFigures(
+        name, True, None, return_pct=float((equity[-1] - 1.0) * 100.0),
+        sharpe=sharpe(_daily(equity)), maxdd=max_drawdown(equity), trades=trades,
+        bars_held=held, commissions=-trades * s.cost_bps / 10_000.0 * 100.0, gains_tax=tax)
 
 
 @dataclass

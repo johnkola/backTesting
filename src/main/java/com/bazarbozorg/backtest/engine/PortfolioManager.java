@@ -105,6 +105,15 @@ public class PortfolioManager {
         }
     }
 
+    /**
+     * Interest on cash for one bar, at {@code rate} (a fraction of the cash).
+     * Only dual momentum's cash earns any, T-bills as its rule says (B7); the
+     * strategy's idle money earns nothing.
+     */
+    public void accrueInterest(double rate) {
+        cash *= 1.0 + rate;
+    }
+
     /** Total equity = cash + market value of any open positions. */
     public double getEquity(double currentPrice) {
         double positionValue = 0.0;

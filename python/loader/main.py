@@ -24,6 +24,7 @@ from loader.feeds.api import router as feeds_router
 from loader.imports_api import router as imports_router
 from nn.nn_api import router as nn_router
 from nn.pipeline_api import router as pipeline_router
+from nn.rules_api import router as rules_router
 from nn.walkforward_api import router as walkforward_router
 
 
@@ -52,6 +53,7 @@ app.include_router(audit_router)
 app.include_router(nn_router)
 app.include_router(pipeline_router)
 app.include_router(walkforward_router)
+app.include_router(rules_router)
 
 
 @app.get("/health")

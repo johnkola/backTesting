@@ -208,6 +208,10 @@ public class BacktestEngine {
         // always-long strategy through the same loop, fill rule and cost
         // models. Stored with the result; no run reads another's.
         BuyAndHold buyAndHold = buyAndHold(series, timeframe, warmupBars, instrument.id(), lastClose);
+        // Faber and dual momentum beside it (B7), the same way: decided by the
+        // loader's rule module, traded here with the same costs.
+        List<RuleBenchmark> benchmarks = ruleBenchmarks(series, timeframe, warmupBars,
+                instrument, source);
         double buyAndHoldReturnPct = buyAndHold.metrics().getTotalReturnPct();
 
         // Same reasoning for annualisation: the strategy's equity curve only
@@ -264,7 +268,8 @@ public class BacktestEngine {
                 modelCacheKey,
                 modelCacheHit,
                 modelVersionId,
-                buyAndHold);
+                buyAndHold,
+                benchmarks);
     }
 
     /** Always long: an entry on every bar, which a held position ignores. */
@@ -287,9 +292,17 @@ public class BacktestEngine {
         PortfolioManager pm = new PortfolioManager(initialCapital);
         ExecutionSimulator sim = new ExecutionSimulator(commissionModel, slippageModel);
         trade(series, ALWAYS_LONG, warmupBars, instrumentId, pm, sim);
-        double finalEquity = pm.getEquity(lastClose);
-        double returnPct = (finalEquity / initialCapital - 1.0) * 100.0;
+        Scored s = scored(pm, sim, series, timeframe, warmupBars, lastClose);
+        return new BuyAndHold(s.metrics(), s.finalEquity(), pm.getCompletedTrades(), s.equity());
+    }
 
+    /** What a benchmark's run came to, over the same bars as the strategy's. */
+    record Scored(PerformanceMetrics metrics, double finalEquity, List<Double> equity) {}
+
+    private Scored scored(PortfolioManager pm, ExecutionSimulator sim, BarSeries series,
+                          Timeframe timeframe, int warmupBars, double lastPrice) {
+        double finalEquity = pm.getEquity(lastPrice);
+        double returnPct = (finalEquity / initialCapital - 1.0) * 100.0;
         int start = benchmarkStartIndex(series.getBarCount(), warmupBars);
         long bars = series.getBarCount() - start;
         long days = java.util.stream.IntStream.range(start, series.getBarCount())
@@ -299,7 +312,163 @@ public class BacktestEngine {
                 returnPct, bars, days, MetricsCalculator.periodsPerYear(timeframe, bars, days),
                 sim.getTotalSlippage());
         List<Double> equity = pm.getEquityHistory().stream().map(EquityPoint::equity).toList();
-        return new BuyAndHold(metrics, finalEquity, pm.getCompletedTrades(), equity);
+        return new Scored(metrics, finalEquity, equity);
+    }
+
+    /**
+     * Faber and dual momentum over the result's window (B7). The decisions come
+     * from the loader; SPY's bars from the store. Anything that stops a rule
+     * from being scored makes it not available with the reason, never a zero.
+     */
+    List<RuleBenchmark> ruleBenchmarks(BarSeries series, Timeframe timeframe, int warmupBars,
+                                       Instrument instrument, DataSource source) {
+        if (timeframe != Timeframe.D1) {
+            String why = "the rules decide at month ends on daily bars; this result is " + timeframe;
+            return List.of(RuleBenchmark.unavailable(FABER, why),
+                    RuleBenchmark.unavailable(DUAL_MOMENTUM, why));
+        }
+        int start = benchmarkStartIndex(series.getBarCount(), warmupBars);
+        java.time.LocalDate from = barDate(series.getBar(start)).toLocalDate();
+        java.time.LocalDate to = barDate(series.getBar(series.getBarCount() - 1)).toLocalDate();
+        com.google.gson.JsonObject body;
+        try {
+            body = com.bazarbozorg.backtest.loader.LoaderClient.get("/api/nn/rules?symbol="
+                    + com.bazarbozorg.backtest.loader.LoaderClient.encode(instrument.symbol())
+                    + "&source=" + com.bazarbozorg.backtest.loader.LoaderClient.encode(source.name())
+                    + "&from=" + from + "&to=" + to);
+        } catch (RuntimeException e) {
+            String why = "the loader could not serve the rule decisions: " + e.getMessage();
+            return List.of(RuleBenchmark.unavailable(FABER, why),
+                    RuleBenchmark.unavailable(DUAL_MOMENTUM, why));
+        }
+        Map<java.time.LocalDate, Bar> spy = new java.util.HashMap<>();
+        try {
+            Instrument spyInstrument = new InstrumentRepository(databaseManager).findBySymbol("SPY")
+                    .orElse(null);
+            if (spyInstrument != null) {
+                List<Candle> candles = new CandleRepository(databaseManager).findByInstrumentAndTimeframe(
+                        spyInstrument.id(), source.id(), Timeframe.D1,
+                        from.atStartOfDay(ZoneOffset.UTC), to.plusDays(1).atStartOfDay(ZoneOffset.UTC));
+                if (!candles.isEmpty()) {
+                    BarSeries s = BarSeriesConverter.convert("SPY", candles);
+                    for (int i = 0; i < s.getBarCount(); i++) {
+                        spy.put(barDate(s.getBar(i)).toLocalDate(), s.getBar(i));
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            logger.warn("SPY could not be loaded for dual momentum: {}", e.getMessage());
+        }
+        return scoreRules(body, series, timeframe, warmupBars, instrument.id(), instrument.symbol(), spy);
+    }
+
+    static final String FABER = "faber";
+    static final String DUAL_MOMENTUM = "dual_momentum";
+    /** An id for SPY's positions inside a switching run; never stored. */
+    private static final long SPY_ID = -1L;
+
+    /** Both rules from the loader's decisions. Package-private for the tests. */
+    List<RuleBenchmark> scoreRules(com.google.gson.JsonObject body, BarSeries series,
+                                   Timeframe timeframe, int warmupBars, long instrumentId,
+                                   String symbol, Map<java.time.LocalDate, Bar> spy) {
+        List<String> dates = new ArrayList<>();
+        body.getAsJsonArray("dates").forEach(e -> dates.add(e.getAsString()));
+        Map<java.time.LocalDate, Double> bills = new java.util.HashMap<>();
+        if (body.has("bills") && !body.get("bills").isJsonNull()) {
+            com.google.gson.JsonArray b = body.getAsJsonArray("bills");
+            for (int i = 0; i < dates.size(); i++) {
+                bills.put(java.time.LocalDate.parse(dates.get(i)), b.get(i).getAsDouble());
+            }
+        }
+        List<RuleBenchmark> out = new ArrayList<>();
+        for (String[] rule : new String[][] {{FABER, "faber"}, {DUAL_MOMENTUM, "dualMomentum"}}) {
+            com.google.gson.JsonObject r = body.getAsJsonObject(rule[1]);
+            if (!r.get("available").getAsBoolean()) {
+                out.add(RuleBenchmark.unavailable(rule[0], r.get("reason").getAsString()));
+                continue;
+            }
+            Map<java.time.LocalDate, String> calls = new java.util.HashMap<>();
+            com.google.gson.JsonArray c = r.getAsJsonArray("calls");
+            for (int i = 0; i < dates.size(); i++) {
+                calls.put(java.time.LocalDate.parse(dates.get(i)),
+                        c.get(i).isJsonNull() ? null : c.get(i).getAsString());
+            }
+            PortfolioManager pm = new PortfolioManager(initialCapital);
+            ExecutionSimulator sim = new ExecutionSimulator(commissionModel, slippageModel);
+            String missing = tradeHoldings(series, calls, symbol, instrumentId, spy,
+                    rule[0].equals(DUAL_MOMENTUM) ? bills : Map.of(), warmupBars, pm, sim);
+            if (missing != null) {
+                out.add(RuleBenchmark.unavailable(rule[0], missing));
+                continue;
+            }
+            Scored s = scored(pm, sim, series, timeframe, warmupBars, pm.getCash());
+            out.add(new RuleBenchmark(rule[0], true, null, s.metrics(), s.finalEquity(),
+                    pm.getCompletedTrades(), s.equity()));
+        }
+        return out;
+    }
+
+    /**
+     * Trades a series of holdings, one asset at a time (the instrument, SPY)
+     * or cash, the way {@link #trade} trades signals: the holding called at a
+     * bar's close is bought at the next bar's open, the old one sold at that
+     * open first; cash earns {@code bills} for the bar after the open; equity is
+     * marked at the held asset's close; a holding still open at the end is
+     * closed at the last close. Returns why it could not be traded, or null.
+     */
+    static String tradeHoldings(BarSeries series, Map<java.time.LocalDate, String> calls,
+                                String symbol, long instrumentId, Map<java.time.LocalDate, Bar> spy,
+                                Map<java.time.LocalDate, Double> bills, int warmupBars,
+                                PortfolioManager pm, ExecutionSimulator sim) {
+        String held = null;
+        String pending = null;
+        boolean called = false;
+        ZonedDateTime lastTime = null;
+        double lastMark = 0.0;
+        for (int i = warmupBars; i < series.getBarCount(); i++) {
+            Bar bar = series.getBar(i);
+            java.time.LocalDate day = barDate(bar).toLocalDate();
+            ZonedDateTime time = ZonedDateTime.ofInstant(bar.getEndTime(), ZoneOffset.UTC);
+            if (called && !java.util.Objects.equals(pending, held)) {
+                if (held != null) {
+                    Bar from = held.equals(symbol) ? bar : spy.get(day);
+                    if (from == null) return "SPY has no bar on " + day;
+                    Position open = pm.getOpenPositions().get(0);
+                    double price = from.getOpenPrice().doubleValue();
+                    Order order = Order.market(open.instrumentId(), OrderSide.SELL, open.quantity(), price);
+                    ExecutionSimulator.FillResult fill = sim.fillMarketOrder(order, price);
+                    pm.closePosition(open, fill.filledPrice(), time, fill.commission(), order.id());
+                }
+                if (pending != null) {
+                    Bar into = pending.equals(symbol) ? bar : spy.get(day);
+                    if (into == null) return "SPY has no bar on " + day;
+                    double price = into.getOpenPrice().doubleValue();
+                    double qty = pm.calculatePositionSize(price, 1.0);
+                    long id = pending.equals(symbol) ? instrumentId : SPY_ID;
+                    Order order = Order.market(id, OrderSide.BUY, qty, price);
+                    ExecutionSimulator.FillResult fill = sim.fillMarketOrder(order, price);
+                    pm.openPosition(id, OrderSide.BUY, fill.filledPrice(), qty, time,
+                            fill.commission(), order.id());
+                }
+                held = pending;
+            }
+            if (calls.containsKey(day)) {
+                pending = calls.get(day);
+                called = true;
+            }
+            if (held == null) {
+                pm.accrueInterest(bills.getOrDefault(day, 0.0));
+            }
+            Bar mark = held == null || held.equals(symbol) ? bar : spy.get(day);
+            if (mark == null) return "SPY has no bar on " + day;
+            lastMark = held == null ? 0.0 : mark.getClosePrice().doubleValue();
+            lastTime = time;
+            pm.recordEquityPoint(time, lastMark);
+        }
+        if (pm.hasOpenPositions() && lastTime != null) {
+            pm.closeAllPositions(lastMark, lastTime, sim);
+        }
+        return null;
     }
 
     /**

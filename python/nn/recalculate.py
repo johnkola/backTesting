@@ -51,7 +51,7 @@ from typing import Any
 import numpy as np
 from psycopg.rows import dict_row
 
-from nn import profit, strategy_spec, walkforward, walkforward_store
+from nn import profit, rules, strategy_spec, walkforward, walkforward_store
 from nn.walkforward import FoldResult
 
 #: The objective's keys that change what the model learns. Every other key is
@@ -251,6 +251,9 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
     psq = dff = None
     if settings.execution == "margin":
         psq, dff = walkforward.load_margin_series(cur, run["source"])
+    # Faber and dual momentum (B7), recalculated with everything else.
+    spy, dtb3 = walkforward.load_rule_inputs(cur, run["source"])
+    decisions = rules.decide(run["symbol"], px, spy, dtb3)
     markets: dict[int, profit.Market] = {}
     for r in before:
         sig = signals[r.fold]
@@ -261,7 +264,8 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
                            f"scored, from {gone[0]}; the candles changed under it, so "
                            f"rerun it instead")
             continue
-        m = profit.market(px, sig.dates, sig.exits, park_obs, settings.park, psq, dff)
+        m = profit.market(px, sig.dates, sig.exits, park_obs, settings.park, psq, dff,
+                          spy=spy, dtb3=dtb3)
         holes = [d for d, g, h in zip(sig.dates, m.gap, m.intra, strict=True)
                  if np.isnan(g) or np.isnan(h)]
         if holes:
@@ -283,7 +287,10 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
         money = profit.score(sig.output, markets[r.fold], settings)
         pred = profit.calls(sig.output, settings.loss, settings.threshold)
         after.append(dataclasses.replace(
-            r, accuracy=profit.accuracy(pred, sig.labels, settings.loss), **money.fields()))
+            r, accuracy=profit.accuracy(pred, sig.labels, settings.loss),
+            rules=walkforward.score_rules(decisions, sig.dates, markets[r.fold], settings,
+                                          run["symbol"]),
+            **money.fields()))
 
     outcome = Outcome(run_id, None, "in place" if in_place else "new run", dry_run,
                       target, settings, verdict, before, after)

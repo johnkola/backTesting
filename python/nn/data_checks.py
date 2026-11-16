@@ -272,3 +272,46 @@ def report(results: Sequence[CheckResult]) -> str:
         if r.flagged > len(r.samples):
             lines.append(f"           ... and {r.flagged - len(r.samples)} more")
     return "\n".join(lines)
+
+
+def rule_checks(dec, closes: dict[date, float]) -> list[CheckResult]:
+    """B7: the rule benchmarks' 10-month average and 12-month return against a
+    copy computed independently from the daily closes.
+
+    The copy shares no code with `rules.decide`: month ends come from grouping
+    the dates by calendar month (the last of each, the newest unfinished month
+    dropped), the average from a numpy convolution, the return from array
+    slicing. Agreement within rounding says both read the same month ends and
+    did the same arithmetic; a flagged month says one of them did not.
+    """
+    import numpy as np
+
+    from nn.feature_config import Check
+
+    by_month: dict[tuple[int, int], date] = {}
+    for d in sorted(closes):
+        by_month[(d.year, d.month)] = d          # the last date seen in each month
+    ends = sorted(by_month.values())[:-1]       # the newest month is unfinished
+    if ends != list(dec.month_ends):
+        mine = {(d.year, d.month) for d in dec.month_ends}
+        theirs = {(d.year, d.month) for d in ends}
+        raise ValueError(f"month ends disagree: {len(mine ^ theirs)} month(s) differ")
+    monthly = np.array([closes[d] for d in ends], dtype=float)
+    n, k = len(monthly), 10
+    sma = np.full(n, np.nan)
+    if n >= k:
+        sma[k - 1:] = np.convolve(monthly, np.ones(k) / k, mode="valid")
+    r12 = np.full(n, np.nan)
+    if n > 12:
+        r12[12:] = monthly[12:] / monthly[:-12] - 1.0
+
+    def as_list(a) -> list[float | None]:
+        return [None if np.isnan(v) else float(v) for v in a]
+
+    scale = float(monthly.max()) if n else 1.0
+    return [
+        compare(Check("faber 10-month average", "faber", {}, tolerance=1e-9 * scale),
+                ends, dec.sma, as_list(sma)),
+        compare(Check("dual momentum 12-month return", "dual_momentum", {}, tolerance=1e-12),
+                ends, dec.r12, as_list(r12)),
+    ]

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-3** · 2026-11-16 00:23 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-5** · 2026-11-16 00:57 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -305,6 +305,56 @@ Checklist:
 - **Buy-and-hold under tax.** It now pays tax on its final sale (D8): 6.77 pts a fold at 25%. That is why the taxed classifier (457) gains 4.5 pp against it.
 - **Backtest results.** 730-745 were rerun as 746-761 from their stored requests. Every strategy return and trade count is identical. Only buy-and-hold moved: it now buys at the first fill's open and pays commission and slippage (761: 1,252.10% → 1,240.79%). The originals were deleted in one transaction. The result page draws each run's own buy-and-hold curve, 6,860 points for 761, one per equity point.
 
+**B7 plan (G33, D7), 2026-11-16.** The author: do B7. The conditions are in `AGENTS.md`, build step B7.
+
+The shape:
+- **The rules, once: `nn/rules.py`.** From a daily price history, at each month's last bar:
+  - Faber: long when the close is above the average of the last 10 month-end closes, else cash.
+  - Dual momentum (D7): the better 12-month return of the instrument and SPY, held when it beats T-bills over the same 12 months, else cash at the T-bill rate. When the instrument is SPY, the T-bill test alone.
+
+  Each decision holds from the next open (B1) to the next month-end decision. A month-end without 10 (or 13) month-ends of history behind it has no decision. A window whose first bar has none reports the rule as not available, with the reason. It is never computed on fewer months.
+
+  The averages come from the existing indicator module. R66 asks for TA-Lib, which waits on D14 and is not installed.
+- **Trading them: the profit step.** Faber is the long/flat simulation with its calls. Dual momentum switches between the instrument, SPY and T-bills, so the profit step gains a holdings simulator: one asset at a time, sold and bought at the open, commission on each fill, tax on each sale, the end-of-window sale (D8). It is tested equal to `simulate_taxed` on one asset. Faber's cash earns the run's park; dual momentum's earns DTB3.
+- **Walk-forward.** Each fold scores both rules with the run's settings, beside buy-and-hold. One row per fold and rule goes in a new table, `walkforward_benchmarks`: available and reason, return, Sharpe, drawdown, trades, bars held, commission, tax. Trades a year and average holding time are derived on read, as everything derivable is. A recalculation recomputes the rows.
+- **Engine.** The loader serves the decisions (`GET /api/nn/rules`) from the same module. The engine trades them with its own commission and slippage: Faber through `trade`, dual momentum through a switching loop on the instrument's and SPY's bars, with T-bill interest on cash. Both are stored in `result_json` beside `buyAndHold`. On a timeframe other than D1, or with the loader unreachable, each is not available with the reason.
+- **Side by side.** The Training tab shows the strategy, buy-and-hold, Faber and dual momentum on one table: return, trades, trades a year, average holding time, drawdown, Sharpe. So does the result page, whose chart draws all three benchmarks.
+- **Data check.** `data_checks.rule_checks` compares the 10-month average and the 12-month return with a copy computed independently in pandas (month-end resample, rolling mean, percent change). The runner prints it, and a test runs it.
+
+Checklist:
+- [x] Plan here
+- [x] `nn/rules.py` and its tests (decisions, availability, month ends); `data_checks.rule_checks` and its test
+- [x] Profit step: the holdings simulator (tested against `simulate_taxed`) and the two rules' figures; tests
+- [x] Walk-forward: SPY and DTB3 loaded, rules scored per fold, `walkforward_benchmarks` (schema, store, Java reader, API); recalculation; tests
+- [x] Loader route for the decisions; engine: Faber and dual momentum traded with its costs, in `result_json`; tests
+- [x] Client: the side-by-side table on the Training tab and the result page; three curves on the chart; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go.** Walk-forward 456-462 recalculated in place; backtest results 746-761 rerun and the originals deleted.
+- [x] README, `AGENTS.md`, G33 and this record say done
+
+*Done, 2026-11-16 00:57.* The author chose: recalculate the walk-forward runs, rerun the results.
+- **Tests:** Python 786, Java 127, API 107, client 141.
+  - Python: the rules (month ends, Faber, dual momentum incl. SPY and cash, never on fewer months); the data check, with a planted wrong average flagged; the holdings simulator equal to `simulate_taxed` on one asset; a switch paying both ways; cash at T-bills; the loader payload; the store rewriting a fold's rows.
+  - Java: Faber's fills at the next open; dual momentum switching to SPY with commission; T-bill cash for dual momentum only; not available carrying its reason; not daily.
+  - Client: the side-by-side rows from folds and from a result.
+- **Data check on QQQ (yahoo-adj).** The 10-month average agrees with the independent copy on all 323 month ends, the 12-month return on all 320, with no disagreement.
+- **Walk-forward 456-462, recalculated in place.** Nothing was retrained, and the strategy and buy-and-hold figures are unchanged (462 still +0.00 pp). Every fold now has both rules:
+  - Before tax, a fold's mean: buy-and-hold +26.79%, Faber +18.54%, dual momentum +20.43%.
+  - At 25% tax: buy-and-hold +20.03%, Faber +13.90%, dual momentum +15.08%.
+  - Over 2016-2021 neither rule beats holding QQQ on average. Faber does in 2018 (+7.69% against −1.64%), the year of the Q4 drop.
+- **Backtest results 746-761, rerun as 762-777.** Every strategy return, trade count and buy-and-hold figure is identical; each result now carries both rules. Six are not available, each with its reason:
+  - 767 and 768 are H1 and M30, and the rules need daily bars.
+  - Dual momentum on 766 and 769: the synthetic source has no SPY.
+  - Both on 777: its window starts 1999-06-18, before 10 month-ends of QQQ exist.
+
+  The originals were deleted in one transaction.
+- **Wording:** the data check's summary says "days compared" for what are month ends, since it reuses the feature checks' line.
+- **Not done here:**
+  - TA-Lib for the averages (R66) waits on D14.
+  - Holding time for walk-forward rows is in trading days and for results in calendar days; each table says which.
+  - Trades are position changes in walk-forward and round trips in results, the same in every row of a table.
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -336,10 +386,10 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R32 | done 2026-11-15 (B10) | D9 |
 | R33 | conflicts | G58 |
 | R34 | partial | G50, G45 |
-| R36 | partial: buy-and-hold is stored with each run, recalculated under its cost and tax settings and pays the same (B6). Faber and dual momentum (B7, G33), dividends and currency (G53) and superficial loss are not built | G32, G33, G53 |
+| R36 | partial: the three benchmarks (buy-and-hold B6, Faber and dual momentum B7) are computed for every run, under its cost and tax settings, and stored with it. Dividends and currency (G53) and the superficial-loss rule are not built | G53 |
 | R37 | partial | G32 (B6) |
 | R38 | partial | G50, G57 |
-| R39 | partial | G33 (B7), G57 |
+| R39 | partial: the strategy and all three benchmarks show return, trades, trades a year, average holding time, drawdown and Sharpe side by side, on the Training tab and the result page (B7). Walk-forward runs still never reach Results (G57) | G57 |
 | R40 | partial | G57 |
 | R41 | partial | G58, G10 |
 | R42 | partial | G56 |
@@ -416,7 +466,7 @@ rule in `AGENTS.md`.
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
 | G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | done 2026-11-16 (B6): see the B6 record in Pass 4 |
-| G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | open (D7 decided) |
+| G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | done 2026-11-16 (B7): see the B7 record in Pass 4 |
 | G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | partial |
 | G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | open |
 
@@ -429,7 +479,7 @@ say so; `readonly-doc/` will say so once it is refreshed.
 | # | Question | What exists today | Status |
 |---|---|---|---|
 | D6 | How is a benchmark kept? The design says both. Design Notes ("Buy-and-hold is one fixed benchmark") and Architecture §6.3: computed once for a window, stored, reused, "never recomputed per run". Requirement 36: "recalculated on every run, never cached", under the strategy's cost, tax, dividend and currency settings, and stored with the run | The first: `BenchmarkRepository.findOrCreate` and `walkforward_store.find_or_create_benchmark` never recalculate a stored row (G23) | decided 2026-11-14: recalculated on every run, under that run's settings, and stored with the run. The same window and settings must still give the same figure. The shared stored row and its lookups go (G32). **Built 2026-11-16 (B6)** |
-| D7 | What exactly is dual momentum here? One line of the design holds the asset when its 12-month return beats T-bills "and the alternative, else switch"; another holds it while its 12-month return beats cash. Which asset is the alternative for QQQ, and what is held when the rule is out | DTB3 (T-bills) and SPY are stored; nothing is chosen | decided 2026-11-14: at each month's last bar take whichever of the instrument and SPY has the higher 12-month return. Hold it for the next month if that return beats T-bills over the same 12 months, otherwise hold cash at the T-bill rate. When the instrument is SPY there is no alternative and only the T-bill test applies (G33) |
+| D7 | What exactly is dual momentum here? One line of the design holds the asset when its 12-month return beats T-bills "and the alternative, else switch"; another holds it while its 12-month return beats cash. Which asset is the alternative for QQQ, and what is held when the rule is out | DTB3 (T-bills) and SPY are stored; nothing is chosen | decided 2026-11-14: at each month's last bar take whichever of the instrument and SPY has the higher 12-month return. Hold it for the next month if that return beats T-bills over the same 12 months, otherwise hold cash at the T-bill rate. When the instrument is SPY there is no alternative and only the T-bill test applies (G33). **Built 2026-11-16 (B7)** |
 | D8 | With tax on, is a position still open at the end of the window sold and taxed? The design has buy-and-hold pay tax "on its single buy and final sell". The scorer taxes neither the strategy's open position nor buy-and-hold at the end of a fold | `walkforward.simulate_taxed` ("A position still open when the fold ends is not taxed") | decided 2026-11-14: sold and taxed, for the strategy and every benchmark alike, at the end of the window a result is scored over. In walk-forward that window is the fold (G32). **Built 2026-11-16 (B6)** |
 
 ## Pass 2 — 2026-11-07 (HEAD `84acc6e`, plus uncommitted G1 section 1)
@@ -1110,6 +1160,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-5 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done: Faber and dual momentum beside every run; G33 done; R36 and R39 updated |
+| 2026-11-16-4 | 2026-11-16 00:27 | Claude Code (Claude Opus 5.5) | B7 plan (G33, D7) |
 | 2026-11-16-3 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done: buy-and-hold costed and stored with each run; G32 done, D6 and D8 built, R36 partial |
 | 2026-11-16-2 | 2026-11-16 00:07 | Claude Code (Claude Opus 5.5) | B6 plan (G32, D6, D8) |
 | 2026-11-16-1 | 2026-11-16 00:04 | Claude Code (Claude Opus 5.5) | B1 done: the reruns and checks; G27 done, R76 partial (benchmarks: B6); new gap G69 (dead Known limitations links) |

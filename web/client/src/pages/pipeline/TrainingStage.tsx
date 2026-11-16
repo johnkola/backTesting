@@ -1,4 +1,6 @@
 import { useCallback, useState } from 'react'
+import BenchmarkTable from '../../components/BenchmarkTable'
+import { foldBenchmarkRows } from '../../lib/benchmarks'
 import {
   api,
   type TrainedModel,
@@ -307,6 +309,14 @@ export default function TrainingStage() {
           {detail && (
             <>
               <RunProvenance run={detail.run} />
+              <p className="text-xs text-base-content/70 mb-1">
+                Beside the benchmarks, a fold&apos;s mean under the run&apos;s own costs and tax
+                (worst drawdown of any fold):
+              </p>
+              <BenchmarkTable
+                rows={foldBenchmarkRows(detail.folds)} unit="trading days"
+                tradesNote="Position changes a fold, every row alike: each buy and each sale, the last at the fold's end."
+              />
               <div className="overflow-x-auto bg-base-200 rounded-box">
                 <table className="table table-sm">
                   <thead>

@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.model;
 
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * One validation fold of a walk-forward run: what the model did over one year,
@@ -58,6 +59,7 @@ import java.time.LocalDate;
  * @param daysHedged   Strategy 2: bars held in PSQ
  * @param coreAtRisk   Strategy 2: bars below maintenance with nothing left on margin
  * @param leveredReturn G25: the fold always long on margin (no model), percent
+ * @param benchmarks   Faber and dual momentum over the fold (B7)
  */
 public record WalkforwardFold(
         long runId,
@@ -91,7 +93,8 @@ public record WalkforwardFold(
         Integer daysLong,
         Integer daysHedged,
         Integer coreAtRisk,
-        Double leveredReturn
+        Double leveredReturn,
+        List<FoldBenchmark> benchmarks
 ) {
 
     /** The headline: did the model beat holding over this fold, in points. */
