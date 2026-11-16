@@ -62,14 +62,14 @@ services:
       MAINTENANCE_MESSAGE: ${MAINTENANCE_MESSAGE:-}
     volumes:
       - ./data/models:/data/models:ro
-      - ./GETTING-STARTED.md:/app/docs/GETTING-STARTED.md:ro
+      - ./docs/GETTING-STARTED.md:/app/docs/docs/GETTING-STARTED.md:ro
       - ./README.md:/app/docs/README.md:ro
       # The design set, at the path the DOCS registry addresses it by. Quoted
       # because `Design Notes.md` contains a space, and :ro because nothing in
-      # this repo may write to readonly-doc/.
-      - "./readonly-doc/Architecture.md:/app/docs/readonly-doc/Architecture.md:ro"
-      - "./readonly-doc/Design Notes.md:/app/docs/readonly-doc/Design Notes.md:ro"
-      - "./readonly-doc/Features.md:/app/docs/readonly-doc/Features.md:ro"
+      # this repo may write to docs/readonly-doc/.
+      - "./docs/readonly-doc/Architecture.md:/app/docs/docs/readonly-doc/Architecture.md:ro"
+      - "./docs/readonly-doc/Design Notes.md:/app/docs/docs/readonly-doc/Design Notes.md:ro"
+      - "./docs/readonly-doc/Features.md:/app/docs/docs/readonly-doc/Features.md:ro"
 
   # The React SPA, static files behind nginx. No backend of its own: it calls
   # the API by the URL baked in at build time.

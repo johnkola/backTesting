@@ -3,7 +3,7 @@
 > **Revision 2026-11-16-9** · 2026-11-16 16:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 Every endpoint the API origin serves, with assertions on status, shape and key
-values. Required by `reference/qqq-backtesting-model/Architecture.md` §10:
+values. Required by `docs/reference/qqq-backtesting-model/Architecture.md` §10:
 
 > Postman collection for every service endpoint, checked in at `postman/` with
 > an environment file per target (local, docker). Each request carries

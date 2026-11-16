@@ -2,7 +2,7 @@
 
 > **Revision 2026-11-16-25** · 2026-11-16 16:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
-What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
+What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
 Newest pass at the top.
 
@@ -16,7 +16,7 @@ Effort is an estimate: S is under a day, M a few days, L a week or more, XL a re
 
 ## Pass 4 — 2026-11-15 (HEAD `6cdc664`): `Requirements.md` R1 to R76 against the code
 
-Scope: the author refreshed `readonly-doc/` on 2026-11-15 (`5f7a8c2`, `ee02e90`). That
+Scope: the author refreshed `docs/readonly-doc/` on 2026-11-15 (`5f7a8c2`, `ee02e90`). That
 refresh added `Requirements.md` (R1 to R76, numbered for one-by-one review), expanded
 `Architecture.md`, and adjusted `Design Notes.md`. Four read-only agents checked every
 requirement against the code and the live database. Each finding that changes a
@@ -24,12 +24,12 @@ conclusion was checked again before it was written here.
 
 **Result: 12 done, 33 partial, 21 missing, 10 in conflict.** The conflicts are with a
 deliberate code choice or a recorded decision, and four of them are also
-contradictions inside `readonly-doc/` itself.
+contradictions inside `docs/readonly-doc/` itself.
 
 **What the refresh settled.** Pass 3's note that "the design copy is behind" no longer
-holds. The four requirement groups it quoted now sit in `readonly-doc/`: R76 (B1), R36
+holds. The four requirement groups it quoted now sit in `docs/readonly-doc/`: R76 (B1), R36
 and R39 (B6, B7), R72 (B8), and R21 to R23 with R74 (B9). Where they differ from the
-quotes, `readonly-doc/` wins.
+quotes, `docs/readonly-doc/` wins.
 - `Design Notes.md` now validates on 2016 to 2021 and tests on 2022 onward (the
   contradiction the step 4 review found is gone).
 - It recalculates the benchmark on every run (D6).
@@ -95,8 +95,8 @@ stored run.
 | G65 | Signal voting (Phase 2): per-bar votes per signal, a voting setup with a minimum count, and its backtest | R73 | none in code | none | L | gated: after Phase 1 |
 | G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `data/csv-archive` | none | S | open |
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
-| G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
-| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | open: found during B1 |
+| G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `docs/readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
+| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `docs/readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | open: found during B1 |
 | G70 | An engine cannot train on a subset of the strategy's features. R21 lets an engine override the strategy's feature list with its own subset, recorded on its engine row and its run result; every engine reads the strategy's list | R21 | `nn/engines.py`, `strategy_engines` (no feature column) | none | S | open: found during B9 |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
@@ -853,16 +853,16 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 Scope: a read of the Java engine, the walk-forward scorer and the two single-split
 trainers, plus four requirements the repo's design copy does not carry. Nothing was run
 and no stored run was checked. What each row needs before it counts as done is in
-[`AGENTS.md`, Build steps](AGENTS.md#build-steps).
+[`AGENTS.md`, Build steps](../AGENTS.md#build-steps).
 
-**The design copy is behind.** `readonly-doc/Architecture.md` is an older snapshot of the
+**The design copy is behind.** `docs/readonly-doc/Architecture.md` is an older snapshot of the
 author's Architecture document. The current one has a numbered Requirements list, and four
-groups of its entries have no text in `readonly-doc/`: trading at the next bar's open
+groups of its entries have no text in `docs/readonly-doc/`: trading at the next bar's open
 (Requirement 76), three benchmarks beside every run (36, 39), a naive prediction baseline
 (72) and three engine types (21 to 23, 74). The rows below quote them. They are always
 written "Requirement N", because R1 to R9 in this file are Pass 2's review findings. These
-rows are the only copy in the repo until the author refreshes `readonly-doc/`; after
-that, where the two differ, `readonly-doc/` wins. The rest of the Requirements list was
+rows are the only copy in the repo until the author refreshes `docs/readonly-doc/`; after
+that, where the two differ, `docs/readonly-doc/` wins. The rest of the Requirements list was
 not checked against the code in this pass. The current document also numbers its sections
 differently: what is §6.3, §8.x and §10 here is §5.3, §7.x and §9 there, so the section
 references in this repo's docs and code comments need a pass when it lands.
@@ -894,7 +894,7 @@ rule in `AGENTS.md`.
 
 Each of these blocks a row above. The answer goes here, and into the design, before the
 work starts. All three were answered on 2026-11-14 and the author's design documents now
-say so; `readonly-doc/` will say so once it is refreshed.
+say so; `docs/readonly-doc/` will say so once it is refreshed.
 
 | # | Question | What exists today | Status |
 |---|---|---|---|
