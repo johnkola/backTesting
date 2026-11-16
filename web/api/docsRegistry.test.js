@@ -81,7 +81,7 @@ describe('docs registry', () => {
     // There used to be two Architecture documents -- this repo's code
     // architecture at the root, and the QQQ system design -- and the test here
     // was that they stayed distinct. The root one was deleted when
-    // readonly-doc/ became the design set, so the surviving risk is the
+    // docs/readonly-doc/ became the design set, so the surviving risk is the
     // opposite one: an entry still pointing at the file that is gone. That is
     // what broke the Docs tab and this suite.
     const rootArchitecture = Object.entries(DOCS)
@@ -107,9 +107,9 @@ describe('docs registry', () => {
     }
   });
 
-  it('serves the design set out of readonly-doc/, not the stale reference/ copy', () => {
-    // readonly-doc/ is the set the author maintains by hand.
-    // reference/qqq-backtesting-model/ holds an earlier revision of the same
+  it('serves the design set out of docs/readonly-doc/, not the stale reference/ copy', () => {
+    // docs/readonly-doc/ is the set the author maintains by hand.
+    // docs/reference/qqq-backtesting-model/ holds an earlier revision of the same
     // three documents: its Design.md still fits normalization statistics on
     // each feature's full history, where the current text fits them on the
     // training window only, per fold. Serving the old copy would publish a
@@ -121,7 +121,7 @@ describe('docs registry', () => {
         DOCS[key].file.startsWith(DESIGN_DOC_DIR),
         `${key} should come from ${DESIGN_DOC_DIR}, got ${DOCS[key].file}`,
       );
-      assert.ok(!DOCS[key].file.startsWith('reference/'), `${key} points at the stale copy`);
+      assert.ok(!DOCS[key].file.startsWith('docs/reference/'), `${key} points at the stale copy`);
     }
   });
 

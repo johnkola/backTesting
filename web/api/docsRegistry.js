@@ -7,21 +7,22 @@
 // KNOWN_DOCS from these keys so a doc can never render without recording a
 // revision.
 //
-// The first two are the project's own docs at the repo root: how to operate it,
+// The first two are the project's own docs (docs/GETTING-STARTED.md and the
+// repo-root README.md): how to operate it,
 // and what to type. The last three are the QQQ model's design set, which
 // describes the model rather than this codebase (Architecture.md §8.1a asks for
 // them on the Docs tab).
 //
-// Those three come from `readonly-doc/`, which the author maintains by hand and
+// Those three come from `docs/readonly-doc/`, which the author maintains by hand and
 // nothing in this repo may write to. It supersedes
-// `reference/qqq-backtesting-model/`, which is an earlier revision of the same
+// `docs/reference/qqq-backtesting-model/`, which is an earlier revision of the same
 // three documents and is deliberately NOT served: its Design.md still fits
 // normalization statistics on each feature's full history, where the current
 // text fits them on the training window only, per walk-forward fold. Serving
 // the stale copy would put a description of a data leak on the Docs tab.
 //
 // There is no entry for a repo-root ARCHITECTURE.md: that document was deleted
-// when `readonly-doc/` was created. The `/architecture` and `/claude` legacy
+// when `docs/readonly-doc/` was created. The `/architecture` and `/claude` legacy
 // redirects in server.js therefore point at `qqq-architecture`, which is the
 // only Architecture document left.
 //
@@ -34,27 +35,27 @@
 // COPY (JSON form, so the space is not an argument break) and the compose bind
 // mounts, which the tests below check.
 const DOCS = {
-  GETTING_STARTED: { file: 'GETTING-STARTED.md', label: 'Getting Started', slug: 'getting-started' },
+  GETTING_STARTED: { file: 'docs/GETTING-STARTED.md', label: 'Getting Started', slug: 'getting-started' },
   README: { file: 'README.md', label: 'README', slug: 'readme' },
   QQQ_DESIGN: {
-    file: 'readonly-doc/Design Notes.md',
+    file: 'docs/readonly-doc/Design Notes.md',
     label: 'QQQ Design Notes',
     slug: 'qqq-design',
   },
   QQQ_ARCHITECTURE: {
-    file: 'readonly-doc/Architecture.md',
+    file: 'docs/readonly-doc/Architecture.md',
     label: 'QQQ Architecture',
     slug: 'qqq-architecture',
   },
   QQQ_FEATURES: {
-    file: 'readonly-doc/Features.md',
+    file: 'docs/readonly-doc/Features.md',
     label: 'QQQ Features',
     slug: 'qqq-features',
   },
 };
 
 /** Where the authoritative design set lives; see the note above. */
-const DESIGN_DOC_DIR = 'readonly-doc/';
+const DESIGN_DOC_DIR = 'docs/readonly-doc/';
 
 /** slug -> registry key, so the client can address docs by the name in its URL. */
 const DOC_BY_SLUG = new Map(Object.entries(DOCS).map(([name, c]) => [c.slug, name]));

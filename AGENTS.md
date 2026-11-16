@@ -14,12 +14,12 @@ in order, and what has to be true before each one is done.
 
 It does not repeat how to run anything. Commands and settings are in
 [`README.md`](README.md), and the end-to-end walkthrough is in
-[`GETTING-STARTED.md`](GETTING-STARTED.md). Each step links to the section it
+[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md). Each step links to the section it
 needs. The design these steps come from is
-[`readonly-doc/Design Notes.md`](readonly-doc/Design%20Notes.md) ("Staged Pipeline
+[`docs/readonly-doc/Design Notes.md`](docs/readonly-doc/Design%20Notes.md) ("Staged Pipeline
 Architecture" and "Web Monitoring App"), with the tab lineup in
-[`readonly-doc/Architecture.md`](readonly-doc/Architecture.md) §8.1a. Open gaps
-are tracked in [`DESIGN-GAPS.md`](DESIGN-GAPS.md).
+[`docs/readonly-doc/Architecture.md`](docs/readonly-doc/Architecture.md) §8.1a. Open gaps
+are tracked in [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).
 
 **How each condition is checked**
 
@@ -75,15 +75,15 @@ steps.
 
   Check that the reruns reproduce the results. Never mark stale records as expired
   and keep them.
-- **Keep work followable.** Write the plan as a checklist in `DESIGN-GAPS.md`, tick
+- **Keep work followable.** Write the plan as a checklist in `docs/DESIGN-GAPS.md`, tick
   it as you go, and stop at a checkpoint before applying anything.
 - **Commit or push only when the author asks**, and then do just that.
 - **Stamp every doc you change.** Bump the revision line under its title
   (`Revision YYYY-MM-DD-N`, Toronto time, your name and model) and add a row to its
   Revision history at the end: revision, time, who and model, what changed. This
-  covers the project docs and trackers, never `readonly-doc/`, whose revision line
+  covers the project docs and trackers, never `docs/readonly-doc/`, whose revision line
   is the author's.
-- **`readonly-doc/` is never edited.** Each new fact goes in exactly one place:
+- **`docs/readonly-doc/` is never edited.** Each new fact goes in exactly one place:
   see [`CLAUDE.md`](CLAUDE.md).
 - **Settings the user chooses don't change the signal.** The app may become a
   signal provider, so per-user settings such as tax must not change the signal it
@@ -94,7 +94,7 @@ steps.
 ## 0. The stack is running
 
 The database, Java engine, Python loader, Node API and React client are up.
-See [GETTING-STARTED §1](GETTING-STARTED.md#1-start-the-stack) and
+See [GETTING-STARTED §1](docs/GETTING-STARTED.md#1-start-the-stack) and
 [Services and ports](README.md#services-and-ports).
 
 **Done when**
@@ -112,7 +112,7 @@ See [GETTING-STARTED §1](GETTING-STARTED.md#1-start-the-stack) and
 Every raw series the model reads is stored at D1 and current: prices, rates,
 breadth and earnings. The data feeds keep the series current every weekday
 evening. See [Data feeds](README.md#data-feeds) and
-[GETTING-STARTED §2](GETTING-STARTED.md#2-get-candles-in).
+[GETTING-STARTED §2](docs/GETTING-STARTED.md#2-get-candles-in).
 Tab: **Pipeline → Data**.
 
 **Done when**
@@ -301,7 +301,7 @@ Tab: **Pipeline → Training**.
 Signals run through the Java engine's accounting: equity curve, trades, costs, and
 metrics against the stored buy-and-hold benchmark. See
 [Execution engine](README.md#execution-engine) and
-[GETTING-STARTED §4–5](GETTING-STARTED.md#4-run-your-first-backtest).
+[GETTING-STARTED §4–5](docs/GETTING-STARTED.md#4-run-your-first-backtest).
 Tab: **Pipeline → Backtest**.
 
 **Done when**
@@ -377,11 +377,11 @@ phase one's question.
 Steps 0 to 8 check the app as it is. These are the changes still to make, in the order
 to make them. B1 to B5 correct numbers the app already stores. B6 to B9 add what the
 design asks for and the app does not have. Each has a row in
-[`DESIGN-GAPS.md`](DESIGN-GAPS.md), Pass 3, which holds the evidence and, once work
+[`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md), Pass 3, which holds the evidence and, once work
 starts, the plan checklist. This section holds only what has to be true before that row
 is marked done.
 
-Four of the rows quote a requirement that is not in `readonly-doc/` yet: see the note
+Four of the rows quote a requirement that is not in `docs/readonly-doc/` yet: see the note
 at the top of Pass 3. The author's decisions D6, D7 and D8 are made, and B6 and B7 state
 them.
 
