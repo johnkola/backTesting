@@ -115,6 +115,7 @@ public record WalkforwardRun(
         boolean isTest,
         String hyperparamsJson,
         String columnsJson,
+        String enginesJson,
         StrategyProvenance strategy,
         Lineage lineage,
         Execution execution,

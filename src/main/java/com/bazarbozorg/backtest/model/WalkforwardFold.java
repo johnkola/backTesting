@@ -64,6 +64,7 @@ import java.util.List;
 public record WalkforwardFold(
         long runId,
         int fold,
+        String engine,
         int valYear,
         LocalDate trainFrom,
         LocalDate trainTo,

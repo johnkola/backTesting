@@ -51,7 +51,7 @@ from typing import Any
 import numpy as np
 from psycopg.rows import dict_row
 
-from nn import profit, rules, strategy_spec, walkforward, walkforward_store
+from nn import engines, profit, rules, strategy_spec, walkforward, walkforward_store
 from nn.walkforward import FoldResult
 
 #: The objective's keys that change what the model learns. Every other key is
@@ -102,7 +102,8 @@ class Outcome:
                 "version": self.strategy.version,
             },
             "settings": dataclasses.asdict(self.settings),
-            "folds": [{"fold": a.fold, "valYear": a.val_year, "before": fold(b), "after": fold(a)}
+            "folds": [{"fold": a.fold, "engine": a.engine, "valYear": a.val_year,
+                       "before": fold(b), "after": fold(a)}
                       for b, a in zip(self.before, self.after, strict=True)],
         }
 
@@ -117,6 +118,9 @@ def model_side_differences(a: strategy_spec.Strategy, b: strategy_spec.Strategy)
         ("features", tuple(a.features), tuple(b.features)),
         ("windows", dict(a.windows), dict(b.windows)), ("label", dict(a.label), dict(b.label)),
         ("hyperparameters", dict(a.hyperparams), dict(b.hyperparams)),
+        # Which engines train, and on what settings (B9).
+        ("engines", {k: dict(v) for k, v in a.engines.items()},
+         {k: dict(v) for k, v in b.engines.items()}),
     ) if x != y]
     for key in MODEL_OBJECTIVE_KEYS:
         default = strategy_spec.OBJECTIVE_DEFAULTS.get(key)
@@ -235,16 +239,25 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
             raise Refused(exc.reasons) from exc
         settings, verdict = profit.Settings.from_args(args), args.objective
 
-    signals = walkforward_store.load_signals(cur, run_id)
+    # Every engine's signals, and a fold row per engine (B9), in the order the
+    # runner wrote them: fold, then registry order.
+    signals = walkforward_store.load_engine_signals(cur, run_id)
     rows.execute("SELECT * FROM walkforward_folds WHERE run_id = %s ORDER BY fold", (run_id,))
-    before = [_fold_from_row(row) for row in rows.fetchall()]
+    order = {name: i for i, name in enumerate(engines.ENGINES)}
+    before = sorted((_fold_from_row(row) for row in rows.fetchall()),
+                    key=lambda r: (r.fold, order.get(r.engine, len(order)), r.engine))
     if not signals:
         raise Refused([f"run {run_id} stored no signals: it was run before signals were "
                        f"kept (B10, 2026-11-15). Rerun it once and it can be recalculated "
                        f"from then on"], status=409)
-    missing = [r.fold for r in before if r.fold not in signals]
+    missing = [f"{r.engine} fold {r.fold}" for r in before
+               if r.fold not in signals.get(r.engine, {})]
     if missing:
-        raise Refused([f"run {run_id} has no stored signals for fold(s) {missing}"], status=409)
+        raise Refused([f"run {run_id} has no stored signals for {', '.join(missing)}"],
+                      status=409)
+
+    def signals_of(r: FoldResult) -> profit.Signals:
+        return signals[r.engine][r.fold]
 
     px = walkforward.load_prices(cur, run["symbol"], run["source"], run["timeframe"])
     park_obs = profit.load_park(cur, settings.park)
@@ -256,7 +269,9 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
     decisions = rules.decide(run["symbol"], px, spy, dtb3)
     markets: dict[int, profit.Market] = {}
     for r in before:
-        sig = signals[r.fold]
+        if r.fold in markets:
+            continue    # every engine of a fold scores the same bars
+        sig = signals_of(r)
         gone = sorted({d for d in [*sig.dates, *sig.exits]
                        if d is not None and d not in px.closes})
         if gone:
@@ -283,7 +298,7 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
 
     after: list[FoldResult] = []
     for r in before:
-        sig = signals[r.fold]
+        sig = signals_of(r)
         money = profit.score(sig.output, markets[r.fold], settings)
         pred = profit.calls(sig.output, settings.loss, settings.threshold)
         after.append(dataclasses.replace(
@@ -320,7 +335,7 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
         conn, args, int(run["feature_set_id"]), int(run["input_width"]),
         json.loads(run["columns_json"]) if run["columns_json"] else None, provenance, lineage)
     for r in after:
-        walkforward_store.save_fold(conn, new_id, r, signals[r.fold], settings)
+        walkforward_store.save_fold(conn, new_id, r, signals_of(r), settings)
     walkforward_store.close_run(conn, new_id)
     outcome.run_id = new_id
     return outcome
@@ -335,18 +350,23 @@ def print_outcome(o: Outcome) -> None:
           f"tax {f'{s.tax_rate:g}%' if s.tax_rate else 'off'}, park {s.park}, "
           f"{'Strategy 2' if s.execution == 'margin' else 'Strategy 1'}"
           + (f", threshold {s.threshold:g}" if s.loss != "ce" else ""))
-    print(f"\n{'fold':>4} {'val':>5} {'strat% was':>11} {'now':>8} {'excess was':>11} "
-          f"{'now':>8} {'tax was':>8} {'now':>7} {'trd':>4}")
+    print(f"\n{'engine':<9}{'fold':>4} {'val':>5} {'strat% was':>11} {'now':>8} "
+          f"{'excess was':>11} {'now':>8} {'tax was':>8} {'now':>7} {'trd':>4}")
     for b, a in zip(o.before, o.after, strict=True):
-        print(f"{a.fold:>4} {a.val_year:>5} {b.strat_return:>11.2f} {a.strat_return:>8.2f} "
+        print(f"{a.engine:<9}{a.fold:>4} {a.val_year:>5} {b.strat_return:>11.2f} "
+              f"{a.strat_return:>8.2f} "
               f"{b.excess:>+11.2f} {a.excess:>+8.2f} {b.gains_tax:>+8.2f} {a.gains_tax:>+7.2f} "
               f"{a.trades:>4}")
     print(walkforward.header_line())
     for a in o.after:
         print(walkforward.fold_line(a))
-    walkforward.report(o.after, argparse.Namespace(
-        objective=o.verdict, park=s.park, cost_bps=s.cost_bps, tax_rate=s.tax_rate),
-        s.execution == "margin")
+    names = list(dict.fromkeys(a.engine for a in o.after))
+    for name in names:
+        if len(names) > 1:
+            print(f"\nENGINE {name}")
+        walkforward.report([a for a in o.after if a.engine == name], argparse.Namespace(
+            objective=o.verdict, park=s.park, cost_bps=s.cost_bps, tax_rate=s.tax_rate,
+            loss=s.loss), s.execution == "margin")
     if o.dry_run:
         print("dry run      nothing written")
     elif o.mode == "in place":

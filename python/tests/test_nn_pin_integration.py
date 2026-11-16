@@ -166,3 +166,38 @@ def test_the_saved_window_is_the_bars_fitted(client):
     assert body["trainSamples"] == rec.extra["train_samples"]
     w = model_windows.lookup(_registry(), body["strategy"], body["versionId"])
     assert w.status == model_windows.KNOWN and w.until == last_fit
+
+
+@pytest.mark.parametrize("engine,model_file", [("xgboost", "model.json"),
+                                               ("lightgbm", "model.txt")])
+def test_a_tree_engine_trains_saves_and_predicts(client, engine, model_file):
+    """B9: a tree engine trains on the same rows, is saved in its library's
+    format with no scaler, and predict_range serves it for a step 7 backtest."""
+    pytest.importorskip(engine)
+    from nn.nn_api import _registry
+
+    resp = _train(client, mode="force", engine=engine, engine_settings={"nEstimators": 10})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["strategy"] == engine
+    files = {p.name for p in _registry().version_dir(
+        engine, body["cacheKey"], body["versionId"]).iterdir()}
+    assert files == {model_file, "metadata.json"}
+
+    again = _train(client, mode="auto", engine=engine, engine_settings={"nEstimators": 10})
+    assert again.json()["versionId"] == body["versionId"]   # same settings, same key
+    other = _train(client, mode="load_only", engine=engine, engine_settings={"nEstimators": 11})
+    assert other.status_code == 404                          # other settings, other key
+
+    pred = client.post("/api/nn/predict_range", json={
+        "cache_key": body["cacheKey"], "version_id": body["versionId"], "engine": engine,
+        "symbol": SYMBOL, "source": SOURCE, "timeframe": TF})
+    assert pred.status_code == 200, pred.text
+    rows = pred.json()["predictions"]
+    assert rows and all(abs(sum(r["probabilities"]) - 1.0) < 1e-6 for r in rows)
+
+
+def test_an_unknown_engine_or_a_bad_setting_is_refused(client):
+    assert _train(client, mode="force", engine="svm").status_code == 400
+    bad = _train(client, mode="force", engine="xgboost", engine_settings={"maxDepth": 99})
+    assert bad.status_code == 400 and "outside" in bad.json()["error"]

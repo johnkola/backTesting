@@ -693,6 +693,21 @@ ALTER TABLE walkforward_runs
 -- Train with tax and train with margin are gone with D9: an engine never sees
 -- a cost, so no run can have been trained with one.
 ALTER TABLE walkforward_runs DROP COLUMN IF EXISTS tax_train;
+-- B9 (G35): a run trains every engine its strategy switches on (nn/engines.py),
+-- so a fold has one row per engine and a bar one signal per engine. Rows from
+-- before were the network alone, hence the default. The primary keys become
+-- unique indexes with the engine in them: dropping a key is idempotent, adding
+-- one is not. engines_json records each engine's settings, library version and
+-- seed, in registry order, the first being the one the run list summarises.
+ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS engine VARCHAR(16) NOT NULL DEFAULT 'mlp';
+ALTER TABLE walkforward_folds DROP CONSTRAINT IF EXISTS walkforward_folds_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_walkforward_folds_run_fold_engine
+    ON walkforward_folds (run_id, fold, engine);
+ALTER TABLE walkforward_signals ADD COLUMN IF NOT EXISTS engine VARCHAR(16) NOT NULL DEFAULT 'mlp';
+ALTER TABLE walkforward_signals DROP CONSTRAINT IF EXISTS walkforward_signals_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_walkforward_signals_run_engine_date
+    ON walkforward_signals (run_id, engine, bar_date);
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS engines_json TEXT;
 ALTER TABLE walkforward_runs DROP COLUMN IF EXISTS margin_train;
 
 -- ---------------------------------------------------------------------------

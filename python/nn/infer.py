@@ -54,6 +54,9 @@ def load_for_inference(
     metadata = registry.read_metadata(strategy, cache_key, version_id=version_id)
     if metadata is None:
         return None
+    if metadata.extra.get("engine", "mlp") != "mlp":
+        # A tree engine (B9) rebuilds itself from its own file; no shape needed.
+        return registry.load(strategy, cache_key, version_id=version_id, build_model=None)
 
     spec = ArchSpec(
         input_size=metadata.input_size,
@@ -81,9 +84,13 @@ def predict_batch(loaded: LoadedModel, feature_matrix: np.ndarray) -> list[Predi
             f"got {feature_matrix.shape[1]}"
         )
 
-    x = loaded.scaler.transform(feature_matrix.astype(np.float32))
-    tensor = torch.from_numpy(x)
-    proba = predict_proba(loaded.model, tensor).cpu().numpy()
+    if loaded.scaler is None:
+        # A tree engine: unscaled inputs, its own probabilities (B9).
+        proba = loaded.model.predict(feature_matrix.astype(np.float32))
+    else:
+        x = loaded.scaler.transform(feature_matrix.astype(np.float32))
+        tensor = torch.from_numpy(x)
+        proba = predict_proba(loaded.model, tensor).cpu().numpy()
     classes = proba.argmax(axis=1)
 
     return [

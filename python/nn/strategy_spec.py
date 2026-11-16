@@ -47,6 +47,12 @@ are saved on the strategy (`objective_json`) rather than left to runner flags.
 `runner_args` always returns all of them, so two runs of one strategy cannot
 differ by a flag nobody recorded.
 
+THE ENGINES ARE THE STRATEGY'S (B9, R21). Each version has a row per engine in
+`strategy_engines` (on or off, and its settings); `engines` holds the ones
+switched on, in registry order (`nn/engines.py`). A version with no rows ran
+the network alone, which is what every version saved before B9 did. An engine
+that cannot train on the strategy's loss is refused here, not swapped.
+
 `trainSplitRatio` is deliberately not mapped. Walk-forward splits on dates, so
 the ratio has no meaning here, and applying it anywhere would be a second split
 the strategy's windows do not describe.
@@ -54,6 +60,7 @@ the strategy's windows do not describe.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -61,6 +68,7 @@ from datetime import date, timedelta
 from types import MappingProxyType
 from typing import Any
 
+from nn import engines as engine_registry
 from nn import label_kinds
 from nn.profit import D9_REASON
 
@@ -127,9 +135,11 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
 #: The design's hard rule for Strategy 2 (G5), as web/api/strategies.js holds it.
 MARGIN_CEILING_PCT = 50.0
 
-#: What the runner can execute. Mirrors MODEL_TYPES and LABEL_KINDS in
-#: web/api/strategies.js. The label kinds are the registry's (`nn/label_kinds.py`),
-#: where a kind cannot exist without its naive baseline (R72, B8).
+#: What the runner can execute. MODEL_TYPES is the network's architecture,
+#: mirrored in web/api/strategies.js; the engines themselves are
+#: `nn/engines.py`'s, which the API reads from the loader. The label kinds are
+#: the registry's (`nn/label_kinds.py`), where a kind cannot exist without its
+#: naive baseline (R72, B8).
 MODEL_TYPES = ("mlp",)
 LABEL_KINDS = tuple(label_kinds.LABEL_KINDS)
 
@@ -173,6 +183,9 @@ class Strategy:
     objective: Mapping[str, Any] = field(default_factory=lambda: dict(OBJECTIVE_DEFAULTS))
     #: True when `objective` was filled from defaults, for the run to say so.
     objective_defaulted: bool = False
+    #: The engines switched on, name -> saved settings, in registry order (B9).
+    engines: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=lambda: dict(engine_registry.DEFAULT_ENGINES))
 
 
 @dataclass(frozen=True)
@@ -233,12 +246,33 @@ def from_row(row: Sequence[Any]) -> Strategy:
     )
 
 
+def engines_from_rows(rows: Sequence[Sequence[Any]]) -> dict[str, dict[str, Any]]:
+    """A version's `strategy_engines` rows (engine, enabled, settings_json) as
+    the engines switched on, in registry order. No rows: the network alone.
+    An engine the registry does not know is kept, so the runner refuses it by
+    name rather than dropping it. Pure."""
+    if not rows:
+        return dict(engine_registry.DEFAULT_ENGINES)
+    on = {name: json.loads(settings) if settings else {}
+          for name, enabled, settings in rows if enabled}
+    known = engine_registry.ordered(on)
+    return {**{n: on[n] for n in known}, **{n: v for n, v in on.items() if n not in known}}
+
+
 def load(cur, strategy_id: int) -> Strategy:
     cur.execute(_SELECT, (strategy_id,))
     row = cur.fetchone()
     if row is None:
         raise LookupError(f"no saved strategy with id {strategy_id}")
-    return from_row(row)
+    s = from_row(row)
+    # The API creates strategy_engines beside strategies; a database it has not
+    # started against yet has no rows to read, which is the network alone.
+    cur.execute("SELECT to_regclass('strategy_engines') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return s
+    cur.execute("SELECT engine, enabled, settings_json FROM strategy_engines "
+                "WHERE strategy_id = %s", (strategy_id,))
+    return dataclasses.replace(s, engines=engines_from_rows(cur.fetchall()))
 
 
 def _starts_a_year(d: date) -> bool:
@@ -328,9 +362,14 @@ def runner_args(s: Strategy) -> dict[str, Any]:
         if s.objective.get(key):
             errors.append(f"{key} ({what}) is set: {D9_REASON}. Save a new version "
                           f"without it")
+    # Every engine switched on must be registered, valid and able to train on
+    # the strategy's loss (B9): refused, never swapped.
+    errors.extend(engine_registry.refusals(
+        s.engines, s.objective.get("loss", OBJECTIVE_DEFAULTS["loss"])))
     if errors:
         raise StrategyRefused(errors)
     out = {RUNNER_ARGS[k]: v for k, v in s.hyperparams.items() if k in RUNNER_ARGS}
+    out["engines"] = {name: dict(settings) for name, settings in s.engines.items()}
     for key, arg in OBJECTIVE_ARGS.items():
         value = s.objective.get(key, OBJECTIVE_DEFAULTS[key])
         if value is not None:

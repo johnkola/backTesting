@@ -58,7 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from nn import profit
+from nn import engines, profit
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, types only
     from nn.walkforward import FoldResult
@@ -89,7 +89,7 @@ INSERT INTO walkforward_runs
      feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
      execution, leverage_pct, hedge_pct, margin_spread_pct, maintenance_pct, long_threshold,
      span_from, span_to, last_used, window_end, span_snapshot, span_parts_json,
-     span_backfilled, recalculated_from)
+     span_backfilled, recalculated_from, engines_json)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
@@ -105,13 +105,13 @@ VALUES
      %(execution)s, %(leverage_pct)s, %(hedge_pct)s, %(margin_spread_pct)s,
      %(maintenance_pct)s, %(long_threshold)s,
      %(span_from)s, %(span_to)s, %(last_used)s, %(window_end)s, %(span_snapshot)s,
-     %(span_parts_json)s, %(span_backfilled)s, %(recalculated_from)s)
+     %(span_parts_json)s, %(span_backfilled)s, %(recalculated_from)s, %(engines_json)s)
 RETURNING id
 """
 
 _INSERT_FOLD = """
 INSERT INTO walkforward_folds
-    (run_id, fold, val_year, train_from, train_to, n_train, n_val,
+    (run_id, fold, engine, val_year, train_from, train_to, n_train, n_val,
      strat_return, hold_return, strat_sharpe, hold_sharpe,
      strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
      days_out, drift_tax, commissions, timing, gains_tax, best_epoch, epochs_run,
@@ -119,7 +119,7 @@ INSERT INTO walkforward_folds
      days_hedged, core_at_risk,
      levered_return)
 VALUES
-    (%(run_id)s, %(fold)s, %(val_year)s, %(train_from)s, %(train_to)s,
+    (%(run_id)s, %(fold)s, %(engine)s, %(val_year)s, %(train_from)s, %(train_to)s,
      %(n_train)s, %(n_val)s,
      %(strat_return)s, %(hold_return)s, %(strat_sharpe)s, %(hold_sharpe)s,
      %(strat_maxdd)s, %(hold_maxdd)s, %(trades)s, %(accuracy)s, %(baseline_acc)s,
@@ -127,7 +127,7 @@ VALUES
      %(best_epoch)s, %(epochs_run)s, %(hold_commissions)s, %(hold_gains_tax)s,
      %(margin_interest)s, %(margin_calls)s, %(trims)s, %(days_long)s, %(days_hedged)s,
      %(core_at_risk)s, %(levered_return)s)
-ON CONFLICT (run_id, fold) DO UPDATE SET
+ON CONFLICT (run_id, fold, engine) DO UPDATE SET
     val_year = EXCLUDED.val_year,
     train_from = EXCLUDED.train_from,
     train_to = EXCLUDED.train_to,
@@ -238,10 +238,23 @@ def run_row(args: Any, set_id: int, input_width: int,
         "is_test": bool(getattr(args, "test", False)),
         "hyperparams_json": json.dumps(hyperparams(args), sort_keys=True),
         "columns_json": json.dumps(list(columns)) if columns is not None else None,
+        # Each engine trained, with its settings, library version and seed (B9).
+        "engines_json": json.dumps(engines.record(engines_of(args), hyperparams(args)),
+                                   sort_keys=True),
         **execution_columns(args),
         **{**NO_PROVENANCE, **(provenance or {})},
         **{**NO_LINEAGE, **(lineage or {})},
     }
+
+
+def engines_of(args: Any) -> dict[str, dict[str, Any]]:
+    """The engines a run trains, name -> saved settings; the network alone for
+    a run set up without any (every run before B9)."""
+    raw = getattr(args, "engines", None) or engines.DEFAULT_ENGINES
+    if isinstance(raw, str):
+        # The `--engines` flag as parsed, before the runner reads it.
+        raw = {name.strip(): {} for name in raw.split(",") if name.strip()}
+    return {name: dict(settings) for name, settings in raw.items()}
 
 
 def execution_columns(args: Any) -> dict[str, Any]:
@@ -270,6 +283,7 @@ def fold_row(run_id: int, r: FoldResult) -> dict[str, Any]:
     return {
         "run_id": run_id,
         "fold": r.fold,
+        "engine": getattr(r, "engine", "mlp"),
         "val_year": r.val_year,
         "train_from": r.train_from,
         "train_to": r.train_to,
@@ -344,7 +358,8 @@ def open_run(conn, args: Any, set_id: int, input_width: int,
     return run_id
 
 
-_DELETE_SIGNALS = "DELETE FROM walkforward_signals WHERE run_id = %s AND fold = %s"
+_DELETE_SIGNALS = ("DELETE FROM walkforward_signals "
+                   "WHERE run_id = %s AND fold = %s AND engine = %s")
 
 _DELETE_RULES = "DELETE FROM walkforward_benchmarks WHERE run_id = %s AND fold = %s"
 
@@ -363,18 +378,20 @@ def rule_rows(run_id: int, fold: int, figures) -> list[dict[str, Any]]:
     return [{"run_id": run_id, "fold": fold, **dataclasses.asdict(f)} for f in figures]
 
 _INSERT_SIGNAL = """
-INSERT INTO walkforward_signals (run_id, fold, bar_date, exit_date, output, call_class, label)
-VALUES (%s, %s, %s, %s, %s, %s, %s)
+INSERT INTO walkforward_signals
+    (run_id, fold, bar_date, exit_date, output, call_class, label, engine)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 
 def signal_rows(run_id: int, fold: int, sig: profit.Signals,
-                settings: profit.Settings) -> list[tuple]:
-    """One fold's signals as rows. The call is the one the run's own threshold
-    makes; a recalculation derives its own from `output`. Pure."""
+                settings: profit.Settings, engine: str = "mlp") -> list[tuple]:
+    """One fold's signals from one engine as rows. The call is the one the
+    run's own threshold makes; a recalculation derives its own from `output`.
+    Pure."""
     calls = profit.calls(sig.output, settings.loss, settings.threshold)
     return [
-        (run_id, fold, d, e, [float(v) for v in out], int(c), int(label))
+        (run_id, fold, d, e, [float(v) for v in out], int(c), int(label), engine)
         for d, e, out, c, label in zip(sig.dates, sig.exits, sig.output, calls, sig.labels,
                                        strict=True)
     ]
@@ -389,10 +406,12 @@ def save_fold(conn, run_id: int, r: FoldResult, sig: profit.Signals | None = Non
     rather than restarted. Without `sig` the fold's figures are rewritten and
     its stored signals left as they are: a recalculation in place.
     """
+    engine = getattr(r, "engine", "mlp")
     with conn.cursor() as cur:
         set_actor(cur)
         cur.execute(_INSERT_FOLD, fold_row(run_id, r))
-        # Faber and dual momentum, rewritten with the fold (B7).
+        # Faber and dual momentum, rewritten with the fold (B7). They are the
+        # fold's, not an engine's: every engine's save writes the same rows.
         cur.execute(_DELETE_RULES, (run_id, r.fold))
         rows = rule_rows(run_id, r.fold, getattr(r, "rules", ()))
         if rows:
@@ -400,29 +419,37 @@ def save_fold(conn, run_id: int, r: FoldResult, sig: profit.Signals | None = Non
         if sig is not None:
             if settings is None:
                 raise ValueError("storing signals needs the settings that made the call")
-            cur.execute(_DELETE_SIGNALS, (run_id, r.fold))
-            cur.executemany(_INSERT_SIGNAL, signal_rows(run_id, r.fold, sig, settings))
+            cur.execute(_DELETE_SIGNALS, (run_id, r.fold, engine))
+            cur.executemany(_INSERT_SIGNAL, signal_rows(run_id, r.fold, sig, settings, engine))
     conn.commit()
 
 
-def load_signals(cur, run_id: int) -> dict[int, profit.Signals]:
-    """A run's stored signals, by fold; empty for a run that stored none."""
+def load_engine_signals(cur, run_id: int) -> dict[str, dict[int, profit.Signals]]:
+    """A run's stored signals, by engine and fold; empty for a run that stored none."""
     cur.execute(
-        "SELECT fold, bar_date, exit_date, output, label FROM walkforward_signals "
-        "WHERE run_id = %s ORDER BY fold, bar_date",
+        "SELECT engine, fold, bar_date, exit_date, output, label FROM walkforward_signals "
+        "WHERE run_id = %s ORDER BY engine, fold, bar_date",
         (run_id,),
     )
-    by_fold: dict[int, list[tuple]] = {}
-    for fold, d, e, out, label in cur.fetchall():
-        by_fold.setdefault(int(fold), []).append((d, e, out, label))
+    grouped: dict[str, dict[int, list[tuple]]] = {}
+    for engine, fold, d, e, out, label in cur.fetchall():
+        grouped.setdefault(engine, {}).setdefault(int(fold), []).append((d, e, out, label))
     return {
-        fold: profit.Signals(
-            dates=[r[0] for r in rows], exits=[r[1] for r in rows],
-            output=np.array([r[2] for r in rows], dtype=np.float64),
-            labels=np.array([r[3] for r in rows], dtype=np.int64),
-        )
-        for fold, rows in by_fold.items()
+        engine: {
+            fold: profit.Signals(
+                dates=[r[0] for r in rows], exits=[r[1] for r in rows],
+                output=np.array([r[2] for r in rows], dtype=np.float64),
+                labels=np.array([r[3] for r in rows], dtype=np.int64),
+            )
+            for fold, rows in by_fold.items()
+        }
+        for engine, by_fold in grouped.items()
     }
+
+
+def load_signals(cur, run_id: int, engine: str = "mlp") -> dict[int, profit.Signals]:
+    """One engine's stored signals, by fold; empty when it stored none."""
+    return load_engine_signals(cur, run_id).get(engine, {})
 
 
 def close_run(conn, run_id: int) -> None:

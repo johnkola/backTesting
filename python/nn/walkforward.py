@@ -27,6 +27,13 @@ is not the Java engine: no slippage model, no intraday fills, no partial
 positions. It exists to rank variants against each other cheaply and
 consistently. A variant that wins here still has to survive a real backtest.
 
+EVERY ENABLED ENGINE, ONE FOLD AT A TIME (B9, G35). A fold's rows, labels and
+purge are built once; each engine the strategy switches on (`nn/engines.py`:
+the network, XGBoost, LightGBM) trains on them and predicts the fold's bars,
+and the profit step scores each engine's signals with the same costs and tax.
+The benchmarks are the fold's, computed once. A fold has one stored row and
+one set of signals per engine.
+
 SIGNALS HERE, MONEY IN `nn/profit.py` (D9, R75). This module trains and
 predicts; the model never sees a cost, a tax or a margin term. Each fold's
 per-bar signals (the raw output, the call, the label, and the two dates the
@@ -54,6 +61,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from nn import (
     data_checks,
+    engines,
     feature_store,
     label_kinds,
     lineage,
@@ -61,6 +69,7 @@ from nn import (
     rules,
     staleness,
     strategy_spec,
+    trees,
     walkforward_store,
 )
 from nn.labels import CLASS_SELL, NUM_CLASSES
@@ -125,6 +134,8 @@ class FoldResult:
     # Faber and dual momentum over the fold (B7), each a `profit.RuleFigures`:
     # stored as rows of `walkforward_benchmarks`, not fold columns.
     rules: tuple = ()
+    # The engine that made the signals (B9); the fold's other figures are its.
+    engine: str = "mlp"
 
     @property
     def excess(self) -> float:
@@ -458,25 +469,20 @@ def predict(model: nn.Module, scaler, x: np.ndarray, loss: str) -> np.ndarray:
     return out.numpy().astype(np.float64)
 
 
-def run_fold(
-    fold_no: int, year: int, tr: list[int], va: list[int],
-    x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
-    dates: list[date], args, decisions: rules.Decisions | None = None,
-) -> tuple[FoldResult, profit.Signals]:
-    """Train on `tr`, predict `va`, and hand the signals to the profit step.
+def fit_network(
+    tr: list[int], va: list[int], x_all: np.ndarray, y_all: np.ndarray,
+    full: profit.Market, dates: list[date], args,
+) -> tuple[np.ndarray, list[int], Stopper | None]:
+    """The network on one fold: (output over `va`, rows fitted, stopper).
 
-    `full` is the market over the whole date axis: a money loss trains on the
-    training bars' two segments, and the fold is scored on `va`'s. Returns the
-    fold and the signals it stored, which the profit step scored and a
-    recalculation reads back.
+    With early stopping the last training year is held out of its fitting to
+    decide when to stop, so the rows fitted are fewer than the fold's.
     """
     patience = getattr(args, "patience", None)
     stop_ix: list[int] = []
     if patience:
         tr, stop_ix = stop_split(tr, dates, args.forward)
     x_tr, y_tr = x_all[tr], y_all[tr]
-    y_va = y_all[va]
-
     if args.loss == "ce":
         model, scaler, stopper = train_one(
             x_tr, y_tr, args, stop=(x_all[stop_ix], y_all[stop_ix]) if patience else None)
@@ -486,30 +492,59 @@ def run_fold(
 
         model, scaler, stopper = train_money(
             x_tr, seg(tr), args, stop=(x_all[stop_ix], seg(stop_ix)) if patience else None)
-    sig = profit.Signals(
-        dates=[dates[i] for i in va],
-        exits=[dates[i + 1] if i + 1 < len(dates) else None for i in va],
-        output=predict(model, scaler, x_all[va], args.loss),
-        labels=np.asarray(y_va, dtype=np.int64),
-    )
-    settings = profit.Settings.from_args(args)
-    money = profit.score(sig.output, full.take(va), settings)
-    benchmarks = (score_rules(decisions, sig.dates, full.take(va), settings, args.symbol)
-                  if decisions is not None else ())
-    pred = profit.calls(sig.output, settings.loss, settings.threshold)
-    accuracy, baseline_acc = fold_accuracy(pred, y_va, y_tr, args.loss)
+    return predict(model, scaler, x_all[va], args.loss), tr, stopper
 
-    return FoldResult(
-        fold=fold_no,
-        train_from=dates[tr[0]], train_to=dates[tr[-1]], val_year=year,
-        n_train=len(tr), n_val=len(va),
-        accuracy=accuracy,
-        baseline_acc=baseline_acc,
-        best_epoch=stopper.best_epoch if stopper else None,
-        epochs_run=stopper.epochs_run if stopper else None,
-        rules=benchmarks,
-        **money.fields(),
-    ), sig
+
+def run_fold(
+    fold_no: int, year: int, tr: list[int], va: list[int],
+    x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
+    dates: list[date], args, decisions: rules.Decisions | None = None,
+) -> list[tuple[FoldResult, profit.Signals]]:
+    """Train every enabled engine on `tr`, predict `va`, and hand each engine's
+    signals to the profit step.
+
+    `full` is the market over the whole date axis: a money loss trains on the
+    training bars' two segments, and the fold is scored on `va`'s. Returns, per
+    engine in registry order, the fold and the signals it stored, which the
+    profit step scored and a recalculation reads back. Every engine gets the
+    same rows and labels; only the network is scaled (R68).
+    """
+    y_va = y_all[va]
+    settings = profit.Settings.from_args(args)
+    market = full.take(va)
+    va_dates = [dates[i] for i in va]
+    benchmarks = (score_rules(decisions, va_dates, market, settings, args.symbol)
+                  if decisions is not None else ())
+    out: list[tuple[FoldResult, profit.Signals]] = []
+    for name, saved in walkforward_store.engines_of(args).items():
+        stopper = None
+        if name == "mlp":
+            output, fitted, stopper = fit_network(tr, va, x_all, y_all, full, dates, args)
+        else:
+            model = trees.train(name, x_all[tr], y_all[tr], engines.ENGINES[name].resolve(saved),
+                                weighted=bool(getattr(args, "class_weights", False)))
+            output, fitted = model.predict(x_all[va]), tr
+        sig = profit.Signals(
+            dates=va_dates,
+            exits=[dates[i + 1] if i + 1 < len(dates) else None for i in va],
+            output=output,
+            labels=np.asarray(y_va, dtype=np.int64),
+        )
+        money = profit.score(sig.output, market, settings)
+        pred = profit.calls(sig.output, settings.loss, settings.threshold)
+        accuracy, baseline_acc = fold_accuracy(pred, y_va, y_all[fitted], args.loss)
+        out.append((FoldResult(
+            fold=fold_no, engine=name,
+            train_from=dates[fitted[0]], train_to=dates[fitted[-1]], val_year=year,
+            n_train=len(fitted), n_val=len(va),
+            accuracy=accuracy,
+            baseline_acc=baseline_acc,
+            best_epoch=stopper.best_epoch if stopper else None,
+            epochs_run=stopper.epochs_run if stopper else None,
+            rules=benchmarks,
+            **money.fields(),
+        ), sig))
+    return out
 
 
 def score_rules(decisions: rules.Decisions, dates: list[date], m: profit.Market,
@@ -541,14 +576,14 @@ def park_series(cur, dates: list[date], mode: str) -> np.ndarray:
 
 
 def header_line() -> str:
-    return (f"\n{'fold':>4} {'val':>5} {'strat%':>8} {'hold%':>8} {'excess':>8} "
+    return (f"\n{'engine':<9}{'fold':>4} {'val':>5} {'strat%':>8} {'hold%':>8} {'excess':>8} "
             f"{'shrp':>6} {'maxdd':>7} {'trd':>4} │ {'out':>4} {'drift':>7} {'comm':>6} "
             f"{'tax':>6} {'timing':>7}")
 
 
 def fold_line(r: FoldResult) -> str:
-    """One fold, as the runner and a recalculation print it."""
-    return (f"{r.fold:>4} {r.val_year:>5} {r.strat_return:>8.2f} "
+    """One fold of one engine, as the runner and a recalculation print it."""
+    return (f"{r.engine:<9}{r.fold:>4} {r.val_year:>5} {r.strat_return:>8.2f} "
             f"{r.hold_return:>8.2f} {r.excess:>+8.2f} {r.strat_sharpe:>6.2f} "
             f"{r.strat_maxdd:>7.2f} {r.trades:>4} │ {r.days_out:>4} "
             f"{r.drift_tax:>+7.2f} {r.commissions:>+6.2f} {r.gains_tax:>+6.2f} "
@@ -782,6 +817,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Position below this counts as flat when a money-trained model "
                         "is evaluated by the binary rule")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--engines", default="mlp",
+                   help="Engines to train on every fold, comma-separated, from "
+                        f"{', '.join(engines.ENGINES)} (B9). The tree engines run on their "
+                        "default settings here; a saved strategy sets its own")
     p.add_argument("--test", action="store_true",
                    help="Spend the holdout: ONE fold, train through --last-val, evaluate "
                         "everything after it. A one-way door - tuning on the result "
@@ -1000,6 +1039,15 @@ def main(argv: list[str] | None = None) -> int:
             conn.close()
     # A strategy's timeframe is refused by `strategy_spec.fold_plan`, with its
     # other reasons; this is the same rule for a run set up by flags.
+    if args.strategy_id is None:
+        # Flags name the engines; a strategy's rows do, through `strategy_setup`.
+        args.engines = {n.strip(): {} for n in str(args.engines).split(",") if n.strip()}
+        refused = engines.refusals(args.engines, args.loss)
+        if refused:
+            for why in refused:
+                print(f"refused: {why}")
+            return 2
+        args.engines = {n: args.engines[n] for n in engines.ordered(args.engines)}
     if args.strategy_id is None and args.timeframe != "D1":
         print(f"refused: timeframe {args.timeframe!r} cannot run yet: walk-forward is "
               f"daily only (one row per date, {TRADING_DAYS} periods a year); use D1")
@@ -1135,6 +1183,13 @@ def main(argv: list[str] | None = None) -> int:
                              if args.tax_rate else "off: scored before tax"))
     print("engine       blind (D9): trained on returns alone; costs, tax, park and "
           "margin are the profit step's")
+    for rec in engines.record(args.engines, walkforward_store.hyperparams(args)):
+        e = engines.ENGINES[rec["engine"]]
+        print(f"  {e.name:<9}  {e.library} {rec['version'] or '(not installed)'}, seed "
+              f"{rec['seed']}, {'scaled per fold' if e.scaled else 'no scaler'}"
+              + ("" if e.name == "mlp" else
+                 "  " + ", ".join(f"{k} {v:g}" for k, v in rec["settings"].items()
+                                  if k != "seed")))
 
     # Opened before the first fold so the row exists while the run is still
     # going: fourteen retrains is minutes to hours, and a run that only appears
@@ -1178,13 +1233,18 @@ def main(argv: list[str] | None = None) -> int:
     print(header_line())
     results: list[FoldResult] = []
     for i, (year, tr, va) in enumerate(folds, 1):
-        r, sig = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions)
-        results.append(r)
-        if run_id is not None:
-            walkforward_store.save_fold(conn, run_id, r, sig, profit.Settings.from_args(args))
-        print(fold_line(r))
+        for r, sig in run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions):
+            results.append(r)
+            if run_id is not None:
+                walkforward_store.save_fold(conn, run_id, r, sig,
+                                            profit.Settings.from_args(args))
+            print(fold_line(r))
 
-    report(results, args, margin is not None)
+    for name in args.engines:
+        if len(args.engines) > 1:
+            e = engines.ENGINES[name]
+            print(f"\nENGINE {e.title} ({e.library} {e.version()})")
+        report([r for r in results if r.engine == name], args, margin is not None)
 
     if run_id is not None:
         # Stamps finished_at. Until this runs the row reads as in progress, so

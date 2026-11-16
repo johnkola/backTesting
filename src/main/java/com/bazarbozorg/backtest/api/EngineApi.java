@@ -286,6 +286,9 @@ public class EngineApi {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("run", runPayload(run));
             body.put("folds", folds);
+            // One line per engine over its folds (B9); the run's own figures
+            // above are its first engine's.
+            body.put("engineSummaries", com.bazarbozorg.backtest.model.EngineSummary.of(folds));
             return body;
         }
 
@@ -339,6 +342,9 @@ public class EngineApi {
         out.put("lastVal", run.lastVal());
         out.put("isTest", run.isTest());
         out.put("columns", jsonArray(run.columnsJson(), run.id(), "columns_json"));
+        // Each engine trained, with its settings, library version and seed (B9);
+        // null for a run from before, which trained the network alone.
+        out.put("engines", jsonArray(run.enginesJson(), run.id(), "engines_json"));
         out.put("strategy", strategyPayload(run));
         out.put("lineage", lineagePayload(run));
         out.put("execution", run.execution());

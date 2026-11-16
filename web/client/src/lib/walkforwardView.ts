@@ -215,9 +215,12 @@ export function isLeverageOnly(run: WalkforwardRun): boolean {
 /**
  * The flag for a run whose model does not beat the naive predictor on the same
  * folds (R72, B8), with both figures; null when it does or when there is
- * nothing to compare. A tie does not beat it.
+ * nothing to compare. A tie does not beat it. Takes one engine's summary too
+ * (B9), with the run's loss.
  */
-export function naiveFlag(run: WalkforwardRun): string | null {
+export function naiveFlag(
+  run: Pick<WalkforwardRun, 'beatsNaive' | 'meanAccuracy' | 'meanBaselineAcc' | 'loss'>,
+): string | null {
   if (run.beatsNaive !== false || run.meanAccuracy == null || run.meanBaselineAcc == null) {
     return null
   }

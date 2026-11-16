@@ -11,6 +11,11 @@ dependencies = [
     "psycopg-pool>=3.2",
     "numpy>=2.0",
     "torch>=2.6",
+    # The tree engines (B9, G35). xgboost-cpu is XGBoost without the CUDA
+    # libraries the plain wheel pulls in; both are trained through their native
+    # APIs, so neither needs scikit-learn.
+    "xgboost-cpu>=2.1",
+    "lightgbm>=4.5",
 ]
 
 [project.scripts]

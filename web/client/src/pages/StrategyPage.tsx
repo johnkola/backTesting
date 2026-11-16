@@ -1,11 +1,16 @@
 import { useMemo, useState } from 'react'
 import {
   api, isAbortError,
-  type FeatureCoverage, type Instrument, type ParamSpec, type SavedStrategy,
+  type EngineEntry, type FeatureCoverage, type Instrument, type ParamSpec, type SavedStrategy,
   type SavedStrategiesResponse,
 } from '../lib/api'
 import CoverageWarning, { FeatureListNotUsedNote } from '../components/CoverageWarning'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
+import {
+  NETWORK, applyLoss, enabledEngines, engineProblems, engineTitle, enginesPayload, enginesToForm,
+  settingHint, settingProblem, splitParamSpec, switchBlocked, unregisteredEngines,
+  type EngineForm,
+} from '../lib/engines'
 import { hintFor, paramHint } from '../lib/fieldHints'
 import { useApiData } from '../lib/useApiData'
 import { useTimeframe } from '../lib/useTimeframe'
@@ -21,9 +26,9 @@ import {
  * The Strategy tab — the builder (Architecture.md §8.1a / §8.2a).
  *
  * Compose a strategy *before* anything is trained: the feature subset, the four
- * date windows, the validation scheme, the model type, the label definition,
- * the hyperparameters, and the objective: the loss, the verdict metric, the cost
- * charged and where money parks. Saving stores a named, versioned record; Train executes
+ * date windows, the validation scheme, the model type, the engines that compete
+ * on the same folds (B9), the label definition, the hyperparameters, and the
+ * objective: the loss, the verdict metric, the cost charged and where money parks. Saving stores a named, versioned record; Train executes
  * one and makes no choices of its own.
  *
  * Why this is a separate tab rather than more fields on Train: the Train page
@@ -70,6 +75,12 @@ export default function StrategyPage() {
   const [params, setParams] = useState<Record<string, string>>({})
   // Null until touched, then derived from the API's defaults like the windows.
   const [editedObjective, setEditedObjective] = useState<ObjectiveForm | null>(null)
+  // B9: the engines, null until touched; derived from the registry like the
+  // objective. The notices say what changed without the user asking: an engine
+  // the new loss switched off, or one a cloned version named that is gone.
+  const [editedEngines, setEditedEngines] = useState<EngineForm | null>(null)
+  const [lossNotice, setLossNotice] = useState<string | null>(null)
+  const [cloneNotice, setCloneNotice] = useState<string | null>(null)
 
   // The series fields and the windows are stored as "what the user chose, or
   // null for not yet chosen", and the effective value is derived during render.
@@ -210,14 +221,45 @@ export default function StrategyPage() {
   const objectiveSpec = saved?.objectiveSpec
   const objectiveForm: ObjectiveForm | null = editedObjective
     ?? (objectiveSpec ? objectiveToForm(objectiveSpec.defaults) : null)
-  const setObjective = (part: Partial<ObjectiveForm>) =>
+  // The runner's engines (R22). Null when the loader did not answer: the form
+  // then saves as it did before B9, the network alone.
+  const registry: EngineEntry[] | null = saved?.engines ?? null
+  const engineForm: EngineForm | null = registry
+    ? editedEngines ?? enginesToForm(undefined, registry)
+    : null
+  const setObjective = (part: Partial<ObjectiveForm>) => {
     setEditedObjective((o) => ({ ...(o ?? objectiveForm!), ...part }))
+    // A loss an engine cannot train on switches it off, and says so: the form
+    // never keeps an unrunnable combination (B9).
+    if (part.loss && registry && engineForm) {
+      const { form, switchedOff } = applyLoss(engineForm, registry, part.loss)
+      if (switchedOff.length) {
+        setEditedEngines(form)
+        setLossNotice(`Switched off for the '${part.loss}' loss: `
+          + switchedOff.map((x) => x.reason).join(' '))
+      } else {
+        setLossNotice(null)
+      }
+    }
+  }
+  const setEngine = (engine: string, part: Partial<EngineForm[string]>) => {
+    setEditedEngines((f) => {
+      const base = f ?? engineForm!
+      return { ...base, [engine]: { ...(base[engine] ?? { enabled: false, settings: {} }), ...part } }
+    })
+    setLossNotice(null)
+  }
   const marginIssues = objectiveSpec && objectiveForm
     ? marginProblems(objectiveForm, objectiveSpec, symbol)
     : []
+  const engineIssues = registry && engineForm && objectiveForm
+    ? engineProblems(engineForm, registry, objectiveForm.loss)
+    : []
   const ready = !!(name.trim() && slice && selected.length > 0
-    && windowProblems.length === 0 && marginIssues.length === 0
+    && windowProblems.length === 0 && marginIssues.length === 0 && engineIssues.length === 0
     && objectiveSpec && objectiveForm && !busy)
+  const { shared: sharedParams, network: networkParams } = splitParamSpec(paramSpec)
+  const networkOff = !!engineForm && engineForm[NETWORK]?.enabled === false
 
   function setWindow(key: WindowKey, part: Partial<{ from: string, to: string }>) {
     setEditedWindows((w) => {
@@ -245,6 +287,8 @@ export default function StrategyPage() {
         label: { kind: 'forward_return_3class', horizonBars: Number(horizon) },
         hyperparams,
         objective: objectiveFromForm(objectiveForm, objectiveSpec),
+        // B9. Left out when the registry did not answer: the network alone.
+        ...(registry && engineForm ? { engines: enginesPayload(engineForm, registry) } : {}),
         notes: notes.trim() || null,
       })
       setResult(stored)
@@ -292,6 +336,14 @@ export default function StrategyPage() {
       Object.entries(s.hyperparams).map(([k, v]) => [k, String(v)]),
     ))
     setEditedObjective(objectiveToForm(s.objective))
+    // A version from before B9 reads as the network alone, which is what it ran.
+    setEditedEngines(registry ? enginesToForm(s.engines, registry) : null)
+    const gone = registry ? unregisteredEngines(s.engines, registry) : []
+    setCloneNotice(gone.length
+      ? `v${s.version} switched on ${gone.join(', ')}, which the runner no longer registers: `
+        + 'left out of this form.'
+      : null)
+    setLossNotice(null)
     setResult(null); setSubmitError(null)
   }
 
@@ -308,6 +360,7 @@ export default function StrategyPage() {
 
       <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
         <SavedList
+          registry={registry}
           saved={saved}
           loading={savedLoading}
           error={savedError}
@@ -536,32 +589,80 @@ export default function StrategyPage() {
           </Section>
 
           <Section
-            title="6 · Hyperparameters"
+            title="6 · Engines"
+            note="Every engine switched on trains on the same folds, rows, purge, features and labels, and is scored with the same costs and tax, so they compete on equal terms. Each gets its own line per fold on the Training tab. The list is what the runner registers."
+          >
+            {!registry || !engineForm ? (
+              <div className="alert alert-warning py-2">
+                <span className="text-sm">
+                  The runner&apos;s engine list did not load
+                  {saved?.enginesError ? `: ${saved.enginesError}` : '.'}{' '}
+                  This form saves the network alone. The API checks engines against the same
+                  list, so a save may be refused until the loader answers.
+                </span>
+              </div>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {registry.map((entry) => (
+                  <EngineCard
+                    key={entry.name}
+                    entry={entry}
+                    state={engineForm[entry.name] ?? { enabled: false, settings: {} }}
+                    blocked={objectiveForm ? switchBlocked(entry, objectiveForm.loss) : null}
+                    onToggle={(enabled) => setEngine(entry.name, { enabled })}
+                    onSetting={(key, value) => setEngine(entry.name, {
+                      settings: { ...engineForm[entry.name]?.settings, [key]: value },
+                    })}
+                  />
+                ))}
+              </div>
+            )}
+            {lossNotice && <p className="mt-3 text-sm text-warning">{lossNotice}</p>}
+            {cloneNotice && <p className="mt-3 text-sm text-warning">{cloneNotice}</p>}
+            {engineIssues.length > 0 && (
+              <ul className="mt-3 space-y-1">
+                {engineIssues.map((m) => <li key={m} className="text-sm text-error">{m}</li>)}
+              </ul>
+            )}
+          </Section>
+
+          <Section
+            title="7 · Shared inputs and the network's settings"
             note="Leave a field blank to use the model's default. Bounds are the ones the API enforces, so nothing here can be saved that training would later reject."
           >
+            <h3 className="text-sm font-medium mb-1">Every engine reads</h3>
+            <p className="text-xs text-base-content/60 mb-2">
+              The window each sample sees and the label it is taught: the same for every engine.
+            </p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {Object.entries(paramSpec).map(([key, spec]: [string, ParamSpec]) => (
-                <label key={key} className="form-control">
-                  <FieldLabel
-                    className="text-xs"
-                    text={spec.label}
-                    hint={paramHint(key, spec)}
-                  />
-                  <input
-                    className="input input-bordered input-sm"
-                    inputMode="decimal"
-                    placeholder="default"
-                    value={params[key] ?? ''}
-                    onChange={(e) => setParams((p) => ({ ...p, [key]: e.target.value }))}
-                  />
-                </label>
+              {sharedParams.map(([key, spec]) => (
+                <ParamField
+                  key={key} name={key} spec={spec} value={params[key] ?? ''}
+                  onChange={(v) => setParams((p) => ({ ...p, [key]: v }))}
+                />
+              ))}
+            </div>
+            <h3 className="text-sm font-medium mt-4 mb-1">
+              {engineTitle(NETWORK, registry)}
+            </h3>
+            <p className={`text-xs mb-2 ${networkOff ? 'text-warning' : 'text-base-content/60'}`}>
+              {networkOff
+                ? 'Switched off in 6 · Engines: these settings are saved but no run uses them.'
+                : 'The network\'s own settings. The other engines keep theirs in 6 · Engines.'}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {networkParams.map(([key, spec]) => (
+                <ParamField
+                  key={key} name={key} spec={spec} value={params[key] ?? ''}
+                  onChange={(v) => setParams((p) => ({ ...p, [key]: v }))}
+                />
               ))}
             </div>
           </Section>
 
           {objectiveSpec && objectiveForm && (
             <Section
-              title="7 · Objective and costs"
+              title="8 · Objective and costs"
               note="What the model is trained to want, the metric that decides whether a run beat holding, and what each trade costs. Every value is saved with the strategy, so a run cannot be charged something its record does not show."
             >
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -573,6 +674,11 @@ export default function StrategyPage() {
                   >
                     {objectiveSpec.losses.map((l) => <option key={l} value={l}>{l}</option>)}
                   </select>
+                  {lossNotice && (
+                    <span className="label-text-alt mt-1 text-warning">
+                      Switched an engine off: see 6 · Engines.
+                    </span>
+                  )}
                 </label>
                 {objectiveForm.loss === 'ce' ? (
                   <label className="form-control">
@@ -735,12 +841,111 @@ export default function StrategyPage() {
               <span>
                 Saved <span className="font-mono">{result.name}</span> as version{' '}
                 <span className="font-mono">v{result.version}</span> — {result.features.length}{' '}
-                features, by {result.createdBy}. Train can run it now.
+                features on {enginesLabel(result, registry)}, by {result.createdBy}. Train can
+                run it now.
               </span>
             </div>
           )}
         </form>
       </div>
+    </div>
+  )
+}
+
+/** The engines a saved version switches on, by title (B9). */
+function enginesLabel(s: SavedStrategy, registry: EngineEntry[] | null): string {
+  const on = enabledEngines(s.engines, registry)
+  return on.length ? on.map((n) => engineTitle(n, registry)).join(' + ') : 'no engine on'
+}
+
+/** One hyperparameter field: blank is the model default, the hint gives the bounds. */
+function ParamField(
+  { name, spec, value, onChange }: {
+    name: string, spec: ParamSpec, value: string, onChange: (v: string) => void
+  },
+) {
+  return (
+    <label className="form-control">
+      <FieldLabel className="text-xs" text={spec.label} hint={paramHint(name, spec)} />
+      <input
+        className="input input-bordered input-sm"
+        inputMode="decimal"
+        placeholder="default"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  )
+}
+
+/**
+ * One engine's catalogue entry (R74), its switch and its settings (B9).
+ *
+ * A switch the runner could not honour is disabled with the reason beside it,
+ * never offered (R22); one already on stays switchable off. The network shows
+ * no settings here: its settings are the hyperparameters in section 7.
+ */
+function EngineCard(
+  { entry, state, blocked, onToggle, onSetting }: {
+    entry: EngineEntry
+    state: EngineForm[string]
+    /** Why it cannot be switched on, or null. */
+    blocked: string | null
+    onToggle: (enabled: boolean) => void
+    onSetting: (key: string, value: string) => void
+  },
+) {
+  return (
+    <div className={`rounded-box bg-base-100 p-3 border ${
+      state.enabled ? 'border-primary/40' : 'border-base-300'}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="font-medium">{entry.title}</h3>
+          <p className="text-xs text-base-content/60">
+            {entry.library}{' '}
+            {entry.version ?? <span className="text-warning">not installed</span>}
+            {' · '}{entry.scaled ? 'scaled inputs' : 'no scaler'}
+          </p>
+        </div>
+        <span className={tipClass} data-tip={blocked ?? `Train ${entry.title} in every fold`}>
+          <input
+            type="checkbox" className="toggle toggle-sm toggle-primary"
+            aria-label={`Train ${entry.title}`}
+            checked={state.enabled}
+            disabled={!!blocked && !state.enabled}
+            onChange={(e) => onToggle(e.target.checked)}
+          />
+        </span>
+      </div>
+      <p className="text-xs mt-2">{entry.description}</p>
+      <p className="text-xs text-base-content/60 mt-1">Checked by: {entry.checkedBy}</p>
+      {blocked && <p className="text-xs text-warning mt-1">{blocked}</p>}
+      {entry.settings.length === 0 ? (
+        <p className="text-xs text-base-content/60 mt-2">
+          Its settings are in 7 · Shared inputs and the network&apos;s settings.
+        </p>
+      ) : (
+        <div className={`grid gap-2 sm:grid-cols-2 mt-2 ${state.enabled ? '' : 'opacity-60'}`}>
+          {entry.settings.map((st) => {
+            const raw = state.settings[st.key] ?? ''
+            const bad = settingProblem(entry, st, raw)
+            return (
+              <label key={st.key} className="form-control">
+                <FieldLabel className="text-xs" text={st.label} hint={settingHint(st)} />
+                <input
+                  className={`input input-bordered input-sm ${bad ? 'input-error' : ''}`}
+                  inputMode="decimal"
+                  placeholder={String(st.default)}
+                  title={bad ?? undefined}
+                  value={raw}
+                  onChange={(e) => onSetting(st.key, e.target.value)}
+                />
+              </label>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -762,7 +967,8 @@ function Section(
  * form so a strategy can be cloned and one choice varied at a time.
  */
 function SavedList(
-  { saved, loading, error, onClone, onRemove }: {
+  { registry, saved, loading, error, onClone, onRemove }: {
+    registry: EngineEntry[] | null
     saved: SavedStrategiesResponse | null
     loading: boolean
     error: string | null
@@ -793,6 +999,10 @@ function SavedList(
               <span className="badge badge-ghost badge-sm ml-2">v{s.version}</span>
               <span className="block text-xs text-base-content/60 mt-0.5">
                 {s.instrument} · {s.timeframe} · {s.features.length} features
+                {/* B9: named only when it is not the network alone, as every
+                    version before B9 was. */}
+                {enabledEngines(s.engines, registry).join() !== NETWORK
+                  && ` · ${enginesLabel(s, registry)}`}
               </span>
             </button>
             <button

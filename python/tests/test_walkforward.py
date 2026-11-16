@@ -341,6 +341,7 @@ def test_strategy_setup_resolves_the_set_columns_and_settings():
     args = wf.build_parser().parse_args(["--strategy-id", "7"])
     cur = _QueueCursor(
         [_strategy_row()],                         # load
+        [(False,)],                                # no strategy_engines table yet
         [(11,)],                                   # latest_set_id
         [("price_close", 3270), ("vix", 2500)],    # column_counts
         [(3270,)],                                 # window_bars
@@ -362,6 +363,7 @@ def test_strategy_setup_drops_a_data_only_column_and_says_why():
     args = wf.build_parser().parse_args(["--strategy-id", "7"])
     cur = _QueueCursor(
         [_strategy_row(("price_close", "rsi_14"))],
+        [(False,)],
         [(11,)],
         [("price_close", 3270), ("rsi_14", 3270)],
         [(3270,)],
@@ -375,7 +377,7 @@ def test_strategy_setup_drops_a_data_only_column_and_says_why():
 
 def test_strategy_setup_refuses_a_set_of_another_series():
     args = wf.build_parser().parse_args(["--strategy-id", "7", "--set-id", "99"])
-    cur = _QueueCursor([_strategy_row()], [])      # load, then set_matches: no row
+    cur = _QueueCursor([_strategy_row()], [(False,)], [])  # load, then set_matches: no row
     with pytest.raises(wf.strategy_spec.StrategyRefused, match="--set-id 99"):
         wf.strategy_setup(cur, args, {"strategy_id", "set_id"})
 

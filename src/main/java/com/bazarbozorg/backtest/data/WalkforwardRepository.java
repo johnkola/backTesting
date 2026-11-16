@@ -67,7 +67,7 @@ public class WalkforwardRepository {
                    r.feature_set_id, r.input_width, r.objective, r.loss,
                    r.cost_bps, r.park, r.threshold, r.tax_rate, r.recalculated_from, r.purge_bars,
                    r.train_start, r.first_val, r.last_val, r.is_test,
-                   r.hyperparams_json, r.columns_json,
+                   r.hyperparams_json, r.columns_json, r.engines_json,
                    r.strategy_id, r.strategy_name, r.strategy_version,
                    r.dropped_json, r.partial_json,
                    r.train_first, r.train_bars_used, r.train_bars, r.test_end,
@@ -108,6 +108,9 @@ public class WalkforwardRepository {
               JOIN instruments i ON i.id = r.instrument_id
               JOIN data_sources ds ON ds.id = r.source_id
               LEFT JOIN walkforward_folds f ON f.run_id = r.id
+                   -- One engine's folds: the run's first (B9), or the network
+                   -- for a run from before engines were recorded.
+                   AND f.engine = COALESCE((r.engines_json::jsonb) -> 0 ->> 'engine', 'mlp')
               LEFT JOIN feature_sets fs ON fs.id = r.feature_set_id
               LEFT JOIN feature_runs fr_then ON fr_then.id = r.feature_run_id
               LEFT JOIN feature_runs fr_now ON fr_now.id = fs.current_run_id
@@ -182,16 +185,22 @@ public class WalkforwardRepository {
      */
     public List<WalkforwardFold> findFolds(long runId) {
         String sql = """
-                SELECT run_id, fold, val_year, train_from, train_to, n_train, n_val,
-                       strat_return, hold_return, strat_sharpe, hold_sharpe,
-                       strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,
-                       days_out, drift_tax, commissions, timing, gains_tax,
-                       best_epoch, epochs_run, hold_commissions, hold_gains_tax,
-                       margin_interest, margin_calls, trims, days_long, days_hedged, core_at_risk,
-                       levered_return
-                  FROM walkforward_folds
-                 WHERE run_id = ?
-                 ORDER BY fold
+                SELECT f.run_id, f.fold, f.engine, f.val_year, f.train_from, f.train_to,
+                       f.n_train, f.n_val,
+                       f.strat_return, f.hold_return, f.strat_sharpe, f.hold_sharpe,
+                       f.strat_maxdd, f.hold_maxdd, f.trades, f.accuracy, f.baseline_acc,
+                       f.days_out, f.drift_tax, f.commissions, f.timing, f.gains_tax,
+                       f.best_epoch, f.epochs_run, f.hold_commissions, f.hold_gains_tax,
+                       f.margin_interest, f.margin_calls, f.trims, f.days_long, f.days_hedged,
+                       f.core_at_risk, f.levered_return
+                  FROM walkforward_folds f
+                  JOIN walkforward_runs r ON r.id = f.run_id
+                 WHERE f.run_id = ?
+                 -- Each fold's engines in the order the run recorded them (B9).
+                 ORDER BY f.fold,
+                       array_position(ARRAY(SELECT e ->> 'engine' FROM jsonb_array_elements(
+                           COALESCE(r.engines_json, '[]')::jsonb) e), f.engine::text),
+                       f.engine
                 """;
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -236,7 +245,7 @@ public class WalkforwardRepository {
         }
         List<WalkforwardFold> out = new ArrayList<>();
         for (WalkforwardFold f : folds) {
-            out.add(new WalkforwardFold(f.runId(), f.fold(), f.valYear(), f.trainFrom(),
+            out.add(new WalkforwardFold(f.runId(), f.fold(), f.engine(), f.valYear(), f.trainFrom(),
                     f.trainTo(), f.nTrain(), f.nVal(), f.stratReturn(), f.holdReturn(),
                     f.stratSharpe(), f.holdSharpe(), f.stratMaxdd(), f.holdMaxdd(), f.trades(),
                     f.accuracy(), f.baselineAcc(), f.daysOut(), f.driftTax(), f.commissions(),
@@ -364,6 +373,7 @@ public class WalkforwardRepository {
                 rs.getBoolean("is_test"),
                 rs.getString("hyperparams_json"),
                 rs.getString("columns_json"),
+                rs.getString("engines_json"),
                 mapProvenance(rs),
                 mapLineage(rs),
                 mapExecution(rs),
@@ -392,6 +402,7 @@ public class WalkforwardRepository {
         return new WalkforwardFold(
                 rs.getLong("run_id"),
                 rs.getInt("fold"),
+                rs.getString("engine"),
                 rs.getInt("val_year"),
                 rs.getDate("train_from").toLocalDate(),
                 rs.getDate("train_to").toLocalDate(),

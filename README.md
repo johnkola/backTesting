@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-7** · 2026-11-16 13:05 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-8** · 2026-11-16 13:47 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -303,7 +303,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | Endpoint | Body / params | Does |
 |---|---|---|
 | `GET /api/walkforward/runs` | `timeframe` `includeTest` `limit` | `{items, timeframe, includeTest, limit}` — walk-forward runs, newest first, each with its folds summarised on read: `folds`, `foldsWon`, `meanExcess`, `worstStratDrawdown`, `totalTrades` and the cost attribution (`meanDriftTax`, `meanCommissions`, `meanTiming`). None of that is stored; it is aggregated from `walkforward_folds`, so it cannot disagree with the folds. A run with no folds yet reports `null` for each average rather than a zero that reads as a measurement, and `inProgress` is true until `finishedAt` is stamped. **Holdout runs are excluded** unless `includeTest=true` — spending the test block is a one-way door, and listing those runs beside the validation ones is how it becomes training data. `limit` defaults to 50, capped at 500 |
-| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. Every run carries `execution`: `kind` is `signals` (Strategy 1) or `margin` (Strategy 2), with its dials (`leveragePct`, `hedgePct`, `marginSpreadPct`, `maintenancePct`, `longThreshold`) and margin summary (`meanMarginInterest`, `marginCalls`, `trims`, `coreAtRisk`, `meanDaysLong`, `meanDaysHedged`), all `null` under Strategy 1; a Strategy 2 fold carries `marginInterest`, `marginCalls`, `trims`, `daysLong`, `daysHedged`, `coreAtRisk` and `leveredReturn` (the same fold always long on margin, no model), and the run `execution.meanLeveredReturn`, `execution.foldsBeatLevered` and `beatsLeveredOnReturn` (false beside a win over buy-and-hold means the win is the borrowing, not the timing); each fold's buy-and-hold (`holdReturn`, `holdSharpe`, `holdMaxdd`) is scored with the fold under the run's own settings, with its own `holdCommissions` and `holdGainsTax`; the gap's cost terms are the strategy's minus these. Every run carries `meanAccuracy` and `meanBaselineAcc`, the fold means of the model's accuracy and of the naive predictor's (R72), and `beatsNaive`, false when the model does not beat it (a tie does not); the Training tab badges such a run "below naive" and the runner prints a `NAIVE` line. Each fold's `benchmarks` holds Faber and dual momentum: `{name, available, reason, returnPct, sharpe, maxdd, trades, barsHeld, commissions, gainsTax}`. `recalculatedFrom` is the run whose stored signals this one was scored from without retraining, `null` on a run that trained. `404` for an unknown id, `400` for a non-numeric one |
+| `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. Every run carries `execution`: `kind` is `signals` (Strategy 1) or `margin` (Strategy 2), with its dials (`leveragePct`, `hedgePct`, `marginSpreadPct`, `maintenancePct`, `longThreshold`) and margin summary (`meanMarginInterest`, `marginCalls`, `trims`, `coreAtRisk`, `meanDaysLong`, `meanDaysHedged`), all `null` under Strategy 1; a Strategy 2 fold carries `marginInterest`, `marginCalls`, `trims`, `daysLong`, `daysHedged`, `coreAtRisk` and `leveredReturn` (the same fold always long on margin, no model), and the run `execution.meanLeveredReturn`, `execution.foldsBeatLevered` and `beatsLeveredOnReturn` (false beside a win over buy-and-hold means the win is the borrowing, not the timing); each fold's buy-and-hold (`holdReturn`, `holdSharpe`, `holdMaxdd`) is scored with the fold under the run's own settings, with its own `holdCommissions` and `holdGainsTax`; the gap's cost terms are the strategy's minus these. Every run carries `meanAccuracy` and `meanBaselineAcc`, the fold means of the model's accuracy and of the naive predictor's (R72), and `beatsNaive`, false when the model does not beat it (a tie does not); the Training tab badges such a run "below naive" and the runner prints a `NAIVE` line. Each fold's `benchmarks` holds Faber and dual momentum: `{name, available, reason, returnPct, sharpe, maxdd, trades, barsHeld, commissions, gainsTax}`. `recalculatedFrom` is the run whose stored signals this one was scored from without retraining, `null` on a run that trained. A run trains every engine its strategy switches on (B9): `run.engines` lists each one's `{engine, library, version, seed, scaled, settings}` (`null` on a run from before, which trained the network alone), each fold row carries its `engine`, one row per engine per fold, and `engineSummaries` gives each engine's `{folds, foldsWon, meanExcess, meanStratReturn, meanHoldReturn, meanStratSharpe, worstStratDrawdown, totalTrades, meanTiming, meanAccuracy, meanBaselineAcc, beatsNaive, beatsHoldOnReturn}`. The run's own summary figures, here and in the list, are its first engine's. `404` for an unknown id, `400` for a non-numeric one |
 | `GET /api/strategies` | — | `{items: [...]}` — every registered strategy with its description, default parameters, and `requiresTrainedModel`. What a strategy picker and parameter form are built from |
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing` | Runs a backtest, saves it, returns the full result. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range |
 | `DELETE /api/results/:id` | — | Deletes one saved result. `404` if it doesn't exist |
@@ -322,10 +322,11 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
 | `GET /api/nn/pipeline/status` | `timeframe` (default `D1`), `fresh` | Each pipeline stage's state (`passed`, `failed`, `stale`, `empty`, `unknown`, `running`) with the reasons, as the pipeline tabs show them; per strategy, whether its newest walk-forward run would read the same inputs if rerun (`fresh`, `stale`, `unknown`), and which stored backtest results a later fix has touched. Kept for a minute; `fresh=1` recomputes. See [Pipeline stage states](#pipeline-stage-states) |
-| `POST /api/nn/train` | `symbol`, `source`, `timeframe`, `mode`, hyperparameters | Trains and caches a model. `mode` is `auto` / `force` / `load_only`; `404` on a `load_only` miss |
-| `POST /api/nn/predict_range` | `symbol`, `source`, `timeframe`, `cache_key`, `version_id`, `since`, `until` | Predicts every bar in a range in one call. This is what the engine uses |
+| `POST /api/nn/train` | `symbol`, `source`, `timeframe`, `mode`, hyperparameters, `engine`, `engine_settings` | Trains and caches a model. `mode` is `auto` / `force` / `load_only`; `404` on a `load_only` miss. `engine` is `mlp` (the default, the network, with the hyperparameter fields) or `xgboost` / `lightgbm` with their own `engine_settings` (B9), on the same rows, labels and purged split; a tree model is saved in its library's format under its own strategy name, with no scaler. `400` for an unknown engine or a setting out of bounds |
+| `POST /api/nn/predict_range` | `symbol`, `source`, `timeframe`, `cache_key`, `version_id`, `since`, `until`, `engine` | Predicts every bar in a range in one call. This is what the engine uses; `engine` (default `mlp`) says whose model to load |
 | `POST /api/nn/predict` | `cache_key`, `version_id`, feature rows | Single-shot scoring against a stored model, for callers that already have features |
 | `GET /api/nn/models` | `strategy` | Cached models from the loader's own registry |
+| `GET /api/nn/engines` | — | The engines the runner registers (B9): `items`, each `{name, title, kind, library, version, description, checkedBy, scaled, losses, settings}`, `settings` being `{key, kind, default, min, max, label}`. The one list: the API checks a saved strategy's engines against it and the Strategy tab draws its engine sections from it |
 | `GET /api/nn/features/preview` | `column`, `set` (default: the newest), `days` (default 730) or `from`/`to` | One feature column before and after its normalization method, per date: `points` of `{date, before, after}`, where `before` is the series the method was given as the set recorded it, and `after` the stored value (null on a warm-up day). `configMatches` is false when the set was built from another `features.toml`. The Normalization tab's preview. `404` for a column the set does not hold, `400` for a bad window |
 | `POST /api/nn/walkforward` | `strategyId`, `label` | Starts `python -m nn.walkforward --strategy-id N [--label=…]` in the loader and returns `202` with the job. The strategy is checked first: `400` with `reasons` if it cannot run as saved, `404` if it does not exist, `409` while another run is going (one at a time). Validation folds only; the holdout (`--test`) is terminal-only. The run itself lands in `GET /api/walkforward/runs` as the runner records it |
 | `GET /api/nn/walkforward/jobs` | — | `{items, running}` — jobs started since the loader came up, newest first (last 20): `running`, `exitCode`, `runId` once the runner opens its row, and the last 40 lines of output. In memory only; a restart forgets them, and `walkforward_runs` stays the record. A job that ends with `runId: null` was refused or crashed, and its output says which |
@@ -505,6 +506,18 @@ Both models come in `Percentage` and `Fixed` flavours and are configured in
 fill. See [Configuration](#configuration) to change them. A strategy that trades often
 pays these on every round trip, twice; if two runs differ only in trade count, that is
 usually most of the difference.
+
+**A strategy runs every engine it switches on** (build step B9). The engines are the
+neural network, XGBoost and LightGBM, registered once in the loader (`GET
+/api/nn/engines`). The Strategy tab has a section per engine: its catalogue entry, its
+switch and its settings; the network's settings are the hyperparameters. One walk-forward
+run trains every engine switched on, fold by fold, on the same rows, labels and purge, and
+scores each with the same costs and tax beside the same benchmarks: the Training tab shows
+a line per engine per fold and a summary per engine. The tree engines take no scaler and
+train the class label only, so a money-trained loss (`return`, `sharpe`, `calmar`) with a
+tree engine on is refused with the reason. A run from flags names its engines with
+`--engines mlp,xgboost,lightgbm` (default `mlp`), the tree engines on their defaults. Each
+run records every engine's settings, library version and seed.
 
 **A model result says whether it is in-sample** (build step B4). A model is found by its
 configuration, not its data window, so nothing stops a backtest over the very bars it
@@ -1054,6 +1067,22 @@ asked for as `requested_since` and `requested_until`, and the scored bars as
 `validation_window`. The Models page and the in-sample mark (B4) read that window. See
 [Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
 
+### `xgboost` and `lightgbm`
+
+**Gradient boosting** in place of the network (B9): many small decision trees, each
+correcting the errors of the ones before; LightGBM grows its trees leaf by leaf. Trained
+and served by the loader like `nn-feedforward`, on the same candle features, labels and
+purged split, so the three can be backtested side by side; each must be trained first.
+No scaler, since a split does not care about a feature's scale.
+
+The shared parameters are `nn-feedforward`'s inputs and label: `lookbackWindow`,
+`forwardBars`, `buyThreshold`, `sellThreshold`, `trainSplitRatio`. Every other `-p` is the
+engine's own setting, checked by the loader against its registry (`GET /api/nn/engines`):
+for XGBoost `nEstimators`, `maxDepth`, `learningRate`, `subsample`, `colsampleBytree`,
+`minChildWeight`, `seed`; for LightGBM `numLeaves` and `minChildSamples` in place of the
+depth and child weight. They train on one thread with the seed, so the same settings give
+the same model.
+
 ---
 
 **Adding one:** implement `TradingStrategy` — usually by extending
@@ -1071,6 +1100,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-8 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9: the engines (network, XGBoost, LightGBM); `GET /api/nn/engines`; engine fields on train, predict and walk-forward runs; the `xgboost` and `lightgbm` strategies |
 | 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5: the single-split trainers purge; what a model's training window records |
 | 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4: in-sample model results marked; `GET /api/nn/models/window`; the backfill command |
 | 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2: entries are sized on the slipped fill with the commission inside the cash |

@@ -773,12 +773,30 @@ function readModelsFromDisk() {
 // saved strategy create a new version rather than overwrite, so every run keeps
 // pointing at exactly what it was trained from.
 
+/**
+ * The engines the runner registers (B9, R22), from the loader: the one list the
+ * builder offers and a saved strategy is checked against. Null when the loader
+ * does not answer, with the reason.
+ */
+async function engineRegistry() {
+  try {
+    const body = await getUpstreamJson(`${LOADER_URL}/api/nn/engines`, 5000);
+    return { items: Array.isArray(body.items) ? body.items : null, error: null };
+  } catch (err) {
+    return { items: null, error: err.message };
+  }
+}
+
 app.get('/api/strategies/saved', async (req, res) => {
   try {
     const name = typeof req.query.name === 'string' && req.query.name ? req.query.name : null;
     const latestOnly = /^(1|true|yes)$/i.test(String(req.query.latest || ''));
+    const registry = await engineRegistry();
     res.json({
       items: await strategies.list({ name, latestOnly }),
+      // Read from the runner, never listed here (R22).
+      engines: registry.items,
+      enginesError: registry.error,
       // The form is generated from the same spec the validator enforces.
       paramSpec: strategies.PARAM_SPEC,
       objectiveSpec: strategies.OBJECTIVE_SPEC,
@@ -810,7 +828,13 @@ app.get('/api/strategies/saved/:id', async (req, res) => {
 // parser would consume that stream before the proxy could forward it -- the
 // upstream would then see an empty body and answer 422.
 app.post('/api/strategies/saved', express.json({ limit: '256kb' }), async (req, res) => {
-  const checked = strategies.validateStrategy(req.body);
+  const registry = await engineRegistry();
+  if (!registry.items) {
+    return res.status(503).json({
+      error: `the engine registry is unavailable, so the engines cannot be checked: ${registry.error}`,
+    });
+  }
+  const checked = strategies.validateStrategy(req.body, registry.items);
   if (!checked.ok) {
     // 422, not 400: the body parsed fine, the values are what is wrong.
     return res.status(422).json({ error: checked.errors.join('; '), errors: checked.errors });

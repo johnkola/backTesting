@@ -92,6 +92,16 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         return "nn-feedforward";
     }
 
+    /**
+     * The engine this strategy's models are (B9): the network here,
+     * {@code xgboost} or {@code lightgbm} in {@link TreeEngineStrategy}. Sent
+     * on every train and predict call, so the loader trains, loads and serves
+     * the matching model.
+     */
+    protected String engine() {
+        return "mlp";
+    }
+
     @Override
     public String getDescription() {
         return "Neural Network Feedforward (Python loader)";
@@ -174,7 +184,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         } catch (ModelNotCachedException e) {
             throw e;
         } catch (RuntimeException e) {
-            throw new RuntimeException("nn-feedforward: /api/nn/train failed: " + e.getMessage(), e);
+            throw new RuntimeException(getName() + ": /api/nn/train failed: " + e.getMessage(), e);
         }
 
         // For LOAD_ONLY the loader returned 'cached' or 404 (already mapped to
@@ -195,13 +205,14 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         body.addProperty("timeframe", modelContext.timeframe().name());
         body.addProperty("since", since);
         body.addProperty("until", until);
+        body.addProperty("engine", engine());
 
         JsonObject predResp;
         try {
             predResp = postJson("/api/nn/predict_range", body);
         } catch (RuntimeException e) {
             throw new RuntimeException(
-                    "nn-feedforward: /api/nn/predict_range failed: " + e.getMessage(), e);
+                    getName() + ": /api/nn/predict_range failed: " + e.getMessage(), e);
         }
 
         int firstPredictedBarIndex = predResp.get("firstPredictedBarIndex").getAsInt();
@@ -260,20 +271,31 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         }
 
         // Pass through every known hyperparam override. Names match the
-        // Python TrainRequest schema (snake_case).
+        // Python TrainRequest schema (snake_case). The inputs, label and split
+        // are every engine's; the rest are the model's own.
+        body.addProperty("engine", engine());
         addIntParam(body, "lookback_window", "lookbackWindow");
         addIntParam(body, "forward_bars", "forwardBars");
         addDoubleParam(body, "buy_threshold", "buyThreshold");
         addDoubleParam(body, "sell_threshold", "sellThreshold");
+        addDoubleParam(body, "train_split_ratio", "trainSplitRatio");
+        addModelParams(body);
+        return body;
+    }
+
+    /** The parameter names every engine shares: inputs, label and split. */
+    protected static final java.util.Set<String> SHARED_PARAMETERS = java.util.Set.of(
+            "lookbackWindow", "forwardBars", "buyThreshold", "sellThreshold", "trainSplitRatio");
+
+    /** The network's own hyperparameters, in the loader's names. */
+    protected void addModelParams(JsonObject body) {
         addIntParam(body, "hidden_size", "hiddenLayerSize");
         addIntParam(body, "num_hidden", "numHiddenLayers");
         addDoubleParam(body, "dropout_rate", "dropoutRate");
         addDoubleParam(body, "learning_rate", "learningRate");
         addIntParam(body, "num_epochs", "numEpochs");
         addIntParam(body, "batch_size", "batchSize");
-        addDoubleParam(body, "train_split_ratio", "trainSplitRatio");
         addIntParam(body, "seed", "seed");
-        return body;
     }
 
     private void addIntParam(JsonObject body, String pyName, String javaKey) {

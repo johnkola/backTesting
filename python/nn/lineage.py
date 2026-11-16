@@ -24,6 +24,7 @@ versioned feature sets, which G3 deliberately left as a later decision.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -105,6 +106,10 @@ def lib_versions() -> dict[str, str]:
         out["psycopg"] = psycopg.__version__
     except ImportError:
         pass
+    # The tree engines' libraries (B9), when installed.
+    for name in ("xgboost", "lightgbm"):
+        with contextlib.suppress(ImportError):
+            out[name] = __import__(name).__version__
     return out
 
 

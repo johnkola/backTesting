@@ -1,12 +1,16 @@
 import { useCallback, useState } from 'react'
 import BenchmarkTable from '../../components/BenchmarkTable'
-import { foldBenchmarkRows } from '../../lib/benchmarks'
 import {
   api,
+  type EngineSummary,
   type TrainedModel,
   type WalkforwardRun,
   type WalkforwardFold,
 } from '../../lib/api'
+import {
+  NETWORK, engineBenchmarkRows, engineRecordLine, engineTitle, foldEngine, isNetworkAlone,
+  runEnginesNote,
+} from '../../lib/engines'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import {
@@ -36,6 +40,10 @@ type Loaded = { items: TrainedModel[], modelsDir: string }
  * only the last of those is the model. Without the split, "the model lost 20
  * points" and "the model is absent and the structure lost 20 points" look the
  * same.
+ *
+ * A run of several engines (B9) has one fold row per engine, an engine summary
+ * and one strategy line per engine beside the benchmarks, which are the fold's
+ * and counted once. Its line in the run list is its first engine's.
  */
 export default function TrainingStage() {
   const [tf] = useTimeframe()
@@ -59,6 +67,9 @@ export default function TrainingStage() {
   )
   // Strategy 2 (G5): the fold table swaps Strategy 1's attribution for margin figures.
   const margin = detail?.run.execution?.kind === 'margin'
+  // B9: a run of several engines has one fold row per engine, so the fold
+  // table names the engine. A run of the network alone reads as before.
+  const engineColumn = !!detail && !isNetworkAlone(detail.run)
 
   const { data, error } = useApiData<Loaded>((signal) => api.models(tf, signal), [tf])
 
@@ -173,6 +184,7 @@ export default function TrainingStage() {
                       {r.strategy.version !== null && ` v${r.strategy.version}`}
                     </div>
                   )}
+                  <RunEngines run={r} />
                   {r.isTest && (
                     <span
                       className="badge badge-xs badge-warning ml-2 tooltip"
@@ -318,12 +330,15 @@ export default function TrainingStage() {
           {detail && (
             <>
               <RunProvenance run={detail.run} />
+              {engineColumn && detail.engineSummaries && (
+                <EngineSummaries run={detail.run} summaries={detail.engineSummaries} />
+              )}
               <p className="text-xs text-base-content/70 mb-1">
                 Beside the benchmarks, a fold&apos;s mean under the run&apos;s own costs and tax
-                (worst drawdown of any fold):
+                (worst drawdown of any fold){engineColumn && ', one strategy line per engine'}:
               </p>
               <BenchmarkTable
-                rows={foldBenchmarkRows(detail.folds)} unit="trading days"
+                rows={engineBenchmarkRows(detail.folds)} unit="trading days"
                 tradesNote="Position changes a fold, every row alike: each buy and each sale, the last at the fold's end."
               />
               <div className="overflow-x-auto bg-base-200 rounded-box">
@@ -331,6 +346,7 @@ export default function TrainingStage() {
                   <thead>
                     <tr>
                       <th className="text-right">Fold</th>
+                      {engineColumn && <th>Engine</th>}
                       <th className="text-right">Val year</th>
                       <th>Trained on</th>
                       <th className="text-right">Rows</th>
@@ -376,23 +392,31 @@ export default function TrainingStage() {
                       </th>
                       <th
                         className="text-right tooltip tooltip-left"
-                        data-tip="Early stopping: the epoch kept / epochs trained"
+                        data-tip="Early stopping: the epoch kept / epochs trained. The network's only."
                       >
                         Epochs
                       </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.folds.map((f: WalkforwardFold) => {
+                    {detail.folds.map((f: WalkforwardFold, i) => {
                       const excess = f.stratReturn - f.holdReturn
+                      const engine = foldEngine(f)
+                      // The fold's own columns repeat on its second engine's
+                      // row on; dimmed, so each fold reads as one group.
+                      const again = i > 0 && detail.folds[i - 1].fold === f.fold
+                        ? 'opacity-40' : ''
                       return (
-                        <tr key={f.fold}>
-                          <td className="text-right">{f.fold}</td>
-                          <td className="text-right font-mono">{f.valYear}</td>
-                          <td className="font-mono text-xs whitespace-nowrap">
+                        <tr key={`${f.fold}:${engine}`}>
+                          <td className={`text-right ${again}`}>{f.fold}</td>
+                          {engineColumn && (
+                            <td className="text-xs whitespace-nowrap">{engineTitle(engine)}</td>
+                          )}
+                          <td className={`text-right font-mono ${again}`}>{f.valYear}</td>
+                          <td className={`font-mono text-xs whitespace-nowrap ${again}`}>
                             {f.trainFrom} .. {f.trainTo}
                           </td>
-                          <td className="text-right text-xs">
+                          <td className={`text-right text-xs ${again}`}>
                             {f.nTrain.toLocaleString()} / {f.nVal.toLocaleString()}
                           </td>
                           <td className="text-right font-mono">{num(f.stratReturn)}</td>
@@ -471,11 +495,15 @@ export default function TrainingStage() {
                           </td>
                           <td
                             className="text-right font-mono text-xs"
-                            title={f.epochsRun === null
-                              ? 'Trained a fixed number of epochs'
-                              : `Kept epoch ${f.bestEpoch}; stopped after ${f.epochsRun}`}
+                            title={engine !== NETWORK
+                              ? `${engineTitle(engine)} has no epochs: they are the network's`
+                              : f.epochsRun === null
+                                ? 'Trained a fixed number of epochs'
+                                : `Kept epoch ${f.bestEpoch}; stopped after ${f.epochsRun}`}
                           >
-                            {f.epochsRun === null ? '—' : `${f.bestEpoch}/${f.epochsRun}`}
+                            {engine !== NETWORK || f.epochsRun === null
+                              ? '—'
+                              : `${f.bestEpoch}/${f.epochsRun}`}
                           </td>
                         </tr>
                       )
@@ -490,10 +518,10 @@ export default function TrainingStage() {
                 attribution terms approximate Excess rather than summing to it exactly,
                 because they are additive and the returns are geometric.
               </p>
-              {detail.run.hyperparams && (
+              {(detail.run.hyperparams || detail.run.engines) && (
                 <details className="mt-3">
                   <summary className="cursor-pointer text-sm">
-                    Hyperparameters and configuration
+                    Hyperparameters{detail.run.engines ? ', engines' : ''} and configuration
                   </summary>
                   <div className="mt-2 text-xs font-mono bg-base-200 rounded-box p-3">
                     <div>
@@ -501,10 +529,16 @@ export default function TrainingStage() {
                       {' · '}cost {detail.run.costBps} bps · parked in {detail.run.park}
                       {detail.run.threshold != null && ` · threshold ${detail.run.threshold}`}
                     </div>
-                    <div className="mt-1">
-                      {Object.entries(detail.run.hyperparams)
-                        .map(([k, v]) => `${k}=${v}`).join('  ')}
-                    </div>
+                    {detail.run.hyperparams && (
+                      <div className="mt-1">
+                        {Object.entries(detail.run.hyperparams)
+                          .map(([k, v]) => `${k}=${v}`).join('  ')}
+                      </div>
+                    )}
+                    {/* B9: what each engine was trained with, so a rerun can match it. */}
+                    {detail.run.engines?.map((e) => (
+                      <div key={e.engine} className="mt-1 break-words">{engineRecordLine(e)}</div>
+                    ))}
                   </div>
                 </details>
               )}
@@ -567,10 +601,113 @@ export default function TrainingStage() {
 }
 
 /**
- * What a run trained on: the strategy behind it, its columns, and how much of
- * the train window those columns really covered. A partial column is kept but
- * moves the first train bar, which is easy to miss from the fold table alone.
+ * The engines a run trained, under its name in the run list (B9). The line's
+ * figures are the first engine's, which the tooltip says; nothing is shown for
+ * a run of the network alone.
  */
+function RunEngines({ run }: { run: WalkforwardRun }) {
+  const note = runEnginesNote(run)
+  if (!note) return null
+  return (
+    <div className="opacity-70 tooltip tooltip-right text-left" data-tip={note.tip}>
+      {note.text}
+    </div>
+  )
+}
+
+/**
+ * One line per engine over the run's folds (B9), each scored by the same profit
+ * step, with the badges the run list uses. Library, version and seed are the
+ * run's record of what trained it.
+ */
+function EngineSummaries({ run, summaries }: { run: WalkforwardRun, summaries: EngineSummary[] }) {
+  const pct = (x: number | null) => (x == null ? '—' : `${(x * 100).toFixed(1)}%`)
+  const meaning = accuracyMeaning(run.loss)
+  return (
+    <>
+      <p className="text-xs text-base-content/70 mb-1">
+        Each engine over the same folds, rows and labels, scored with the same costs and tax.
+        The run&apos;s line in the list is the first engine&apos;s.
+      </p>
+      <div className="overflow-x-auto bg-base-200 rounded-box mb-4">
+        <table className="table table-sm">
+          <thead>
+            <tr>
+              <th>Engine</th>
+              <th>Library</th>
+              <th className="text-right">Seed</th>
+              <th className="text-right">Folds won</th>
+              <th className="text-right">Mean excess</th>
+              <th className="text-right">Mean return</th>
+              <th className="text-right">Sharpe</th>
+              <th className="text-right">Worst DD</th>
+              <th className="text-right">Trades</th>
+              <th className="text-right tooltip tooltip-left" data-tip={meaning.header}>
+                Accuracy
+              </th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {summaries.map((s) => {
+              const rec = run.engines?.find((e) => e.engine === s.engine)
+              const flag = naiveFlag({ ...s, loss: run.loss })
+              return (
+                <tr key={s.engine}>
+                  <td className="text-xs whitespace-nowrap font-medium">{engineTitle(s.engine)}</td>
+                  <td className="text-xs whitespace-nowrap">
+                    {rec ? `${rec.library} ${rec.version ?? '(version not recorded)'}` : '—'}
+                  </td>
+                  <td className="text-right font-mono text-xs">{rec?.seed ?? '—'}</td>
+                  <td className="text-right">{s.folds === 0 ? '—' : `${s.foldsWon}/${s.folds}`}</td>
+                  <td className={`text-right font-mono ${
+                    s.meanExcess == null ? '' : s.meanExcess > 0 ? 'text-success' : 'text-error'}`}
+                  >
+                    {pp(s.meanExcess)}
+                  </td>
+                  <td className="text-right font-mono text-xs">{num(s.meanStratReturn)}</td>
+                  <td className="text-right font-mono text-xs">{num(s.meanStratSharpe)}</td>
+                  <td className="text-right font-mono text-xs">{num(s.worstStratDrawdown, 1)}</td>
+                  <td className="text-right">{s.folds === 0 ? '—' : s.totalTrades}</td>
+                  <td className="text-right text-xs">
+                    {pct(s.meanAccuracy)}
+                    {s.meanBaselineAcc != null && (
+                      <span className="opacity-60" title={meaning.baseline}>
+                        {` / ${pct(s.meanBaselineAcc)}`}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {run.inProgress
+                      ? <span className="badge badge-sm badge-info">running</span>
+                      : s.beatsHoldOnReturn === true
+                        ? (
+                          <>
+                            <span className="badge badge-sm badge-success">beat hold</span>
+                            {flag && (
+                              <span
+                                className="badge badge-sm badge-error ml-1 tooltip tooltip-left"
+                                data-tip={flag}
+                              >
+                                below naive
+                              </span>
+                            )}
+                          </>
+                        )
+                        : s.beatsHoldOnReturn === false
+                          ? <span className="badge badge-sm badge-error">lost to hold</span>
+                          : <span className="badge badge-sm badge-ghost">not decided</span>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
 /** A Strategy 1 attribution term on a Strategy 2 run, where it does not apply. */
 function NotStrategy1() {
   return (
@@ -580,6 +717,11 @@ function NotStrategy1() {
   )
 }
 
+/**
+ * What a run trained on: the strategy behind it, its columns, and how much of
+ * the train window those columns really covered. A partial column is kept but
+ * moves the first train bar, which is easy to miss from the fold table alone.
+ */
 function RunProvenance({ run }: { run: WalkforwardRun }) {
   const s = run.strategy
   if (!s && !run.columns) {

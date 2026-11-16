@@ -332,7 +332,70 @@ function readWindow(label, raw, errors) {
  * `{ ok: false, errors }` with every problem found rather than only the first,
  * so the builder can show the whole form's worth of mistakes at once.
  */
-function validateStrategy(body) {
+/**
+ * A strategy's engines (B9, R21), checked against the runner's registry.
+ *
+ * `registry` is what the loader serves (`GET /api/nn/engines`): every engine
+ * the runner can run, with its settings and the losses it can train on. It is
+ * the one list (R22), so nothing here names an engine. `raw` is
+ * `{name: {enabled, settings}}`; absent, the strategy is the network alone,
+ * which is what every strategy saved before B9 ran. Returns one entry per
+ * registered engine, in registry order, or null when the registry is missing.
+ */
+function validateEngines(raw, registry, loss, errors) {
+  if (!Array.isArray(registry)) {
+    if (raw !== undefined && raw !== null) {
+      errors.push('the engine registry is unavailable (the loader did not answer), '
+        + 'so the engines cannot be checked');
+    }
+    return null;
+  }
+  const given = raw === undefined || raw === null ? { mlp: { enabled: true } } : raw;
+  if (!isPlainObject(given)) {
+    errors.push('engines must be an object of {enabled, settings} by engine name');
+    return null;
+  }
+  const known = new Map(registry.map((e) => [e.name, e]));
+  for (const name of Object.keys(given)) {
+    if (!known.has(name)) {
+      errors.push(`engine ${name} is not registered; the runner has `
+        + `${registry.map((e) => e.name).join(', ')}`);
+    }
+  }
+  const out = [];
+  for (const e of registry) {
+    const g = given[e.name];
+    const enabled = isPlainObject(g) && g.enabled === true;
+    const settings = {};
+    const rawSettings = isPlainObject(g) && isPlainObject(g.settings) ? g.settings : {};
+    const spec = new Map((e.settings || []).map((s) => [s.key, s]));
+    for (const [key, value] of Object.entries(rawSettings)) {
+      if (value === '' || value === null || value === undefined) continue;
+      const s = spec.get(key);
+      if (!s) { errors.push(`${e.title} has no setting ${key}`); continue; }
+      const n = typeof value === 'number' ? value : Number(value);
+      if (!Number.isFinite(n)) { errors.push(`${e.title} ${s.label} must be a number`); continue; }
+      if (s.kind === 'int' && !Number.isInteger(n)) {
+        errors.push(`${e.title} ${s.label} must be a whole number`); continue;
+      }
+      if (n < s.min || n > s.max) {
+        errors.push(`${e.title} ${s.label} must be between ${s.min} and ${s.max}`); continue;
+      }
+      settings[key] = n;
+    }
+    // Refused, never swapped (B9): the money-trained losses are the network's.
+    if (enabled && loss && !(e.losses || []).includes(loss)) {
+      errors.push(`${e.title} cannot train on the '${loss}' loss: the money-trained losses `
+        + `are written for the network, whose position head they differentiate through; `
+        + `${e.title} trains on the class label ('ce'). Switch it off or use 'ce'`);
+    }
+    out.push({ engine: e.name, enabled, settings });
+  }
+  if (!out.some((e) => e.enabled)) errors.push('switch at least one engine on');
+  return out;
+}
+
+function validateStrategy(body, registry = null) {
   const errors = [];
   const b = isPlainObject(body) ? body : {};
 
@@ -457,6 +520,7 @@ function validateStrategy(body) {
   }
 
   const objective = validateObjective(b.objective, errors);
+  const engines = validateEngines(b.engines, registry, objective?.loss, errors);
   // Strategy 2 holds a QQQ core and hedges with PSQ, QQQ's inverse.
   if (objective?.execution === 'margin' && instrument && instrument !== 'QQQ') {
     errors.push(`execution 'margin' (Strategy 2) runs on QQQ only, not ${instrument}: `
@@ -477,6 +541,7 @@ function validateStrategy(body) {
     value: {
       name, instrument, source, timeframe, modelType,
       validationScheme: scheme, features, windows, label, hyperparams, objective, notes,
+      engines,
       actor: typeof b.actor === 'string' && b.actor.trim() ? b.actor.trim() : DEFAULT_ACTOR,
     },
   };
@@ -525,9 +590,51 @@ async function ensureSchema() {
   // (strategy, name) and upserted, which overwrote history the design requires
   // be kept. Dropped rather than left behind as a confusing twin.
   await pool.query('DROP TABLE IF EXISTS strategy_presets');
+  // One row per engine of a version (B9, R21): switched on or off, and its
+  // settings. The network's settings stay in hyperparams_json beside the
+  // inputs every engine shares; a version with no rows is the network alone.
+  // Deleted with the version.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS strategy_engines (
+      strategy_id BIGINT NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+      engine VARCHAR(16) NOT NULL,
+      enabled BOOLEAN NOT NULL,
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (strategy_id, engine)
+    )
+  `);
 }
 
-function toItem(r) {
+/** `{name: {enabled, settings}}` from a version's engine rows; none: the network alone. */
+function enginesOf(rows) {
+  if (!rows || rows.length === 0) return { mlp: { enabled: true, settings: {} } };
+  const out = {};
+  for (const r of rows) {
+    let settings = {};
+    try { settings = JSON.parse(r.settings_json || '{}'); } catch { settings = {}; }
+    out[r.engine] = { enabled: r.enabled, settings };
+  }
+  return out;
+}
+
+/** Each strategy row with its engines attached, read in one query. */
+async function withEngines(rows) {
+  if (rows.length === 0) return [];
+  const { rows: eng } = await pool.query(
+    'SELECT strategy_id, engine, enabled, settings_json FROM strategy_engines '
+      + 'WHERE strategy_id = ANY($1::bigint[])',
+    [rows.map((r) => String(r.id))],
+  );
+  const by = new Map();
+  for (const e of eng) {
+    const k = String(e.strategy_id);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(e);
+  }
+  return rows.map((r) => toItem(r, by.get(String(r.id)) || []));
+}
+
+function toItem(r, engineRows = []) {
   const parse = (s, fallback) => {
     try { return JSON.parse(s); } catch { return fallback; }
   };
@@ -547,6 +654,10 @@ function toItem(r) {
     objective: { ...OBJECTIVE_DEFAULTS, ...parse(r.objective_json, {}) },
     /** True for a row saved before `objective` existed: its values are the defaults. */
     objectiveDefaulted: r.objective_json == null,
+    /** Each engine, switched on or off, with its settings (B9). */
+    engines: enginesOf(engineRows),
+    /** True for a version saved before engines were rows: the network alone. */
+    enginesDefaulted: engineRows.length === 0,
     notes: r.notes,
     createdAt: r.created_at,
     createdBy: r.created_by,
@@ -566,13 +677,13 @@ async function list({ name = null, latestOnly = false } = {}) {
         ORDER BY s.name ASC`,
       name ? [name] : [],
     );
-    return rows.map(toItem);
+    return withEngines(rows);
   }
   const { rows } = name
     ? await pool.query(
         'SELECT * FROM strategies WHERE name = $1 ORDER BY version DESC', [name])
     : await pool.query('SELECT * FROM strategies ORDER BY name ASC, version DESC');
-  return rows.map(toItem);
+  return withEngines(rows);
 }
 
 /**
@@ -583,7 +694,33 @@ async function list({ name = null, latestOnly = false } = {}) {
  * race, and this way there is no race to lose.
  */
 async function save(v) {
-  const { rows } = await pool.query(
+  // The version and its engine rows land together or not at all.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const item = await insertVersion(client, v);
+    const engines = v.engines || [{ engine: 'mlp', enabled: true, settings: {} }];
+    for (const e of engines) {
+      await client.query(
+        'INSERT INTO strategy_engines (strategy_id, engine, enabled, settings_json) '
+          + 'VALUES ($1, $2, $3, $4)',
+        [item.id, e.engine, e.enabled, JSON.stringify(e.settings || {})],
+      );
+    }
+    await client.query('COMMIT');
+    return { ...item, engines: enginesOf(engines.map((e) => ({
+      engine: e.engine, enabled: e.enabled, settings_json: JSON.stringify(e.settings || {}),
+    }))), enginesDefaulted: false };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function insertVersion(client, v) {
+  const { rows } = await client.query(
     `INSERT INTO strategies
        (name, version, instrument, source, timeframe, model_type, validation_scheme,
         features_json, windows_json, label_json, hyperparams_json, notes,
@@ -703,7 +840,7 @@ async function removeByName(name) {
 
 async function getById(id) {
   const { rows } = await pool.query('SELECT * FROM strategies WHERE id = $1', [id]);
-  return rows.length ? toItem(rows[0]) : null;
+  return rows.length ? (await withEngines(rows))[0] : null;
 }
 
 /** What the form needs to draw the objective section from the same rules. */
@@ -735,6 +872,8 @@ module.exports = {
   MAX_NOTES_LEN,
   DEFAULT_ACTOR,
   validateStrategy,
+  validateEngines,
+  enginesOf,
   ensureSchema,
   list,
   save,

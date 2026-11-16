@@ -479,6 +479,64 @@ class TestRoundTrip:
         finally:
             self._cleanup(db, run_id)
 
+    def test_each_engine_stores_its_fold_and_signals_and_recalculates(self, db, a_set):
+        # B9: a fold has a row and signals per engine, and rescoring in place
+        # gives each engine back exactly what it stored.
+        import json
+
+        import numpy as np
+
+        from nn import profit, recalculate
+        from nn import walkforward as wf
+        with db.cursor() as cur:
+            cur.execute("SELECT i.symbol, ds.name FROM feature_sets fs "
+                        "JOIN instruments i ON i.id = fs.instrument_id "
+                        "JOIN data_sources ds ON ds.id = fs.source_id WHERE fs.id = %s", (a_set,))
+            symbol, source = cur.fetchone()
+            prices = wf.load_prices(cur, symbol, source, "D1")
+        days = sorted(prices.closes)[-4:]
+        if len(days) < 4:
+            pytest.skip(f"no D1 candles for {symbol}/{source}, which the set is of")
+        settings = profit.Settings(loss="ce", cost_bps=5.0)
+        market = profit.market(prices, days[:3], days[1:], None, "cash")
+        outputs = {"mlp": [[0.6, 0.3, 0.1], [0.1, 0.2, 0.7], [0.5, 0.4, 0.1]],
+                   "xgboost": [[0.2, 0.7, 0.1], [0.6, 0.2, 0.2], [0.1, 0.1, 0.8]]}
+        folds, sigs = {}, {}
+        for name, out in outputs.items():
+            sigs[name] = profit.Signals(days[:3], days[1:], np.array(out), np.array([0, 2, 1]))
+            money = profit.score(sigs[name].output, market, settings)
+            folds[name] = wf.FoldResult(
+                fold=1, engine=name, train_from=days[0], train_to=days[0],
+                val_year=days[0].year, n_train=1, n_val=3, accuracy=0.5, baseline_acc=0.4,
+                **money.fields())
+        args = an_args(label="pytest-engines", engines={"mlp": {}, "xgboost": {"maxDepth": 4}})
+        run_id = ws.open_run(db, args, a_set, 580)
+        try:
+            for name in outputs:
+                ws.save_fold(db, run_id, folds[name], sigs[name], settings)
+            ws.close_run(db, run_id)
+            with db.cursor() as cur:
+                cur.execute("SELECT engine, strat_return FROM walkforward_folds "
+                            "WHERE run_id = %s ORDER BY engine", (run_id,))
+                assert cur.fetchall() == [("mlp", folds["mlp"].strat_return),
+                                          ("xgboost", folds["xgboost"].strat_return)]
+                cur.execute("SELECT engines_json FROM walkforward_runs WHERE id = %s",
+                            (run_id,))
+                rec = json.loads(cur.fetchone()[0])
+            assert [r["engine"] for r in rec] == ["mlp", "xgboost"]
+            assert rec[1]["settings"]["maxDepth"] == 4 and rec[1]["version"]
+            with db.cursor() as cur:
+                stored = ws.load_engine_signals(cur, run_id)
+            assert np.array_equal(stored["xgboost"][1].output, sigs["xgboost"].output)
+
+            dry = recalculate.recalculate(db, run_id, dry_run=True)
+            assert [a.engine for a in dry.after] == ["mlp", "xgboost"]
+            for a in dry.after:
+                for name in profit.PROFIT_FIELDS:
+                    assert getattr(a, name) == getattr(folds[a.engine], name), (a.engine, name)
+        finally:
+            self._cleanup(db, run_id)
+
     def test_a_run_without_signals_is_refused_with_the_reason(self, db, a_set):
         from nn import recalculate
         run_id = ws.open_run(db, an_args(label="pytest-nosignals"), a_set, 580)
@@ -643,22 +701,26 @@ def test_a_classifier_s_call_is_its_most_probable_class():
     assert rows[0][4] == [0.6, 0.3, 0.1]
 
 
-def test_load_signals_groups_rows_by_fold_in_date_order():
+def test_load_signals_groups_rows_by_engine_and_fold_in_date_order():
     from datetime import date
 
     class Cur:
         def execute(self, sql, params):
-            assert "ORDER BY fold, bar_date" in sql and params == (5,)
+            assert "ORDER BY engine, fold, bar_date" in sql and params == (5,)
 
         def fetchall(self):
-            return [(1, date(2020, 1, 2), date(2020, 1, 3), [0.4], 2),
-                    (1, date(2020, 1, 3), None, [0.6], 0),
-                    (2, date(2021, 1, 4), date(2021, 1, 5), [0.8], 1)]
+            return [("mlp", 1, date(2020, 1, 2), date(2020, 1, 3), [0.4], 2),
+                    ("mlp", 1, date(2020, 1, 3), None, [0.6], 0),
+                    ("mlp", 2, date(2021, 1, 4), date(2021, 1, 5), [0.8], 1),
+                    ("xgboost", 1, date(2020, 1, 2), date(2020, 1, 3), [0.2, 0.5, 0.3], 2)]
 
     got = ws.load_signals(Cur(), 5)
     assert sorted(got) == [1, 2]
     assert got[1].exits == [date(2020, 1, 3), None]
     assert got[1].output.shape == (2, 1) and got[1].labels.tolist() == [2, 0]
+    both = ws.load_engine_signals(Cur(), 5)
+    assert sorted(both) == ["mlp", "xgboost"]
+    assert both["xgboost"][1].output.shape == (1, 3)
 
 
 def test_storing_signals_needs_the_settings_that_made_the_call():

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-13** · 2026-11-16 13:06 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-15** · 2026-11-16 13:47 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -97,6 +97,7 @@ stored run.
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
 | G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
 | G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | open: found during B1 |
+| G70 | An engine cannot train on a subset of the strategy's features. R21 lets an engine override the strategy's feature list with its own subset, recorded on its engine row and its run result; every engine reads the strategy's list | R21 | `nn/engines.py`, `strategy_engines` (no feature column) | none | S | open: found during B9 |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
 
@@ -503,6 +504,69 @@ Checklist:
 
 
 
+**B9 plan (G35), 2026-11-16.** The author: do B9. The conditions are in `AGENTS.md`, build step B9.
+
+Today the runner trains one engine, the network (`mlp`), and the builder's list of model types is hard-coded twice (`strategy_spec.MODEL_TYPES`, `strategies.js`). Neither library is installed.
+
+The shape:
+- **One registry: `nn/engines.py`.** `mlp`, `xgboost` and `lightgbm`, each with its catalogue entry (name, library and version, a plain description, what checks it), its settings with defaults and bounds, the losses it can train on, and whether it is scaled. The loader serves it (`GET /api/nn/engines`); the API validates a saved strategy against it and hands it to the builder, so there is no second list.
+- **Libraries.** `xgboost-cpu` (XGBoost without the CUDA libraries) and `lightgbm`, trained through their native APIs on one thread with the seed, so the same seed and inputs give the same model. The loader image gains the OpenMP runtime LightGBM links.
+- **On the strategy version (R21).** A child row per engine, `strategy_engines (strategy_id, engine, enabled, settings_json)`. The network's settings stay in `hyperparams_json`, where every saved version already holds them, beside the shared inputs (lookback, horizon, thresholds); a tree engine's row holds its own. A version with no rows is the network alone, which is what every existing version ran.
+- **One run, every enabled engine.** Each fold builds its rows, labels and purge once, and every enabled engine trains on them. The network fits a scaler; the tree engines get the raw rows. Each engine's signals go through the same profit step, costs and tax; the benchmarks are computed once per fold. The network's early stopping, when set, holds its last training year out of its own fitting, as it does today; the tree engines train a fixed number of rounds.
+- **Losses.** The tree engines train the class label only (`ce`). A strategy with a money-trained loss and a tree engine on is refused with the reason, at save and at run; nothing is swapped.
+- **Stored per engine.** `walkforward_folds` and `walkforward_signals` gain an `engine` column (existing rows are `mlp`). The run records `engines_json`: each engine's settings, library version and seed; `lib_versions` adds both libraries. The Java reader serves each fold row with its engine and a summary per engine; a run's list figures are its first engine's. Recalculation rescores each engine's stored signals.
+- **Shown.** The Training tab has one line per engine per fold beside the three benchmarks, and a summary per engine. The Strategy tab has an engine section per registered engine: its catalogue entry, its switch and its settings.
+- **Step 7.** `POST /api/nn/train` and `predict_range` take an engine; the registry saves a tree model in its library's own format. The engine registers `xgboost` and `lightgbm` beside `nn-feedforward`, so a saved model of each type can be backtested.
+- **Stored data.** Nothing existing changes figures: old folds and signals become `mlp` rows. Whether to run the strategies with the tree engines on is the checkpoint.
+
+Checklist:
+- [x] Plan here
+- [x] `nn/engines.py`, the tree trainers and the libraries; tests (determinism, no scaler, loss refusal)
+- [x] Strategy engine rows: API validation from the registry, `strategy_spec`; tests
+- [x] The runner over every enabled engine; fold, signal and run storage; recalculation; tests
+- [x] Java reader: engine per fold, summary per engine; tests
+- [x] Step 7: train and predict per engine, the two engine strategies; tests
+- [x] Client: the Strategy tab's engine sections, the Training tab's lines per engine; Postman
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go:** runs with the tree engines on
+- [x] README, `AGENTS.md`, G35 and this record say done
+
+*Done, 2026-11-16 13:47.* The author chose: a new three-engine strategy, run once; and a model of each tree engine trained and backtested.
+- **Tests:** Python 839, Java 164, API 116, client 169. New tests:
+  - the registry, its catalogue entries and refusals (a tree engine on a money loss, unknown engines, bad settings, nothing on);
+  - each tree engine: the same seed and inputs give the same model, three probabilities in the label's order, the same model from inputs rescaled by a power of two (no scaler), a saved model loads back exactly, class weights change it;
+  - one fold, every engine: the same rows, dates, labels, benchmarks and buy-and-hold, and the tree engines given the raw rows;
+  - a strategy's engine rows, and the runner's refusals from them and from flags;
+  - against the database: two engines' fold rows, signals and `engines_json` stored and recalculated in place exactly;
+  - Java: the run list summarises the first engine, the folds come in the run's engine order, a summary per engine, and a run from before reads as the network's; the `xgboost` and `lightgbm` strategies are registered and pass their settings through;
+  - the train and predict routes for each tree engine (saved in its library's format, no scaler; the same settings find the same key);
+  - the API's engine validation; the client's engine helpers.
+- **Live:**
+  - The registry reports PyTorch 2.15.0, XGBoost 3.4.1 and LightGBM 4.7.0.
+  - Every existing strategy reads as the network alone, and run 462 serves its folds as `mlp` and recalculates as before.
+  - The network's cache keys are unchanged: the pinned version 20261116T180301.234Z still resolves under `7c522ad2…`.
+- **phase1-engines v1 (id 39), run 684.** phase1-full v5's features, windows, costs and 25% tax, with loss `ce` (the one all three train on) and all three engines on. 18 fold rows; a dry-run recalculation reproduces every one.
+
+  | Engine | Folds beating hold | Mean excess a fold | Accuracy against naive |
+  |---|---|---|---|
+  | Network | 0 of 6 | −1.19 pp | 62.5% vs 62.8%: below naive |
+  | XGBoost | 0 of 6 | −1.56 pp | 62.9% vs 62.8% |
+  | LightGBM | 0 of 6 | −1.53 pp | 61.6% vs 62.8%: below naive |
+
+  Buy-and-hold makes +20.03% a fold, Faber +13.90%, dual momentum +15.08%. **No engine beats buy-and-hold.**
+- **Step 7.** One XGBoost and one LightGBM model, trained on the request the network models used (QQQ yahoo, 2003-2015). Each fitted the same 2,553 rows and was validated on the same 640 bars (validation accuracy 68.0% and 67.8%).
+  - Backtested over 2022-04-13 to 2026-06-30 as results 835 (XGBoost, +74.11%, 10 trades) and 836 (LightGBM, +94.26%, 17 trades), beside 813 (the network, +7.46%) and buy-and-hold (+111.93%).
+  - Both are marked out of sample (B4), and each reproduced exactly on a pinned rerun: the trades bar their random ids, the equity curve, return, final equity and Sharpe.
+  - The two rerun rows (837, 838) were deleted (backup `b9-step7/before-delete.sql.gz`).
+- **Deliberate:**
+  - The network's early stopping still holds its last training year out of its own fitting. The tree engines train a fixed number of rounds on all of the fold's rows.
+  - `model_type` stays the network's architecture (`mlp`), and the Strategy tab's model-type list still comes from Node (G54).
+  - The `xgboost` and `lightgbm` names are registered in the Java engine's strategy list, for step 7. Their settings are not: they pass through to the loader's registry.
+- **Found and fixed on the way:** `python -m nn.recalculate` printed its report without the loss, so it would crash at the `NAIVE` line, as it would have since B8. It now passes the loss.
+- **Found, not fixed:** G70. An engine cannot yet train on its own subset of the features (R21).
+
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -521,9 +585,9 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R17 | partial | G47, G52 |
 | R18 | partial | G56 |
 | R20 | partial | D12, G45 |
-| R21 | missing | G35 (B9) |
-| R22 | partial | G54, G35 |
-| R23 | missing | G35 (B9) |
+| R21 | partial | G70 |
+| R22 | partial | G54 |
+| R23 | done | B9, 2026-11-16 |
 | R25 | partial | G49, G50, D3 |
 | R26 | partial | G55 |
 | R27 | partial | G55 |
@@ -570,7 +634,7 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R71 | missing | G49 |
 | R72 | partial: every run is scored against its naive predictor, and one that does not beat it is flagged (B8); a label kind cannot exist without its baseline. Direction and return targets are not registered yet (G49), and Results do not show walk-forward runs (G57) | G49, G57 |
 | R73 | missing | G65 |
-| R74 | missing | G63, G35 (B9) |
+| R74 | partial | G63 |
 | R75 | partial: engines blind and profit recalculated on demand (B10). Slippage, superficial loss, dividends and currency are not in the profit step yet, and the benchmarks do not go through it (B6, B7, G53) | D9 |
 | R76 | partial: the engine and the walk-forward scorer trade at the next open (B1); buy-and-hold still buys at the first close (B6) | G27, G32 |
 
@@ -616,7 +680,7 @@ rule in `AGENTS.md`.
 | G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | done 2026-11-16 (B6): see the B6 record in Pass 4 |
 | G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | done 2026-11-16 (B7): see the B7 record in Pass 4 |
 | G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | done 2026-11-16 (B8): see the B8 record in Pass 4 |
-| G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | open |
+| G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | done 2026-11-16 (B9): see the B9 record in Pass 4 |
 
 ### Decisions the author owes
 
@@ -1308,6 +1372,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-15 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9 done: the three engines; G35 done; R23 done, R21 and R74 partial; new gap G70 |
+| 2026-11-16-14 | 2026-11-16 13:13 | Claude Code (Claude Opus 5.5) | B9 plan (G35) |
 | 2026-11-16-13 | 2026-11-16 13:06 | Claude Code (Claude Opus 5.5) | B5 done: the trainers purge; 6 models retrained, 8 results rerun; G31 done; B4's backfill test scoped |
 | 2026-11-16-12 | 2026-11-16 12:55 | Claude Code (Claude Opus 5.5) | B5 plan (G31) |
 | 2026-11-16-11 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done: in-sample model results marked; G30 done |

@@ -112,6 +112,9 @@ class TestFoldPlan:
             ss.fold_plan(s)
 
 
+#: A strategy with no engine rows runs the network alone (B9).
+NETWORK_ONLY = {"engines": {"mlp": {}}}
+
 DEFAULT_OBJECTIVE_ARGS = {
     "loss": "ce", "class_weights": False, "objective": "return", "cost_bps": 5, "park": "cash",
     "execution": "signals",
@@ -122,7 +125,7 @@ class TestRunnerArgs:
     def test_names_are_translated(self):
         s = a_strategy(hyperparams={"numEpochs": 9, "learningRate": 0.01})
         assert ss.runner_args(s) == {
-            "epochs": 9, "lr": 0.01, "forward": 5, **DEFAULT_OBJECTIVE_ARGS,
+            "epochs": 9, "lr": 0.01, "forward": 5, **DEFAULT_OBJECTIVE_ARGS, **NETWORK_ONLY,
         }
 
     def test_every_objective_setting_is_returned_so_no_flag_decides_it(self):
@@ -208,7 +211,7 @@ class TestRunnerArgs:
     def test_a_train_split_ratio_is_not_a_walkforward_setting(self):
         assert "trainSplitRatio" not in ss.RUNNER_ARGS
         args = ss.runner_args(a_strategy(hyperparams={"trainSplitRatio": 0.8}))
-        assert args == {"forward": 5, **DEFAULT_OBJECTIVE_ARGS}
+        assert args == {"forward": 5, **DEFAULT_OBJECTIVE_ARGS, **NETWORK_ONLY}
 
     def test_every_saved_hyperparameter_is_accounted_for(self):
         """A key added to PARAM_SPEC must be mapped or deliberately left out,

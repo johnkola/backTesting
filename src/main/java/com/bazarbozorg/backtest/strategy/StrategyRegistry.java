@@ -37,6 +37,9 @@ public final class StrategyRegistry {
         registerStrategy("ema-triple", EmaTripleCrossStrategy::new);
         registerStrategy("nn-feedforward", NeuralNetworkStrategy::new);
         registerStrategy("nn-feature-store", FeatureStoreNeuralNetworkStrategy::new);
+        // The tree engines' saved models (B9): the same loader path as the network.
+        registerStrategy("xgboost", com.bazarbozorg.backtest.strategy.nn.TreeEngineStrategy::xgboost);
+        registerStrategy("lightgbm", com.bazarbozorg.backtest.strategy.nn.TreeEngineStrategy::lightgbm);
     }
 
     /**

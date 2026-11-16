@@ -1279,6 +1279,16 @@
                   "    for (const f of pm.response.json().folds) {",
                   "        pm.expect(f.benchmarks.map((b) => b.name).sort()).to.eql(['dual_momentum', 'faber']);",
                   "    }",
+                  "});",
+                  "",
+                  "pm.test('each fold row names its engine, and each engine has a summary (B9)', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d).to.have.property('engineSummaries');",
+                  "    const engines = new Set(d.folds.map(f => f.engine));",
+                  "    pm.expect(d.engineSummaries.map(s => s.engine).sort()).to.eql([...engines].sort());",
+                  "    if (d.run.engines !== null) {",
+                  "        pm.expect(d.run.engines.map(e => e.engine).sort()).to.eql([...engines].sort());",
+                  "    }",
                   "});"
                 ]
               }
@@ -1901,6 +1911,56 @@
           ]
         },
         {
+          "name": "A tree engine on a money loss is refused (B9)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/strategies/saved",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "strategies",
+                "saved"
+              ]
+            },
+            "description": "B9: the money-trained losses are written for the network; a tree engine trains on the class label. Switching one on with a money loss is refused with the reason, never swapped for 'ce'.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-smoke\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [\n    \"price_close\"\n  ],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2016-01-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\",\n  \"objective\": {\n    \"loss\": \"sharpe\",\n    \"positionThreshold\": 0.5\n  },\n  \"engines\": {\n    \"mlp\": {\n      \"enabled\": true\n    },\n    \"xgboost\": {\n      \"enabled\": true\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('names the engine and the loss', function () {",
+                  "    pm.expect(pm.response.json().error).to.include(\"XGBoost cannot train on the 'sharpe' loss\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List saved strategies",
           "request": {
             "method": "GET",
@@ -1945,6 +2005,15 @@
                   "        'requiredWindows');",
                   "    pm.expect(Object.keys(d.paramSpec)).to.have.lengthOf(12);",
                   "    pm.expect(d.requiredWindows).to.eql(['train', 'validation', 'test']);",
+                  "});",
+                  "",
+                  "pm.test('the builder gets the runner\\'s engines, and each version its own (B9)', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.engines.map(e => e.name)).to.include.members(['mlp', 'xgboost', 'lightgbm']);",
+                  "    for (const s of d.items) {",
+                  "        pm.expect(s).to.have.property('engines');",
+                  "        pm.expect(Object.values(s.engines).some(e => e.enabled)).to.be.true;",
+                  "    }",
                   "});"
                 ]
               }
@@ -2719,6 +2788,55 @@
                   "    const d = pm.response.json();",
                   "    pm.expect(d).to.have.property('items');",
                   "    pm.expect(d.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Engines the runner registers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/engines",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "engines"
+              ]
+            },
+            "description": "B9, R22, R74: the one list of engines (network, XGBoost, LightGBM), each with its catalogue entry, settings and the losses it can train on. The API validates a saved strategy against it and the Strategy tab draws its engine sections from it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('the three engines, in registry order, each with a catalogue entry', function () {",
+                  "    const items = pm.response.json().items;",
+                  "    pm.expect(items.map(e => e.name)).to.eql(['mlp', 'xgboost', 'lightgbm']);",
+                  "    for (const e of items) {",
+                  "        pm.expect(e).to.include.keys('title', 'library', 'version', 'description', 'checkedBy', 'losses', 'settings', 'scaled');",
+                  "        pm.expect(e.kind).to.eql('engine');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('the tree engines train the class label only and are not scaled', function () {",
+                  "    for (const e of pm.response.json().items.filter(e => e.name !== 'mlp')) {",
+                  "        pm.expect(e.losses).to.eql(['ce']);",
+                  "        pm.expect(e.scaled).to.eql(false);",
+                  "        pm.expect(e.settings.map(s => s.key)).to.include('seed');",
+                  "    }",
                   "});"
                 ]
               }

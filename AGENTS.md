@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-7** · 2026-11-16 13:05 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-8** · 2026-11-16 13:47 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -280,8 +280,11 @@ Tab: **Pipeline → Training**.
   momentum beside the strategy, under the run's own costs and tax, or a benchmark
   marked not available with the reason. The Training tab shows the four side by
   side: return, trades, trades a year, holding time, drawdown and Sharpe (B7).
-- [ ] **not built (G35)**: a result line for every enabled engine. Today there is
-  one engine.
+- [ ] **app**: one run trains every engine its strategy switches on (B9): the
+  network, XGBoost, LightGBM, on the same folds, rows, purge and labels, scored the
+  same way. The Training tab shows a line per engine per fold beside the three
+  benchmarks and a summary per engine; the run records each engine's settings,
+  library version and seed.
 
 ## 7. Backtest / scoring
 
@@ -327,6 +330,8 @@ Tab: **Pipeline → Backtest**.
 - [ ] **app**: an entry never spends more than the cash: it is sized on the slipped
   fill price with the commission inside the cash, so cash is zero or more after every
   entry, long or short (B2).
+- [ ] **app**: a saved model of each engine type backtests here: `nn-feedforward`,
+  `xgboost` and `lightgbm`, each trained by the loader on the same purged rows (B9).
 
 ## 8. The held-out test
 
@@ -524,19 +529,19 @@ Comes last, so each new engine is judged against the full set of benchmarks.
 
 **Done when**
 
-- [ ] The runner registers `mlp`, `xgboost` and `lightgbm`. The builder offers what the
+- [x] The runner registers `mlp`, `xgboost` and `lightgbm`. The builder offers what the
   runner registers, read from it, not from a second hard-coded list.
-- [ ] One run of a strategy trains every enabled engine on the same folds, rows, purge,
+- [x] One run of a strategy trains every enabled engine on the same folds, rows, purge,
   features and labels, and scores each with the same scorer, costs and tax. The tree
   engines get no scaler.
-- [ ] Each engine's on/off switch and settings are stored on the strategy version and
+- [x] Each engine's on/off switch and settings are stored on the strategy version and
   recorded on the run, with the library's version and the seed. The same seed and
   inputs give the same model.
-- [ ] There is one result line per engine per fold, shown beside the three benchmarks.
-- [ ] A loss an engine cannot train on is refused with the reason, not swapped for
+- [x] There is one result line per engine per fold, shown beside the three benchmarks.
+- [x] A loss an engine cannot train on is refused with the reason, not swapped for
   another. The money-trained losses are written for the network.
-- [ ] A saved model of each engine type can be backtested in step 7.
-- [ ] Each engine has a catalogue entry on the Strategy tab: name, library and version,
+- [x] A saved model of each engine type can be backtested in step 7.
+- [x] Each engine has a catalogue entry on the Strategy tab: name, library and version,
   a plain description, and what checks it.
 
 ---
@@ -575,7 +580,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B6. Buy-and-hold costs | G32 | | done | 2026-11-16. Buy-and-hold is the always-long strategy through the same code: in the profit step for walk-forward (commission and tax, D8 sale at the end) and through `BacktestEngine.trade` for results (commission and slippage). Stored with each run (fold `hold_*` columns, `result_json.buyAndHold`); the `benchmarks` table, both `benchmark_id` columns and their lookups are gone. A position open at the end is sold and taxed, strategy and Strategy 2's core alike. Python 767, Java 121, API 107, client 138. Walk-forward 456-462 recalculated in place from stored signals (nothing retrained); phase1-full v5 went from +0.55 to +0.00 pp, as it is buy-and-hold. The 16 results rerun as 746-761 with the same strategy figures (DESIGN-GAPS, B6 record) |
 | B7. Faber and dual momentum | G33 | B6 | done | 2026-11-16. `nn/rules.py` decides both rules (Faber 10-month, dual momentum per D7) at month ends; the profit step trades them (`simulate_holdings`) with the run's costs and tax; walk-forward folds store them in `walkforward_benchmarks`; the engine trades the loader's decisions (`GET /api/nn/rules`) with its own costs and stores them in `result_json`. Not available, with the reason, when history is short, the result is not daily or SPY is missing. Data check against an independent copy: 0 disagreements. Python 786, Java 127, API 107, client 141. Walk-forward 456-462 recalculated in place; results rerun as 762-777 (DESIGN-GAPS, B7 record) |
 | B8. Naive baseline flag | G34 | | done | 2026-11-16. Folds store the baseline as before; the run's is the fold mean, read with the run (`meanAccuracy`, `meanBaselineAcc`, `beatsNaive`). The runner prints `NAIVE`; the Training tab badges "below naive". `nn/label_kinds.py` registers a label kind only with a target that has a naive baseline (class: majority, direction: always up, return: historical mean), mirrored in `strategies.js`. All 7 stored runs are flagged: none beats its baseline. Python 795, Java 128, API 109, client 143 (DESIGN-GAPS, B8 record) |
-| B9. XGBoost and LightGBM | G35 | B7 | not started | |
+| B9. XGBoost and LightGBM | G35 | B7 | done | 2026-11-16. `nn/engines.py` registers `mlp`, `xgboost` and `lightgbm` (catalogue entry, settings, losses, scaled or not); the loader serves it (`GET /api/nn/engines`) and the API checks a saved strategy against it. A strategy version holds a row per engine (`strategy_engines`). Every enabled engine trains on each fold's same rows, purge and labels; the tree engines take no scaler, train on one thread with the seed, and refuse a money-trained loss. Folds and signals are stored per engine, the run records each engine's settings, version and seed, and recalculation rescores each. Step 7: `xgboost` and `lightgbm` strategies backtest the loader's tree models. Python 839, Java 164, API 116, client 169. phase1-engines v1 (run 684): no engine beats buy-and-hold; results 835 and 836 backtest a model of each tree engine (DESIGN-GAPS, B9 record) |
 | B10. Signals, then profit | D9 | | done | 2026-11-15. `nn/profit.py` is the one profit step; each fold stores its signals (`walkforward_signals`); `nn/recalculate.py` and its route rescore a run without retraining; the money losses are blind and the training switches refused (D9). G68 fixed on the way. Python 765, Java 128, API 110, client 138. Seven runs rerun as 434-440: the classifiers reproduced, the money runs retrained blind; 375 and 395 dropped as duplicates. Run 434 recalculated at 25% tax equals the full rerun 435 in all 60 fields (DESIGN-GAPS, B10 record) |
 
 ---
@@ -586,6 +591,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-8 | 2026-11-16 13:47 | Claude Code (Claude Opus 5.5) | B9 done; step 6's engine condition and step 7's tree-model condition are app conditions |
 | 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5 done |
 | 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done; step 7's in-sample check is now an app condition |
 | 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done; step 7's sizing limit is now an app condition |

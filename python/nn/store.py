@@ -37,6 +37,21 @@ MODEL_FILE = "model.pt"
 SCALER_FILE = "scaler.json"
 METADATA_FILE = "metadata.json"
 
+
+def engine_of(extra: Mapping | None) -> str:
+    """The engine a version holds (B9): `extra.engine`, or the network for a
+    version saved before the tree engines, which recorded none."""
+    return str((extra or {}).get("engine") or "mlp")
+
+
+def required_files(engine: str) -> tuple[str, ...]:
+    """What a complete version directory of `engine` holds. A tree engine is
+    saved in its library's own format and has no scaler (R68)."""
+    if engine == "mlp":
+        return (MODEL_FILE, SCALER_FILE, METADATA_FILE)
+    from nn.trees import MODEL_FILES
+    return (MODEL_FILES[engine], METADATA_FILE)
+
 # Compact ISO-8601 UTC w/ ms precision: 20260603T134522.123Z. Sortable
 # lexicographically, filesystem-safe on every host the project runs on.
 _VERSION_RE = re.compile(r"\d{8}T\d{6}\.\d{3}Z")
@@ -76,10 +91,11 @@ def _new_version_id() -> str:
 @dataclass
 class LoadedModel:
     """In-memory triple returned by load(). The PyTorch state_dict has
-    already been folded into `model`."""
+    already been folded into `model`. For a tree engine `model` is a
+    `trees.TreeModel` and `scaler` is None (B9)."""
 
-    model: nn.Module
-    scaler: MinMaxScaler
+    model: object
+    scaler: MinMaxScaler | None
     metadata: MetadataRecord
 
 
@@ -107,19 +123,27 @@ class ModelRegistry:
         *,
         strategy: str,
         cache_key: str,
-        model: nn.Module,
-        scaler: MinMaxScaler,
+        model: object,
+        scaler: MinMaxScaler | None,
         metadata_extra: Mapping[str, object] | None = None,
         input_size: int,
         hidden_size: int,
         num_hidden: int,
     ) -> str:
+        """Save a version. `model` is a torch module with its scaler, or a
+        `trees.TreeModel` with none, written in its library's format (B9)."""
         version_id = _new_version_id()
         dir_ = self.version_dir(strategy, cache_key, version_id)
         dir_.mkdir(parents=True, exist_ok=True)
 
-        torch.save(model.state_dict(), dir_ / MODEL_FILE)
-        (dir_ / SCALER_FILE).write_text(json.dumps(scaler.to_dict()), encoding="utf-8")
+        engine = getattr(model, "engine", None) if not isinstance(model, nn.Module) else None
+        if engine is not None:
+            from nn.trees import MODEL_FILES
+            (dir_ / MODEL_FILES[engine]).write_bytes(model.to_bytes())
+            metadata_extra = {**dict(metadata_extra or {}), "engine": engine}
+        else:
+            torch.save(model.state_dict(), dir_ / MODEL_FILE)
+            (dir_ / SCALER_FILE).write_text(json.dumps(scaler.to_dict()), encoding="utf-8")
 
         meta = MetadataRecord(
             strategy=strategy,
@@ -188,11 +212,11 @@ class ModelRegistry:
         so a half-written version directory reads as a miss either way."""
 
         dir_ = self.resolve_version_dir(strategy, cache_key, version_id)
-        if dir_ is None:
-            return None
-        if not all((dir_ / f).exists() for f in (MODEL_FILE, SCALER_FILE, METADATA_FILE)):
+        if dir_ is None or not (dir_ / METADATA_FILE).exists():
             return None
         blob = json.loads((dir_ / METADATA_FILE).read_text(encoding="utf-8"))
+        if not all((dir_ / f).exists() for f in required_files(engine_of(blob.get("extra")))):
+            return None
         return MetadataRecord(**blob)
 
     def _find_latest(self, entry: Path) -> Path | None:
@@ -205,11 +229,17 @@ class ModelRegistry:
         model_path = dir_ / MODEL_FILE
         scaler_path = dir_ / SCALER_FILE
         metadata_path = dir_ / METADATA_FILE
-        if not (model_path.exists() and scaler_path.exists() and metadata_path.exists()):
+        if not metadata_path.exists():
             return None
-
         metadata_blob = json.loads(metadata_path.read_text(encoding="utf-8"))
+        engine = engine_of(metadata_blob.get("extra"))
+        if not all((dir_ / f).exists() for f in required_files(engine)):
+            return None
         metadata = MetadataRecord(**metadata_blob)
+        if engine != "mlp":
+            from nn.trees import MODEL_FILES, TreeModel
+            tree = TreeModel.from_bytes(engine, (dir_ / MODEL_FILES[engine]).read_bytes())
+            return LoadedModel(model=tree, scaler=None, metadata=metadata)
 
         model = build_model()
         state = torch.load(model_path, map_location="cpu")

@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# LightGBM links the system OpenMP runtime, which the slim image does not ship.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY python/pyproject.toml ./
 # Install the CPU-only PyTorch wheel first so `pip install .` sees torch already
 # satisfied and skips the multi-GB CUDA build from PyPI. The NN strategy is a small

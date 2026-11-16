@@ -986,6 +986,47 @@ export type ObjectiveSpec = {
   marginCeilingPct: number
 }
 
+/** One setting of an engine, as the builder shows it and the API checks it (B9). */
+export type EngineSetting = {
+  key: string
+  kind: 'int' | 'float'
+  default: number
+  min: number
+  max: number
+  label: string
+}
+
+/**
+ * One engine the runner registers, with its catalogue entry (B9, R22, R74).
+ *
+ * Served from the loader's one registry (`nn/engines.py`) through
+ * GET /api/strategies/saved, so the builder offers exactly what the runner can
+ * run and nothing the client lists itself. The network (`mlp`) has no settings
+ * of its own here: its settings are the strategy's hyperparameters.
+ */
+export type EngineEntry = {
+  name: 'mlp' | 'xgboost' | 'lightgbm' | string
+  title: string
+  kind: 'engine'
+  library: string
+  /** The installed library's version; null when the loader cannot import it. */
+  version: string | null
+  description: string
+  /** What checks this engine's results, in plain words. */
+  checkedBy: string
+  /** True when the engine fits a scaler on its training rows (R68); trees get none. */
+  scaled: boolean
+  /** The losses it can train on. A tree engine trains on the class label only. */
+  losses: string[]
+  settings: EngineSetting[]
+}
+
+/**
+ * A strategy version's engines by name (B9): switched on or off, with its
+ * settings. Absent from a request, the API stores the network alone.
+ */
+export type StrategyEngines = Record<string, { enabled: boolean, settings: Record<string, number> }>
+
 /** An inclusive date range, YYYY-MM-DD at both ends. */
 export type DateWindow = { from: string, to: string }
 
@@ -1036,6 +1077,10 @@ export type SavedStrategy = {
   objective: StrategyObjective
   /** True for a row saved before `objective` existed: its values are the defaults. */
   objectiveDefaulted: boolean
+  /** Each registered engine, on or off, with its settings (B9). */
+  engines?: StrategyEngines
+  /** True for a version saved before engines existed: `engines` is the network alone. */
+  enginesDefaulted?: boolean
   notes: string | null
   createdAt: string
   createdBy: string
@@ -1051,6 +1096,12 @@ export type SavedStrategiesResponse = {
   objectiveSpec: ObjectiveSpec
   /** §8.2a: populated from what the model layer registers, not hard-coded. */
   modelTypes: string[]
+  /**
+   * The engines the runner registers, in its order (B9, R22); null when the
+   * loader did not answer, with the reason in `enginesError`.
+   */
+  engines?: EngineEntry[] | null
+  enginesError?: string | null
   validationSchemes: string[]
   windows: string[]
   requiredWindows: string[]
@@ -1069,6 +1120,8 @@ export type SaveStrategyRequest = {
   label: { kind: string, horizonBars: number }
   hyperparams: Record<string, string | number>
   objective: StrategyObjective
+  /** B9: each engine on or off with its settings. Absent: the network alone. */
+  engines?: StrategyEngines
   notes?: string | null
 }
 
@@ -1182,6 +1235,11 @@ export type FeatureGaps = {
 export type WalkforwardFold = {
   runId: number
   fold: number
+  /**
+   * The engine this row scores (B9): a fold has one row per engine the run
+   * trained, all on the same rows. Absent on data read before B9.
+   */
+  engine?: string
   valYear: number
   /** ISO dates. */
   trainFrom: string
@@ -1297,6 +1355,12 @@ export type WalkforwardRun = {
   isTest: boolean
   /** The input columns in order; null on a run older than the record, which read the whole set. */
   columns: string[] | null
+  /**
+   * Each engine the run trained, in the run's order (B9). Null on a run from
+   * before, which trained the network alone. The run's own figures below are
+   * its FIRST engine's; `engineSummaries` on the detail has every engine's.
+   */
+  engines?: EngineRecord[] | null
   /** The saved strategy the run executed; null for a run launched from flags. */
   strategy: WalkforwardStrategyRef | null
   /** What produced the run's inputs (G3); null on a run from before it. */
@@ -1388,9 +1452,48 @@ export type WalkforwardRuns = {
   limit: number
 }
 
+/**
+ * What a run records about one engine it trained (B9): the library and its
+ * version, the seed, and the settings used. The network's settings are the
+ * run's hyperparameters.
+ */
+export type EngineRecord = {
+  engine: string
+  library: string
+  version: string | null
+  seed: number | null
+  /** False for a tree engine: it took the raw rows, no scaler (R68). */
+  scaled: boolean
+  settings: Record<string, unknown>
+}
+
+/**
+ * One engine's figures over a run's folds (B9), computed on read like the
+ * run's own. Fields mirror the run's summary; averages are null with no folds.
+ */
+export type EngineSummary = {
+  engine: string
+  folds: number
+  foldsWon: number
+  meanExcess: number | null
+  meanStratReturn: number | null
+  meanHoldReturn: number | null
+  meanStratSharpe: number | null
+  worstStratDrawdown: number | null
+  totalTrades: number
+  meanTiming: number | null
+  meanAccuracy: number | null
+  meanBaselineAcc: number | null
+  beatsNaive: boolean | null
+  beatsHoldOnReturn: boolean | null
+}
+
 export type WalkforwardRunDetail = {
   run: WalkforwardRun
+  /** One row per engine per fold, by fold, then in the run's engine order. */
   folds: WalkforwardFold[]
+  /** One line per engine, in the run's order (B9); absent before B9. */
+  engineSummaries?: EngineSummary[]
 }
 
 // ---------------------------------------------------------------------------

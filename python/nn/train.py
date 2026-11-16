@@ -171,6 +171,83 @@ def training_rows(candles: Sequence[Candle], cfg: TrainConfig) -> Rows:
     )
 
 
+def _windows(rows: Rows, candles: Sequence[Candle], bar_times: Sequence[str],
+             training_window: Mapping[str, object] | None) -> dict[str, object]:
+    """The saved training and validation windows: the bars fitted, inclusive,
+    beside the caller's provenance (B5)."""
+    return {
+        "training_window": {
+            **dict(training_window or {}),
+            "since": bar_times[rows.first_fit],
+            "until": bar_times[rows.last_fit],
+            "inclusive": True,
+            "purged_rows": rows.first_val - rows.last_fit - 1,
+            "bar_count": len(candles),
+            "first_close": float(candles[0].close),
+            "last_close": float(candles[-1].close),
+        },
+        "validation_window": {
+            "since": bar_times[rows.first_val],
+            "until": bar_times[rows.last_val],
+            "bar_count": int(len(rows.val_y)),
+        },
+    }
+
+
+def _label_distribution(labels: np.ndarray) -> dict[str, int]:
+    return {"BUY": int((labels == 0).sum()), "HOLD": int((labels == 1).sum()),
+            "SELL": int((labels == 2).sum())}
+
+
+def _train_tree(
+    rows: Rows, candles: Sequence[Candle], bar_times: Sequence[str], cfg: TrainConfig,
+    engine: str, engine_settings: Mapping[str, object] | None, *, registry: ModelRegistry,
+    cache_key_inputs: dict[str, str], strategy_name: str,
+    training_window: Mapping[str, object] | None,
+) -> TrainResult:
+    """A tree engine on the same purged rows, unscaled (B9, R68)."""
+    from nn import engines, trees
+
+    spec = engines.ENGINES[engine]
+    settings = spec.resolve(engine_settings)
+    model = trees.train(engine, rows.train_x, rows.train_y, settings)
+
+    def scored(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+        p = model.predict(x)
+        loss = float(-np.mean(np.log(np.clip(p[np.arange(len(y)), y], 1e-12, None))))
+        return loss, float((p.argmax(axis=1) == y).mean())
+
+    train_loss, train_acc = scored(rows.train_x, rows.train_y)
+    val_loss, val_acc = scored(rows.val_x, rows.val_y)
+    cache_key = compute_cache_key(cache_key_inputs)
+    label_dist = _label_distribution(rows.labels)
+    version_id = registry.save(
+        strategy=strategy_name, cache_key=cache_key, model=model, scaler=None,
+        input_size=int(rows.train_x.shape[1]), hidden_size=0, num_hidden=0,
+        metadata_extra={
+            **_windows(rows, candles, bar_times, training_window),
+            "train_samples": int(len(rows.train_y)),
+            "val_samples": int(len(rows.val_y)),
+            "final_train_loss": train_loss, "final_train_acc": train_acc,
+            "final_val_loss": val_loss, "final_val_acc": val_acc,
+            "label_distribution": label_dist,
+            "library": spec.library, "library_version": spec.version(),
+            "engine_settings": settings,
+            "config": {
+                "lookback_window": cfg.lookback_window, "forward_bars": cfg.forward_bars,
+                "buy_threshold": cfg.buy_threshold, "sell_threshold": cfg.sell_threshold,
+                "train_split_ratio": cfg.train_split_ratio, "seed": settings["seed"],
+            },
+        },
+    )
+    return TrainResult(
+        version_id=version_id, cache_key=cache_key,
+        train_samples=int(len(rows.train_y)), val_samples=int(len(rows.val_y)),
+        final_train_loss=train_loss, final_train_acc=train_acc,
+        final_val_loss=val_loss, final_val_acc=val_acc, label_distribution=label_dist,
+    )
+
+
 def train_model(
     candles: Sequence[Candle],
     cfg: TrainConfig,
@@ -180,6 +257,8 @@ def train_model(
     cache_key_inputs: dict[str, str],
     strategy_name: str = "nn-feedforward",
     training_window: Mapping[str, object] | None = None,
+    engine: str = "mlp",
+    engine_settings: Mapping[str, object] | None = None,
 ) -> TrainResult:
     """End-to-end training run.
 
@@ -194,6 +273,11 @@ def train_model(
     if len(bar_times) != len(candles):
         raise ValueError(f"{len(bar_times)} timestamps for {len(candles)} candles")
     rows = training_rows(candles, cfg)
+    if engine != "mlp":
+        # XGBoost or LightGBM (B9): the same rows, labels and purge.
+        return _train_tree(rows, candles, bar_times, cfg, engine, engine_settings,
+                           registry=registry, cache_key_inputs=cache_key_inputs,
+                           strategy_name=strategy_name, training_window=training_window)
     label_vec = rows.labels
     train_x_np, train_y_np = rows.train_x, rows.train_y
     val_x_np, val_y_np = rows.val_x, rows.val_y
@@ -237,11 +321,7 @@ def train_model(
         final_val_loss, final_val_acc = _evaluate(model, val_loader, loss_fn)
 
     cache_key = compute_cache_key(cache_key_inputs)
-    label_dist = {
-        "BUY": int((label_vec == 0).sum()),
-        "HOLD": int((label_vec == 1).sum()),
-        "SELL": int((label_vec == 2).sum()),
-    }
+    label_dist = _label_distribution(label_vec)
 
     version_id = registry.save(
         strategy=strategy_name,
@@ -256,21 +336,7 @@ def train_model(
             # data window so a model can be backtested over any range; this is
             # what lets a reader see which bars it actually learned from, and
             # notice when that is not the range they are testing over.
-            "training_window": {
-                **dict(training_window or {}),
-                "since": bar_times[rows.first_fit],
-                "until": bar_times[rows.last_fit],
-                "inclusive": True,
-                "purged_rows": rows.first_val - rows.last_fit - 1,
-                "bar_count": len(candles),
-                "first_close": float(candles[0].close),
-                "last_close": float(candles[-1].close),
-            },
-            "validation_window": {
-                "since": bar_times[rows.first_val],
-                "until": bar_times[rows.last_val],
-                "bar_count": int(val_x_np.shape[0]),
-            },
+            **_windows(rows, candles, bar_times, training_window),
             "train_samples": int(train_x_np.shape[0]),
             "val_samples": int(val_x_np.shape[0]),
             "final_train_loss": final_train_loss,

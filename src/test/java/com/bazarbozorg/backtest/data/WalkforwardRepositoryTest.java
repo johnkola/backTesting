@@ -595,4 +595,53 @@ class WalkforwardRepositoryTest {
         assertNull(unknown.setRebuiltSince());
         assertNull(unknown.valuesChangedSince());
     }
+
+    @Test
+    @DisplayName("B9: a fold has a row per engine; the run summarises its first, each engine its own")
+    void eachEngineHasItsFoldsAndItsSummary() {
+        long id = insertRun(LABEL, false, "return", "ce", null);
+        exec("UPDATE walkforward_runs SET engines_json = '[{\"engine\": \"xgboost\"},"
+             + " {\"engine\": \"mlp\"}]' WHERE id = " + id);
+        // The network beats holding in one fold of two; XGBoost in both.
+        insertFold(id, 1, 2016, 12.0, 7.0, 0.8, 0.6, 9.0, 11.0, 4, 0, 0, 0);
+        insertFold(id, 2, 2017, 1.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, 0, 0, 0);
+        for (int[] f : new int[][] {{1, 2016, 15}, {2, 2017, 9}}) {
+            exec("INSERT INTO walkforward_folds (run_id, fold, engine, val_year, train_from,"
+                 + " train_to, n_train, n_val, strat_return, hold_return, strat_sharpe,"
+                 + " hold_sharpe, strat_maxdd, hold_maxdd, trades, accuracy, baseline_acc,"
+                 + " days_out, drift_tax, commissions, timing) VALUES (" + id + ", " + f[0]
+                 + ", 'xgboost', " + f[1] + ", '2003-01-02', '" + (f[1] - 1) + "-12-31',"
+                 + " 3200, 252, " + f[2] + ", " + (f[0] == 1 ? 7.0 : 8.0)
+                 + ", 0.9, 0.6, 8.0, 11.0, 6, 0.45, 0.48, 20, 0, 0, 0)");
+        }
+
+        // The list's figures are the run's first engine's, XGBoost here.
+        WalkforwardRun run = theRun(id);
+        assertEquals(2, run.folds());
+        assertEquals(2, run.foldsWon());
+        assertEquals(((15 - 7) + (9 - 8)) / 2.0, run.meanExcess(), 1e-9);
+
+        // The detail has every engine's folds, in the run's engine order.
+        List<WalkforwardFold> folds = repo.findFolds(id);
+        assertEquals(List.of("xgboost", "mlp", "xgboost", "mlp"),
+                folds.stream().map(WalkforwardFold::engine).toList());
+        var summaries = com.bazarbozorg.backtest.model.EngineSummary.of(folds);
+        assertEquals(List.of("xgboost", "mlp"),
+                summaries.stream().map(com.bazarbozorg.backtest.model.EngineSummary::engine).toList());
+        assertEquals(2, summaries.get(0).foldsWon());
+        assertEquals(1, summaries.get(1).foldsWon());
+        assertEquals(Boolean.FALSE, summaries.get(0).beatsNaive());   // 0.45 vs 0.48
+        assertEquals(Boolean.TRUE, summaries.get(1).beatsNaive());    // 0.52 vs 0.48
+        assertEquals(Boolean.FALSE, summaries.get(1).beatsHoldOnReturn());
+    }
+
+    @Test
+    @DisplayName("B9: a run from before engines were recorded is the network's")
+    void aRunWithoutEnginesIsTheNetworks() {
+        WalkforwardRun run = theRun(runId);
+        assertNull(run.enginesJson());
+        assertEquals(2, run.folds());
+        assertEquals(List.of("mlp", "mlp"),
+                repo.findFolds(runId).stream().map(WalkforwardFold::engine).toList());
+    }
 }

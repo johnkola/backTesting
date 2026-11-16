@@ -42,6 +42,11 @@ from nn.train import TrainConfig, train_model
 from loader.db import pool
 
 _STRATEGY = "nn-feedforward"
+
+#: The registry name each engine's candle-trained models are saved under, and
+#: the engine strategy that backtests them (B9). The network keeps its own, so
+#: its cache keys are unchanged.
+ENGINE_STRATEGIES = {"mlp": _STRATEGY, "xgboost": "xgboost", "lightgbm": "lightgbm"}
 router = APIRouter()
 
 
@@ -88,6 +93,16 @@ class TrainRequest(BaseModel):
             "that exact version under the resolved cache key, or 404 if it's "
             "not on disk — never trains a different version to satisfy the pin."
         ),
+    )
+
+    engine: str = Field(
+        "mlp",
+        description="Which engine to train (B9): 'mlp' (the network), 'xgboost' or "
+                    "'lightgbm'. Every engine trains on the same rows, labels and purge",
+    )
+    engine_settings: dict[str, float] | None = Field(
+        None, description="A tree engine's own settings (GET /api/nn/engines); its "
+                          "defaults where absent. The network's are the fields below",
     )
 
     # Hyperparameter overrides; everything not set falls back to TrainConfig
@@ -165,6 +180,20 @@ def post_train(req: TrainRequest) -> JSONResponse:
     # than silently unreachable. FEATURE_SCHEMA_VERSION stays in the key: a
     # feature-formula change makes the stored weights genuinely wrong, not
     # merely stale.
+    from nn import engines
+
+    if req.engine not in ENGINE_STRATEGIES:
+        return JSONResponse(status_code=400, content={
+            "error": f"engine {req.engine!r} is not registered; the runner has "
+                     f"{', '.join(ENGINE_STRATEGIES)}"})
+    problems = engines.ENGINES[req.engine].problems(req.engine_settings)
+    if req.engine == "mlp" and req.engine_settings:
+        problems.append("the network's settings are the hyperparameter fields, not "
+                        "engine_settings")
+    if problems:
+        return JSONResponse(status_code=400, content={"error": "; ".join(problems)})
+    strategy = ENGINE_STRATEGIES[req.engine]
+
     cache_inputs: dict[str, str] = {
         "strategy": _STRATEGY,
         "feature_schema_version": str(FEATURE_SCHEMA_VERSION),
@@ -184,6 +213,18 @@ def post_train(req: TrainRequest) -> JSONResponse:
         "train_split_ratio": f"{cfg.train_split_ratio:.6f}",
         "seed": str(cfg.seed),
     }
+    if req.engine != "mlp":
+        # A tree engine's identity: the shared inputs and label, the split, and
+        # its own settings; none of the network's.
+        shared = ("feature_schema_version", "instrument_id", "source_id", "timeframe",
+                  "lookback_window", "forward_bars", "buy_threshold", "sell_threshold",
+                  "train_split_ratio")
+        cache_inputs = {
+            "strategy": strategy,
+            **{k: cache_inputs[k] for k in shared},
+            **{f"engine.{k}": f"{v:g}" for k, v in sorted(
+                engines.ENGINES[req.engine].resolve(req.engine_settings).items())},
+        }
 
     # `mode` decides whether to honour an existing model at this cache key.
     if req.mode not in {"force", "auto", "load_only"}:
@@ -195,7 +236,7 @@ def post_train(req: TrainRequest) -> JSONResponse:
 
     cache_key = compute_cache_key(cache_inputs)
     if req.mode in {"auto", "load_only"}:
-        existing_versions = _registry().list_versions(_STRATEGY, cache_key)
+        existing_versions = _registry().list_versions(strategy, cache_key)
 
         # Explicit version pin (from `run --model-version`): succeed only if
         # that exact version exists under this cache key. Never train or fall
@@ -207,7 +248,7 @@ def post_train(req: TrainRequest) -> JSONResponse:
                     status_code=200,
                     content={
                         "status": "cached",
-                        "strategy": _STRATEGY,
+                        "strategy": strategy,
                         "cacheKey": cache_key,
                         "versionId": req.version_id,
                         "symbol": req.symbol,
@@ -231,7 +272,7 @@ def post_train(req: TrainRequest) -> JSONResponse:
                 status_code=200,
                 content={
                     "status": "cached",
-                    "strategy": _STRATEGY,
+                    "strategy": strategy,
                     "cacheKey": cache_key,
                     "versionId": existing_versions[-1],  # latest
                     "symbol": req.symbol,
@@ -257,7 +298,9 @@ def post_train(req: TrainRequest) -> JSONResponse:
             cfg,
             registry=_registry(),
             cache_key_inputs=cache_inputs,
-            strategy_name=_STRATEGY,
+            strategy_name=strategy,
+            engine=req.engine,
+            engine_settings=req.engine_settings,
             bar_times=bar_times,
             # Provenance for the saved model. The cache key no longer encodes
             # the window, so this is the only record of which bars produced
@@ -280,7 +323,7 @@ def post_train(req: TrainRequest) -> JSONResponse:
         status_code=200,
         content={
             "status": "completed",
-            "strategy": _STRATEGY,
+            "strategy": strategy,
             "cacheKey": result.cache_key,
             "versionId": result.version_id,
             "symbol": req.symbol,
@@ -382,13 +425,17 @@ class PredictRangeRequest(BaseModel):
     timeframe: str
     since: str | None = None
     until: str | None = None
+    engine: str = Field("mlp", description="The engine whose model to load (B9)")
 
 
 @router.post("/api/nn/predict_range")
 def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
+    if req.engine not in ENGINE_STRATEGIES:
+        return JSONResponse(status_code=400, content={
+            "error": f"engine {req.engine!r} is not registered"})
     loaded = load_for_inference(
         _registry(),
-        strategy=_STRATEGY,
+        strategy=ENGINE_STRATEGIES[req.engine],
         cache_key=req.cache_key,
         version_id=req.version_id,
     )
@@ -632,6 +679,15 @@ def get_models(strategy: str | None = None) -> JSONResponse:
         status_code=200,
         content={"items": items, "modelsDir": str(_models_dir())},
     )
+
+
+@router.get("/api/nn/engines")
+def get_engines() -> dict:
+    """The engines the runner registers (B9, R22): each one's catalogue entry,
+    settings with defaults and bounds, and the losses it can train on. The API
+    validates a saved strategy against this and hands the builder the same."""
+    from nn import engines
+    return {"items": engines.registry_json()}
 
 
 @router.get("/api/nn/models/window")

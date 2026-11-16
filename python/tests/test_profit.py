@@ -274,9 +274,9 @@ class TestBlindTraining:
         extra = STRATEGY2 if execution == "margin" else {}
         m = _market(len(dates), execution)
 
-        untaxed, sig0 = wf.run_fold(1, 2019, tr, va, x, y, m, dates,
+        [(untaxed, sig0)] = wf.run_fold(1, 2019, tr, va, x, y, m, dates,
                                     _args(loss, tax_rate=None, cost_bps=5.0, **extra))
-        rerun, sig25 = wf.run_fold(1, 2019, tr, va, x, y, m, dates,
+        [(rerun, sig25)] = wf.run_fold(1, 2019, tr, va, x, y, m, dates,
                                    _args(loss, tax_rate=25.0, cost_bps=12.0, **extra))
 
         # Training never saw the tax or the cost: the signals are the same.
@@ -293,7 +293,7 @@ class TestBlindTraining:
     def test_the_stored_signals_carry_each_bar_s_two_dates_and_label(self):
         x, y, rets, dates = _data()
         tr, va = list(range(0, 160)), list(range(200, 220))
-        _, sig = wf.run_fold(1, 2019, tr, va, x, y, _market(len(dates), "signals"), dates,
+        [(_, sig)] = wf.run_fold(1, 2019, tr, va, x, y, _market(len(dates), "signals"), dates,
                              _args("return"))
         assert sig.dates == dates[200:220]
         assert sig.exits == [*dates[201:220], None]    # the last date has no exit
@@ -302,7 +302,7 @@ class TestBlindTraining:
 
     def test_a_classifier_stores_its_three_probabilities(self):
         x, y, rets, dates = _data()
-        _, sig = wf.run_fold(1, 2019, list(range(160)), list(range(165, 175)), x, y,
+        [(_, sig)] = wf.run_fold(1, 2019, list(range(160)), list(range(165, 175)), x, y,
                              _market(len(dates), "signals"), dates, _args("ce"))
         assert sig.output.shape == (10, 3)
         assert np.allclose(sig.output.sum(axis=1), 1.0, atol=1e-6)

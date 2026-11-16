@@ -32,7 +32,9 @@ export default function BenchmarkTable({ rows, unit, tradesNote }: {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key} className={r.key === 'strategy' ? 'font-semibold' : ''}>
+            // Keyed with the label too: a run of several engines has one
+            // strategy line each (B9).
+            <tr key={`${r.key}:${r.label}`} className={r.key === 'strategy' ? 'font-semibold' : ''}>
               <td>{r.label}</td>
               {r.note ? (
                 <td colSpan={6} className="text-xs text-base-content/60">Not available: {r.note}</td>

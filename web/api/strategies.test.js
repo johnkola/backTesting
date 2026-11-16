@@ -481,3 +481,63 @@ describe('label kinds and their naive baselines (B8, R72)', () => {
     assert.match(errors.join(' '), /label.kind must be one of forward_return_3class/);
   });
 });
+
+describe('validateEngines — the runner registry decides (B9, R22)', () => {
+  const { validateEngines, enginesOf } = require('./strategies');
+  // The shape GET /api/nn/engines serves, trimmed to what validation reads.
+  const REGISTRY = [
+    { name: 'mlp', title: 'Neural network', losses: ['ce', 'return', 'sharpe', 'calmar'],
+      settings: [] },
+    { name: 'xgboost', title: 'XGBoost', losses: ['ce'],
+      settings: [{ key: 'maxDepth', kind: 'int', min: 1, max: 16, label: 'Maximum tree depth' }] },
+  ];
+  const check = (raw, loss = 'ce') => {
+    const errors = [];
+    const value = validateEngines(raw, REGISTRY, loss, errors);
+    return { value, errors };
+  };
+
+  it('is the network alone when none are given', () => {
+    const { value, errors } = check(undefined);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(value, [
+      { engine: 'mlp', enabled: true, settings: {} },
+      { engine: 'xgboost', enabled: false, settings: {} },
+    ]);
+  });
+
+  it('keeps each engine in registry order with its checked settings', () => {
+    const { value, errors } = check({ xgboost: { enabled: true, settings: { maxDepth: '4' } },
+      mlp: { enabled: false } });
+    assert.deepEqual(errors, []);
+    assert.deepEqual(value.map((e) => [e.engine, e.enabled]), [['mlp', false], ['xgboost', true]]);
+    assert.deepEqual(value[1].settings, { maxDepth: 4 });
+  });
+
+  it('refuses a tree engine on a money loss with the reason, not a swap', () => {
+    const { errors } = check({ mlp: { enabled: true }, xgboost: { enabled: true } }, 'sharpe');
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /XGBoost cannot train on the 'sharpe' loss/);
+  });
+
+  it('refuses unknown engines, bad settings and nothing switched on', () => {
+    assert.match(check({ svm: { enabled: true } }).errors.join(), /svm is not registered/);
+    assert.match(check({ xgboost: { enabled: true, settings: { maxDepth: 2.5 } } }).errors.join(),
+      /whole number/);
+    assert.match(check({ xgboost: { enabled: true, settings: { eta: 1 } } }).errors.join(),
+      /has no setting eta/);
+    assert.match(check({ mlp: { enabled: false } }).errors.join(), /at least one engine/);
+  });
+
+  it('says the registry is missing rather than guessing', () => {
+    const errors = [];
+    assert.equal(validateEngines({ mlp: { enabled: true } }, null, 'ce', errors), null);
+    assert.match(errors[0], /registry is unavailable/);
+  });
+
+  it('reads a version without engine rows as the network alone', () => {
+    assert.deepEqual(enginesOf([]), { mlp: { enabled: true, settings: {} } });
+    assert.deepEqual(enginesOf([{ engine: 'xgboost', enabled: true, settings_json: '{"maxDepth":4}' }]),
+      { xgboost: { enabled: true, settings: { maxDepth: 4 } } });
+  });
+});
