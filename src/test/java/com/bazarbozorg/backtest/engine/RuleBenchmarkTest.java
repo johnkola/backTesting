@@ -97,10 +97,10 @@ class RuleBenchmarkTest {
         assertEquals(103.0, t.get(0).exitPrice(), 1e-12);    // sold at bar 2's open
         assertEquals(52.0, t.get(1).entryPrice(), 1e-12);    // SPY at bar 2's open
         assertEquals(55.0, t.get(1).exitPrice(), 1e-12);
-        // Each buy is sized on all the cash before its commission, so cash ends 1.00
-        // below zero after it (G28, B2): the same accounting as the strategy's.
-        double afterQqq = CAPITAL * 103 / 101 - 1.0 - 1.0;
-        assertEquals(afterQqq * 55 / 52 - 1.0 - 1.0, d.finalEquity(), 1e-6);
+        // Each buy is sized with its commission inside the cash (B2), so cash is 0
+        // after it, never below.
+        double afterQqq = (CAPITAL - 1.0) / 101 * 103 - 1.0;
+        assertEquals((afterQqq - 1.0) / 52 * 55 - 1.0, d.finalEquity(), 1e-6);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.bazarbozorg.backtest.engine;
 
 import com.bazarbozorg.backtest.model.Order;
 import com.bazarbozorg.backtest.model.commission.CommissionModel;
+import com.bazarbozorg.backtest.model.enums.OrderSide;
 import com.bazarbozorg.backtest.model.slippage.SlippageModel;
 
 /**
@@ -51,6 +52,50 @@ public class ExecutionSimulator {
      * simulator serves one run (`BacktestEngine` creates it per run), so this
      * is that run's total slippage. It was reported as 0 until 2026-11-15 (G29).
      */
+    /**
+     * The largest quantity an entry can take with {@code budget}: its fill at
+     * {@code price}, slipped for {@code side}, times the quantity, plus the
+     * commission on that fill, costs no more than the budget (B2, G28).
+     *
+     * <p>Entries used to be sized as budget / price and then filled at the
+     * slipped price plus commission, so every entry with costs on left cash
+     * negative and the run slightly leveraged without saying so. This sizes on
+     * what the fill will actually charge, for any commission model: the
+     * quantity is the fixed point of {@code (budget - commission(q)) / fill},
+     * which converges because a commission grows no faster than the notional,
+     * and is then trimmed until the exact cost {@code openPosition} deducts
+     * fits. With commission and slippage at zero it is {@code budget / price},
+     * exactly the old quantity, so a frictionless result reproduces.
+     *
+     * @return the quantity, or 0 when the budget cannot cover any fill
+     */
+    public double affordableQuantity(double budget, double price, OrderSide side) {
+        if (!(budget > 0) || !(price > 0)) {
+            return 0.0;
+        }
+        double fill = slippageModel.calculate(price, side);
+        if (!(fill > 0)) {
+            return 0.0;
+        }
+        double qty = budget / fill;
+        for (int i = 0; i < 100; i++) {
+            double next = (budget - commissionModel.calculate(fill, qty)) / fill;
+            if (!(next > 0)) {
+                return 0.0;
+            }
+            boolean settled = Math.abs(next - qty) <= 1e-15 * qty;
+            qty = next;
+            if (settled) {
+                break;
+            }
+        }
+        // Never a fraction of a cent over: the cost below is the one charged.
+        for (int i = 0; i < 1000 && fill * qty + commissionModel.calculate(fill, qty) > budget; i++) {
+            qty = Math.nextDown(qty);
+        }
+        return qty;
+    }
+
     public double getTotalSlippage() {
         return totalSlippage;
     }

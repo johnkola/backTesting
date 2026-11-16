@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-4** · 2026-11-16 09:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-5** · 2026-11-16 09:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -326,11 +326,9 @@ Tab: **Pipeline → Backtest**.
   result's own commission and slippage, or not available with the reason (not
   daily, too little history, no SPY on the source). The result page shows the four
   side by side, and its chart draws all three benchmarks (B7).
-
-Known limits, each with a build step that removes it:
-
-- Entries are sized at all of cash on the close, before slippage and commission
-  are added. With costs on, cash goes slightly negative on every entry (G28, B2).
+- [ ] **app**: an entry never spends more than the cash: it is sized on the slipped
+  fill price with the commission inside the cash, so cash is zero or more after every
+  entry, long or short (B2).
 
 ## 8. The held-out test
 
@@ -403,10 +401,10 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 **Done when**
 
-- [ ] After every entry cash is zero or more, under each commission and slippage model
+- [x] After every entry cash is zero or more, under each commission and slippage model
   and for long and short entries. The quantity is sized on the slipped price with the
   commission inside it.
-- [ ] With commission and slippage at zero the quantity is what it is today, so a
+- [x] With commission and slippage at zero the quantity is what it is today, so a
   frictionless result reproduces.
 
 ### B3. Engine metrics (G29)
@@ -572,7 +570,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | Build step | Gap | Waits for | Status | Evidence and notes |
 |---|---|---|---|---|
 | B1. Next-open execution | G27 | | done | 2026-11-16. The profit step trades at the next session's open: the old position holds the overnight, the new one the day; the money loss trains on the same curve; the engine fills a signal at the next bar's open. One fixture holds the Java engine and the Python scorer to the same three trades and return. Python 772, Java 130. Walk-forward rerun as 456-462: the classifiers equal their dry-run recalculations exactly; the 16 backtest results rerun as 730-745 with the same trades. phase1-full v5 (462) reads +0.55 pp a fold, but it is long throughout with timing 0: the first-overnight artifact B6 removes (DESIGN-GAPS, B1 record) |
-| B2. Entry sizing | G28 | | not started | |
+| B2. Entry sizing | G28 | | done | 2026-11-16. `ExecutionSimulator.affordableQuantity` sizes every entry (long, short, the rule benchmarks' switches) on the slipped fill with the commission inside the cash: the fixed point of (cash − commission) ÷ fill, trimmed until the exact charge fits. Frictionless sizing is unchanged. Java 155 (24 sizing cases: four commission models, three slippage models, long and short). The 16 results rerun as 778-793: the same trades, returns slightly lower without the hidden leverage, originals deleted (DESIGN-GAPS, B2 record) |
 | B3. Engine metrics | G29 | | done | 2026-11-15. Sortino over the downside deviation, total slippage summed over every fill, break-even trades outside the win rate and streaks, and not-available metrics as null and a dash. Java 128 (9 new), client 142. All 16 stored results were rerun with rebuilt requests and reproduced exactly, apart from the fixed metrics, and replaced: 686-713 are now 714-729 (DESIGN-GAPS, B3 record) |
 | B4. In-sample flag | G30 | | not started | |
 | B5. Trainer purge | G31 | | not started | |
@@ -590,6 +588,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done; step 7's sizing limit is now an app condition |
 | 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done; step 6's naive-baseline condition is an app condition |
 | 2026-11-16-3 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done; steps 6 and 7 gain the rule-benchmark conditions |
 | 2026-11-16-2 | 2026-11-16 00:23 | Claude Code (Claude Opus 5.5) | B6 done; step 7's buy-and-hold condition rewritten as an app condition |

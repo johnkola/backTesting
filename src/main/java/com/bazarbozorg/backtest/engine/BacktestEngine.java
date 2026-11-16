@@ -443,7 +443,7 @@ public class BacktestEngine {
                     Bar into = pending.equals(symbol) ? bar : spy.get(day);
                     if (into == null) return "SPY has no bar on " + day;
                     double price = into.getOpenPrice().doubleValue();
-                    double qty = pm.calculatePositionSize(price, 1.0);
+                    double qty = sim.affordableQuantity(pm.getCash(), price, OrderSide.BUY);
                     long id = pending.equals(symbol) ? instrumentId : SPY_ID;
                     Order order = Order.market(id, OrderSide.BUY, qty, price);
                     ExecutionSimulator.FillResult fill = sim.fillMarketOrder(order, price);
@@ -646,7 +646,9 @@ public class BacktestEngine {
                 // Only enter if no existing long position
                 Position existingLong = portfolioManager.findOpenPosition(instrumentId, OrderSide.BUY);
                 if (existingLong == null) {
-                    double quantity = portfolioManager.calculatePositionSize(price, 1.0);
+                    // Sized on the slipped fill and its commission (B2): cash never goes negative.
+                    double quantity = executionSimulator.affordableQuantity(
+                            portfolioManager.getCash(), price, OrderSide.BUY);
                     if (quantity > 0) {
                         Order order = Order.market(instrumentId, OrderSide.BUY, quantity, price);
                         ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, price);
@@ -666,7 +668,9 @@ public class BacktestEngine {
                 // Only enter if no existing short position
                 Position existingShort = portfolioManager.findOpenPosition(instrumentId, OrderSide.SELL);
                 if (existingShort == null) {
-                    double quantity = portfolioManager.calculatePositionSize(price, 1.0);
+                    // The collateral and commission come out of cash too (B2).
+                    double quantity = executionSimulator.affordableQuantity(
+                            portfolioManager.getCash(), price, OrderSide.SELL);
                     if (quantity > 0) {
                         Order order = Order.market(instrumentId, OrderSide.SELL, quantity, price);
                         ExecutionSimulator.FillResult fill = executionSimulator.fillMarketOrder(order, price);

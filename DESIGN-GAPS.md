@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-7** · 2026-11-16 09:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-9** · 2026-11-16 09:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -392,6 +392,26 @@ Checklist:
 - **Found and fixed: 14 orphaned runs.** The store's database tests failed during B6, before the schema had the new columns, and left their aborted transactions unable to clean up. That left 14 empty, unfinished runs (464-470, 472-478). The cleanup now rolls back first. With the author's go, the runs were backed up (`cleanup-b8-20261116/before.sql.gz`) and deleted.
 
 
+**B2 plan (G28), 2026-11-16.** The author: do B2. The conditions are in `AGENTS.md`, build step B2.
+
+The shape:
+- **Sized on what the fill will cost.** `ExecutionSimulator.affordableQuantity(budget, price, side)` returns the largest quantity whose slipped fill price times quantity, plus its commission, is no more than the budget. It works for any commission model: the quantity is solved as a fixed point, `(budget − commission(quantity)) ÷ slipped price`, and then trimmed until the exact cost `openPosition` charges fits. With commission and slippage at zero it is `budget ÷ price`, exactly today's quantity.
+- **Every entry uses it.** Long and short entries in `processSignal`, and the switching loop of the rule benchmarks (B7). `PortfolioManager.calculatePositionSize`, which sized on the raw price, goes.
+- **Stale records.** Every backtest result was run with commission and slippage on, so all 16 (762-777) are slightly leveraged today. They are rerun at the checkpoint. Walk-forward is unaffected: the profit step charges costs as fractions of equity, which can never overspend.
+
+Checklist:
+- [x] Plan here
+- [x] `affordableQuantity` and every entry through it; tests for each commission and slippage model, long and short, and the frictionless case
+- [x] All four CI jobs; rebuild
+- [x] **Checkpoint, the author's go:** results 762-777 backed up, rerun and the originals deleted
+- [x] README, `AGENTS.md`, G28 and this record say done
+
+*Done, 2026-11-16 09:22.* The author chose: back up, rerun, delete.
+- **Tests:** Java 155. Every combination of four commission models (zero, a $4.95 fee, 0.1%, 2%), three slippage models (zero, 0.15%, $0.05) and both sides leaves cash at zero or more and under a cent idle after an entry, at prices from $0.37 to $4,321. The old sizing went negative. Frictionless sizing is exactly cash ÷ price, so the B1 cross-check still makes its fixture's return. The rule benchmark test now expects cash never below zero.
+- **Results 762-777, rerun as 778-793.** All 16 keep their trades; each return is a little lower without the hidden leverage, for example 793 (nn-feedforward, 1999-2026) at 2,609.83% where it was 2,618.94%, and buy-and-hold at 1,238.93% where it was 1,240.79%. Checked by hand on 778: its first entry costs 9,990.01 plus 9.99 commission, exactly the 10,000 of cash. The backup is `rerun-b2-20261116/before.sql.gz`, and the originals were deleted in one transaction.
+- **Walk-forward is unaffected:** the profit step charges costs as fractions of equity, so an entry there can never overspend.
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -492,7 +512,7 @@ rule in `AGENTS.md`.
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
 | G27 | Trades happen on the wrong bar. A signal computed from a bar's close must be traded at the next bar's open. The Java engine fills at the same close that gave the signal, which is the flattering side. The walk-forward scorer trades at the next session's close, a session late, because it reads closes only; the first bar of a fold is the exception and trades at its own close. So the same signals give different trades in steps 6 and 7, and neither follows the rule | Requirement 76 ("traded at the next bar's open ... never at the same close it was computed from. Applies to every engine and benchmark") | `BacktestEngine.processSignal` fills at bar `i`'s `closePrice`; `walkforward.py:1156` builds `rets` close to next close and `simulate` shifts one more day; `test_walkforward.py` `test_the_first_bar_acts_on_its_own_signal`; `money_loss.portfolio_returns` and `strategy2.simulate_margin` pad the same way | M | done 2026-11-16 (B1): see the B1 record in Pass 4 |
-| G28 | An entry spends more cash than there is. The quantity is all of cash divided by the close; the fill then pays the slipped price plus commission, so cash is negative after every entry with costs on and the run is slightly leveraged without saying so | Design Notes, Staged Pipeline Architecture, stage 6 ("costs applied") | `PortfolioManager.calculatePositionSize` returns `cash * riskPercent / price`; `BacktestEngine.processSignal` sizes on `closePrice`, and `openPosition` then subtracts `filledPrice * quantity + commission` | S | open |
+| G28 | An entry spends more cash than there is. The quantity is all of cash divided by the close; the fill then pays the slipped price plus commission, so cash is negative after every entry with costs on and the run is slightly leveraged without saying so | Design Notes, Staged Pipeline Architecture, stage 6 ("costs applied") | `PortfolioManager.calculatePositionSize` returns `cash * riskPercent / price`; `BacktestEngine.processSignal` sizes on `closePrice`, and `openPosition` then subtracts `filledPrice * quantity + commission` | S | done 2026-11-16 (B2): see the B2 record in Pass 4 |
 | G29 | Four engine metrics are wrong or empty. (a) Sortino divides by the standard deviation of the losing bars about their own mean, which is not the downside deviation, and is 0 when no bar loses. (b) Total slippage is always 0. (c) A trade with zero profit counts as a loss. (d) Profit factor is 0 when no trade loses, which reads as the worst case | Design Notes, Staged Pipeline Architecture, stage 6 ("metrics computed") | `MetricsCalculator.calculateSortinoRatio`; `.totalSlippage(0.0)` in `calculate`; `Trade.isWin` is `pnl > 0` and every other trade is counted as losing; `MathUtils.safeDiv` returns 0 on a zero divisor | S | done 2026-11-15: see the B3 record in Pass 4 |
 | G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | open |
 | G36 | A selected cyclical feature is never trained on. The strategy names a catalogue feature (`day_of_week`), but the feature set stores a cyclical feature as two columns (`day_of_week_sin`, `day_of_week_cos`). `resolve_columns` compares the two names, finds no match, and drops the feature as "not in this feature set". phase1-full and both Strategy 2 variants select `day_of_week`, `day_of_year` and `day_of_month`, so all their runs trained without those six columns, while reporting that the features were simply absent | Architecture §8.2a (the strategy decides which features go in; a feature is dropped only when it has no values in the train window) | `nn/strategy_spec.py` `resolve_columns` compares `selected` with the set's column names; `feature_spec` for sets 10, 18 and 23 holds `day_of_week_sin` ... `day_of_month_cos` (columns 24 to 29 in set 23); `walkforward_runs.dropped_json` for runs 300, 301 and 348 lists the three as "not in this feature set". Found in the `AGENTS.md` step 1 review, 2026-11-14. The step 5 review found the other half: the coverage grid maps a base name to its `_sin`/`_cos` columns (`web/api/featureCatalogue.js` `VALUE_JOIN`), so the builder shows all three at 100% and kept, and the Train tab lists 26 features where the runner uses 23. Runs 300, 301 and 348 have `input_width` 460 where 580 was selected. No other selectable feature is cyclical | S | done (`fb6c5fe`): `strategy_spec.feature_columns`; runs 300, 301 and 348 were backed up, deleted and rerun on 2026-11-14 as 376, 377 and 378, each on 580 inputs with nothing dropped |
@@ -1197,6 +1217,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-9 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done: entries never spend more than the cash; G28 done |
+| 2026-11-16-8 | 2026-11-16 09:20 | Claude Code (Claude Opus 5.5) | B2 plan (G28) |
 | 2026-11-16-7 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done: runs flagged against the naive baseline; G34 done; R72 partial; 14 orphaned test runs removed |
 | 2026-11-16-6 | 2026-11-16 01:01 | Claude Code (Claude Opus 5.5) | B8 plan (G34, R72) |
 | 2026-11-16-5 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7 done: Faber and dual momentum beside every run; G33 done; R36 and R39 updated |

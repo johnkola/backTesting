@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-4** · 2026-11-16 09:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-5** · 2026-11-16 09:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -534,9 +534,11 @@ result page show the strategy and all three benchmarks side by side.
 with reasoning is
 [Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system):
 
-- **All-in sizing.** Every entry puts 100% of cash in, every exit takes all of it out.
+- **All-in sizing.** Every entry puts all of the cash in, every exit takes all of it out.
   No risk fraction, no stops, no diversification — the equity curve is one instrument's
-  path, leveraged by concentration.
+  path, concentrated in one position. An entry is sized on its slipped fill price with its
+  commission inside the cash, so cash never goes below zero (build step B2); results
+  stored before 2026-11-16 sized on the raw price and were slightly leveraged.
 - **One open position per `(instrument, side)`.** Repeat entry signals are ignored while
   a position is open, so a strategy that "adds to a winner" can't.
 - **Slippage is a fixed bump, not a depth model.** Real slippage grows with order size;
@@ -1055,6 +1057,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2: entries are sized on the slipped fill with the commission inside the cash |
 | 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8: the naive baseline per run (`meanAccuracy`, `meanBaselineAcc`, `beatsNaive`) and its flag |
 | 2026-11-16-3 | 2026-11-16 00:57 | Claude Code (Claude Opus 5.5) | B7: Faber and dual momentum beside every run; `GET /api/nn/rules`; result and fold benchmark fields |
 | 2026-11-16-2 | 2026-11-16 00:22 | Claude Code (Claude Opus 5.5) | B6: buy-and-hold pays the strategy's costs and tax and is stored with each run; the shared benchmark row is gone |

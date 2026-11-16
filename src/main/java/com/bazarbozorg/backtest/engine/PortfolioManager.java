@@ -140,14 +140,6 @@ public class PortfolioManager {
         equityHistory.add(new EquityPoint(time, equity, drawdown, drawdownPct));
     }
 
-    /** Position size = (cash * riskPercent) / price; zero if price is non-positive. */
-    public double calculatePositionSize(double price, double riskPercent) {
-        if (price <= 0) {
-            return 0.0;
-        }
-        return (cash * riskPercent) / price;
-    }
-
     public double getInitialCapital() {
         return initialCapital;
     }
