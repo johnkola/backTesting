@@ -94,7 +94,7 @@ public class ReportCommand implements Runnable {
         List<String> headers = List.of(
                 "ID", "Strategy", "Instrument", "Timeframe", "Source",
                 "Period", "Return%", "Sharpe", "Drawdown%",
-                "Trades", "Win Rate%", "Sample", "Created"
+                "Trades", "Win Rate%", "Sample", "Tax%", "Created"
         );
 
         List<List<String>> rows = new ArrayList<>();
@@ -116,6 +116,8 @@ public class ReportCommand implements Runnable {
             row.add(summary.modelWindow() == null ? ""
                     : summary.inSample() == null ? "?"
                     : summary.inSample() ? "IN" : "out");
+            // G20: the rate a result was scored after, blank before tax.
+            row.add(summary.taxRate() == null ? "" : String.valueOf(MathUtils.round(summary.taxRate(), 2)));
             row.add(DateTimeUtils.format(summary.createdAt()));
             rows.add(row);
         }
@@ -126,7 +128,7 @@ public class ReportCommand implements Runnable {
                 describeFilters().isEmpty() ? "" : ", filtered by " + describeFilters());
         System.out.println(TableFormatter.formatTable(headers, rows));
         System.out.println("  Sample: IN = a model tested on bars it was trained on (B4); out = after"
-                + " them; ? = its training window is unknown.");
+                + " them; ? = its training window is unknown. Tax%: scored after that tax (G20).");
         System.out.println("  Full report for one row: report --id <ID>");
     }
 

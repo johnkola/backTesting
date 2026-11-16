@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import { sampleNote, sampleOf } from '../lib/inSample'
+import { taxNote } from '../lib/tax'
 import { testWindowMark, testWindowNote } from '../lib/testWindow'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import TradeChart from '../components/TradeChart'
@@ -138,6 +139,7 @@ export default function ResultDetailPage() {
       ? `${detail.totalTrades} (${r.metrics.breakEvenTrades} break-even)`
       : String(detail.totalTrades)],
     ['Slippage', money(r?.metrics?.totalSlippage ?? null)],
+    ['Tax', detail.taxRate == null ? 'before tax' : money(r?.metrics?.totalTax ?? 0)],
     ['Initial', money(detail.initialCapital)],
     ['Final', money(detail.finalEquity)],
     ['Buy & hold', pct(r?.metrics?.buyAndHoldReturnPct ?? null)],
@@ -195,6 +197,10 @@ export default function ResultDetailPage() {
           {sampleNote(detail)}
         </div>
       )}
+
+      <p className="text-xs text-base-content/70">
+        {taxNote(detail.taxRate, r?.metrics?.totalTax, r?.buyAndHold?.metrics?.totalTax)}
+      </p>
 
       {testWindowMark(detail) && (
         <div className={`alert ${testWindowMark(detail) === 'reused' ? 'alert-error'

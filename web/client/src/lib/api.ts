@@ -352,6 +352,8 @@ export type ResultSummary = {
   testWindows?: TestWindowLook[]
   /** True when a window it scores was looked at before; null when it scores none. */
   testWindowReused?: boolean | null
+  /** Percent charged on each realized gain, or null when scored before tax (G20). */
+  taxRate?: number | null
 }
 
 /** One look at a saved test window (`test_window_looks`), as Results shows it. */
@@ -401,6 +403,8 @@ export type PerformanceMetrics = {
   /** Trades closed at exactly zero P&L: neither wins nor losses. */
   breakEvenTrades?: number
   totalCommissions?: number
+  /** Tax paid on realized gains, in money; 0 when scored before tax (G20). */
+  totalTax?: number
   /** Per fill, |fill - bar price| x quantity, summed. 0 before 2026-11-15 (G29). */
   totalSlippage?: number
   buyAndHoldReturnPct?: number
@@ -499,6 +503,8 @@ export type ResultDetail = ResultSummary & {
     equityHistory: EquityPoint[]
     buyAndHold?: BuyAndHold | null
     benchmarks?: RuleBenchmark[] | null
+    /** Percent on realized gains, or null before tax (G20). */
+    taxRatePct?: number | null
   } | null
 }
 
@@ -614,6 +620,8 @@ export type RunRequest = {
   parameters?: Record<string, string>
   modelVersion?: string
   aggregateMissing?: boolean
+  /** Score after tax: percent on each realized gain, the benchmarks alike (G20). */
+  taxRate?: number
 }
 
 /** The full result POST /api/run returns — same shape GET /api/results/:id nests under `result`. */

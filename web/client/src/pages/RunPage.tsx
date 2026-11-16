@@ -43,6 +43,8 @@ export default function RunPage() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [capital, setCapital] = useState('')
+  // Score after tax (G20): blank scores before tax.
+  const [taxRate, setTaxRate] = useState('')
   const [params, setParams] = useState<Record<string, string>>({})
   const [modelVersion, setModelVersion] = useState('')
 
@@ -162,6 +164,7 @@ export default function RunPage() {
         from: from || undefined,
         to: to || undefined,
         capital: capital ? Number(capital) : undefined,
+        taxRate: taxRate ? Number(taxRate) : undefined,
         parameters: params,
         modelVersion: modelVersion || undefined,
       })
@@ -335,7 +338,7 @@ export default function RunPage() {
 
           <details className="bg-base-200 rounded-box p-4">
             <summary className="cursor-pointer font-medium">
-              Optional: capital{strategy && Object.keys(strategy.defaultParameters).length > 0 ? ', parameters' : ''}
+              Optional: capital, tax{strategy && Object.keys(strategy.defaultParameters).length > 0 ? ', parameters' : ''}
             </summary>
             <div className="grid gap-4 md:grid-cols-3 mt-4">
               <label className="form-control">
@@ -343,6 +346,12 @@ export default function RunPage() {
                 <input type="number" step="any" className="input input-bordered"
                   placeholder="from config" value={capital}
                   onChange={(e) => setCapital(e.target.value)} />
+              </label>
+              <label className="form-control">
+                <FieldLabel text="Score after tax (%)" hint="Percent charged on each realized gain, net of commissions, with a loss offsetting later gains; a position open at the end is sold and taxed. Buy-and-hold and the rule benchmarks pay the same. Scoring only: the signals are unchanged. Empty scores before tax (G20)." />
+                <input type="number" step="any" min="0" max="99" className="input input-bordered"
+                  placeholder="before tax" value={taxRate}
+                  onChange={(e) => setTaxRate(e.target.value)} />
               </label>
             </div>
 

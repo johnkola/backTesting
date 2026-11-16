@@ -575,6 +575,7 @@ app.get('/api/results', async (req, res) => {
              total_trades, win_rate, model_cache_key, model_cache_hit,
              model_version_id, created_at,
              model_train_from, model_train_to, model_train_symbol, model_window, in_sample,
+             tax_rate,
              -- Buy-and-hold is the only number that says whether a result was
              -- worth producing, and the list is where you compare many at once.
              -- It has no column of its own, so it is read out of result_json
@@ -642,6 +643,8 @@ function modelWindowOf(r) {
     modelTrainTo: day(r.model_train_to),
     modelTrainSymbol: r.model_train_symbol ?? null,
     inSample: r.in_sample ?? null,
+    // G20: the percent it was scored after on realized gains; null before tax.
+    taxRate: r.tax_rate == null ? null : Number(r.tax_rate),
   };
 }
 
@@ -657,7 +660,8 @@ app.get('/api/results/:id', async (req, res) => {
              total_return_pct, sharpe_ratio, max_drawdown_pct,
              total_trades, win_rate, model_cache_key, model_cache_hit,
              model_version_id, result_json, created_at,
-             model_train_from, model_train_to, model_train_symbol, model_window, in_sample
+             model_train_from, model_train_to, model_train_symbol, model_window, in_sample,
+             tax_rate
         FROM backtest_results
        WHERE id = $1`;
     const { rows } = await pool.query(sql, [id]);

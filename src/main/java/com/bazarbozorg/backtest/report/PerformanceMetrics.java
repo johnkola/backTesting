@@ -34,6 +34,8 @@ public class PerformanceMetrics {
     private final int maxConsecutiveWins;
     private final int maxConsecutiveLosses;
     private final double totalCommissions;
+    /** Tax paid on realized gains, in money; 0 for a run scored before tax (G20). */
+    private final double totalTax;
     private final double totalSlippage;
     private final double buyAndHoldReturnPct;
     private final double initialCapital;
@@ -60,6 +62,7 @@ public class PerformanceMetrics {
         this.maxConsecutiveWins = builder.maxConsecutiveWins;
         this.maxConsecutiveLosses = builder.maxConsecutiveLosses;
         this.totalCommissions = builder.totalCommissions;
+        this.totalTax = builder.totalTax;
         this.totalSlippage = builder.totalSlippage;
         this.buyAndHoldReturnPct = builder.buyAndHoldReturnPct;
         this.initialCapital = builder.initialCapital;
@@ -146,6 +149,10 @@ public class PerformanceMetrics {
         return totalCommissions;
     }
 
+    public double getTotalTax() {
+        return totalTax;
+    }
+
     public double getTotalSlippage() {
         return totalSlippage;
     }
@@ -190,6 +197,7 @@ public class PerformanceMetrics {
         private int maxConsecutiveWins;
         private int maxConsecutiveLosses;
         private double totalCommissions;
+        private double totalTax;
         private double totalSlippage;
         private double buyAndHoldReturnPct;
         private double initialCapital;
@@ -288,6 +296,11 @@ public class PerformanceMetrics {
 
         public Builder totalCommissions(double totalCommissions) {
             this.totalCommissions = totalCommissions;
+            return this;
+        }
+
+        public Builder totalTax(double totalTax) {
+            this.totalTax = totalTax;
             return this;
         }
 

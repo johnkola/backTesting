@@ -55,6 +55,12 @@ public class BacktestResult {
      * repository reads it back from, so it is never in two places.
      */
     private final transient ModelWindow modelWindow;
+    /**
+     * Percent charged on each realized gain, or null for a result scored before
+     * tax (G20). The strategy, its buy-and-hold and its rule benchmarks all paid
+     * it. Kept in the stored JSON as well as its column, as the run's setting.
+     */
+    private final Double taxRatePct;
 
     public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
                           String dataSource,
@@ -67,6 +73,24 @@ public class BacktestResult {
                           BuyAndHold buyAndHold,
                           List<RuleBenchmark> benchmarks,
                           ModelWindow modelWindow) {
+        this(strategyName, instrumentSymbol, timeframe, dataSource, startDate, endDate, metrics,
+                trades, equityHistory, initialCapital, finalEquity, modelCacheKey, modelCacheHit,
+                modelVersionId, buyAndHold, benchmarks, modelWindow, null);
+    }
+
+    public BacktestResult(String strategyName, String instrumentSymbol, Timeframe timeframe,
+                          String dataSource,
+                          ZonedDateTime startDate, ZonedDateTime endDate,
+                          PerformanceMetrics metrics, List<Trade> trades,
+                          List<EquityPoint> equityHistory,
+                          double initialCapital, double finalEquity,
+                          String modelCacheKey, Boolean modelCacheHit,
+                          String modelVersionId,
+                          BuyAndHold buyAndHold,
+                          List<RuleBenchmark> benchmarks,
+                          ModelWindow modelWindow,
+                          Double taxRatePct) {
+        this.taxRatePct = taxRatePct;
         this.strategyName = strategyName;
         this.instrumentSymbol = instrumentSymbol;
         this.timeframe = timeframe;
@@ -84,6 +108,11 @@ public class BacktestResult {
         this.buyAndHold = buyAndHold;
         this.benchmarks = benchmarks;
         this.modelWindow = modelWindow;
+    }
+
+    /** Percent on realized gains, or null when scored before tax (G20). */
+    public Double getTaxRatePct() {
+        return taxRatePct;
     }
 
     public String getDataSource() {
@@ -168,6 +197,6 @@ public class BacktestResult {
     public BacktestResult withModelWindow(ModelWindow window) {
         return new BacktestResult(strategyName, instrumentSymbol, timeframe, dataSource, startDate,
                 endDate, metrics, trades, equityHistory, initialCapital, finalEquity, modelCacheKey,
-                modelCacheHit, modelVersionId, buyAndHold, benchmarks, window);
+                modelCacheHit, modelVersionId, buyAndHold, benchmarks, window, taxRatePct);
     }
 }

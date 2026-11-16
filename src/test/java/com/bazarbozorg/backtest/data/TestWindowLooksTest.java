@@ -100,6 +100,21 @@ class TestWindowLooksTest {
         assertTrue(b.get(0).describe(SYMBOL).startsWith("TEST WINDOW REUSED"));
     }
 
+    @Test
+    @DisplayName("G20: a result scored after tax stores its rate, read back by the list and the report")
+    void theTaxRateIsStored() {
+        ZonedDateTime a = LocalDate.parse("2019-01-02").atStartOfDay(ZoneOffset.UTC);
+        long taxed = repo.save(new BacktestResult("sma-crossover", SYMBOL, Timeframe.D1, "yahoo", a,
+                a.plusDays(30), new PerformanceMetrics.Builder().totalTax(12.5).build(), List.of(),
+                List.of(), 10_000, 10_100, null, null, null, null, List.of(), null, 25.0));
+        long plain = repo.save(result("2019-01-02", "2019-02-01"));
+        assertEquals(25.0, repo.findById(taxed).orElseThrow().getTaxRatePct());
+        assertEquals(null, repo.findById(plain).orElseThrow().getTaxRatePct());
+        var rows = repo.findFiltered(null, SYMBOL, null, 10);
+        assertEquals(25.0, rows.stream().filter(r -> r.id() == taxed).findFirst().orElseThrow().taxRate());
+        assertEquals(null, rows.stream().filter(r -> r.id() == plain).findFirst().orElseThrow().taxRate());
+    }
+
     private String scalar(String sql) throws Exception {
         try (Connection c = db.getConnection(); Statement st = c.createStatement();
              ResultSet rs = st.executeQuery(sql)) {

@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-11** · 2026-11-16 14:57 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-12** · 2026-11-16 15:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -328,8 +328,11 @@ Tab: **Pipeline → Backtest**.
 - [ ] **app**: an nn result stores its model's training window, and one that covers
   it is marked in-sample on the Results list, the result page and the CLI, or its
   window is marked unknown (B4). The result to judge on is one marked out of sample.
-- [ ] **not built (G20)**: after-tax results. The engine's backtest is before
-  tax, while walk-forward scoring includes it.
+- [ ] **app**: a result can be scored after tax (G20): the run's rate on each realized
+  gain at the close, net of commissions, a loss offsetting later gains, a position open
+  at the end sold and taxed; its buy-and-hold and rule benchmarks pay the same. The
+  engine and the walk-forward scorer make the same after-tax figures on a shared fixture.
+  Results, the result page and the report show the rate and the tax paid.
 - [ ] **app**: Faber and dual momentum beside buy-and-hold, traded with the
   result's own commission and slippage, or not available with the reason (not
   daily, too little history, no SPY on the source). The result page shows the four
@@ -602,6 +605,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-12 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | G20: step 7's after-tax condition is an app condition |
 | 2026-11-16-11 | 2026-11-16 14:57 | Claude Code (Claude Opus 5.5) | Steps 4, 6 and 7 re-reviewed: app conditions hold; 4 waits on the test block, 6 on G11 (and no strategy passes), 7 on G20 |
 | 2026-11-16-10 | 2026-11-16 14:37 | Claude Code (Claude Opus 5.5) | G37: step 4's split is the chosen strategy's, as a run makes it |
 | 2026-11-16-9 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38 and G48: steps 4, 7 and 8 gain their app conditions |

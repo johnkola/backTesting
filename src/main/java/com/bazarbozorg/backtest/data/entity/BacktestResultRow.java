@@ -28,6 +28,7 @@ public record BacktestResultRow(long id,
                                 String modelVersionId,
                                 String resultJson,
                                 com.bazarbozorg.backtest.engine.ModelWindow modelWindow,
+                                Double taxRatePct,
                                 ZonedDateTime createdAt) {
 
     public static Builder builder() {
@@ -54,6 +55,7 @@ public record BacktestResultRow(long id,
         private String modelVersionId;
         private String resultJson;
         private com.bazarbozorg.backtest.engine.ModelWindow modelWindow;
+        private Double taxRatePct;
         private ZonedDateTime createdAt;
 
         private Builder() {}
@@ -76,6 +78,7 @@ public record BacktestResultRow(long id,
         public Builder modelCacheHit(Boolean v) { this.modelCacheHit = v; return this; }
         public Builder modelVersionId(String s) { this.modelVersionId = s; return this; }
         public Builder modelWindow(com.bazarbozorg.backtest.engine.ModelWindow w) { this.modelWindow = w; return this; }
+        public Builder taxRatePct(Double d) { this.taxRatePct = d; return this; }
         public Builder resultJson(String s) { this.resultJson = s; return this; }
         public Builder createdAt(ZonedDateTime d) { this.createdAt = d; return this; }
 
@@ -84,7 +87,7 @@ public record BacktestResultRow(long id,
                     dataSource, startDate, endDate, initialCapital, finalEquity,
                     totalReturnPct, sharpeRatio, maxDrawdownPct, totalTrades, winRate,
                     modelCacheKey, modelCacheHit, modelVersionId,
-                    resultJson, modelWindow, createdAt);
+                    resultJson, modelWindow, taxRatePct, createdAt);
         }
     }
 }

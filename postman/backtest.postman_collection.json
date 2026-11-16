@@ -1056,6 +1056,55 @@
           ]
         },
         {
+          "name": "A tax rate outside 0-100 is refused (G20)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "run"
+              ]
+            },
+            "description": "G20: taxRate is the percent charged on each realized gain, above 0 and below 100, or absent to score before tax. Refused before anything runs or is stored.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategy\": \"sma-crossover\",\n  \"instrument\": \"{{instrument}}\",\n  \"timeframe\": \"{{timeframe}}\",\n  \"source\": \"{{source}}\",\n  \"taxRate\": 150\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says what a tax rate must be', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('taxRate must be a percent');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Delete a result that does not exist",
           "request": {
             "method": "DELETE",
@@ -1563,6 +1612,13 @@
                   "        pm.expect(r.testWindows).to.be.an('array');",
                   "        if (r.testWindows.length === 0) pm.expect(r.testWindowReused).to.be.null;",
                   "        else pm.expect(r.testWindowReused).to.eql(r.testWindows.some(w => w.looksBefore > 0));",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('a result says the tax it was scored after, null before tax (G20)', function () {",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(r).to.have.property('taxRate');",
+                  "        if (r.taxRate !== null) pm.expect(r.taxRate).to.be.within(0, 100);",
                   "    }",
                   "});"
                 ]

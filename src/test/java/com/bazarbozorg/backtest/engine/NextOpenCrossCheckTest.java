@@ -85,7 +85,11 @@ class NextOpenCrossCheckTest {
     }
 
     private static PortfolioManager run(BarSeries s, boolean[] calls) {
-        PortfolioManager pm = new PortfolioManager(CAPITAL);
+        return run(s, calls, 0.0);
+    }
+
+    private static PortfolioManager run(BarSeries s, boolean[] calls, double taxRate) {
+        PortfolioManager pm = new PortfolioManager(CAPITAL, taxRate);
         BacktestEngine.trade(s, replay(calls), 0, 1L, pm,
                 new ExecutionSimulator(new FixedCommission(0.0), new PercentageSlippage(0.0)));
         return pm;
@@ -133,5 +137,27 @@ class NextOpenCrossCheckTest {
         PortfolioManager last = run(s, onlyLast);
         assertTrue(last.getCompletedTrades().isEmpty(), "the last bar's call has no next open");
         assertEquals(CAPITAL, last.getCash(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("G20: after tax, the engine makes the walk-forward scorer's return and tax")
+    void taxedMatchesTheScorer() throws IOException {
+        JsonObject f = fixture();
+        JsonObject taxed = f.getAsJsonObject("taxed");
+        BarSeries s = series(f.getAsJsonArray("bars"));
+        boolean[] calls = longs(taxed.getAsJsonArray("long"));
+        double rate = taxed.get("taxRatePct").getAsDouble() / 100.0;
+
+        PortfolioManager before = run(s, calls);
+        assertEquals(taxed.get("returnPctBeforeTax").getAsDouble(),
+                (before.getCash() / CAPITAL - 1.0) * 100.0, 1e-9);
+
+        PortfolioManager after = run(s, calls, rate);
+        assertEquals(taxed.get("fills").getAsInt(), 2 * after.getCompletedTrades().size());
+        assertEquals(taxed.get("returnPct").getAsDouble(), (after.getCash() / CAPITAL - 1.0) * 100.0, 1e-9);
+        assertEquals(taxed.get("taxPaidPct").getAsDouble(), after.getTaxPaid() / CAPITAL * 100.0, 1e-9);
+        // Two gains taxed at their sale, a loss carried untaxed, the last sale
+        // taxed net of it: four trades, three paying.
+        assertEquals(3, after.getCompletedTrades().stream().filter(t -> t.tax() > 0).count());
     }
 }

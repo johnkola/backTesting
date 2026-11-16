@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { sampleNote, sampleOf } from '../lib/inSample'
+import { taxBadge } from '../lib/tax'
 import { testWindowMark, testWindowNote } from '../lib/testWindow'
 import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
@@ -148,6 +149,9 @@ export default function ResultsPage() {
                           >
                             in-sample
                           </span>
+                        )}
+                        {taxBadge(r.taxRate) && (
+                          <span className="badge badge-xs badge-ghost ml-1">{taxBadge(r.taxRate)}</span>
                         )}
                         {testWindowMark(r) && (
                           <span

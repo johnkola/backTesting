@@ -125,9 +125,11 @@ public final class MetricsCalculator {
         double totalWinPnl = 0.0;
         double totalLossPnl = 0.0;
         double totalCommissions = 0.0;
+        double totalTax = 0.0;
 
         for (Trade trade : trades) {
             totalCommissions += trade.commission();
+            totalTax += trade.tax();
             if (trade.isWin()) {
                 winningTradeCount++;
                 totalWinPnl += trade.pnl();
@@ -172,6 +174,7 @@ public final class MetricsCalculator {
                 .maxConsecutiveWins(maxConsecutiveWins)
                 .maxConsecutiveLosses(maxConsecutiveLosses)
                 .totalCommissions(totalCommissions)
+                .totalTax(totalTax)
                 .totalSlippage(totalSlippage)
                 .buyAndHoldReturnPct(buyAndHoldReturnPct)
                 .initialCapital(initialCapital)

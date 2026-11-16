@@ -102,8 +102,9 @@ export default function BacktestStage() {
           ? 'Run a backtest to populate this stage.'
           : (
             <>
-              Returns are gross: tax on realized gains is not yet charged inside the
-              equity curve, so these are not after-tax numbers.
+              A result is scored before tax unless it was run after tax (the Run
+              tab&apos;s rate, or <code>run --tax-rate</code>, G20); Results marks one that
+              was, and its buy-and-hold and rule benchmarks paid the same.
               {unscored > 0 && ` ${unscored} run${unscored === 1 ? '' : 's'} carry no `
                 + 'return figures and are excluded from the count rather than counted as losses.'}
             </>

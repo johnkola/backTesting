@@ -66,3 +66,21 @@ def test_the_scorer_trades_on_the_fixture_s_days_at_its_prices(fx):
     assert got == f["expected"]["trades"]
     # Each trade is two fills, the last one's sale being the end of the window.
     assert trades == 2 * len(got)
+
+
+def test_after_tax_the_scorer_makes_the_fixture_s_return_and_tax(fx):
+    """G20: the Java engine is held to the same taxed figures
+    (`NextOpenCrossCheckTest.taxedMatchesTheScorer`)."""
+    f, days, px = fx
+    taxed = f["taxed"]
+    dates, exits = days[:-1], days[1:]
+    preds = np.array([CLASS_BUY if x else CLASS_SELL for x in taxed["long"][:-1]])
+    gap, intra, tradable = profit.segments(px, dates, exits)
+    before, _, _ = profit.simulate_taxed(preds, gap, intra, cost_bps=0.0, tradable=tradable)
+    eq, fills, tax = profit.simulate_taxed(preds, gap, intra, cost_bps=0.0,
+                                           tax_rate=taxed["taxRatePct"] / 100.0,
+                                           tradable=tradable)
+    assert (before[-1] - 1.0) * 100.0 == pytest.approx(taxed["returnPctBeforeTax"], abs=1e-9)
+    assert (eq[-1] - 1.0) * 100.0 == pytest.approx(taxed["returnPct"], abs=1e-9)
+    assert -tax == pytest.approx(taxed["taxPaidPct"], abs=1e-9)
+    assert fills == taxed["fills"]

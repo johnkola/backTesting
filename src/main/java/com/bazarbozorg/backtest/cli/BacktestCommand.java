@@ -1,5 +1,6 @@
 package com.bazarbozorg.backtest.cli;
 
+import com.bazarbozorg.backtest.util.MathUtils;
 import com.bazarbozorg.backtest.config.AppConfig;
 import com.bazarbozorg.backtest.data.BacktestResultRepository;
 import com.bazarbozorg.backtest.data.DatabaseManager;
@@ -73,6 +74,13 @@ public class BacktestCommand implements Runnable {
                     + "imported) is rolled up via the loader before the backtest runs.")
     private boolean noAggregate;
 
+    @Option(names = {"--tax-rate"},
+            description = "Score after tax: percent charged on each realized gain, the strategy, "
+                    + "its buy-and-hold and its rule benchmarks alike; a position open at the end "
+                    + "is sold and taxed (G20). Scoring only: the signals are unchanged. Before "
+                    + "tax when absent")
+    private Double taxRate;
+
     @Option(names = {"--model-version"},
             description = "Pin a specific trained-model version id (e.g. 20260511T134522.123Z). "
                     + "Defaults to the latest version under the strategy + hyperparam cache key. "
@@ -126,6 +134,8 @@ public class BacktestCommand implements Runnable {
             if (modelVersion != null) {
                 System.out.printf("Model ver:   %s%n", modelVersion);
             }
+            System.out.printf("Tax:         %s%n", taxRate == null ? "off, scored before tax"
+                    : String.format("%s%% on each realized gain", MathUtils.round(taxRate, 4)));
             System.out.println();
 
             if (!noAggregate) {
@@ -134,7 +144,7 @@ public class BacktestCommand implements Runnable {
 
             // Create and run engine
             BacktestEngine engine = new BacktestEngine(
-                    dbManager, commissionModel, slippageModel, initialCapital);
+                    dbManager, commissionModel, slippageModel, initialCapital).withTaxRate(taxRate);
 
             BacktestResult result = engine.run(
                     instrumentSymbol, timeframe, strategy, strategyParams, from, to, source,

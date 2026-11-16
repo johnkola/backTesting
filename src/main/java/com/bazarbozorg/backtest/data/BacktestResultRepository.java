@@ -75,8 +75,8 @@ public class BacktestResultRepository {
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, " +
                 "model_version_id, result_json, model_train_from, model_train_to, " +
-                "model_train_symbol, model_window) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
+                "model_train_symbol, model_window, tax_rate) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -132,6 +132,12 @@ public class BacktestResultRepository {
             setDay(ps, 19, w == null ? null : w.until());
             ps.setString(20, w == null ? null : w.symbol());
             ps.setString(21, w == null ? null : w.status());
+            // Percent on realized gains (G20); NULL scored before tax.
+            if (row.taxRatePct() != null) {
+                ps.setDouble(22, row.taxRatePct());
+            } else {
+                ps.setNull(22, Types.DOUBLE);
+            }
 
             long id;
             try (ResultSet rs = ps.executeQuery()) {
@@ -164,7 +170,8 @@ public class BacktestResultRepository {
             "SELECT id, instrument_symbol, strategy_name, timeframe, data_source, " +
             "start_date, end_date, total_return_pct, sharpe_ratio, " +
             "max_drawdown_pct, total_trades, win_rate, " +
-            "model_cache_key, model_cache_hit, model_version_id, in_sample, model_window, created_at " +
+            "model_cache_key, model_cache_hit, model_version_id, in_sample, model_window, " +
+            "tax_rate, created_at " +
             "FROM backtest_results";
 
     /** Returns lightweight summaries (no result_json), ordered most-recent first. */
@@ -356,6 +363,7 @@ public class BacktestResultRepository {
                 .modelCacheHit(result.getModelCacheHit())
                 .modelVersionId(result.getModelVersionId())
                 .modelWindow(result.getModelWindow())
+                .taxRatePct(result.getTaxRatePct())
                 .resultJson(gson.toJson(result))
                 .build();
     }
@@ -389,6 +397,7 @@ public class BacktestResultRepository {
                 .modelVersionId(rs.getString("model_version_id"))
                 .inSample(rs.getObject("in_sample", Boolean.class))
                 .modelWindow(rs.getString("model_window"))
+                .taxRate(rs.getObject("tax_rate", Double.class))
                 .createdAt(createdAt)
                 .build();
     }

@@ -23,6 +23,17 @@ import java.util.List;
 public class PortfolioManager {
 
     private final double initialCapital;
+    /**
+     * Tax on realized gains, a fraction (0.25 for 25%), or 0 for a run scored
+     * before tax (G20). The walk-forward scorer's rule (`profit.simulate_taxed`)
+     * in money terms: a gain is taxed when a position closes, net of both
+     * commissions; a loss carries to offset later gains within the run; the
+     * position the end of the window closes is taxed like any other.
+     */
+    private final double taxRate;
+    /** Realized losses not yet offset by a gain: zero or negative. */
+    private double lossCarry;
+    private double taxPaid;
     private double cash;
     private final List<Position> openPositions;
     private final List<Trade> completedTrades;
@@ -30,6 +41,15 @@ public class PortfolioManager {
     private double peakEquity;
 
     public PortfolioManager(double initialCapital) {
+        this(initialCapital, 0.0);
+    }
+
+    /** @param taxRate tax on realized gains, a fraction; 0 scores before tax (G20) */
+    public PortfolioManager(double initialCapital, double taxRate) {
+        if (!(taxRate >= 0.0 && taxRate < 1.0)) {
+            throw new IllegalArgumentException("tax rate must be a fraction in [0, 1), not " + taxRate);
+        }
+        this.taxRate = taxRate;
         this.initialCapital = initialCapital;
         this.cash = initialCapital;
         this.openPositions = new ArrayList<>();
@@ -79,6 +99,18 @@ public class PortfolioManager {
         openPositions.remove(position);
 
         Trade trade = Trade.from(closed, 0);
+        if (taxRate > 0.0) {
+            double net = trade.taxableGain() + lossCarry;
+            if (net > 0.0) {
+                double tax = taxRate * net;
+                cash -= tax;
+                taxPaid += tax;
+                lossCarry = 0.0;
+                trade = trade.withTax(tax);
+            } else {
+                lossCarry = net;
+            }
+        }
         completedTrades.add(trade);
         return trade;
     }
@@ -142,6 +174,15 @@ public class PortfolioManager {
 
     public double getInitialCapital() {
         return initialCapital;
+    }
+
+    /** Tax paid on realized gains so far (G20). */
+    public double getTaxPaid() {
+        return taxPaid;
+    }
+
+    public double getTaxRate() {
+        return taxRate;
     }
 
     public double getCash() {

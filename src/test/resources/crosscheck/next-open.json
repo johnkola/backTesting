@@ -74,5 +74,23 @@
       }
     ],
     "returnPct": -2.466542172424524
+  },
+  "taxed": {
+    "about": "G20: other calls on the same bars, scored at a 25% tax on realized gains, costs off. Two gains taxed at their sale, a loss carried, and the position open at the end sold at the last close and taxed net of the carried loss. The Java engine's PortfolioManager and the walk-forward scorer's profit.simulate_taxed must both give this return and this tax (points of starting capital).",
+    "long": [
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true
+    ],
+    "taxRatePct": 25,
+    "fills": 8,
+    "returnPctBeforeTax": 5.979714602187025,
+    "returnPct": 4.475618250229796,
+    "taxPaidPct": 1.491872750076595
   }
 }

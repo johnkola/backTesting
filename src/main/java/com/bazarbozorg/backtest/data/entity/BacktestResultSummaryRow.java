@@ -25,6 +25,7 @@ public record BacktestResultSummaryRow(long id,
                                        String modelVersionId,
                                        Boolean inSample,
                                        String modelWindow,
+                                       Double taxRate,
                                        ZonedDateTime createdAt) {
 
     public static Builder builder() {
@@ -49,6 +50,7 @@ public record BacktestResultSummaryRow(long id,
         private String modelVersionId;
         private Boolean inSample;
         private String modelWindow;
+        private Double taxRate;
         private ZonedDateTime createdAt;
 
         private Builder() {}
@@ -70,13 +72,14 @@ public record BacktestResultSummaryRow(long id,
         public Builder modelVersionId(String s) { this.modelVersionId = s; return this; }
         public Builder inSample(Boolean b) { this.inSample = b; return this; }
         public Builder modelWindow(String s) { this.modelWindow = s; return this; }
+        public Builder taxRate(Double d) { this.taxRate = d; return this; }
         public Builder createdAt(ZonedDateTime d) { this.createdAt = d; return this; }
 
         public BacktestResultSummaryRow build() {
             return new BacktestResultSummaryRow(id, instrumentSymbol, strategyName, timeframe,
                     dataSource, startDate, endDate, totalReturnPct, sharpeRatio, maxDrawdownPct,
                     totalTrades, winRate, modelCacheKey, modelCacheHit, modelVersionId, inSample,
-                    modelWindow,
+                    modelWindow, taxRate,
                     createdAt);
         }
     }

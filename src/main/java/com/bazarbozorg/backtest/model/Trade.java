@@ -18,7 +18,8 @@ public record Trade(String id,
                     double quantity,
                     double pnl,
                     double commission,
-                    int holdingBars) {
+                    int holdingBars,
+                    double tax) {
 
     /** Builds a Trade from a closed Position. */
     public static Trade from(Position position, int holdingBars) {
@@ -37,7 +38,22 @@ public record Trade(String id,
                 position.quantity(),
                 position.realizedPnl(),
                 position.commission(),
-                holdingBars);
+                holdingBars,
+                0.0);
+    }
+
+    /**
+     * The gain this trade realized for tax: the price difference less both
+     * legs' commissions, the basis the walk-forward scorer taxes (G20).
+     */
+    public double taxableGain() {
+        return pnl - commission;
+    }
+
+    /** A copy carrying the tax paid at its exit (G20). */
+    public Trade withTax(double paid) {
+        return new Trade(id, instrumentId, side, entryPrice, exitPrice, entryTime, exitTime,
+                quantity, pnl, commission, holdingBars, paid);
     }
 
     public boolean isWin() {

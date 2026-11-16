@@ -72,6 +72,16 @@ public class ConsoleReportFormatter {
             sb.append(String.format("  Model:       %s%n", result.getModelWindow().describe(
                     result.getStartDate().toLocalDate(), result.getEndDate().toLocalDate())));
         }
+        // G20: after tax, the tax each side paid, so the gap is read on one basis.
+        if (result.getTaxRatePct() != null) {
+            sb.append(String.format("  Tax:         %s%% on each realized gain; paid $%,.2f%s%n",
+                    result.getTaxRatePct(), result.getMetrics().getTotalTax(),
+                    result.getBuyAndHold() == null ? ""
+                            : String.format(" (buy-and-hold $%,.2f)",
+                                    result.getBuyAndHold().metrics().getTotalTax())));
+        } else {
+            sb.append(String.format("  Tax:         off, scored before tax%n"));
+        }
         sb.append(SECTION_SEPARATOR).append('\n');
     }
 

@@ -60,6 +60,27 @@ public class BacktestEngine {
     }
 
     /**
+     * Percent charged on each realized gain (G20), or null to score before tax.
+     * The strategy, its buy-and-hold and both rule benchmarks pay it, each on
+     * its own trades: the walk-forward scorer's rule, in the accounting layer.
+     */
+    private Double taxRatePct;
+
+    /** Scores this engine's runs after tax at {@code pct} percent; null for before tax. */
+    public BacktestEngine withTaxRate(Double pct) {
+        if (pct != null && !(pct > 0.0 && pct < 100.0)) {
+            throw new IllegalArgumentException("tax rate must be a percent above 0 and below 100, not " + pct);
+        }
+        this.taxRatePct = pct;
+        return this;
+    }
+
+    /** A portfolio at the run's capital and tax rate. */
+    private PortfolioManager portfolio() {
+        return new PortfolioManager(initialCapital, taxRatePct == null ? 0.0 : taxRatePct / 100.0);
+    }
+
+    /**
      * The first bar the strategy is allowed to act on, which is also where the
      * buy-and-hold benchmark must start.
      *
@@ -170,7 +191,7 @@ public class BacktestEngine {
         logger.info("Strategy '{}' initialized with {} warmup bars", strategy.getName(), warmupBars);
 
         // Step 4: Create PortfolioManager and ExecutionSimulator
-        PortfolioManager portfolioManager = new PortfolioManager(initialCapital);
+        PortfolioManager portfolioManager = portfolio();
         ExecutionSimulator executionSimulator = new ExecutionSimulator(commissionModel, slippageModel);
 
         // Steps 5 and 6: the bar loop, then the end-of-run close-out.
@@ -270,7 +291,8 @@ public class BacktestEngine {
                 modelVersionId,
                 buyAndHold,
                 benchmarks,
-                modelVersionId == null ? null : modelWindow(strategy.getName(), modelVersionId));
+                modelVersionId == null ? null : modelWindow(strategy.getName(), modelVersionId),
+                taxRatePct);
     }
 
     /**
@@ -311,7 +333,7 @@ public class BacktestEngine {
      */
     BuyAndHold buyAndHold(BarSeries series, Timeframe timeframe, int warmupBars, long instrumentId,
                           double lastClose) {
-        PortfolioManager pm = new PortfolioManager(initialCapital);
+        PortfolioManager pm = portfolio();
         ExecutionSimulator sim = new ExecutionSimulator(commissionModel, slippageModel);
         trade(series, ALWAYS_LONG, warmupBars, instrumentId, pm, sim);
         Scored s = scored(pm, sim, series, timeframe, warmupBars, lastClose);
@@ -415,7 +437,7 @@ public class BacktestEngine {
                 calls.put(java.time.LocalDate.parse(dates.get(i)),
                         c.get(i).isJsonNull() ? null : c.get(i).getAsString());
             }
-            PortfolioManager pm = new PortfolioManager(initialCapital);
+            PortfolioManager pm = portfolio();
             ExecutionSimulator sim = new ExecutionSimulator(commissionModel, slippageModel);
             String missing = tradeHoldings(series, calls, symbol, instrumentId, spy,
                     rule[0].equals(DUAL_MOMENTUM) ? bills : Map.of(), warmupBars, pm, sim);

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-19** · 2026-11-16 14:37 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-21** · 2026-11-16 15:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -644,6 +644,42 @@ Checklist:
 
 
 
+**G20 plan, 2026-11-16.** The author: do G20. The engine's backtest is before tax, while walk-forward scoring taxes realized gains (G2). Design Notes, Tax and Trading Costs: tax is deducted in the accounting layer at the moment a position is closed at a profit, as a user toggle with the user's own rate, the signals unchanged underneath; a position still open at the end is sold and taxed, for the strategy and buy-and-hold alike. R29, R36.
+
+The shape:
+- **The profit step's rule, in the engine's accounting.** `PortfolioManager` takes a tax rate. When a position closes, the realized gain is the price difference less both legs' commissions. A loss carries to offset later gains within the run. A positive total is taxed and paid from cash at the exit, the trade recording its tax. A position open at the end is already sold at the last close (B6, D8), so it is taxed too. Interest on dual momentum's cash is not taxed. At no rate, nothing changes, bit for bit. It is `profit.simulate_taxed`'s rule in money terms.
+- **Everything in a run pays it.** The strategy, its buy-and-hold and the two rule benchmarks share the rate, each with its own carry.
+- **Held to the walk-forward scorer.** The B1 cross-check fixture gains a second set of calls that realizes gains, a loss and an end-of-window sale, with the after-tax return and tax from the profit step. The Java engine and the Python scorer must both make them.
+- **A setting of the run, stored with it.** `run --tax-rate PCT`, `POST /api/run` `taxRate`, and the Run tab's "Score after tax" with a rate. `backtest_results.tax_rate` holds it (NULL: before tax), and the metrics gain `totalTax`.
+  - The Results list marks a result scored after tax, and the result page shows the tax paid by the strategy and by each benchmark. The report prints them.
+  - The Backtest tab's "returns are gross" says what is true.
+- **Stored results** were all scored before tax and stay so: nothing changes.
+
+Checklist:
+- [x] Plan here
+- [x] The tax in `PortfolioManager` and the trades; every portfolio of a run; metrics; tests, the cross-check fixture in both languages
+- [x] The setting: CLI, `/api/run`, the column, the report; tests
+- [x] API and client: the Run tab's switch, the Results mark, the result page; Postman
+- [x] All four CI jobs; rebuild
+- [x] README, `AGENTS.md`, G20 and this record say done
+
+*Done, 2026-11-16 15:14.* The author chose: run one after-tax backtest live and keep it.
+- **Tests:** Java 171, Python 850, API 119, client 176. New tests:
+  - the B1 fixture's taxed case: two gains taxed, a loss carried, the last sale taxed net of it. The Java engine and `profit.simulate_taxed` both make +4.4756% after 1.4919 points of tax, and +5.9797% before;
+  - a gain taxed net of both commissions and paid from cash;
+  - a loss offsetting a short's later gain;
+  - no rate leaving everything unchanged, and rates outside the range refused;
+  - buy-and-hold paying tax on its one sale;
+  - the rate stored and read back by the list and the report.
+- **Live: result 876.** It is 787's request (MACD on AAPL, 2020-2026) at 25%.
+  - The same 60 trades on the same days at the same prices.
+  - +101.76% where 787 makes +151.82%, after $3,391.90 of tax. The return falls by more than the tax because less capital compounds after each payment. 16 trades paid tax, the other gains offset by carried losses.
+  - Buy-and-hold makes +249.25% (+332.33% before), after $8,308.33 on its one sale. Faber and dual momentum paid $5,766.39 and $2,487.75.
+  - The report, `report --list`, the API and Results all show the rate. No test-window look was added. Stored results stay before tax.
+- **Not built (R29):** the capital-gains inclusion rate (the rate entered is the effective one), short-term against long-term rates, and tax on margin trades in the engine, which has no margin. R29 stays partial.
+
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -952,7 +988,7 @@ feature set was built from, which is what G3 (an input snapshot id) needs.
 | G23 | Walk-forward folds do not use the stored benchmark. Each fold computes buy-and-hold inline and stores it in `walkforward_folds.hold_*`, so two runs over the same fold recompute it rather than point at one row, which §6.3 asks for ("Two runs on the same window always point at the same benchmark row"). The Java backtest does use the `benchmarks` table | Architecture §6.3; Design Notes, "Buy-and-hold is one fixed benchmark" | `walkforward_store.py:96` writes `hold_return`, `hold_sharpe`; no `benchmark_id` on `walkforward_folds` | M | done: `walkforward.hold_window` gives the bars a fold's buy-and-hold spans (first validation close to the close its last return runs to, which is what the fold compounded); `walkforward_store.find_or_create_benchmark` looks the row up and stores it only on a miss, as Java's `BenchmarkRepository` does, never recalculating one (a revised close prints WARN and the stored figure stands). Rows keyed on capital 1, since a fold is the growth of 1. `walkforward_folds.benchmark_id` (schema.sql) links each fold; Java serves it as `benchmarkId`. Sharpe and drawdown stay per fold (the row holds the return only). Unsaved runs write nothing and use the same formula. Live: strategy 23 as runs 233 and 234, every fold on the same rows 168-173, figures equal to run 201's inline ones to 1e-13. Tests: Python 534, Java 117 (JDK 21 container) |
 | G22 | Review task, started 2026-11-08, findings I1-I8 below: check the whole app end to end on H1 and M30 candles. Import, cohesion and roll-up already know the intraday timeframes, and `tools/datagen` makes synthetic M30/H1 data. Nobody has checked the rest for hidden daily assumptions: features (daily FRED and market series lined up against intraday bars, rolling windows counted in bars), labels (`horizonBars` means hours, not days), walk-forward (calendar-year folds; `252` annualisation in `walkforward.py` and `money_loss.py`), the money loss and tax per bar, the Java engine backtest, session gaps and the NYSE calendar in cohesion, the bar counts and window dates on the Strategy tab, and the charts. Output: a list of what breaks or misleads, each a new row here | Design Notes, Two Phases (intraday is phase two, G17) | `csv_import.ALLOWED_TIMEFRAMES`, `cohesion.INTRADAY`, `aggregate.py` accept M30/H1; `252` in `walkforward.py`, `money_loss.py`, `StrategyPage.tsx`; `features.toml` cadence is daily throughout | M | partial |
 | G21 | A new strategy always starts on the design's QQQ windows (train from 2003), so a series with a shorter history (AAPL was stored from 2019-12-02 only) gets an empty train window and a warning. A "fit windows to this series" action would propose windows from the stored range | Architecture §8.2a | `strategyForm.ts:117` | S | done: `fitWindowsToSeries` + a "Fit windows to this series" button on the Strategy tab. Whole years only (what `fold_plan` accepts), about 55/25/20, a part year left as prediction, null under three whole years. Uses the instrument's range, not the features'. Vitest (80), tsc, ESLint pass; not yet seen in the browser (the client container is a built image) |
-| G20 | The Java Backtest tab is still pre-tax. G2 taxes the walk-forward scoring only; the engine's backtest has no tax switch | Design Notes, Tax and Trading Costs ("the tax and strategy toggles") | `BacktestStage.tsx:92` says returns are gross | M | open |
+| G20 | The Java Backtest tab is still pre-tax. G2 taxes the walk-forward scoring only; the engine's backtest has no tax switch | Design Notes, Tax and Trading Costs ("the tax and strategy toggles") | `BacktestStage.tsx:92` says returns are gross | M | done 2026-11-16: see the G20 record in Pass 4 |
 | G19 | No early stopping. The validation window is only used for scoring, while the design says it is for early stopping and hyperparameter choice, and §8.2a lists early stopping as a hyperparameter | Architecture §8.1a, §8.2a | no `patience` or early stopping anywhere in `python/nn/` | M | done (`a7519ad`; see G19 progress) |
 
 **G26 plan, 2026-11-11.** Decided by the author: a daily run plus a Refresh button; the
@@ -1449,6 +1485,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-21 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | G20 done: a backtest can be scored after tax, its benchmarks alike; result 876 |
+| 2026-11-16-20 | 2026-11-16 15:00 | Claude Code (Claude Opus 5.5) | G20 plan |
 | 2026-11-16-19 | 2026-11-16 14:37 | Claude Code (Claude Opus 5.5) | G37 done: the Split tab shows a strategy's split, as a run makes it |
 | 2026-11-16-18 | 2026-11-16 14:28 | Claude Code (Claude Opus 5.5) | G37 plan |
 | 2026-11-16-17 | 2026-11-16 14:24 | Claude Code (Claude Opus 5.5) | G38 and G48 done: nothing scores past its window; every look at a test window recorded; 8 runs rerun as 703-710; 81 looks backfilled |

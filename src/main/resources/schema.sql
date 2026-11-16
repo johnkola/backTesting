@@ -945,6 +945,11 @@ BEGIN
 END
 $audit_triggers$;
 
+-- G20: the percent a result was scored after, on each realized gain, by the
+-- strategy, its buy-and-hold and its rule benchmarks alike. NULL scored before
+-- tax, as every result before G20 was.
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS tax_rate DOUBLE PRECISION;
+
 -- G48, R69: every run that reports on a saved strategy's test window, kept so
 -- tuning on the test block is visible. The test block is the design's final
 -- exam, scored once; a look at it is a fact that outlives the run that made it,

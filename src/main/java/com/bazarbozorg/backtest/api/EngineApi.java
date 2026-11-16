@@ -177,6 +177,12 @@ public class EngineApi {
 
         AppConfig config = AppConfig.getInstance();
         Double capital = optDouble(body, "capital");
+        // Score after tax (G20): percent on each realized gain, or absent for before tax.
+        Double taxRate = optDouble(body, "taxRate");
+        if (taxRate != null && !(taxRate > 0.0 && taxRate < 100.0)) {
+            throw badRequest("taxRate must be a percent above 0 and below 100, or absent for "
+                    + "before tax, not " + taxRate);
+        }
         double initialCapital = capital != null ? capital : config.getDefaultInitialCapital();
 
         Map<String, String> params = new HashMap<>();
@@ -201,7 +207,7 @@ public class EngineApi {
         }
 
         BacktestEngine engine = new BacktestEngine(databaseManager,
-                commissionModel(config), slippageModel(config), initialCapital);
+                commissionModel(config), slippageModel(config), initialCapital).withTaxRate(taxRate);
 
         BacktestResult result;
         try {
