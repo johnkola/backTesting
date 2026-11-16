@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-11** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-13** · 2026-11-16 13:06 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -449,7 +449,58 @@ Checklist:
   - The other 7 are out of sample.
   - The 8 non-model results have none.
 - **Live:** the loader route answers `known` for a recorded version, `not recorded` for the two saved without dates (2026-09-20 models), and `version gone` for one not in the registry.
-- **Seen on the way:** result 781's model was trained on GOLD and tested on QQQ. It is out of sample by date. Whether a cross-instrument model belongs on Results is not B4's question.
+- **Seen on the way:** result 781's model was trained on GOLD and tested on GOLD. This note first said it was tested on QQQ; corrected in B5.
+
+
+**B5 plan (G31), 2026-11-16.** The author: do B5. The conditions are in `AGENTS.md`, build step B5.
+
+Both single-split trainers cut their rows by `train_split_ratio` and label each row from the close `forward` rows ahead, so the last `forward` training rows are labelled from validation closes. All 16 stored model versions were trained that way: 14 by `nn/train.py`, 2 by `nn/train_features.py`. Six of them back the 8 nn results (778-781, 786, 791-793).
+
+The shape:
+- **One split for both trainers: `labels.purged_split(n, ratio, forward)`.** Validation keeps its rows, from `int(n × ratio)` on. Fitting ends `forward` rows before it, the rows `walkforward.purged` drops from a fold.
+- **The window is the rows fitted.** `training_window.since` and `until` become the first and last fitted bar, inclusive, marked `inclusive: true`, with the purged count and the validation window beside them.
+  - `nn/train.py` gets the bar dates from the loader (`load_candles_with_timestamps`).
+  - The bounds the caller asked for stay as `requested_since` and `requested_until`, so a version can be retrained from its own metadata.
+  - The API reads an inclusive `until` as it is, instead of backing it off as an exclusive bound.
+- **Tests:** a validation slice whose closes jump, so any training label that reads one is BUY. The fitted labels of both trainers are all HOLD, and the rows dropped are exactly the ones that would read it.
+- **Stale records:** decided at the checkpoint. The stored models' weights include the leaking rows, so the 8 results that use them are stale under the working rules.
+
+Checklist:
+- [x] Plan here
+- [x] `purged_split` in both trainers; the window recorded as the rows fitted; tests
+- [x] The API reads an inclusive `until`; test
+- [x] Python and API tests; rebuild
+- [x] **Checkpoint, the author's go:** the stored models and the results that use them
+- [x] README, `AGENTS.md`, G31 and this record say done
+
+*Done, 2026-11-16 13:06.* The author chose: retrain the 6 models and rerun the 8 results; delete the 10 versions no result used.
+- **Tests:** Python 813, API 110. New tests:
+  - `purged_split` drops exactly what `walkforward.purged` drops, and refuses a split that leaves nothing to fit;
+  - both trainers, with a validation slice whose closes jump by half: every fitted label is HOLD, and the 5 rows dropped are the ones whose labels read the jump (BUY);
+  - `train_model` saves the bars fitted as the window, with the requested bounds and the validation window; the same through `POST /api/nn/train` against the database, where B4's reader takes it as known;
+  - the API reads an inclusive `until` as it is.
+- **Retrained** (backups `rerun-b5-20261116/models-before.tgz` and `before.sql.gz`). Each of the 6 versions was retrained from its own recorded request and settings, and landed on its old cache key.
+  - 2,553 rows fitted where 2,558 were (GOLD 2,546 where 2,551). Validation is unchanged at 640 rows (638).
+  - The window now reads 2003-04-14 to 2013-06-04 (GOLD 2013-06-06), the bars fitted, where it read 2003-01-01 to 2015-12-31, the dates asked for.
+  - Validation accuracy: 68.91% where it was 69.22% (QQQ, 50 epochs), 64.42% where 64.26% (GOLD), 69.06% where 67.81% (QQQ adjusted, 200 epochs).
+- **Rerun as 813-820:**
+
+  | Old | New | Model, window | Return before | Return now |
+  |---|---|---|---|---|
+  | 778, 779, 780 | 813, 814, 815 | QQQ, 2022-2026 | 49.45% | 7.46% |
+  | 781 | 816 | GOLD, 2022-2026 | 48.29% | 71.48% |
+  | 786 | 817 | QQQ adjusted, 200 epochs, 2022-2026 | 84.89% | 90.08% |
+  | 791 | 818 | QQQ, 2017-2026 | 291.04% | 9.79% |
+  | 792 | 819 | QQQ, 2024-2026 | 14.12% | 5.45% |
+  | 793 | 820 | QQQ, 1999-2026, in-sample | 2,609.83% | 226.55% |
+
+  Buy-and-hold is identical on every pair (111.93% for 813, 1,238.93% for 820): same bars, same costs, only the model changed. The three identical retrains gave three identical results, so retraining reproduces.
+- **What the swing says.** Dropping 5 of 2,558 rows moved the 2017-2026 return from +291% to +9.8%. Five rows cannot carry that much information. The network is that sensitive to its training set, so a single-split model's backtest says little on its own. The walk-forward folds remain the scoreboard.
+- **Deleted:** the 8 old results, in one transaction; all 16 old versions. That is the 6 replaced, plus 10 no result used: 3 AAPL, 4 QQQ over the whole history, a 3-epoch QQQ test, and 2 feature-table models whose feature sets (2 and 6) are gone.
+- **Found and fixed on the way (a B4 slip):**
+  - B4's backfill test ran the backfill over every result in the live database with a test registry. Each run of the suite rewrote the real nn results' windows as `version gone`, as it did at 12:59 today. The backfill now takes a strategy; the test scopes it to its own rows and checks that another strategy's row is left alone. The 8 windows were restored from the metadata before the backup.
+  - Result 781 is a GOLD model tested on GOLD, not on QQQ as the B4 record said.
+
 
 
 ### Status per requirement
@@ -556,7 +607,7 @@ rule in `AGENTS.md`.
 | G29 | Four engine metrics are wrong or empty. (a) Sortino divides by the standard deviation of the losing bars about their own mean, which is not the downside deviation, and is 0 when no bar loses. (b) Total slippage is always 0. (c) A trade with zero profit counts as a loss. (d) Profit factor is 0 when no trade loses, which reads as the worst case | Design Notes, Staged Pipeline Architecture, stage 6 ("metrics computed") | `MetricsCalculator.calculateSortinoRatio`; `.totalSlippage(0.0)` in `calculate`; `Trade.isWin` is `pnl > 0` and every other trade is counted as losing; `MathUtils.safeDiv` returns 0 on a zero divisor | S | done 2026-11-15: see the B3 record in Pass 4 |
 | G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | done 2026-11-16 (B4): see the B4 record in Pass 4 |
 | G36 | A selected cyclical feature is never trained on. The strategy names a catalogue feature (`day_of_week`), but the feature set stores a cyclical feature as two columns (`day_of_week_sin`, `day_of_week_cos`). `resolve_columns` compares the two names, finds no match, and drops the feature as "not in this feature set". phase1-full and both Strategy 2 variants select `day_of_week`, `day_of_year` and `day_of_month`, so all their runs trained without those six columns, while reporting that the features were simply absent | Architecture §8.2a (the strategy decides which features go in; a feature is dropped only when it has no values in the train window) | `nn/strategy_spec.py` `resolve_columns` compares `selected` with the set's column names; `feature_spec` for sets 10, 18 and 23 holds `day_of_week_sin` ... `day_of_month_cos` (columns 24 to 29 in set 23); `walkforward_runs.dropped_json` for runs 300, 301 and 348 lists the three as "not in this feature set". Found in the `AGENTS.md` step 1 review, 2026-11-14. The step 5 review found the other half: the coverage grid maps a base name to its `_sin`/`_cos` columns (`web/api/featureCatalogue.js` `VALUE_JOIN`), so the builder shows all three at 100% and kept, and the Train tab lists 26 features where the runner uses 23. Runs 300, 301 and 348 have `input_width` 460 where 580 was selected. No other selectable feature is cyclical | S | done (`fb6c5fe`): `strategy_spec.feature_columns`; runs 300, 301 and 348 were backed up, deleted and rerun on 2026-11-14 as 376, 377 and 378, each on 580 inputs with nothing dropped |
-| G31 | The two single-split trainers do not purge. Both cut training from validation by a ratio and label each row from the close `forward` bars ahead, so the last `forward` training rows are labelled from validation prices. The walk-forward runner already drops them (`purged`) | Design Notes, Three-Way Chronological Split | `nn/train.py` `train_model` (`split = int(n * cfg.train_split_ratio)`); `nn/train_features.py:212` | S | open |
+| G31 | The two single-split trainers do not purge. Both cut training from validation by a ratio and label each row from the close `forward` bars ahead, so the last `forward` training rows are labelled from validation prices. The walk-forward runner already drops them (`purged`) | Design Notes, Three-Way Chronological Split | `nn/train.py` `train_model` (`split = int(n * cfg.train_split_ratio)`); `nn/train_features.py:212` | S | done 2026-11-16 (B5): see the B5 record in Pass 4 |
 
 ### Missing pieces
 
@@ -1257,6 +1308,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-13 | 2026-11-16 13:06 | Claude Code (Claude Opus 5.5) | B5 done: the trainers purge; 6 models retrained, 8 results rerun; G31 done; B4's backfill test scoped |
+| 2026-11-16-12 | 2026-11-16 12:55 | Claude Code (Claude Opus 5.5) | B5 plan (G31) |
 | 2026-11-16-11 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done: in-sample model results marked; G30 done |
 | 2026-11-16-10 | 2026-11-16 09:24 | Claude Code (Claude Opus 5.5) | B4 plan (G30) |
 | 2026-11-16-9 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done: entries never spend more than the cash; G28 done |

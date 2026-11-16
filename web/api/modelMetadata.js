@@ -40,15 +40,22 @@ function normaliseMetadata(raw) {
   const window = extra.training_window ?? {};
   const samples = [extra.train_samples, extra.val_samples].filter((n) => typeof n === 'number');
 
-  // `until` is the loader's EXCLUSIVE upper bound (`timestamp < until`), so
-  // reporting it as the training end date overstates the range — by a
-  // millisecond when the Train page sent it, by a whole day when the CLI
-  // passed a bare date. Back off one millisecond to get the latest instant the
-  // window could actually have included. That is still an upper bound rather
-  // than the last candle's own timestamp, which the loader does not record,
-  // but it never claims a model saw bars beyond the window it was given.
+  // Since B5 both trainers record the bars actually fitted, `until` being the
+  // last one, inclusive (`inclusive: true`); it is read as it is. The
+  // features-table trainer always wrote it that way, and is the only writer
+  // of a `validation_window` before B5, so that marks its older versions.
+  //
+  // Otherwise `until` is the bound `/api/nn/train` was asked for, EXCLUSIVE
+  // (`timestamp < until`), so reporting it as the training end date
+  // overstates the range — by a millisecond when the Train page sent it, by a
+  // whole day when the CLI passed a bare date. Back off one millisecond to get
+  // the latest instant the window could actually have included. That is still
+  // an upper bound rather than the last candle's own timestamp, but it never
+  // claims a model saw bars beyond the window it was given.
+  const inclusive = window.inclusive === true || extra.validation_window !== undefined;
   const untilMs = typeof window.until === 'string' ? Date.parse(window.until) : NaN;
-  const trainingToEpochSec = Number.isNaN(untilMs) ? null : Math.floor((untilMs - 1) / 1000);
+  const trainingToEpochSec = Number.isNaN(untilMs) ? null
+    : Math.floor((inclusive ? untilMs : untilMs - 1) / 1000);
 
   return {
     cacheKey: raw.cache_key,

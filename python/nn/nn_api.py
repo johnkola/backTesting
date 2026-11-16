@@ -22,7 +22,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from nn.data import (
-    load_candles,
     load_candles_with_timestamps,
     resolve_instrument,
     resolve_source,
@@ -131,7 +130,7 @@ def post_train(req: TrainRequest) -> JSONResponse:
             return JSONResponse(
                 status_code=404, content={"error": f"unknown data source: {req.source}"}
             )
-        candles = load_candles(
+        bar_times, candles = load_candles_with_timestamps(
             conn,
             instrument_id=instrument_id,
             source_id=source_id,
@@ -259,13 +258,16 @@ def post_train(req: TrainRequest) -> JSONResponse:
             registry=_registry(),
             cache_key_inputs=cache_inputs,
             strategy_name=_STRATEGY,
+            bar_times=bar_times,
             # Provenance for the saved model. The cache key no longer encodes
             # the window, so this is the only record of which bars produced
             # these weights -- and the only way a reader can tell that a model
-            # is being backtested over a range it never saw.
+            # is being backtested over a range it never saw. train_model adds
+            # the bars actually fitted as `since`/`until` (B5); the bounds asked
+            # for are kept so the version can be retrained from its metadata.
             training_window={
-                "since": req.since,
-                "until": req.until,
+                "requested_since": req.since,
+                "requested_until": req.until,
                 "symbol": req.symbol,
                 "source": req.source,
                 "timeframe": req.timeframe,

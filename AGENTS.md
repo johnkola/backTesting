@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-16-6** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-7** · 2026-11-16 13:05 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -435,10 +435,10 @@ and the walk-forward scorer alike. Do this first: every later step is measured w
 
 **Done when**
 
-- [ ] `nn/train.py` and `nn/train_features.py` drop the last `forward` training rows,
+- [x] `nn/train.py` and `nn/train_features.py` drop the last `forward` training rows,
   as `walkforward.purged` does. The saved `training_window` ends on the last row
   actually fitted.
-- [ ] A test shows that no training label reads a close inside the validation slice.
+- [x] A test shows that no training label reads a close inside the validation slice.
 
 ### B6. Buy-and-hold pays what the strategy pays (G32)
 
@@ -571,7 +571,7 @@ One row per build step. **Status:** `waiting` (a decision is owed), `not started
 | B2. Entry sizing | G28 | | done | 2026-11-16. `ExecutionSimulator.affordableQuantity` sizes every entry (long, short, the rule benchmarks' switches) on the slipped fill with the commission inside the cash: the fixed point of (cash − commission) ÷ fill, trimmed until the exact charge fits. Frictionless sizing is unchanged. Java 155 (24 sizing cases: four commission models, three slippage models, long and short). The 16 results rerun as 778-793: the same trades, returns slightly lower without the hidden leverage, originals deleted (DESIGN-GAPS, B2 record) |
 | B3. Engine metrics | G29 | | done | 2026-11-15. Sortino over the downside deviation, total slippage summed over every fill, break-even trades outside the win rate and streaks, and not-available metrics as null and a dash. Java 128 (9 new), client 142. All 16 stored results were rerun with rebuilt requests and reproduced exactly, apart from the fixed metrics, and replaced: 686-713 are now 714-729 (DESIGN-GAPS, B3 record) |
 | B4. In-sample flag | G30 | | done | 2026-11-16. `nn/model_windows.py` reads a model version's training window; the engine stores it with an nn result (`model_train_from`, `model_train_to`, `model_train_symbol`, `model_window`), and `in_sample` is a generated column over the two windows. Marked on the Results list, the result page, `report` and `run`. Backfilled the 8 stored nn results: 793 (1999-2026, model trained 2003-2015) is in-sample, the other 7 out of sample. Python 802, Java 160, API 109, client 145 (DESIGN-GAPS, B4 record) |
-| B5. Trainer purge | G31 | | not started | |
+| B5. Trainer purge | G31 | | done | 2026-11-16. `labels.purged_split` is the one split for `nn/train.py` and `nn/train_features.py`: fitting stops `forward` rows before validation. The saved `training_window` is the bars fitted, inclusive, with the requested bounds beside it. The 6 models the nn results used were retrained (same cache keys, 2,553 rows fitted where 2,558 were) and the 8 results rerun as 813-820; the old results and all 16 old versions deleted. Python 813, API 110 (DESIGN-GAPS, B5 record) |
 | B6. Buy-and-hold costs | G32 | | done | 2026-11-16. Buy-and-hold is the always-long strategy through the same code: in the profit step for walk-forward (commission and tax, D8 sale at the end) and through `BacktestEngine.trade` for results (commission and slippage). Stored with each run (fold `hold_*` columns, `result_json.buyAndHold`); the `benchmarks` table, both `benchmark_id` columns and their lookups are gone. A position open at the end is sold and taxed, strategy and Strategy 2's core alike. Python 767, Java 121, API 107, client 138. Walk-forward 456-462 recalculated in place from stored signals (nothing retrained); phase1-full v5 went from +0.55 to +0.00 pp, as it is buy-and-hold. The 16 results rerun as 746-761 with the same strategy figures (DESIGN-GAPS, B6 record) |
 | B7. Faber and dual momentum | G33 | B6 | done | 2026-11-16. `nn/rules.py` decides both rules (Faber 10-month, dual momentum per D7) at month ends; the profit step trades them (`simulate_holdings`) with the run's costs and tax; walk-forward folds store them in `walkforward_benchmarks`; the engine trades the loader's decisions (`GET /api/nn/rules`) with its own costs and stores them in `result_json`. Not available, with the reason, when history is short, the result is not daily or SPY is missing. Data check against an independent copy: 0 disagreements. Python 786, Java 127, API 107, client 141. Walk-forward 456-462 recalculated in place; results rerun as 762-777 (DESIGN-GAPS, B7 record) |
 | B8. Naive baseline flag | G34 | | done | 2026-11-16. Folds store the baseline as before; the run's is the fold mean, read with the run (`meanAccuracy`, `meanBaselineAcc`, `beatsNaive`). The runner prints `NAIVE`; the Training tab badges "below naive". `nn/label_kinds.py` registers a label kind only with a target that has a naive baseline (class: majority, direction: always up, return: historical mean), mirrored in `strategies.js`. All 7 stored runs are flagged: none beats its baseline. Python 795, Java 128, API 109, client 143 (DESIGN-GAPS, B8 record) |
@@ -586,6 +586,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5 done |
 | 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4 done; step 7's in-sample check is now an app condition |
 | 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2 done; step 7's sizing limit is now an app condition |
 | 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8 done; step 6's naive-baseline condition is an app condition |

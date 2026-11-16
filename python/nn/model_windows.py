@@ -23,6 +23,12 @@ on dates alone: a model trained on another instrument over the same years has
 still seen that market. A window is `known`, `not recorded` (a version saved
 without its dates) or `version gone` (pruned from the registry); only a known
 one says in-sample or not.
+
+Since B5 a window is the bars actually fitted, first to last, inclusive
+(`inclusive: true`). A version saved before by `/api/nn/train` holds the
+bounds it was asked for instead, with `until` exclusive, so its validation
+slice reads as trained on and its last day may be one past the last bar: both
+the cautious side for an in-sample mark.
 """
 
 from __future__ import annotations
@@ -92,6 +98,7 @@ _RESULTS = """
 SELECT id, strategy_name, model_version_id, start_date::date, end_date::date
   FROM backtest_results
  WHERE model_version_id IS NOT NULL
+   AND (%(strategy)s::text IS NULL OR strategy_name = %(strategy)s)
  ORDER BY id
 """
 
@@ -103,10 +110,14 @@ UPDATE backtest_results
 """
 
 
-def backfill(conn, registry, dry_run: bool = False, log=print) -> int:
-    """Give every stored result of a model strategy its model's window."""
+def backfill(conn, registry, dry_run: bool = False, log=print,
+             strategy: str | None = None) -> int:
+    """Give every stored result of a model strategy its model's window, or
+    only `strategy`'s. A result whose version `registry` does not hold is
+    written as `version gone`, so a caller with a registry other than the
+    live one must scope the run to its own rows."""
     with conn.cursor() as cur:
-        cur.execute(_RESULTS)
+        cur.execute(_RESULTS, {"strategy": strategy})
         rows = cur.fetchall()
         for rid, strategy, version, start, end in rows:
             w = lookup(registry, strategy, version)

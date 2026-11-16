@@ -63,3 +63,27 @@ def build_label_indices(
     for i in range(from_index, to_index):
         out.append(classify(candles, i, forward_bars, buy_threshold, sell_threshold))
     return out
+
+
+def purged_split(n: int, ratio: float, forward: int) -> tuple[int, int]:
+    """The rows a single-split trainer fits and validates on (B5, G31).
+
+    For `n` chronological rows, each labelled from the close `forward` rows
+    ahead, returns `(fit_end, val_start)`: fit rows `[0, fit_end)`, validate
+    on rows `[val_start, n)`. Validation starts at `int(n * ratio)`, as it
+    always has. Fitting stops `forward` rows before it, because a row's label
+    reads the close `forward` rows later, so the last `forward` rows before
+    validation are labelled from validation closes. Fitting them would teach
+    the model the very slice it is then judged on. The dropped rows are neither
+    fitted nor validated on. The walk-forward runner drops the same rows from a
+    fold (`walkforward.purged`).
+    """
+    val_start = int(n * ratio)
+    fit_end = val_start - forward
+    if fit_end <= 0 or val_start >= n:
+        raise ValueError(
+            f"train_split_ratio {ratio} with forward_bars {forward} leaves no rows to fit "
+            f"or none to validate on ({n} rows; the last {forward} before validation are "
+            f"purged)"
+        )
+    return fit_end, val_start

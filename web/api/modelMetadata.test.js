@@ -67,6 +67,20 @@ describe('normaliseMetadata — the loader dialect', () => {
     assert.equal(pageEnd, '2021-08-19T00:00:00.000Z');
   });
 
+  it('reads an inclusive window as the last bar fitted (B5)', () => {
+    const m = normaliseMetadata(loaderMetadata({
+      since: '2003-04-01T00:00:00+00:00', until: '2013-05-31T00:00:00+00:00', inclusive: true,
+    }));
+    assert.equal(new Date(m.trainingToEpochSec * 1000).toISOString(), '2013-05-31T00:00:00.000Z');
+
+    // The features-table trainer wrote the last fitted row before B5 too; its
+    // validation_window marks those versions.
+    const v2 = loaderMetadata();
+    v2.extra.validation_window = { since: '2021-08-26', until: '2026-01-02' };
+    const end = new Date(normaliseMetadata(v2).trainingToEpochSec * 1000).toISOString();
+    assert.equal(end.slice(0, 10), '2021-08-19');
+  });
+
   it('leaves the id columns null — the loader deals in names', () => {
     const m = normaliseMetadata(loaderMetadata());
     assert.equal(m.instrumentId, null);

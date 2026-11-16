@@ -138,3 +138,31 @@ def test_model_version_pin_resolves_exact_or_404s(client):
     payload = pred.json()
     assert payload["versionId"] == version
     assert len(payload["predictions"]) > 0
+
+
+def test_the_saved_window_is_the_bars_fitted(client):
+    """B5: `since`/`until` are the first and last bar fitted, inclusive, with
+    the purged rows between them and validation; the bounds asked for are kept
+    beside them, and B4's reader takes the window as known."""
+    from nn import model_windows
+    from nn.nn_api import _registry
+
+    resp = _train(client, mode="force", since="2021-01-04T00:00:00Z",
+                  until="2021-05-04T00:00:00Z")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    rec = next(r for r in _registry().list_all(strategy=body["strategy"])
+               if r.version_id == body["versionId"])
+    tw, vw = rec.extra["training_window"], rec.extra["validation_window"]
+    forward = PARAMS["forward_bars"]
+    assert tw["inclusive"] is True and tw["purged_rows"] == forward
+    assert (tw["requested_since"], tw["requested_until"]) == (
+        "2021-01-04T00:00:00Z", "2021-05-04T00:00:00Z")
+    # The seeded bars are consecutive days, so validation starts `forward`
+    # bars after the next one: the purged rows lie between.
+    last_fit = datetime.date.fromisoformat(tw["until"][:10])
+    assert datetime.date.fromisoformat(vw["since"][:10]) == last_fit + datetime.timedelta(
+        days=forward + 1)
+    assert body["trainSamples"] == rec.extra["train_samples"]
+    w = model_windows.lookup(_registry(), body["strategy"], body["versionId"])
+    assert w.status == model_windows.KNOWN and w.until == last_fit

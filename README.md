@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-6** · 2026-11-16 11:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-7** · 2026-11-16 13:05 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -1029,7 +1029,7 @@ becomes an entry, SELL an exit, HOLD does nothing.
 | `buyThreshold` / `sellThreshold` | 0.02 / −0.02 | Move size that counts as a real signal. |
 | `hiddenLayerSize` / `numHiddenLayers` | 64 / 2 | Network size. |
 | `learningRate`, `numEpochs`, `batchSize`, `dropoutRate` | 0.001, 50, 32, 0.5 | Training. |
-| `trainSplitRatio` | 0.8 | Fraction used for learning; the rest scores it. |
+| `trainSplitRatio` | 0.8 | Fraction used for learning; the rest scores it. The last `forwardBars` rows before the scored part are fitted by neither side, since their labels read it (B5). |
 | `seed` | 42 | Reproducibility. |
 
 **Read its accuracy sceptically.** With three classes, always answering HOLD
@@ -1046,7 +1046,12 @@ the arithmetic.
 
 **Validation is not walk-forward.** The held-out split is the tail of the training
 range, and the labels look forward by construction, so a good score says the model
-fits this history — not that it would have predicted it. See
+fits this history — not that it would have predicted it. The split is purged (build
+step B5): the `forwardBars` rows just before validation are dropped, because their labels
+read validation closes. A version's `metadata.json` records the bars it actually fitted as
+`training_window.since` and `until`, inclusive (`inclusive: true`), with the dates it was
+asked for as `requested_since` and `requested_until`, and the scored bars as
+`validation_window`. The Models page and the in-sample mark (B4) read that window. See
 [Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
 
 ---
@@ -1066,6 +1071,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-7 | 2026-11-16 13:05 | Claude Code (Claude Opus 5.5) | B5: the single-split trainers purge; what a model's training window records |
 | 2026-11-16-6 | 2026-11-16 11:17 | Claude Code (Claude Opus 5.5) | B4: in-sample model results marked; `GET /api/nn/models/window`; the backfill command |
 | 2026-11-16-5 | 2026-11-16 09:22 | Claude Code (Claude Opus 5.5) | B2: entries are sized on the slipped fill with the commission inside the cash |
 | 2026-11-16-4 | 2026-11-16 09:17 | Claude Code (Claude Opus 5.5) | B8: the naive baseline per run (`meanAccuracy`, `meanBaselineAcc`, `beatsNaive`) and its flag |

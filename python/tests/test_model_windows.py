@@ -63,7 +63,7 @@ class TestOverlap:
 def test_the_backfill_fills_the_columns_and_the_database_derives_in_sample():
     import psycopg
     conn = psycopg.connect(dsn())
-    strategy = "zz-b4-backfill"
+    strategy, other = "zz-b4-backfill", "zz-b4-backfill-other"
     try:
         with conn.cursor() as cur:
             for version, start in (("v-in", "1999-06-18"), ("v-out", "2016-01-04"),
@@ -75,17 +75,29 @@ def test_the_backfill_fills_the_columns_and_the_database_derives_in_sample():
                     " model_version_id, result_json) VALUES ('QQQ', %s, 'D1', 'yahoo', %s,"
                     " '2021-12-31', 10000, 11000, 10, 0.5, 5, 2, 50, %s, '{}')",
                     (strategy, start, version))
+            # Another strategy's row, which the scoped backfill must not touch:
+            # a live result looks like this, and this registry does not hold it.
+            cur.execute(
+                "INSERT INTO backtest_results (instrument_symbol, strategy_name, timeframe,"
+                " data_source, start_date, end_date, initial_capital, final_equity,"
+                " total_return_pct, sharpe_ratio, max_drawdown_pct, total_trades, win_rate,"
+                " model_version_id, model_window, result_json) VALUES ('QQQ', %s, 'D1', 'yahoo',"
+                " '2016-01-04', '2021-12-31', 10000, 11000, 10, 0.5, 5, 2, 50, 'v-live', 'known',"
+                " '{}')", (other,))
         conn.commit()
         reg = Registry(Record("v-in", window("2003-01-01", "2015-12-31")),
                        Record("v-out", window("2003-01-01", "2015-12-31")))
         lines: list[str] = []
-        mw.backfill(conn, reg, dry_run=True, log=lines.append)
+        mw.backfill(conn, reg, dry_run=True, log=lines.append, strategy=strategy)
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM backtest_results WHERE strategy_name = %s"
                         " AND model_window IS NOT NULL", (strategy,))
             assert cur.fetchone()[0] == 0, "a dry run writes nothing"
-        mw.backfill(conn, reg, log=lines.append)
+        mw.backfill(conn, reg, log=lines.append, strategy=strategy)
         with conn.cursor() as cur:
+            cur.execute("SELECT model_window FROM backtest_results WHERE strategy_name = %s",
+                        (other,))
+            assert cur.fetchone()[0] == "known", "another strategy's row is left alone"
             cur.execute("SELECT model_version_id, model_window, in_sample FROM backtest_results"
                         " WHERE strategy_name = %s ORDER BY model_version_id", (strategy,))
             assert cur.fetchall() == [("v-gone", "version gone", None), ("v-in", "known", True),
@@ -94,7 +106,8 @@ def test_the_backfill_fills_the_columns_and_the_database_derives_in_sample():
     finally:
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM backtest_results WHERE strategy_name = %s", (strategy,))
+            cur.execute("DELETE FROM backtest_results WHERE strategy_name IN (%s, %s)",
+                        (strategy, other))
         conn.commit()
         conn.close()
 

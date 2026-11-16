@@ -1,6 +1,7 @@
 """Training pipeline. Given (candles, hyperparams):
 
   candles → features matrix + label vector
+         → chronological split, purged (labels.purged_split)
          → MinMaxScaler.fit on the train slice
          → PyTorch Sequential + Adam + CrossEntropyLoss
          → loop over numEpochs (batched, shuffled per epoch)
@@ -8,7 +9,16 @@
 
 Hyperparameter defaults mirror NeuralNetworkConfig.java exactly so a
 side-by-side training run against the same data produces models of the
-same shape (not weights — those differ across DL4J and PyTorch RNGs)."""
+same shape (not weights — those differ across DL4J and PyTorch RNGs).
+
+THE PURGE (B5, G31). A row's label reads the close `forward_bars` later, so
+the last `forward_bars` rows before validation would be labelled from
+validation closes. They are dropped: no fitted label reads a close inside the
+validation slice. `training_window` records the bars actually fitted, first to
+last, inclusive (`inclusive: true`), with the bounds the caller asked for kept
+as `requested_since` and `requested_until`. Versions saved before carry the
+requested bounds as `since` and an exclusive `until` instead, which is what
+`nn/model_windows.py` and the API's metadata reader fall back to."""
 
 from __future__ import annotations
 
@@ -21,7 +31,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from nn.features import Candle, build_feature_matrix, min_bar_index
-from nn.labels import build_label_indices, max_label_index
+from nn.labels import build_label_indices, max_label_index, purged_split
 from nn.model import ArchSpec, build
 from nn.standardise import MinMaxScaler, fit as fit_scaler
 from nn.store import ModelRegistry, compute_cache_key
@@ -103,22 +113,28 @@ def _evaluate(
     return total_loss / max(total, 1), correct / max(total, 1)
 
 
-def train_model(
-    candles: Sequence[Candle],
-    cfg: TrainConfig,
-    *,
-    registry: ModelRegistry,
-    cache_key_inputs: dict[str, str],
-    strategy_name: str = "nn-feedforward",
-    training_window: Mapping[str, object] | None = None,
-) -> TrainResult:
-    """End-to-end training run.
+@dataclass(frozen=True)
+class Rows:
+    """What one training run fits and validates on, before scaling.
 
-    `cache_key_inputs` is the canonical map fed into compute_cache_key().
-    Callers should include instrument/source/timeframe + every hyperparam
-    that affects training, so the resulting cache key is stable across
-    identical inputs and unique otherwise."""
+    Indices are candle indices: row j of the feature matrix is candle
+    `from_idx + j`. Candles `last_fit + 1 .. first_val - 1` are the purged rows.
+    """
 
+    train_x: np.ndarray
+    train_y: np.ndarray
+    val_x: np.ndarray
+    val_y: np.ndarray
+    labels: np.ndarray
+    first_fit: int
+    last_fit: int
+    first_val: int
+    last_val: int
+
+
+def training_rows(candles: Sequence[Candle], cfg: TrainConfig) -> Rows:
+    """Features and labels for every usable candle, split chronologically
+    with the purge (`labels.purged_split`)."""
     # The first usable sample index — needs the longest indicator window
     # AND the lookback. The last usable index needs forward_bars of
     # future data for label generation.
@@ -145,16 +161,42 @@ def train_model(
     )
 
     n = feature_matrix.shape[0]
-    split = int(n * cfg.train_split_ratio)
-    if split <= 0 or split >= n:
-        raise ValueError(
-            f"train_split_ratio {cfg.train_split_ratio} produces empty train or val set"
-        )
+    fit_end, val_start = purged_split(n, cfg.train_split_ratio, cfg.forward_bars)
+    return Rows(
+        train_x=feature_matrix[:fit_end], train_y=label_vec[:fit_end],
+        val_x=feature_matrix[val_start:], val_y=label_vec[val_start:],
+        labels=label_vec,
+        first_fit=from_idx, last_fit=from_idx + fit_end - 1,
+        first_val=from_idx + val_start, last_val=from_idx + n - 1,
+    )
 
-    train_x_np = feature_matrix[:split]
-    train_y_np = label_vec[:split]
-    val_x_np = feature_matrix[split:]
-    val_y_np = label_vec[split:]
+
+def train_model(
+    candles: Sequence[Candle],
+    cfg: TrainConfig,
+    *,
+    bar_times: Sequence[str],
+    registry: ModelRegistry,
+    cache_key_inputs: dict[str, str],
+    strategy_name: str = "nn-feedforward",
+    training_window: Mapping[str, object] | None = None,
+) -> TrainResult:
+    """End-to-end training run.
+
+    `bar_times` are the candles' ISO-8601 timestamps, one each, so the saved
+    window can name the bars actually fitted. `training_window` is the
+    caller's provenance (series, requested bounds).
+
+    `cache_key_inputs` is the canonical map fed into compute_cache_key().
+    Callers should include instrument/source/timeframe + every hyperparam
+    that affects training, so the resulting cache key is stable across
+    identical inputs and unique otherwise."""
+    if len(bar_times) != len(candles):
+        raise ValueError(f"{len(bar_times)} timestamps for {len(candles)} candles")
+    rows = training_rows(candles, cfg)
+    label_vec = rows.labels
+    train_x_np, train_y_np = rows.train_x, rows.train_y
+    val_x_np, val_y_np = rows.val_x, rows.val_y
 
     # MinMaxScaler is fit only on the train slice. Future leakage from
     # the val window into the normaliser would invalidate the train/val
@@ -164,7 +206,7 @@ def train_model(
     val_x_np = scaler.transform(val_x_np)
 
     spec = ArchSpec(
-        input_size=feature_matrix.shape[1],
+        input_size=train_x_np.shape[1],
         hidden_size=cfg.hidden_size,
         num_hidden=cfg.num_hidden,
         dropout_rate=cfg.dropout_rate,
@@ -216,9 +258,18 @@ def train_model(
             # notice when that is not the range they are testing over.
             "training_window": {
                 **dict(training_window or {}),
+                "since": bar_times[rows.first_fit],
+                "until": bar_times[rows.last_fit],
+                "inclusive": True,
+                "purged_rows": rows.first_val - rows.last_fit - 1,
                 "bar_count": len(candles),
                 "first_close": float(candles[0].close),
                 "last_close": float(candles[-1].close),
+            },
+            "validation_window": {
+                "since": bar_times[rows.first_val],
+                "until": bar_times[rows.last_val],
+                "bar_count": int(val_x_np.shape[0]),
             },
             "train_samples": int(train_x_np.shape[0]),
             "val_samples": int(val_x_np.shape[0]),

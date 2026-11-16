@@ -34,6 +34,12 @@ which is the point of normalizing before storing rather than after.
 Rows where any column is NULL are dropped by `read_matrix` regardless, so the
 pre-2003 head costs nothing but disk if you leave it in the window.
 
+THE SPLIT IS PURGED (B5, G31). A row's label reads the close `--forward` rows
+later, so the last `--forward` rows before validation are labelled from
+validation closes; `split_samples` drops them, as the walk-forward runner does
+in every fold. The saved `training_window` is the rows actually fitted, first
+to last, inclusive.
+
     python -m nn.train_features
     python -m nn.train_features --epochs 100 --lookback 20
     python -m nn.train_features --from 2003-01-01 --to 2017-12-31 --save
@@ -52,7 +58,7 @@ import psycopg
 import torch
 import torch.nn as nn
 from nn import feature_store
-from nn.labels import CLASS_BUY, CLASS_HOLD, CLASS_SELL, NUM_CLASSES
+from nn.labels import CLASS_BUY, CLASS_HOLD, CLASS_SELL, NUM_CLASSES, purged_split
 from nn.model import ArchSpec, build
 from nn.standardise import fit as fit_scaler
 from torch.utils.data import DataLoader, TensorDataset
@@ -116,6 +122,18 @@ def build_labels(
             )
         usable += 1
     return np.array(labels, dtype=np.int64), len(dates) - usable
+
+
+def split_samples(x_all: np.ndarray, labels: np.ndarray, *, train_split: float,
+                  forward: int) -> tuple[slice, slice]:
+    """The rows to fit and the rows to validate on, chronologically, with the
+    purge (B5, G31): the last `forward` rows before validation are labelled
+    from validation closes and are fitted by neither side. See
+    `labels.purged_split`."""
+    if len(x_all) != len(labels):
+        raise ValueError(f"{len(x_all)} samples for {len(labels)} labels")
+    fit_end, val_start = purged_split(len(labels), train_split, forward)
+    return slice(0, fit_end), slice(val_start, len(labels))
 
 
 def per_class_recall(y_true: np.ndarray, y_pred: np.ndarray) -> dict[int, tuple[int, int]]:
@@ -220,12 +238,15 @@ def main() -> int:
         for c in range(NUM_CLASSES)))
 
     # Chronological split — never shuffled across the boundary. Test forward in
-    # time, never backward.
-    split = int(len(x_all) * args.train_split)
-    x_tr, y_tr = x_all[:split], labels[:split]
-    x_va, y_va = x_all[split:], labels[split:]
-    print(f"split     train {len(x_tr)} ({d_all[0]}..{d_all[split-1]})  "
-          f"val {len(x_va)} ({d_all[split]}..{d_all[-1]})")
+    # time, never backward. Purged: the rows whose labels read validation
+    # closes are fitted by neither side.
+    fit, val = split_samples(x_all, labels, train_split=args.train_split,
+                             forward=args.forward)
+    x_tr, y_tr = x_all[fit], labels[fit]
+    x_va, y_va = x_all[val], labels[val]
+    print(f"split     train {len(x_tr)} ({d_all[0]}..{d_all[fit.stop - 1]})  "
+          f"purged {val.start - fit.stop}  "
+          f"val {len(x_va)} ({d_all[val.start]}..{d_all[-1]})")
 
     # The scaler is fitted on the TRAIN SLICE ONLY. This is the non-causal step
     # the feature store deliberately does not persist, precisely so it can be
@@ -356,14 +377,18 @@ def main() -> int:
                 "feature_names": fm.names,
                 "features_per_bar": len(fm.names),
                 "lookback_window": args.lookback,
+                # The rows actually fitted, first to last, inclusive (B5).
                 "training_window": {
                     "symbol": args.symbol, "source": args.source,
                     "timeframe": args.timeframe,
-                    "since": str(d_all[0]), "until": str(d_all[split - 1]),
+                    "since": str(d_all[0]), "until": str(d_all[fit.stop - 1]),
+                    "inclusive": True,
+                    "purged_rows": val.start - fit.stop,
+                    "requested_since": args.start, "requested_until": args.end,
                     "bar_count": len(x_tr),
                 },
                 "validation_window": {
-                    "since": str(d_all[split]), "until": str(d_all[-1]),
+                    "since": str(d_all[val.start]), "until": str(d_all[-1]),
                     "bar_count": len(x_va),
                 },
                 "final_val_loss": v_loss,
