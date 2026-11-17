@@ -1,3 +1,10 @@
+# The repo's .git, for the commit this image is built from (G45). Compose
+# passes it as a build context of this name (`additional_contexts`), which
+# replaces this empty stage; a plain `docker build` gets the empty stage, and
+# the image records no commit, as before. `.dockerignore` keeps .git out of
+# the main context, so this is the only way it reaches the build.
+FROM scratch AS gitdir
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -21,6 +28,12 @@ RUN pip install --upgrade pip \
 
 COPY python/loader ./loader
 COPY python/nn ./nn
+
+# Last, so a new commit rebuilds only this layer: resolve HEAD from the files
+# (the image has no git binary) and keep it where `nn.lineage.git_sha()` looks.
+# Prints nothing when it cannot tell, and the build still succeeds.
+RUN --mount=type=bind,from=gitdir,target=/tmp/gitdir \
+    python -m nn.lineage --head /tmp/gitdir > /app/GIT_SHA
 
 EXPOSE 8001
 CMD ["uvicorn", "loader.main:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -29,7 +29,9 @@ import hashlib
 import json
 import os
 import platform
+import re
 import subprocess
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -76,12 +78,58 @@ def code_hash() -> str:
     return h.hexdigest()
 
 
+#: Where the loader image keeps the commit it was built from (G45). The image
+#: has neither `.git` nor a `git` binary, so `python/Dockerfile` resolves HEAD
+#: at build time, from the `.git` compose passes as a second build context,
+#: and writes it here. A build from uncommitted changes records the commit it
+#: started from; `code_hash` is what pins the exact code.
+BAKED_SHA_FILE = _PACKAGE_ROOT / "GIT_SHA"
+
+_SHA_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+
+
+def _as_sha(text: str) -> str | None:
+    text = text.strip()
+    return text[:40] if _SHA_RE.fullmatch(text) else None
+
+
+def head_sha(gitdir: Path) -> str | None:
+    """The commit HEAD names, read from a `.git` directory's files alone.
+
+    Covers a detached HEAD, a branch's loose ref and a ref only in
+    `packed-refs`. None when the directory is missing or says nothing usable:
+    the build that calls this must not fail for want of a sha.
+    """
+    try:
+        head = (gitdir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref:"):
+            return _as_sha(head)
+        ref = head[len("ref:"):].strip()
+        loose = gitdir / ref
+        if loose.is_file():
+            return _as_sha(loose.read_text(encoding="utf-8"))
+        packed = gitdir / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[1] == ref and not line.startswith(("#", "^")):
+                    return _as_sha(parts[0])
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None
+
+
 @lru_cache(maxsize=1)
 def git_sha() -> str | None:
-    """`$GIT_SHA` when the build provided one, else the checkout's HEAD, else None."""
+    """The commit this code came from: `$GIT_SHA`, else the sha baked into the
+    image (`BAKED_SHA_FILE`), else the checkout's HEAD, else None."""
     env = os.environ.get("GIT_SHA", "").strip()
     if env:
         return env[:40]
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        baked = _as_sha(BAKED_SHA_FILE.read_text(encoding="utf-8"))
+        if baked:
+            return baked
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=_PACKAGE_ROOT, capture_output=True,
@@ -194,3 +242,21 @@ def changed_inputs(then: Sequence[Mapping[str, Any]],
                 f" then, {b[k]['bars']} bars {b[k]['first']}..{b[k]['last']} now)"
             )
     return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """`python -m nn.lineage --head DIR`: print the commit HEAD names in the
+    `.git` directory DIR, or nothing. Always exits 0, so a build without a
+    usable `.git` still succeeds and records no sha (`python/Dockerfile`)."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) != 2 or args[0] != "--head":
+        print("usage: python -m nn.lineage --head GITDIR", file=sys.stderr)
+        return 2
+    sha = head_sha(Path(args[1]))
+    if sha:
+        print(sha)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

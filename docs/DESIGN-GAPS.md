@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-25** · 2026-11-16 16:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-29** · 2026-11-16 22:29 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -773,6 +773,47 @@ Checklist:
   - **856:** every engine loses (−4.59 to −10.03 pp a fold). Each forecast's mean absolute error (0.0195 to 0.0204) is above the training mean's (0.0190): below naive.
 - **What it says:** the direction target gives the network a different behaviour from the 3-class label's long-throughout. But one well-timed fold is not yet an edge, and every engine is still below its naive baseline. Whether run 855 counts as passing step 6 is the author's call.
 
+**G45 plan, 2026-11-16.** The author: G45 before step 8, so the held-out run can be tied to a commit. Architecture §1: "a feature or model run is identified by code version plus input snapshot" (R1, R5). `code_hash` already pins the exact code that ran. `git_sha` names the commit, and it is NULL on all 10 walk-forward runs and 15 feature builds: the loader image has no `.git` (`.dockerignore` keeps it out) and nothing sets `$GIT_SHA`.
+
+The shape: compose hands the loader's build the repo's `.git` as a second build context (`additional_contexts`). The Dockerfile reads HEAD from those files with the code it has just copied, since the image has no `git` binary, and writes the sha to `/app/GIT_SHA`. `lineage.git_sha()` reads `$GIT_SHA`, then that file, then `git rev-parse HEAD`. So every `docker compose build` records the commit, with nothing for the operator to remember. A plain `docker build` without the context gets an empty stage of the same name and records nothing, as today.
+
+The limit, said where the sha is described: a build from a tree with uncommitted changes records the commit it started from. `code_hash` is what pins the exact code.
+
+- [x] `lineage.head_sha(gitdir)`: HEAD from a `.git` directory's files (a branch's loose ref, a packed ref, a detached HEAD), None when it cannot tell. `python -m nn.lineage --head DIR` prints it. Tests
+- [x] `lineage.git_sha()` reads the baked `GIT_SHA` file between the environment and git. Test
+- [x] `python/Dockerfile` and `docker-compose.yml`: the `.git` context and the bake step, last, so a new commit rebuilds only that layer
+- [x] All four CI jobs, locally; rebuild the loader; live: the container's `git_sha()` equals the host's `git rev-parse HEAD`
+- [ ] Checkpoint: the stored runs and builds keep NULL, since their commit cannot be recovered honestly. A rerun would only add the sha; the author decides
+- [x] README (where the sha comes from). The G45 row says done
+
+*Built, 2026-11-16 19:20, up to the checkpoint.*
+- **Tests:** Python 876 (869 before; 7 new in `test_lineage.py`: a loose ref, a packed ref, a detached HEAD, nothing to tell, agreement with `git rev-parse` on this checkout, the environment before the baked file, the CLI). They call `head_sha`, `main` and `BAKED_SHA_FILE`, none of which exist without the change. Java passes, API 121, client 217 of 218 (below).
+- **Live:** after `docker compose build loader`, `/app/GIT_SHA` and `lineage.git_sha()` in the container both give `c20d1bc105f70af84e81c86e77da8fa38321566e`, the host's HEAD. A plain `docker build -f python/Dockerfile .` builds, leaves the file empty and gives None, as before.
+- **Not yet true:** the image names `c20d1bc`, while the tree holds this change uncommitted. After the commit, rebuild the loader so the sha names it.
+
+**Found on the way: CI on GitHub has been red since B6.** Every build step since has said "all four CI jobs pass", but those were local runs. The last green run on master is `8fb218e` (B1). Since then:
+- `api` fails lint from `35f0db1` (B6) on, with 3 errors now: `server.js` 2 (`./holdCurve` import order), `strategies.js` 408 (double quotes) and 654 (`settings` assigned and never read). They fail locally too.
+- `python` fails from `3b1877e` (G38, G48): `test_walkforward_store.py::test_a_look_at_a_test_window_is_recorded_and_a_second_is_a_reuse` reads the `strategies` table, which the Node API creates at runtime (`strategies.js` line 597) and `schema.sql` does not. The dev database has it and CI's empty one does not.
+- `client`, locally only: `tax.test.ts` expects `$2,500.00`, and Node on this Windows machine formats US dollars as `US$2,500.00`. CI, on Linux, passes. `taxNote` formats with the machine's locale, so the page reads differently by locale too.
+- Running the suites from WSL needs the Windows side: `JAVA_HOME` and `node_modules` are Windows installs, so Gradle and npm go through `cmd.exe`.
+
+**Checkpoint, the author's answers, 2026-11-16:**
+- The stored runs and builds keep NULL; only new ones carry a sha.
+- The 2022 to 2026-06 test block is still usable as step 8's final exam: waived in the step 4 review, with the reason.
+- Fix CI first, before anything else.
+
+**CI plan, 2026-11-16.** Each fix keeps what the test or rule protects; none changes what the app shows or stores.
+- [x] `api` lint: the import order and the quotes by `npm run lint:fix`; the unused initial `settings` in `strategies.js` `enginesOf` removed by hand
+- [x] `python`: the G48 test's skip sits inside the `try`, whose `finally` deletes from `strategies`, so on a database without the table the cleanup's error replaces the skip. Rather than skip, the test makes a `TEMP` `strategies` table when the web layer's is absent (the SQL function finds it through the search path), so the look-recording rule is tested on CI too
+- [x] `client`: `tax.test.ts` compares against the viewer-locale formatter it tests, rather than a US-only string. The page keeps the viewer's locale (a Canadian viewer sees `US$`, which says which dollar)
+- [x] All four jobs locally; the Python suite also against a fresh database with only `schema.sql`, as CI has it
+- [ ] After the author pushes: GitHub's run on master is green
+
+*Fixed locally, 2026-11-16 22:29.*
+- **CI replica:** a scratch database with only `schema.sql`: Python 873 passed, 3 skipped, none failed (CI had 1 failed, 865 passed). The G48 test now runs there. The 3 skips are older and also on CI: three feature-set tests need D1 candles the empty database lacks. README said nothing is skipped; it now says which.
+- **Dev database:** Python 876, Java passes, API lint clean and 121 tests, client lint, build and 218 tests.
+- **Rebuilt:** api (`strategies.js`); `/api/strategies/saved` returns all 21 versions with their engines. The other edits are tests, which no image holds.
+
 
 
 ### Status per requirement
@@ -924,7 +965,7 @@ wrong today.
 | G42 | The span backfill bakes in fixes made after a run. It hashes closes, park and margin as stored at backfill time, without checking for a fix between the run and the backfill. Runs 299, 300 and 301 (finished 2026-11-10) were backfilled on 2026-11-12 18:19, 39 minutes after the PSQ fix (import 351), so they read fresh while `--check-snapshot` says their margin input changed. The G12 plan calls the backfill exact; its proof covered the matrix only | step 6 | `nn/staleness.py` `backfill`; `walkforward_runs.updated_at` against `import_files` 351 | `span_snapshot` of run 299 (300 and 301 were rerun on 2026-11-14 as 376 and 377, whose spans are recorded at run time) | S | open |
 | G43 | The accuracy of a money-trained run is measured against the wrong labels. Its prediction is stored as SELL or 0 (BUY) and compared with the 3-class label, so a long day counts only when labelled BUY and the majority HOLD can never match. Runs 300, 301 and 348 show identical accuracy in 2016, 2017, 2018 and 2021 (the share of BUY labels), whatever they traded. B8 as written would flag every money-trained run | step 6 | `nn/walkforward.py` `pred = np.where(pos < args.threshold, CLASS_SELL, 0)` and `accuracy=float((pred == y_va).mean())` | `walkforward_folds.accuracy` of runs 257, 258, 300, 301, 348 | S | done (`fb6c5fe`): `walkforward.fold_accuracy`; the five runs were rerun on 2026-11-14 as 374 to 378. 257 and 258 reproduced every fold's return and trades exactly, and only their accuracy changed (2016: 17.1% against 69.8% became 86.9% against an always-long 86.9%) |
 | G44 | The Training tab says the runner prints per-epoch loss to its terminal. The walk-forward runner prints nothing per epoch; only `nn/train_features.py` does | step 6 | `TrainingStage.tsx` near line 106 | none | S | done 2026-11-16: see the G11 record in Pass 4 |
-| G45 | `git_sha` is never recorded on the stack. Lineage reads `$GIT_SHA`, but no Dockerfile or compose file sets it and the image has no `.git`, so no run can be tied to a commit (`code_hash` still is) | step 6 | `nn/lineage.py`; `python/Dockerfile`; `docker-compose.yml` | `git_sha` NULL on all 9 runs and 13 feature builds | S | open |
+| G45 | `git_sha` is never recorded on the stack. Lineage reads `$GIT_SHA`, but no Dockerfile or compose file sets it and the image has no `.git`, so no run can be tied to a commit (`code_hash` still is) | step 6 | `nn/lineage.py`; `python/Dockerfile`; `docker-compose.yml` | `git_sha` NULL on all 9 runs and 13 feature builds | S | done 2026-11-16: see the G45 record in Pass 4. Runs and builds before it keep NULL, by the author's choice |
 
 **G36 and G43 plan, 2026-11-14.** The author's order: these two first, then step 3.
 
@@ -1580,6 +1621,10 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-29 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | G45 done; CI fixed locally (api lint, the G48 test on an empty database, the tax test's locale) |
+| 2026-11-16-28 | 2026-11-16 22:24 | Claude Code (Claude Opus 5.5) | G45 checkpoint answered; CI plan |
+| 2026-11-16-27 | 2026-11-16 19:20 | Claude Code (Claude Opus 5.5) | G45 built up to the checkpoint; found CI on GitHub red since B6 |
+| 2026-11-16-26 | 2026-11-16 19:12 | Claude Code (Claude Opus 5.5) | G45 plan |
 | 2026-11-16-25 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | G49 done: direction and return targets; runs 855 and 856; R71 and R72 partial (G57) |
 | 2026-11-16-24 | 2026-11-16 15:58 | Claude Code (Claude Opus 5.5) | G49 plan |
 | 2026-11-16-23 | 2026-11-16 15:43 | Claude Code (Claude Opus 5.5) | G11 and G44 done: every epoch recorded, a NaN loss fails the run, the live view; runs rerun as 779-786 |

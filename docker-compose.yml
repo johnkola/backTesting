@@ -117,6 +117,11 @@ services:
     build:
       context: .
       dockerfile: python/Dockerfile
+      # The commit the image is built from, recorded with every run and feature
+      # build (`git_sha`, G45). `.dockerignore` keeps .git out of the context
+      # above, so it comes in as its own; see python/Dockerfile.
+      additional_contexts:
+        gitdir: ./.git
     container_name: backtest-loader
     restart: unless-stopped
     depends_on:

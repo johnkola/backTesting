@@ -100,3 +100,89 @@ def test_changed_inputs_names_only_what_moved():
         "T10YIE (fred, D1) close: no longer read",
     ]
     assert lineage.changed_inputs(then, then) == []
+
+
+# G45: the commit a run came from. The loader image has no `.git` and no `git`
+# binary, so its build reads HEAD from the files and bakes the sha in.
+
+SHA_A = "a" * 40
+SHA_B = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _gitdir(tmp_path, head):
+    g = tmp_path / ".git"
+    (g / "refs" / "heads").mkdir(parents=True)
+    (g / "HEAD").write_text(head)
+    return g
+
+
+def test_head_sha_reads_a_loose_branch_ref(tmp_path):
+    g = _gitdir(tmp_path, "ref: refs/heads/master\n")
+    (g / "refs" / "heads" / "master").write_text(SHA_B + "\n")
+    assert lineage.head_sha(g) == SHA_B
+
+
+def test_head_sha_falls_back_to_packed_refs(tmp_path):
+    g = _gitdir(tmp_path, "ref: refs/heads/master\n")
+    (g / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted \n"
+        f"{SHA_A} refs/heads/feature\n"
+        f"{SHA_B} refs/heads/master\n"
+        f"^{SHA_A}\n"
+    )
+    assert lineage.head_sha(g) == SHA_B
+
+
+def test_head_sha_reads_a_detached_head(tmp_path):
+    assert lineage.head_sha(_gitdir(tmp_path, SHA_B + "\n")) == SHA_B
+
+
+def test_head_sha_is_none_when_it_cannot_tell(tmp_path):
+    assert lineage.head_sha(tmp_path / "missing") is None
+    assert lineage.head_sha(_gitdir(tmp_path, "ref: refs/heads/gone\n")) is None
+    assert lineage.head_sha(tmp_path) is None  # no HEAD file
+    (tmp_path / "HEAD").write_text("not a sha\n")
+    assert lineage.head_sha(tmp_path) is None
+
+
+def test_head_sha_agrees_with_git_on_this_checkout():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+
+    repo = Path(lineage.__file__).resolve().parents[2]
+    if shutil.which("git") is None or not (repo / ".git").is_dir():
+        pytest.skip("needs a git checkout and the git binary")
+    want = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True, check=True).stdout.strip()
+    assert lineage.head_sha(repo / ".git") == want
+
+
+def test_git_sha_prefers_the_environment_then_the_baked_file(tmp_path, monkeypatch):
+    baked = tmp_path / "GIT_SHA"
+    monkeypatch.setattr(lineage, "BAKED_SHA_FILE", baked)
+    lineage.git_sha.cache_clear()
+    try:
+        baked.write_text(SHA_B + "\n")
+        monkeypatch.delenv("GIT_SHA", raising=False)
+        assert lineage.git_sha() == SHA_B          # baked, though a checkout is here too
+        lineage.git_sha.cache_clear()
+        monkeypatch.setenv("GIT_SHA", SHA_A)
+        assert lineage.git_sha() == SHA_A          # the environment wins
+        lineage.git_sha.cache_clear()
+        monkeypatch.delenv("GIT_SHA")
+        baked.write_text("")                       # a build that found no sha
+        assert lineage.git_sha() != ""             # falls through to git or None
+    finally:
+        lineage.git_sha.cache_clear()
+
+
+def test_main_prints_the_sha_or_nothing(tmp_path, capsys):
+    g = _gitdir(tmp_path, SHA_B + "\n")
+    assert lineage.main(["--head", str(g)]) == 0
+    assert capsys.readouterr().out == SHA_B + "\n"
+    assert lineage.main(["--head", str(tmp_path / "missing")]) == 0
+    assert capsys.readouterr().out == ""
+    assert lineage.main([]) == 2

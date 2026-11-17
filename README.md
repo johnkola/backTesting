@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-13** · 2026-11-16 16:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-16-15** · 2026-11-16 22:29 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -204,7 +204,7 @@ postman collection run postman/backtest.postman_collection.json \
   -e postman/local.postman_environment.json
 ```
 
-**CI.** `.github/workflows/ci.yml` runs the same suites on every push and pull request, as four jobs: `python` (pytest against a TimescaleDB service, with `schema.sql` applied by `psql`), `java` (`gradle test` against its own TimescaleDB), `api` (lint + `node --test`) and `client` (lint, `tsc` + `vite build`, Vitest). The database starts empty and every test seeds its own data, so nothing is skipped. Not covered: the Postman suite, which needs the whole stack running, and `ruff`, which has errors that predate CI.
+**CI.** `.github/workflows/ci.yml` runs the same suites on every push and pull request, as four jobs: `python` (pytest against a TimescaleDB service, with `schema.sql` applied by `psql`), `java` (`gradle test` against its own TimescaleDB), `api` (lint + `node --test`) and `client` (lint, `tsc` + `vite build`, Vitest). The database starts empty and every test seeds its own data. Three feature-set tests in `test_walkforward_store.py` still skip there, for want of D1 candles. Not covered: the Postman suite, which needs the whole stack running, and `ruff`, which has errors that predate CI.
 
 Both `web/client/` and `web/api/` have the same gate: `npm run lint` fails on
 warnings too (`--max-warnings 0`), and `npm run lint:fix` applies what is fixable —
@@ -240,6 +240,8 @@ cd web/client && npm install && npm run dev        # http://localhost:5173
 The Vite dev server proxies `/api` to `$API_URL` (default `http://localhost:8001`), so the dev client makes same-origin requests and needs no CORS. Set `VITE_API_URL` instead to point it straight at a running API — that works too, since the API sends CORS headers.
 
 Note that when running the loader locally on `:8001` you'll collide with the API service; either stop the API container or give the loader another port and set `LOADER_URL` to match. In compose the loader is published on **8003** for exactly this reason, and the Java CLI defaults to it.
+
+**Which commit a run came from.** Every walk-forward run and feature build records `git_sha`, the commit the loader image was built from, beside `code_hash`, the hash of the code it actually ran. `docker compose build loader` reads it from the repo's `.git` on its own, so commit first and rebuild after, or the image keeps naming the commit before. A build from uncommitted changes records the commit it started from, and only `code_hash` tells the two apart. A plain `docker build -f python/Dockerfile .` records no commit, and `GIT_SHA=<sha>` in the loader's environment overrides what was baked in. Runs and builds recorded before 2026-11-16 have none.
 
 ## CLI reference
 
@@ -1153,6 +1155,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-16-15 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | CI: three Python tests skip on the empty database; the paragraph said none did |
+| 2026-11-16-14 | 2026-11-16 19:16 | Claude Code (Claude Opus 5.5) | G45: where a run's `git_sha` comes from, and what to rebuild so it names the right commit |
 | 2026-11-16-13 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | G49: the prediction targets (direction, return) beside the 3-class label; runs' `target` and `labelSpec` |
 | 2026-11-16-12 | 2026-11-16 15:43 | Claude Code (Claude Opus 5.5) | G11: training followed epoch by epoch; the run detail's `epochs`, each fold's `loss`, `failedReason`, `progress` |
 | 2026-11-16-11 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | G20: `run --tax-rate`, `/api/run` `taxRate`, results' `taxRate`; a backtest scored after tax |
