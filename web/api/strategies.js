@@ -405,7 +405,7 @@ function validateEngines(raw, registry, loss, errors) {
     // Refused, never swapped (B9): the money-trained losses are the network's.
     if (enabled && loss && !(e.losses || []).includes(loss)) {
       errors.push(`${e.title} cannot train on the '${loss}' loss: the money-trained losses `
-        + `are written for the network, whose position head they differentiate through; `
+        + 'are written for the network, whose position head they differentiate through; '
         + `${e.title} trains on the class label ('ce'). Switch it off or use 'ce'`);
     }
     out.push({ engine: e.name, enabled, settings });
@@ -651,7 +651,7 @@ function enginesOf(rows) {
   if (!rows || rows.length === 0) return { mlp: { enabled: true, settings: {} } };
   const out = {};
   for (const r of rows) {
-    let settings = {};
+    let settings;
     try { settings = JSON.parse(r.settings_json || '{}'); } catch { settings = {}; }
     out[r.engine] = { enabled: r.enabled, settings };
   }

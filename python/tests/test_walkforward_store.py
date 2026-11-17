@@ -835,11 +835,20 @@ def test_a_look_at_a_test_window_is_recorded_and_a_second_is_a_reuse(db):
     look at it; the next look at the same window counts the one before."""
     conn = db
     symbol, name = "ZZG48PY", "zz-g48-py"
+    with conn.cursor() as cur:
+        # The web layer creates `strategies` (web/api/strategies.js), not
+        # schema.sql, so CI's empty database has none. A session-only table with
+        # the columns this test writes stands in: the SQL function finds it
+        # through the search path, and it goes when the connection closes.
+        cur.execute("SELECT to_regclass('strategies') IS NOT NULL")
+        if not cur.fetchone()[0]:
+            cur.execute(
+                "CREATE TEMP TABLE strategies (name TEXT, version INT, instrument TEXT,"
+                " source TEXT, timeframe TEXT, model_type TEXT, validation_scheme TEXT,"
+                " features_json TEXT, windows_json TEXT, label_json TEXT, hyperparams_json TEXT)")
+    conn.commit()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('strategies') IS NOT NULL")
-            if not cur.fetchone()[0]:
-                pytest.skip("the web layer's strategies table is not there yet")
             cur.execute(
                 "INSERT INTO strategies (name, version, instrument, source, timeframe, model_type,"
                 " validation_scheme, features_json, windows_json, label_json, hyperparams_json)"

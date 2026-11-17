@@ -1,9 +1,9 @@
 const express = require('express');
-const { holdCurve } = require('./holdCurve');
 const fs = require('fs');
 const http = require('node:http');
 const path = require('path');
 const { marked } = require('marked');
+const { holdCurve } = require('./holdCurve');
 const { pool } = require('./db');
 const { normaliseMetadata } = require('./modelMetadata');
 const testWindows = require('./testWindows');
