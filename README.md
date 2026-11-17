@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-17-1** · 2026-11-17 11:34 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-17-2** · 2026-11-17 12:06 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -99,8 +99,8 @@ different windows read the same table.
 
 Restricting the window does not change any feature value. Every column is
 normalized causally at build time, so a z-score on a given date is the same
-number whatever range the set was written over — see
-[Build wide, train narrow](/docs/architecture#build-wide-train-narrow).
+number whatever range the set was written over. Why, and what a method must not do to
+keep it that way, is the comment at the top of `python/nn/normalize.py`.
 
 **Each value lands on the day the system could have it.** A row is decided
 after that session's close, so it holds only what the 18:30 New York feeds run
@@ -180,8 +180,68 @@ is the reference each of its steps links into:
 | Build higher timeframes | [Multi-timeframe aggregation](#multi-timeframe-aggregation) |
 | Train a model | [Model cache](#model-cache) |
 | Run a backtest | [`backtest` — act](#backtest--act) · [Execution engine](#execution-engine) |
-| Read the result | [How to read a result](/docs/architecture#how-to-read-a-result) · [Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system) |
+| Read the result | [How to read a result](#how-to-read-a-result) · [Known limitations](#known-limitations) |
 | Undo a mistake | [Undoing an import](#undoing-an-import) |
+
+## How to read a result
+
+A backtest result is a row on **Results** (or `report --last`, `report --id N`). Read it in
+this order:
+
+1. **Trade count.** Under about 20 trades nothing else is reliable: the window is too
+   short, the warm-up ate it, or the strategy hardly trades. Trades a year and the
+   average hold sit beside it in the benchmark table.
+2. **Return against the benchmarks.** Buy-and-hold, Faber's 10-month rule and dual
+   momentum are traded through the same engine, over the same bars, at the same
+   commission, slippage and tax (B6, B7). A strategy that does not beat buy-and-hold adds
+   nothing here, whatever else it shows.
+3. **Max drawdown.** The path, not the endpoint. A 60% fall on the way to a good return is
+   one a person would have stopped at.
+4. **Profit factor and win rate, together.** A low win rate is fine with a profit factor
+   above about 1.5; a high one with a profit factor near 1 is fragile. How break-even
+   trades and "not available" count is under
+   [How the trade metrics count](#execution-engine).
+5. **Sharpe, Sortino, Calmar.** For ranking runs on the same data, not as thresholds.
+6. **The marks.** *in-sample*: the model trained on part of this window, so it is not an
+   out-of-sample result (B4). *after N% tax*: realized gains were taxed at that rate, the
+   benchmarks too (G20); without it every figure is before tax. *test window reused*: the
+   window overlaps a saved strategy's test block, with the looks before it counted (G48).
+   *cached model*: the run reused a model already trained under the same key.
+
+A walk-forward run (the Training tab, or the runner's output) is read by fold:
+
+- **Folds beating buy-and-hold** and the **mean excess** a fold, which give the verdict on
+  the strategy's objective.
+- **Where the gap comes from**: days out, drift, commissions, gains tax and timing. Only
+  *timing* is the model; the rest is the price of trading at all.
+- **Below naive**: the model did not beat its target's trivial predictor (the training
+  majority class, always up, or the training mean return), so it learned nothing that
+  rule did not (B8, G49).
+- **Leverage, not timing**: a Strategy 2 run is also scored against always long on margin,
+  because borrowing in a rising market beats buy-and-hold with no model at all (G25).
+
+## Known limitations
+
+A research tool, not a trading system. The engine's own simplifications (all-in sizing,
+one position per side, slippage as a fixed bump) are under
+[Execution engine](#execution-engine). Beyond those:
+
+- **No leverage in the backtest engine.** It trades cash only. A short holds its notional
+  as collateral and pays no borrowing cost. Margin exists only in walk-forward scoring, as
+  [Strategy 2](#strategy-2--margin-long-and-inverse).
+- **Tax is one rate on realized gains.** No superficial-loss rule, no dividends, no
+  currency conversion (G53).
+- **One instrument, daily, for the network.** Only QQQ has a feature set, and feature
+  sets and walk-forward refuse anything but D1 (G22, G56). Intraday candles import, roll
+  up and backtest with the rule strategies.
+- **One feature is a proxy that looks ahead.** Each value lands on the first session it
+  could be known (G47), but `earnings_season_share` counts the actual 8-K dates in the
+  next five sessions, standing in for an announced earnings calendar.
+- **Fake data by default.** `./gradlew generateTestData` writes a random walk under
+  `SYNTH`. Import real data before reading anything into a result.
+- **A test block is used once.** A run over a saved strategy's test window is recorded as
+  a look at it. Phase one's held-out test spent QQQ's 2022-01 to 2026-06 block for
+  phase1-full v5.
 
 ## Web client
 
@@ -498,7 +558,7 @@ Python loader (FastAPI) → CSV import · multi-timeframe aggregation · NN trai
 
 Storage: PostgreSQL with the TimescaleDB extension. Five tables: `instruments`, `data_sources`, `candles` (hypertable, PK `(instrument_id, timeframe, source_id, timestamp)`), `data_imports` (audit log of CSV imports — archive path, file hash, name, row count, one row per imported year slice), and `backtest_results`. Schema lives in `src/main/resources/schema.sql` and is bootstrapped (with idempotent migration for pre-source DBs) on every `DatabaseManager.initialize()`.
 
-See [Architecture](/docs/architecture) for the deeper notes — [bar-by-bar loop semantics](/docs/architecture#the-bar-by-bar-loop-enginebacktestenginejava), the [strategy plugin model](/docs/architecture#strategy-plugin-model), and [NN training quirks](/docs/architecture#neural-network-strategy-strategynn--pythonnn).
+The code-level notes live with the code, as comments at the top of the class or method that owns each decision: the bar loop on `BacktestEngine.run` and `trade`, cash and costs on `PortfolioManager` and `ExecutionSimulator`, adding a strategy on `StrategyRegistry`, and the network's calls to the loader on `NeuralNetworkStrategy`.
 
 ---
 
@@ -506,10 +566,8 @@ See [Architecture](/docs/architecture) for the deeper notes — [bar-by-bar loop
 
 What the engine does to your money between "the strategy said buy" and a number on the
 results page. The code-level account — the bar loop, the exact cash math, the
-invariants to preserve when editing `engine/` — is
-[The bar-by-bar loop](/docs/architecture#the-bar-by-bar-loop-enginebacktestenginejava)
-and
-[Portfolio accounting & execution costs](/docs/architecture#portfolio-accounting--execution-costs-portfoliomanager-executionsimulator).
+invariants to preserve when editing `engine/` — is in the comments on
+`BacktestEngine.trade`, `PortfolioManager` and `ExecutionSimulator`.
 This section is the part that changes how you read a result.
 
 **Every fill costs you twice, in a fixed order.** Slippage moves the price against you
@@ -624,9 +682,8 @@ before the window, on a result that is not daily, or without SPY on the source, 
 available, with the reason; it is never computed on fewer months. The Training tab and the
 result page show the strategy and all three benchmarks side by side.
 
-**Three simplifications that flatter a result.** Deliberate, not bugs, and the full list
-with reasoning is
-[Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system):
+**Three simplifications that flatter a result.** Deliberate, not bugs. The limits beyond
+the engine are under [Known limitations](#known-limitations):
 
 - **All-in sizing.** Every entry puts all of the cash in, every exit takes all of it out.
   No risk fraction, no stops, no diversification — the equity curve is one instrument's
@@ -848,7 +905,7 @@ If `run` is invoked without a matching cached model, it prints the exact `train`
 
 ## Storage compression
 
-**Chunk interval.** `candles` is partitioned into **one-year** chunks (`create_hypertable(..., chunk_time_interval => INTERVAL '1 year')`), not TimescaleDB's 7-day default, because the table is daily-bar dominant over a multi-decade history — 7-day chunks produced thousands of near-empty chunks, and chunk count is a correctness concern rather than a tidiness one (it is what broke `backtest-audit` with `out of shared memory ... increase max_locks_per_transaction`). The full reasoning is in [Compression](/docs/architecture#compression-candles-hypertable). Compose raises `max_locks_per_transaction` to 1024 for headroom. Revisit the interval if this database ever becomes minute-bar dominant; a month is the better choice once one year of one instrument stops fitting comfortably in a chunk.
+**Chunk interval.** `candles` is partitioned into **one-year** chunks (`create_hypertable(..., chunk_time_interval => INTERVAL '1 year')`), not TimescaleDB's 7-day default, because the table is daily-bar dominant over a multi-decade history — 7-day chunks produced thousands of near-empty chunks, and chunk count is a correctness concern rather than a tidiness one (it is what broke `backtest-audit` with `out of shared memory ... increase max_locks_per_transaction`). The reasoning is the comment above `create_hypertable('candles', …)` in `schema.sql`. Compose raises `max_locks_per_transaction` to 1024 for headroom. Revisit the interval if this database ever becomes minute-bar dominant; a month is the better choice once one year of one instrument stops fitting comfortably in a chunk.
 
 `set_chunk_time_interval` in `schema.sql` fixes the setting on databases created before this change, but it only governs **new** chunks. To consolidate chunks already on disk, run the one-off `scripts/migrate_candles_chunk_interval.sql`, which copies every row into a correctly-partitioned table and swaps the two inside one transaction. Read its header first — it wants the `web` and `loader` containers stopped (`DROP TABLE` needs an exclusive lock) and a backup taken.
 
@@ -1137,7 +1194,7 @@ read validation closes. A version's `metadata.json` records the bars it actually
 `training_window.since` and `until`, inclusive (`inclusive: true`), with the dates it was
 asked for as `requested_since` and `requested_until`, and the scored bars as
 `validation_window`. The Models page and the in-sample mark (B4) read that window. See
-[Known limitations](/docs/architecture#known-limitations--this-is-a-research-tool-not-a-production-trading-system).
+[Known limitations](#known-limitations).
 
 ### `xgboost` and `lightgbm`
 
@@ -1172,6 +1229,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-17-2 | 2026-11-17 12:06 | Claude Code (Claude Opus 5.5) | G69: "How to read a result" and "Known limitations" written against today's code; 12 links into the deleted Architecture guide now point here or at the code |
 | 2026-11-17-1 | 2026-11-17 11:34 | Claude Code (Claude Opus 5.5) | Roadmap: phase one answered (Done), phase two groundwork (Now, Next); Strategy 2 gets its own section |
 | 2026-11-16-15 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | CI: three Python tests skip on the empty database; the paragraph said none did |
 | 2026-11-16-14 | 2026-11-16 19:16 | Claude Code (Claude Opus 5.5) | G45: where a run's `git_sha` comes from, and what to rebuild so it names the right commit |

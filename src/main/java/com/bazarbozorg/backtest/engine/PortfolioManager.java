@@ -19,6 +19,21 @@ import java.util.List;
  * Positions are immutable {@link Position} records; this manager keeps a list
  * of "currently-open" position references and replaces them whenever a copy
  * with new state (commission update, order-id append, close) is produced.
+ *
+ * <p><b>The cash model.</b> Opening either side debits {@code price x qty +
+ * commission}. Closing a long credits {@code price x qty - commission}; closing
+ * a short credits back its notional plus its realized P&L, less the commission.
+ * So a short's notional is held as collateral rather than its sale proceeds
+ * being credited, and its round trip nets {@code (entry - exit) x qty} less both
+ * commissions. There is no margin and no borrowing cost: the engine trades cash
+ * only (Strategy 2's margin lives in the walk-forward scorer, not here).
+ *
+ * <p><b>Tax (G20).</b> With a rate above zero, each close taxes the trade's gain
+ * net of commissions plus any loss carried from earlier trades, and pays it from
+ * cash at the close; a net loss carries forward instead. Every close goes
+ * through {@link #closePosition}, the end-of-run {@link #closeAllPositions}
+ * included, so a position still open at the end is sold and taxed like any
+ * other (D8).
  */
 public class PortfolioManager {
 

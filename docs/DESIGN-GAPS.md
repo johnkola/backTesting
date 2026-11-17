@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-16-29** · 2026-11-16 22:29 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-17-2** · 2026-11-17 12:05 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -96,7 +96,7 @@ stored run.
 | G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `data/csv-archive` | none | S | open |
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
 | G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `docs/readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
-| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `docs/readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | open: found during B1 |
+| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `docs/readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | done 2026-11-17: see the G69 record in Pass 4 |
 | G70 | An engine cannot train on a subset of the strategy's features. R21 lets an engine override the strategy's feature list with its own subset, recorded on its engine row and its run result; every engine reads the strategy's list | R21 | `nn/engines.py`, `strategy_engines` (no feature column) | none | S | open: found during B9 |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
@@ -814,6 +814,21 @@ The limit, said where the sha is described: a build from a tree with uncommitted
 - **Dev database:** Python 876, Java passes, API lint clean and 121 tests, client lint, build and 218 tests.
 - **Rebuilt:** api (`strategies.js`); `/api/strategies/saved` returns all 21 versions with their engines. The other edits are tests, which no image holds.
 
+
+
+**G69 plan, 2026-11-17.** The author: rewrite, then relink. 15 links point at `/docs/architecture`, the project `ARCHITECTURE.md` deleted in `2294b24`: README 11 (lines 103, 183 twice, 501 four times, 510, 512, 629, 851, 1140) and GETTING-STARTED 4 (lines 8, 213, 219, 305). Restoring the old text would not do: its "How to read a result" and "Known limitations" say fills are at the close (B1 made it the next open), that entries overdraw by the commission (B2), that there is no margin (Strategy 2) and that NN training is not walk-forward. By `CLAUDE.md`, the operator half goes in README and the code half in the owning module's comment.
+
+- [x] A test that fails today: every `/docs/<slug>` link in README and GETTING-STARTED names a registered doc, every `#anchor` on it names a heading that doc has, and every in-page `#anchor` names one of its own. `slugify` moves out of `server.js` into a module the test can load, unchanged
+- [x] README gains "How to read a result" and "Known limitations", written against today's engine, walk-forward runner and Results page
+- [x] README relinks: lines 183, 629 and 1140 to those sections; 103 ("build wide, train narrow") to the top of `python/nn/normalize.py`; 501, 510 and 512 to the comments on `BacktestEngine.run` and `trade`, `PortfolioManager`, `ExecutionSimulator` and `StrategyRegistry`; 851 to the compression comment in `schema.sql`. Code is named in backticks, not linked, since `/docs` cannot render a source file
+- [x] GETTING-STARTED: 213 and 219 to the README sections; 8 and 305 drop the Architecture guide, pointing at the README and at the design set (`/docs/qqq-architecture`) for what the system is for
+- [x] Module comments where the old doc held a fact still true that the code does not say: `StrategyRegistry` (how to register, fresh instances, warm-up), `PortfolioManager` (the cash model: a short's notional is held as collateral, tax on a realized gain is paid at the close); `fillMarketOrder`'s parameter still says "current bar close"
+- [x] API and Java jobs; rebuild api and engine; the G69 row says done
+
+*Done, 2026-11-17 12:05.* The links pointed at 16, not 15: line 501 holds four. The new test (`web/api/docLinks.test.js`) listed exactly those 16 before the change and none after; every in-page anchor already landed. API 125 (4 new), lint clean; Java passes. Rebuilt api and engine: the live `/api/docs/readme` carries `how-to-read-a-result`, `known-limitations`, `strategy-2--margin-long-and-inverse` and `execution-engine`, and no `/docs/architecture`.
+- **README:** "How to read a result" covers the backtest result (trades, the three benchmarks under the same costs and tax, drawdown, profit factor with win rate, the ratios, the four marks) and the walk-forward run (folds, the gap's sources, below naive, leverage not timing). "Known limitations" holds what the engine section does not: no leverage in the engine, tax as one rate, one instrument and daily for the network, the `earnings_season_share` proxy, fake data by default, a test block used once. The engine's three simplifications stay where they were, linked.
+- **Code side:** the bar loop (`BacktestEngine.run`, `trade`), sizing (`ExecutionSimulator.affordableQuantity`) and causal normalization (`nn/normalize.py`) were already explained where they live; the README names them. Added: `StrategyRegistry` (adding a strategy; warm-up is load-bearing, since the benchmarks start on that bar too), `PortfolioManager` (the cash model, no borrowing cost, tax at each close with the loss carried, D8 at the end), and `fillMarketOrder`'s price is the next open or the last close, not "current bar close".
+- **Dropped, not moved:** the old guide's glossaries and "Where to start reading the code". The metric glossary lives in the app's tooltips (`metricHints.ts`), and GETTING-STARTED now points at the design set for what the system is for.
 
 
 ### Status per requirement
@@ -1621,6 +1636,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-17-2 | 2026-11-17 12:05 | Claude Code (Claude Opus 5.5) | G69 done: the two README sections, 16 links relinked, a test for every docs link |
+| 2026-11-17-1 | 2026-11-17 12:00 | Claude Code (Claude Opus 5.5) | G69 plan |
 | 2026-11-16-29 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | G45 done; CI fixed locally (api lint, the G48 test on an empty database, the tax test's locale) |
 | 2026-11-16-28 | 2026-11-16 22:24 | Claude Code (Claude Opus 5.5) | G45 checkpoint answered; CI plan |
 | 2026-11-16-27 | 2026-11-16 19:20 | Claude Code (Claude Opus 5.5) | G45 built up to the checkpoint; found CI on GitHub red since B6 |

@@ -1,12 +1,11 @@
 # Getting Started
 
-> **Revision 2026-11-16-1** · 2026-11-16 00:01 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-17-1** · 2026-11-17 12:03 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A start-to-finish path through this app for someone who has just cloned it: from an
 empty database to a backtest you can read, then the loop you actually work in day to
 day. Everything here is the short version — each step links to the section of the
-[README](/docs/readme) or the [Architecture](/docs/architecture) guide that explains it
-properly.
+[README](/docs/readme) that explains it properly.
 
 You can do the whole path in the browser. The CLI appears alongside each step because a
 few things (training a model, batch imports, scripted sweeps) only exist there.
@@ -210,14 +209,14 @@ metrics. From the CLI, `report --last` or `report --id N`.
 
 Read the numbers in a deliberate order, starting with trade count: under roughly 20
 trades, nothing else on the page is reliable.
-[How to read a result](/docs/architecture#how-to-read-a-result) walks through all six in
+[How to read a result](/docs/readme#how-to-read-a-result) walks through all six in
 order.
 
 Before you conclude anything: this is a research tool with deliberate simplifications —
 all-in position sizing, one open position per side, fixed slippage. (Fills are at the
 next bar's open, never at the close the signal was computed from.) They matter when you interpret a good-looking result. The
-*Known limitations* section of [Architecture](/docs/architecture) is short and worth
-reading once, now, rather than after a surprising number.
+[Known limitations](/docs/readme#known-limitations) are short and worth reading once,
+now, rather than after a surprising number.
 
 ## 6. The neural-network strategy
 
@@ -302,9 +301,11 @@ by `docker compose down -v`.
 
 - **[README](/docs/readme)** — the full reference: CLI and API surface, configuration,
   storage and compression, the roadmap.
-- **[Architecture](/docs/architecture)** — start with *A Beginner's Guide* for the
-  domain concepts and glossaries, then *Where to start reading the code* if you are
-  going to change something.
+- **[QQQ Architecture](/docs/qqq-architecture)** — what the system is for and how its
+  stages fit, from the author's design set, with
+  [QQQ Design Notes](/docs/qqq-design) and [QQQ Features](/docs/qqq-features). The
+  code's own reasoning is in the comment at the top of the class or module that owns
+  each decision.
 - **Running the pieces outside Docker**, with hot reload, is in
   [Development](/docs/readme#development).
 
@@ -314,4 +315,5 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-17-1 | 2026-11-17 12:03 | Claude Code (Claude Opus 5.5) | G69: result reading and limitations link to the README; the deleted Architecture guide gives way to the design set |
 | 2026-11-16-1 | 2026-11-16 00:01 | Claude Code (Claude Opus 5.5) | Revision stamp added; fills are at the next bar's open (B1) |

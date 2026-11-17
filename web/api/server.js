@@ -12,6 +12,7 @@ const docs = require('./docs');
 const strategies = require('./strategies');
 const importFiles = require('./importFiles');
 const { rangeEnd } = require('./dateRange');
+const { slugify } = require('./docAnchors');
 const { DOCS, DOC_BY_SLUG } = require('./docsRegistry');
 
 // CSV upload is owned by the Python loader. In docker-compose this is the
@@ -99,23 +100,6 @@ function renderMarkdown(markdown) {
     return `<h${depth} id="${id}">${text}</h${depth}>\n`;
   };
   return marked.parse(markdown, { renderer });
-}
-
-/**
- * GitHub's heading-anchor rules: lowercase, drop punctuation, each space to a
- * hyphen.
- *
- * `\s` and not `\s+` — that is the whole difference between `build--run` and
- * `build-run`. Dropping the `&` from "Build & Run" leaves two spaces behind, and
- * GitHub turns both into hyphens; collapsing them produces an id no existing
- * link points at.
- */
-function slugify(text) {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s/g, '-');
 }
 
 /**

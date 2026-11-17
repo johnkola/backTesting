@@ -20,7 +20,20 @@ import java.util.function.Supplier;
  * <p>
  * Strategies are registered as suppliers so that a fresh instance is created
  * each time one is requested. This ensures that strategies are not shared
- * across concurrent backtests.
+ * across concurrent backtests, and may keep their indicators as mutable state.
+ * <p>
+ * <b>Adding a strategy.</b> Implement {@link TradingStrategy}, usually by
+ * extending {@link AbstractTa4jStrategy} (typed {@code getIntParam} and
+ * {@code getDoubleParam}, and a {@code buildIndicators()} hook that runs after
+ * {@code initialize}), then add a {@code registerStrategy("name", Mine::new)}
+ * line to the constructor. That name is what {@code run -s},
+ * {@code GET /api/strategies} and the Run tab offer.
+ * <p>
+ * <b>Warm-up is load-bearing.</b> The engine first calls {@code evaluate} at
+ * {@code getWarmupBars()}, and buy-and-hold and the rule benchmarks start on
+ * that same bar, so the comparison covers the bars the strategy could trade. A
+ * strategy whose indicators need N bars must report N: fewer, and it trades on
+ * half-built indicators; more, and it silently gives up bars of every run.
  */
 public final class StrategyRegistry {
 

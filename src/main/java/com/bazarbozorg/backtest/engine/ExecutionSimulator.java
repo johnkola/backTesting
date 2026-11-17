@@ -34,7 +34,8 @@ public class ExecutionSimulator {
      * then calculates the commission based on the adjusted price.
      *
      * @param order     the order to fill
-     * @param fillPrice the base fill price (e.g., current bar close)
+     * @param fillPrice the base fill price: the next bar's open for a signal
+     *                  (B1), the last close for the end-of-run close-out
      * @return a {@link FillResult} with the adjusted price, commission, and slippage amount
      */
     public FillResult fillMarketOrder(Order order, double fillPrice) {
