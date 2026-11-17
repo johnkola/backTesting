@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-16-15** · 2026-11-16 22:29 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-17-1** · 2026-11-17 11:34 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -148,6 +148,23 @@ did.
 
 Nothing is persisted: `backtest_results` is shaped around an equity curve, and
 a half-filled row there would corrupt the results list. Re-run to re-score.
+
+## Strategy 2 — margin long and inverse
+
+A saved strategy's `objective.execution` is `signals` (Strategy 1) or `margin`.
+**Strategy 2** keeps a QQQ core that is never sold, adds QQQ on margin on an up call and
+PSQ on margin on a down one, and pays interest at Fed funds plus a spread. Settings above
+the 50% ceiling are refused. It is set on the Strategy tab and shown on the Training tab.
+
+- Needs `PSQ` (`yahoo-adj`) and `DFF` (`fred`) imported. Windows before PSQ's first bar
+  (2006-06-21) are refused.
+- Engines learn signals only (D9). Margin, like tax and costs, is applied afterwards, so
+  changing a dial is a recalculation (`POST /api/nn/walkforward/runs/:id/recalculate`), not
+  a retrain. A saved strategy with `marginTrain` or `taxTrain` on is refused; save a new
+  version without it.
+- Each run is also scored against always long on margin with no model (G25), because
+  borrowing in a rising market beats buy-and-hold on its own. The runner prints a `TIMING`
+  line, and the Training tab marks a win over buy-and-hold as "leverage, not timing".
 
 ## The happy path, end to end
 
@@ -642,31 +659,31 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 ### Now
 
-Strategy 2, margin long and inverse ([`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md) G5). Step 1, the
-scoring layer, is built: a saved strategy's `objective.execution` is `signals` (Strategy 1)
-or `margin` (Strategy 2: a QQQ core never sold, margin QQQ on an up signal, margin PSQ on a
-down one, interest at Fed funds + a spread, a 50% ceiling that refuses larger settings),
-set on the Strategy tab and shown on the Training tab. Needs `PSQ` (`yahoo-adj`) and `DFF`
-(`fred`) imported; windows before PSQ's first bar (2006-06-21) are refused. Step 2, training
-the model on Strategy 2's curve (`marginTrain`), was built and then removed by D9 on
-2026-11-15: engines learn signals only, and margin, like tax and costs, is applied afterwards
-and recalculated on demand (`POST /api/nn/walkforward/runs/:id/recalculate`). A saved
-strategy with `marginTrain` or `taxTrain` on is refused; save a new version without it. Each
-Strategy 2 run is also scored against always long on margin with no model (G25), because
-borrowing in a bull market beats buy-and-hold on its own: the runner prints a `TIMING` line
-and the Training tab badges a win over buy-and-hold that is "leverage, not timing".
+Phase two groundwork, on synthetic intraday data. Phase one is answered (see Done), and
+the design's next phase rebuilds the model on intraday bars (Design Notes, "Two Phases").
+The NN path is still daily by construction and refuses any timeframe but D1 on purpose
+([`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md) G22, I1 to I4). First, I3: a feature set with
+its own calendar, so an intraday set no longer means editing the one D1 `[alignment]`
+that every daily strategy's hash depends on. It can be built and tested on `tools/datagen`
+M30 and H1 before any intraday data is bought.
 
 ### Next
 
-*Ordered by what blocks the phase-one question. Full list: [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).*
+*Ordered by what blocks phase two. Full list: [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).*
 
-1. Tax on the Java Backtest tab, which still reports gross returns (G20).
-2. The missing feature columns: investment-grade credit, Bank of Canada rate, earnings (G6-G8).
+1. Reads keyed by bar rather than date, and an as-of join of daily series (FRED, VIX, gold)
+   onto intraday bars (G22 I1, I2, I4); then lift the D1 guard on the walk-forward.
+2. The author's decisions: buying FirstRate Data, the timezone of imported intraday files
+   (I7), and whether the Spring Boot move comes first (C1 in
+   [`docs/QUESTIONS-FOR-JOHN.md`](docs/QUESTIONS-FOR-JOHN.md)).
+3. Phase one's leftovers that phase two will want too: walk-forward runs on Results (G57),
+   results that keep their run settings (G40), folds that keep their models (G50).
 
 ### Done
 
 Compressed view — see git log for per-step detail.
 
+- **Phase one, answered: no** (2026-11-17). Steps 0 to 8 of [`AGENTS.md`](AGENTS.md) are done. On the held-out test, scored once (run 881, 2022-01 to 2026-06), phase1-full v5 returned +57.71% after 25% tax and costs against buy-and-hold's +61.07%, and its calls were no better than always predicting the training majority. Built on the way: the feature store and its data checks, walk-forward validation with blind engines and recalculation on demand (B10), Strategy 2 (G5), the network beside XGBoost and LightGBM (B9), buy-and-hold, Faber and dual momentum under the run's own costs and tax (B6, B7), the naive baseline (B8), direction and return targets (G49), after-tax backtests (G20), the corrections B1 to B5, and each run's commit (G45). Per item: [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).
 - **Split into four services, with a complete API**: the system was a CLI plus a Node process that was simultaneously the API and the thing serving the React app, which meant the client could not be deployed without a backend attached and the web UI could display backtest results it had no way to produce. Now: `client` (static SPA behind nginx, `:3000`, reaching the API through a build-time `VITE_API_URL`), `api` (Node, `:8001`, every read plus proxying), `engine` (Java, internal `:8002`), `loader` (Python, host `:8003` for the CLI). The engine is new — `backtest serve` on the JDK's `com.sun.net.httpserver`, no framework — and answers what only Java can: `GET /api/strategies` (registered strategies with descriptions, default parameters and whether they need a trained model) and `POST /api/run` (runs a backtest synchronously and returns the saved result; `409` when a model-backed strategy has no cached model). Also new: `DELETE /api/results/:id`, `POST /api/audit` (the cohesion checks over stored candles), and `DELETE /api/imports/:id` (undoes one import's candles within its slice year, `dry_run` supported, archive deliberately kept). CORS and preflight handling on both Java and Node, since the client is now cross-origin. **Fixed on the way**: Java had no `PG*` environment-variable support — `AppConfig` read `localhost:5432` out of `application.properties` regardless — so the engine container could not reach the database at all; it now prefers `PG*` when set, matching what Node's `db.js` has always done. Both web Dockerfiles used `npm ci` with no lockfile in the build context (both are gitignored since `344b38d`), so neither image could rebuild; they use `npm install` now.
 - **CLI parity with the web UI**: three new subcommands and two widened ones close the gaps where the terminal could not answer a question the browser could. `list-sources` and `list-instruments --detail` expose the per-source, per-timeframe breakdown (counts + date ranges) that `GET /api/instruments` has always returned, so choosing `--source`/`-t` no longer means guessing or opening the UI; `list-imports` shows the import audit log, `list-models` asks the loader's `GET /api/nn/models` for cached models, which is where `run --model-version` ids come from — its help text used to send you to the web page; `aggregate` exposes `POST /api/aggregate` for the one case `run`'s aggregate-if-missing deliberately won't cover, rebuilding a rollup that already has rows (`--force`). `report` gained `--id N` plus `-s`/`-i`/`--source`/`-n` filters mirroring `GET /api/results`, and its listing now shows the data source — runs of the same strategy against different sources were previously indistinguishable. Java→loader HTTP moved onto a shared `LoaderClient`. **Fixed on the way**: that client (and `NeuralNetworkStrategy`'s own) used the JDK's default HTTP/2-with-h2c-upgrade, which drops the request body against uvicorn — every live POST from Java to the loader came back `422` with the whole body reported missing, so `train` and `run -s nn-feedforward` could not work outside the Python tests (which drive FastAPI through `TestClient` and never cross a socket). Both clients now pin HTTP/1.1, guarded by a test each.
 - **Aggregate-if-missing on `run`**: a backtest at a timeframe with no candles for the `(instrument, source)` pair now builds that timeframe first instead of failing, so `run -t W1` is turnkey from the CLI after a D1-only import — the CLI half of the on-demand rollup work whose UI half shipped with the Instruments button. `BacktestCommand` calls the new `LoaderAggregator` (`loader/`), which resolves the pair, checks the target is empty, picks the coarsest available timeframe still finer than the target via `CandleRepository.findAvailableTimeframes`, and posts the missing-only `POST /api/aggregate` form. The aggregation math stays in `python/loader/aggregate.py`; Java only decides whether and from what. Opt out with `--no-aggregate`; an unreachable loader is a warning, not a failure. Fixed alongside it: the monthly `Timeframe` constant was named `MN` while the loader, the `candles` rows and the web UI all use `MN1`, so `run -t MN1` threw "Unknown timeframe code" and `run -t MN` queried a timeframe that never exists in the table — monthly backtests couldn't run at all. The constant is now `MN1` (enum names are what get written to and queried from `candles.timeframe`), with `MN` kept as a parse alias.
@@ -1155,6 +1172,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-17-1 | 2026-11-17 11:34 | Claude Code (Claude Opus 5.5) | Roadmap: phase one answered (Done), phase two groundwork (Now, Next); Strategy 2 gets its own section |
 | 2026-11-16-15 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | CI: three Python tests skip on the empty database; the paragraph said none did |
 | 2026-11-16-14 | 2026-11-16 19:16 | Claude Code (Claude Opus 5.5) | G45: where a run's `git_sha` comes from, and what to rebuild so it names the right commit |
 | 2026-11-16-13 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | G49: the prediction targets (direction, return) beside the 3-class label; runs' `target` and `labelSpec` |
