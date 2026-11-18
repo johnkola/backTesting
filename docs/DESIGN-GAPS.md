@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-18-1** · 2026-11-18 13:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-18-3** · 2026-11-18 15:00 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -850,6 +850,25 @@ The other way, rejected unless the author prefers it: several calendars in one `
 - **No calendar file ships yet.** An intraday one would be refused at build until I1, I2 and I4; the tests write theirs under a temporary `nn/`.
 
 
+**I1, I2 and I4 plan (G22), 2026-11-18.** The author: next after I3. Today every read in the NN path keys on `timestamp::date` (`feature_build._fetch_field`, `_fetch_ohlcv`, `feature_store.read_matrix`, `train_features`, `profit` loads), every series is read at the calendar's timeframe, and scoring counts 252 periods a year and whole calendar days between bars. The lineage hashes are of those (date, value) pairs, so changing the key for everything would change every stored hash and make every run stale.
+
+The shape:
+- **D1 does not move.** A daily calendar keeps date keys; an intraday one keys on the bar's UTC timestamp. Python's `datetime` is a `date`, so the date-typed paths carry it. Set 28, its values hash and every run's input snapshot stay byte for byte.
+- **Which series go intraday (I2).** The calendar instrument's own bars are read at the calendar's timeframe. Every other series is read daily, unless the calendar's file gives it a `timeframe` of its own (the design's market features are daily; Design Notes, "Two Phases").
+- **The as-of rule (I2), to confirm.** A daily value reaches intraday bars from the first bar of the session after it becomes available. G47's delay counts in sessions as now, so a price close for day D reaches D+1's bars, and a FRED value for D (one session late) reaches D+2's. At 09:30 only yesterday's close is known, so nothing on day D's bars depends on D's close.
+- **Scoring (I4).** Periods a year by timeframe, as the engine has since I5 (D1 252; intraday 252 x the measured bars per session), for Sharpe and the parked rate. Interest accrues on the time between bars, in fractional days. Folds stay calendar years.
+- **Benchmarks on intraday, to confirm.** Buy-and-hold goes through the profit step bar by bar, like the strategy. Faber and dual momentum are month-end rules: decided on D1 closes as now, and traded at the first bar of the next session (B1's next-open rule).
+
+- [ ] Bar keys: one helper decides the key by timeframe; every NN read uses it. Test: a dry-run rebuild of set 28 gives its stored values hash, and a stored run recalculates exactly. *Build side done: `feature_build._key_sql`; HEAD and the new code give the same D1 values hash on today's data (6,966 rows, `e056b174`). The walk-forward reads are I4's*
+- [x] I2: `timeframe` per series in a calendar file; the as-of join. Tests: a daily value never reaches a bar of its own session or earlier. *Each feature has a cadence (`feature_build.cadence`): `bar` when it reads the calendar's own bars, normalized per bar; `session` for daily data, resolved and normalized on the sessions exactly as a D1 build would (windows in days) and then given to the next session's bars; `calendar` for a weekday or a scheduled holiday, known in advance, to its own session's bars. Normalizing daily data per bar instead made a daily change a spike on the opening bar and a 60-day z-score a 60-bar one (found in the first dry build). Live: on synthetic QQQ H1, every daily and calendar column equals the D1 build's value for the session before (or the same session), 207,877 pairs, none differing. `test_intraday_build.py`*
+- [ ] I1: a synthetic QQQ H1 calendar (`tools/datagen`, source `synthetic`) builds one row per bar, each bar's own open, high, low and volume; H1 and M30 join `BUILDABLE_TIMEFRAMES`. *Dry build done: 48,510 rows, one per bar, 38 columns, none empty, 2.8 s. The guard stays until I4, since the matrix and the preview still read an intraday set by date*
+- [ ] I4: the matrix, labels, folds and the profit step by bar, with periods a year and fractional days; the walk-forward D1 guard lifts for a timeframe with a built set
+- [ ] Benchmarks on intraday as confirmed
+- [ ] One synthetic H1 walk-forward run end to end. No stored D1 set or run should change; if one would, a checkpoint first
+- [ ] All four CI jobs; rebuild loader, api and client; README; the I1, I2 and I4 rows say done
+
+Effort: L. **Decided by the author, 2026-11-18:** the as-of rule as above (next session), and the benchmarks as above (decided on D1, traded at the next session's first bar).
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -1655,6 +1674,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-18-3 | 2026-11-18 15:00 | Claude Code (Claude Opus 5.5) | I1 and I2, the build side: bar keys, cadences, the as-of join |
+| 2026-11-18-2 | 2026-11-18 14:48 | Claude Code (Claude Opus 5.5) | I1, I2 and I4 plan |
 | 2026-11-18-1 | 2026-11-18 13:26 | Claude Code (Claude Opus 5.5) | I3 done: one config file per calendar |
 | 2026-11-17-3 | 2026-11-17 18:47 | Claude Code (Claude Opus 5.5) | I3 plan (G22) |
 | 2026-11-17-2 | 2026-11-17 12:05 | Claude Code (Claude Opus 5.5) | G69 done: the two README sections, 16 links relinked, a test for every docs link |

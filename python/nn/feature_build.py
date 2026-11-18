@@ -31,7 +31,8 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from dataclasses import replace as dc_replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,54 @@ from nn.indicators import rsi as rsi_series
 # before anything else happens, because the source series disagree about which
 # days exist and only the calendar's opinion counts.
 Observed = dict[date, float]
+
+#: Calendars whose bars are whole sessions or longer keep the date as their key,
+#: exactly as every set built before G22 did, so their values, hashes and the
+#: runs read from them do not move. A finer calendar keys each bar by its UTC
+#: time (a `datetime`, which is a `date`, so the date-typed paths carry it).
+#: Never put both in one sorted list: Python refuses to compare a datetime
+#: with a date. Daily series reach an intraday calendar through
+#: `join_daily`, by session date.
+DATE_KEYED = ("D1", "W1", "MN1")
+
+#: Computed series that are a function of the calendar alone. On an intraday
+#: calendar they are computed per session and given to each bar of it.
+CALENDAR_DERIVED = frozenset({"day_of_week", "day_of_year", "day_of_month", "holiday_proximity"})
+
+
+def is_intraday(timeframe: str) -> bool:
+    return timeframe not in DATE_KEYED
+
+
+def _key_sql(timeframe: str) -> str:
+    return ("c.timestamp::date" if not is_intraday(timeframe)
+            else "(c.timestamp AT TIME ZONE 'UTC')")
+
+
+def session_of(key: date) -> date:
+    """The session a calendar key falls in: itself for a date, its day for a bar."""
+    return key.date() if isinstance(key, datetime) else key
+
+
+def join_daily(calendar: list[date], observed: Observed, delay: int,
+               max_fill_days: int) -> list[float | None]:
+    """A daily series onto an intraday calendar, as of what was known (G22 I2).
+
+    The author's rule (2026-11-18): a daily value reaches intraday bars from the
+    first bar of the session AFTER the one it becomes available on. G47's delay
+    still counts the sessions until it is published (`delay`), and one more
+    session is added, because at the open only yesterday's close is known: a
+    price close for day D reaches D+1's bars, a FRED value for D (one session
+    late) reaches D+2's. Nothing on day D's bars depends on D's close.
+
+    Filled across sessions, not bars, so `max_fill_days` means what it means on
+    a daily calendar.
+    """
+    sessions = sorted({session_of(b) for b in calendar})
+    shifted = nz.shift_to_availability(sessions, observed, delay + 1)
+    per_session = dict(zip(sessions, nz.align_forward_fill(
+        sessions, shifted, max_fill_days=max_fill_days), strict=True))
+    return [per_session[session_of(b)] for b in calendar]
 
 
 class BuildError(RuntimeError):
@@ -70,7 +119,7 @@ def _fetch_field(cur, symbol: str, source: str, timeframe: str, field: str) -> O
     if field not in ("open", "high", "low", "close", "volume"):
         raise BuildError(f"unknown field {field!r}")
     cur.execute(
-        f"SELECT c.timestamp::date, c.{field} FROM candles c "  # noqa: S608 - field is whitelisted above
+        f"SELECT {_key_sql(timeframe)}, c.{field} FROM candles c "  # noqa: S608 - field whitelisted, key fixed
         "JOIN instruments i ON i.id = c.instrument_id "
         "JOIN data_sources ds ON ds.id = c.source_id "
         "WHERE i.symbol = %s AND ds.name = %s AND c.timeframe = %s "
@@ -88,7 +137,7 @@ def _fetch_field(cur, symbol: str, source: str, timeframe: str, field: str) -> O
 
 def _fetch_ohlcv(cur, symbol: str, source: str, timeframe: str) -> dict[str, Observed]:
     cur.execute(
-        "SELECT c.timestamp::date, c.open, c.high, c.low, c.close, c.volume FROM candles c "
+        f"SELECT {_key_sql(timeframe)}, c.open, c.high, c.low, c.close, c.volume FROM candles c "  # noqa: S608
         "JOIN instruments i ON i.id = c.instrument_id "
         "JOIN data_sources ds ON ds.id = c.source_id "
         "WHERE i.symbol = %s AND ds.name = %s AND c.timeframe = %s "
@@ -222,7 +271,7 @@ def resolve_aligned(
     sides disagree about — and VXN and VIX, or copper and gold, do not keep
     identical calendars.
     """
-    tf = cfg.alignment.calendar_timeframe
+    cal_tf = cfg.alignment.calendar_timeframe
     fill = cfg.alignment.max_fill_days
 
     if "op" in spec:
@@ -248,20 +297,81 @@ def resolve_aligned(
     # Each value goes on the first session the evening run can have it, not on
     # the day it describes (`[alignment.available_after]`, G47).
     delay = cfg.alignment.delay(spec.get("symbol"), spec.get("source"))
+    tf = series_timeframe(spec, cfg)
 
     if "computed" in spec:
         name = spec["computed"]
         fn = COMPUTED.get(name)
         if fn is None:
             raise BuildError(f"unknown computed series {name!r}")
-        observed = nz.shift_to_availability(calendar, fn(cur, spec, calendar, tf), delay)
-        # A calendar-derived series is already on the calendar and has no gaps
-        # to fill; going through the filler anyway keeps one code path.
-        return nz.align_forward_fill(calendar, observed, max_fill_days=fill)
+        if is_intraday(cal_tf) and name in CALENDAR_DERIVED:
+            # Known in advance (a weekday, a scheduled holiday): each bar takes
+            # its session's value, with no shift.
+            sessions = sorted({session_of(b) for b in calendar})
+            per_session = fn(cur, spec, sessions, "D1")
+            return [per_session.get(session_of(b)) for b in calendar]
+        observed = fn(cur, spec, calendar, tf)
+    else:
+        observed = _fetch_field(cur, spec["symbol"], spec["source"], tf, spec["field"])
 
-    observed = _fetch_field(cur, spec["symbol"], spec["source"], tf, spec["field"])
+    if is_intraday(cal_tf) and not is_intraday(tf):
+        return join_daily(calendar, observed, delay, fill)
     observed = nz.shift_to_availability(calendar, observed, delay)
+    # A calendar-derived series is already on the calendar and has no gaps to
+    # fill; going through the filler anyway keeps one code path.
     return nz.align_forward_fill(calendar, observed, max_fill_days=fill)
+
+
+def _leaves(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    return _leaves(spec["a"]) + _leaves(spec["b"]) if "op" in spec else [spec]
+
+
+def cadence(spec: dict[str, Any], cfg: FeatureConfig) -> str:
+    """How a feature is normalized on its calendar (G22 I2): `bar` on a daily
+    calendar always, and on an intraday one when any series it reads is
+    intraday; `calendar` when it reads nothing but the calendar (a weekday, a
+    scheduled holiday), known in advance; `session` for daily data."""
+    if not is_intraday(cfg.alignment.calendar_timeframe):
+        return "bar"
+    leaves = _leaves(spec)
+    if all(leaf.get("computed") in CALENDAR_DERIVED for leaf in leaves):
+        return "calendar"
+    if any(leaf.get("computed") not in CALENDAR_DERIVED
+           and is_intraday(series_timeframe(leaf, cfg)) for leaf in leaves):
+        return "bar"
+    return "session"
+
+
+def sessions_to_bars(calendar: list[date], sessions: list[date], per_session: list,
+                     *, next_session: bool) -> list:
+    """Per-session values onto the bars of an intraday calendar: each bar takes
+    its own session's value, or with `next_session` the session before its
+    own, since a daily value is known only after its session's close."""
+    at = {d: i for i, d in enumerate(sessions)}
+    out = []
+    for b in calendar:
+        j = at[session_of(b)] - (1 if next_session else 0)
+        out.append(per_session[j] if j >= 0 else None)
+    return out
+
+
+def series_timeframe(spec: dict[str, Any], cfg: FeatureConfig) -> str:
+    """The timeframe a series is read at (G22 I2).
+
+    On a daily calendar, the calendar's, as always. On an intraday one, the
+    series' own `timeframe` when its calendar file gives one; else the calendar
+    instrument's own bars at the calendar's timeframe, and everything else
+    daily, since the design's market features are daily (Design Notes, "Two
+    Phases").
+    """
+    a = cfg.alignment
+    if not is_intraday(a.calendar_timeframe):
+        return a.calendar_timeframe
+    if "timeframe" in spec:
+        return str(spec["timeframe"])
+    if (spec.get("symbol"), spec.get("source")) == (a.calendar_symbol, a.calendar_source):
+        return a.calendar_timeframe
+    return "D1"
 
 
 # ---------------------------------------------------------------------------
@@ -289,17 +399,44 @@ def build_columns(
     cur, cfg: FeatureConfig, calendar: list[date], prev_close: list[float | None]
 ) -> list[BuiltColumn]:
     """Resolve, align and normalize every built column: inputs first, then the
-    data-only ones (`FeatureConfig.built`)."""
+    data-only ones (`FeatureConfig.built`).
+
+    On an intraday calendar each feature is normalized at its own cadence
+    (`cadence`). One that reads the calendar's bars is normalized per bar. A
+    daily one is resolved and normalized on the calendar's sessions exactly as a
+    D1 build would, its windows still counted in days, and each session's value
+    then goes to the NEXT session's bars (the author's as-of rule, 2026-11-18).
+    Normalizing a daily series per bar instead would make a daily change a spike
+    on the opening bar and a 60-day z-score a 60-bar one. A calendar-derived one
+    is known in advance and goes to its own session's bars.
+    """
+    intraday = is_intraday(cfg.alignment.calendar_timeframe)
+    sessions = sorted({session_of(b) for b in calendar}) if intraday else []
+    daily_cfg = (dc_replace(cfg, alignment=dc_replace(cfg.alignment, calendar_timeframe="D1"))
+                 if intraday else cfg)
     built: list[BuiltColumn] = []
     for feat in cfg.built:
         try:
-            raw = resolve_aligned(cur, feat.series, cfg, calendar)
-            outputs = nz.apply(
-                feat.method,
-                raw,
-                feat.params,
-                prev_close=prev_close if feat.method in nz.NEEDS_PREV_CLOSE else None,
-            )
+            kind = cadence(feat.series, cfg)
+            if kind == "bar":
+                raw = resolve_aligned(cur, feat.series, cfg, calendar)
+                outputs = nz.apply(
+                    feat.method,
+                    raw,
+                    feat.params,
+                    prev_close=prev_close if feat.method in nz.NEEDS_PREV_CLOSE else None,
+                )
+            else:
+                if feat.method in nz.NEEDS_PREV_CLOSE:
+                    raise BuildError(
+                        f"{feat.name}: {feat.method} needs the calendar's previous close, "
+                        "and a daily series on an intraday calendar has none; read the "
+                        "calendar instrument's bars instead")
+                raw = resolve_aligned(cur, feat.series, daily_cfg, sessions)
+                per_session = nz.apply(feat.method, raw, feat.params, prev_close=None)
+                outputs = {suffix: sessions_to_bars(calendar, sessions, series,
+                                                    next_session=(kind == "session"))
+                           for suffix, series in per_session.items()}
         except BuildError:
             raise
         except Exception as e:  # noqa: BLE001 - re-raised with the column named
@@ -324,7 +461,7 @@ def trim(
     if not since:
         return calendar, columns
     cutoff = date.fromisoformat(since)
-    keep = [i for i, d in enumerate(calendar) if d >= cutoff]
+    keep = [i for i, d in enumerate(calendar) if session_of(d) >= cutoff]
     if not keep:
         raise BuildError(f"--since {since} is after the last calendar date {calendar[-1]}")
     return (
