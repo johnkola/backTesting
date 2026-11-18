@@ -80,9 +80,11 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
     series = json.loads(series_json) if isinstance(series_json, str) else series_json
     params = (json.loads(params_json) if isinstance(params_json, str) else params_json) or {}
 
-    cur.execute("SELECT config_hash FROM feature_sets WHERE id = %s", (set_id,))
-    set_hash = cur.fetchone()[0]
-    cfg = feature_config.load(feature_config.DEFAULT_PATH)
+    # Against the file that built this set (I3), not features.toml by name.
+    cur.execute("SELECT config_hash, config_file FROM feature_sets WHERE id = %s", (set_id,))
+    set_hash, cfg_file = cur.fetchone()
+    cfg_path = feature_config.config_path(cfg_file)
+    cfg = feature_config.load(cfg_path)
     _, _, calendar, _ = feature_build.load_calendar(cur, cfg)
 
     if days is not None and days < 1:
@@ -97,6 +99,6 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
     return {
         "setId": set_id, "column": column, "method": method, "params": params,
         "series": series, "role": role, "from": lo.isoformat(), "to": hi.isoformat(),
-        "configMatches": set_hash == staleness.config_hash(),
+        "configMatches": set_hash == staleness.config_hash(cfg_path),
         "points": pair(calendar, before, after, lo, hi),
     }

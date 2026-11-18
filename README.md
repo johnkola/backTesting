@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-17-2** · 2026-11-17 12:06 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-18-1** · 2026-11-18 13:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -96,6 +96,15 @@ docker compose exec loader python -m nn.train_features            # whole set
 what gets written, not the way to choose a training range. Prefer `--from` /
 `--to` on the trainer: it leaves the stored set intact, so two models over
 different windows read the same table.
+
+**One config file per calendar.** `python/nn/features.toml` is the QQQ
+(`yahoo-adj`, D1) calendar. Another calendar is a file of its own in
+`python/nn/calendars/`, with its own features and `[alignment]`, built with
+`--config nn/calendars/<file>.toml`. Each set records the file that built it, and
+the Features stage and the preview check a set against that file, so adding a
+calendar leaves every existing set fresh. Two files may not claim the same
+calendar. Only D1 builds for now: an intraday calendar is refused until bars are
+read as bars (`docs/DESIGN-GAPS.md` G22, I1, I2 and I4).
 
 Restricting the window does not change any feature value. Every column is
 normalized causally at build time, so a z-score on a given date is the same
@@ -1229,6 +1238,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-18-1 | 2026-11-18 13:26 | Claude Code (Claude Opus 5.5) | G22 I3: one config file per calendar, and only D1 builds for now |
 | 2026-11-17-2 | 2026-11-17 12:06 | Claude Code (Claude Opus 5.5) | G69: "How to read a result" and "Known limitations" written against today's code; 12 links into the deleted Architecture guide now point here or at the code |
 | 2026-11-17-1 | 2026-11-17 11:34 | Claude Code (Claude Opus 5.5) | Roadmap: phase one answered (Done), phase two groundwork (Now, Next); Strategy 2 gets its own section |
 | 2026-11-16-15 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | CI: three Python tests skip on the empty database; the paragraph said none did |

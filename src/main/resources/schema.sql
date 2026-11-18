@@ -281,6 +281,14 @@ CREATE TABLE IF NOT EXISTS feature_sets (
     UNIQUE (instrument_id, source_id, timeframe, schema_version, config_hash)
 );
 
+-- The config file that built the set, relative to python/nn/ (G22 I3): one
+-- file per calendar, `features.toml` for QQQ D1, `calendars/*.toml` for any
+-- other. Staleness and the preview check a set against this file, so a new
+-- calendar's file never changes what an existing set is compared with. Every
+-- set built before this column came from features.toml, which the default says.
+ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS config_file VARCHAR(200) NOT NULL
+    DEFAULT 'features.toml';
+
 -- What each column in a built set actually is. Copied out of features.toml at
 -- build time so a set stays self-describing after the config moves on: reading
 -- a two-month-old set tells you the window it used without a git archaeology

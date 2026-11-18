@@ -284,6 +284,8 @@ class Context:
     cfg: Any = None
     cfg_error: str | None = None
     cfg_hash: str | None = None
+    #: The file `cfg` came from: the calendar at this context's timeframe (I3).
+    cfg_name: str = "features.toml"
     _closes: dict = field(default_factory=dict)
     _sets: dict = field(default_factory=dict)
 
@@ -291,8 +293,8 @@ class Context:
     def open(cls, cur, timeframe: str, now: dt.datetime | None = None) -> Context:
         ctx = cls(cur=cur, now=now or dt.datetime.now(dt.UTC), timeframe=timeframe)
         try:
-            ctx.cfg = feature_config.load(feature_config.DEFAULT_PATH)
-            ctx.cfg_hash = config_hash()
+            ctx.cfg_name, ctx.cfg = feature_config.for_timeframe(timeframe)
+            ctx.cfg_hash = config_hash(feature_config.config_path(ctx.cfg_name))
         except Exception as exc:  # noqa: BLE001
             ctx.cfg_error = str(exc)
         return ctx
@@ -389,7 +391,7 @@ def features_stage(ctx: Context) -> dict[str, Any]:
     cs = ctx.current_set(inst, src, ctx.timeframe)
     if cs is None:
         return {"state": "stale", "setId": int(newest[0]), "reasons": [reason(
-            "config", f"features.toml has changed since the newest build (set {newest[0]}"
+            "config", f"{ctx.cfg_name} has changed since the newest build (set {newest[0]}"
             + (f", built {newest[3]:%Y-%m-%d %H:%M}" if newest[3] else "")
             + "); rebuild with python -m nn.feature_build")]}
     set_id, build_id = int(cs[0]), (int(cs[1]) if cs[1] is not None else None)

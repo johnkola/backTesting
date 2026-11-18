@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-17-2** · 2026-11-17 12:05 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-18-1** · 2026-11-18 13:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -831,6 +831,25 @@ The limit, said where the sha is described: a build from a tree with uncommitted
 - **Dropped, not moved:** the old guide's glossaries and "Where to start reading the code". The metric glossary lives in the app's tooltips (`metricHints.ts`), and GETTING-STARTED now points at the design set for what the system is for.
 
 
+**I3 plan (G22), 2026-11-17.** The author: plan I3, then a checkpoint. Today one `[alignment]` block in `nn/features.toml` fixes the calendar at QQQ, `yahoo-adj`, D1, and a set's `config_hash` is the SHA-256 of that whole file. So an intraday set would mean editing the file every daily set is hashed on, and every daily set and run would read stale. `feature_build --config` already builds from another file; nothing else does: staleness, the preview, the API and the data checks all read `features.toml` by its fixed path, and a set does not record which file built it.
+
+The shape: **one config file per calendar.** `features.toml` stays the QQQ D1 config, byte for byte, so set 28, its hash and every run on it are untouched. Another calendar is another file beside it (`nn/calendars/<SYMBOL>-<source>-<TF>.toml`), with its own features and alignment, hashed on its own bytes.
+
+- [x] `feature_sets.config_file`, recorded at build (`features.toml` for every existing set, by backfill); `feature_config.configs()` lists the files and refuses two that claim the same calendar
+- [x] Staleness, the feature preview, the API's feature routes and the data checks read each set's own file, not the fixed path
+- [x] The D1 guard stays: an intraday config can be written and validated, but its build is refused until I1, I2 and I4 make the rows per bar
+- [x] Tests: adding a second calendar's file leaves the D1 set's hash and the Features stage as they were; each set is checked against its own file; a duplicate calendar is refused
+- [x] All four CI jobs; rebuild loader and api; README (where a calendar's config lives); the I3 row says done
+
+The other way, rejected unless the author prefers it: several calendars in one `features.toml`, each hashed on its own section. It keeps one file, but changes what `config_hash` means, so set 28 would read stale until rebuilt.
+
+*Done, 2026-11-18 13:26.* The author's go on 2026-11-18 ("next?" on the plan, one file per calendar).
+- **Code:** `feature_config.configs()`, `for_timeframe()`, `config_name()` and `config_path()`; `feature_build.refusal()` refuses, before the database and dry run included, a config outside `nn/`, a second file for one calendar, and any calendar but D1 (`BUILDABLE_TIMEFRAMES`); `store` records `config_file`. Staleness opens the config of its timeframe and names that file when a set is stale; the preview reads the set's own file. `schema.sql` adds `feature_sets.config_file`, default `features.toml`, which all 7 existing sets carry.
+- **Tests:** Python 885 (876 before, 9 new in `test_calendar_configs.py`, which call functions that do not exist without the change); 882 passed and 3 skipped on a schema-only database, as CI has it; Java passes; API 125; client 218.
+- **Live, after rebuilding the loader:** Features, Normalization, Split, Training and Backtest still pass, so the D1 set is as fresh as before. The preview of set 28 reads `features.toml` and matches it. Data reads stale for a reason of its own: the feeds hold QQQ (`yahoo-adj`), 2 stored days differing 2026-11-13 to 11-16, waiting for the author's Apply.
+- **No calendar file ships yet.** An intraday one would be refused at build until I1, I2 and I4; the tests write theirs under a temporary `nn/`.
+
+
 ### Status per requirement
 
 Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
@@ -1083,7 +1102,7 @@ outlier, the 2008-09-15 open). Roll-up: synthetic D1 from M30 matches yahoo-adj 
 |---|---|---|---|---|
 | I1 | The feature table is daily by construction. Every series is read as `{date: value}`, so an H1 calendar collapses 48,510 bars to 6,930 rows without an error (the last bar of each day wins, so open, high, low and volume are that bar's, not the day's) | `feature_build._fetch_ohlcv`, `_fetch_field` (`timestamp::date`); dry run with `calendar_timeframe = "H1"`: "6930 rows" | L | open |
 | I2 | Every input series is read at the calendar's timeframe, so on an H1 calendar the daily ones (FRED, VIX, gold) are looked up as H1 and the build fails. The design's market features are daily; intraday needs a rule for joining a daily value to the bars of its day without looking ahead (a daily close is not known at 09:30) | `feature_build.resolve_aligned`: `tf = cfg.alignment.calendar_timeframe`; dry run: `no candles for QQQ (yahoo-adj, H1)` | M | open |
-| I3 | One global calendar: `[alignment]` in `features.toml` fixes QQQ / yahoo-adj / D1, so an intraday feature set means editing the shared config, which changes the hash every daily strategy is keyed on | `features.toml:71-76` | M | open |
+| I3 | One global calendar: `[alignment]` in `features.toml` fixes QQQ / yahoo-adj / D1, so an intraday feature set means editing the shared config, which changes the hash every daily strategy is keyed on | `features.toml:71-76` | M | done 2026-11-18: one config file per calendar; see the I3 record in Pass 4 |
 | I4 | The walk-forward path is keyed by date as well: `read_matrix`, `load_closes` and the park series all reduce to `timestamp::date`. Even with an intraday feature set it would collapse to one row a day | `feature_store.py:109`, `train_features.py:75`, `walkforward.py:553` | M | open |
 | I5 | Annualising counts bars as days. Engine: return, Sharpe, Sortino and Calmar use 252 per bar, and `tradingDays` is the bar count. Synthetic 2024-2025: M30 total -9.34% annualised to -0.38%, H1 +14.12% to +0.97% (about +6.8% is right) with `tradingDays` 6,462 and 3,456. Python has the same constant in the Sharpe, the `calmar` loss and the parked return (an annual rate divided by 252 per bar would pay 13x the interest on M30) | `MetricsCalculator.java:17,42,149`; `walkforward.py:52,126,581`; `money_loss.py:33,203,244` | S | done: engine annualises with `MetricsCalculator.periodsPerYear` (D1 252, W1 52, MN1 12, intraday 252 x measured bars per day; W1/MN1 were wrong too), and `tradingDays` is now distinct days. Python walk-forward refuses any timeframe but D1 (`fold_plan` and the flags path) until I4. Live: M30 -9.34% now -4.83% a year (was -0.38%), H1 +14.12% now +6.96% (was +0.97%), D1 identical in every figure |
 | I6 | A `to` date is read as midnight, so on intraday the last day is dropped while D1 keeps it: `to = 2025-12-31` ended the M30 run at 2025-12-30 15:30 and the D1 run at 2025-12-31. The Strategy tab's per-window bar counts use the same endpoint | `server.js` `/api/candles` (`timestamp <= to`); `EngineApi.parseDate` | S | done: `DateTimeUtils.parseEnd` (last microsecond of a bare date) for `to` in `/api/run` and the `run`, `train` and `signals` commands; `web/api/dateRange.js` makes `/api/candles` use `< next midnight UTC`. Live: M30 and H1 runs now end 2025-12-31 15:30; D1 unchanged |
@@ -1636,6 +1655,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-18-1 | 2026-11-18 13:26 | Claude Code (Claude Opus 5.5) | I3 done: one config file per calendar |
+| 2026-11-17-3 | 2026-11-17 18:47 | Claude Code (Claude Opus 5.5) | I3 plan (G22) |
 | 2026-11-17-2 | 2026-11-17 12:05 | Claude Code (Claude Opus 5.5) | G69 done: the two README sections, 16 links relinked, a test for every docs link |
 | 2026-11-17-1 | 2026-11-17 12:00 | Claude Code (Claude Opus 5.5) | G69 plan |
 | 2026-11-16-29 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | G45 done; CI fixed locally (api lint, the G48 test on an empty database, the tax test's locale) |

@@ -31,6 +31,17 @@ import tomllib
 
 DEFAULT_PATH = Path(__file__).with_name("features.toml")
 
+#: ONE FILE PER CALENDAR (G22 I3). `features.toml` is the QQQ, yahoo-adj, D1
+#: calendar; any other calendar is a file of its own here, with its own
+#: features and `[alignment]`. A set's `config_hash` is the SHA-256 of the
+#: file that built it, so a new calendar never touches the bytes, and so the
+#: hash, of a set already built: adding an intraday file leaves every daily
+#: set, and every run on one, exactly as fresh as it was. Each set records
+#: its file (`feature_sets.config_file`, relative to this directory), and
+#: whatever checks a set against its config reads that file, never this
+#: default by name.
+CALENDARS_DIR = DEFAULT_PATH.parent / "calendars"
+
 # method -> (required params, params filled from [defaults] when absent)
 _METHODS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
     "ratio_to_prev_close": (frozenset(), {}),
@@ -476,3 +487,64 @@ def describe(cfg: FeatureConfig) -> str:
 
 if __name__ == "__main__":
     print(describe(load()))
+
+
+def config_name(path: Path | str) -> str:
+    """How a set records the file that built it: its path relative to `nn/`.
+
+    A file outside `nn/` is refused: the loader could not read it back to
+    check the set later, so the set would be stale with no way to tell."""
+    base = DEFAULT_PATH.parent.resolve()
+    p = Path(path).resolve()
+    try:
+        return p.relative_to(base).as_posix()
+    except ValueError:
+        raise FeatureConfigError(
+            f"{path} is not under {base}: a feature set must be built from a config "
+            "the loader keeps (features.toml, or a file in calendars/)") from None
+
+
+def config_path(name: str) -> Path:
+    """The file a set's `config_file` names. Refuses a name that leaves `nn/`."""
+    base = DEFAULT_PATH.parent.resolve()
+    p = (base / name).resolve()
+    if base not in p.parents:
+        raise FeatureConfigError(f"config {name!r} is not a file under {base}")
+    return p
+
+
+def configs() -> dict[str, FeatureConfig]:
+    """Every calendar's config by file name: `features.toml`, then
+    `calendars/*.toml` in name order. Refuses two files claiming the same
+    calendar, since a set is looked up by its calendar and only one file can
+    say what it should hold."""
+    out: dict[str, FeatureConfig] = {}
+    claimed: dict[tuple[str, str, str], str] = {}
+    for path in [DEFAULT_PATH, *sorted(CALENDARS_DIR.glob("*.toml"))]:
+        name = config_name(path)
+        cfg = load(path)
+        a = cfg.alignment
+        key = (a.calendar_symbol, a.calendar_source, a.calendar_timeframe)
+        if key in claimed:
+            raise FeatureConfigError(
+                f"{name} and {claimed[key]} both build the {key[0]} ({key[1]}, {key[2]}) "
+                "calendar: one file per calendar")
+        claimed[key] = name
+        out[name] = cfg
+    return out
+
+
+def for_timeframe(timeframe: str) -> tuple[str, FeatureConfig]:
+    """The config whose calendar is at `timeframe`, as (file name, config).
+
+    `features.toml` when it matches or when no file does, which is what every
+    caller read before calendars had files of their own."""
+    all_ = configs()
+    default = config_name(DEFAULT_PATH)
+    if all_[default].alignment.calendar_timeframe == timeframe:
+        return default, all_[default]
+    for name, cfg in all_.items():
+        if cfg.alignment.calendar_timeframe == timeframe:
+            return name, cfg
+    return default, all_[default]
+

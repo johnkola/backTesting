@@ -403,6 +403,7 @@ def store(
 ) -> tuple[int, int]:
     """Write the set and its values, and record the build. Returns (set id, build id)."""
     cfg_hash = hashlib.sha256(cfg_path.read_bytes()).hexdigest()
+    cfg_file = feature_config.config_name(cfg_path)
     a = cfg.alignment
 
     # The first day every INPUT column can speak to. Rows before it hold NULLs
@@ -418,12 +419,13 @@ def store(
 
     cur.execute(
         "INSERT INTO feature_sets (instrument_id, source_id, timeframe, schema_version, "
-        "config_hash, fill_mode, max_fill_days, first_complete_date, row_count) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        "config_hash, config_file, fill_mode, max_fill_days, first_complete_date, row_count) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON CONFLICT (instrument_id, source_id, timeframe, schema_version, config_hash) "
         "DO UPDATE SET built_at = CURRENT_TIMESTAMP, row_count = EXCLUDED.row_count, "
+        "config_file = EXCLUDED.config_file, "
         "first_complete_date = EXCLUDED.first_complete_date RETURNING id",
-        (inst_id, src_id, a.calendar_timeframe, cfg.schema_version, cfg_hash,
+        (inst_id, src_id, a.calendar_timeframe, cfg.schema_version, cfg_hash, cfg_file,
          a.fill, a.max_fill_days, first_complete, len(calendar)),
     )
     set_id = cur.fetchone()[0]
@@ -467,6 +469,28 @@ def connect():
     )
 
 
+#: The one calendar timeframe the feature table can hold today (G22). Every
+#: series is read as {date: value}, so an intraday calendar would collapse to
+#: one row a day, its last bar's, without an error (I1). Lifted when the reads
+#: are keyed by bar (I1, I4) and daily series have an as-of join (I2).
+BUILDABLE_TIMEFRAMES = ("D1",)
+
+
+def refusal(cfg: FeatureConfig, cfg_path: Path) -> str | None:
+    """Why this config cannot be built, or None. Checked before the database
+    is touched, dry run included."""
+    try:
+        name = feature_config.config_name(cfg_path)
+        feature_config.configs()  # one file per calendar, all of them valid
+    except feature_config.FeatureConfigError as e:
+        return str(e)
+    tf = cfg.alignment.calendar_timeframe
+    if tf not in BUILDABLE_TIMEFRAMES:
+        return (f"{name} is a {tf} calendar, and the feature table is one row per date "
+                "until bars are read as bars (G22 I1, I2, I4); only D1 builds")
+    return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Build the normalized feature table.")
     p.add_argument("--config", default=str(feature_config.DEFAULT_PATH))
@@ -477,6 +501,10 @@ def main() -> int:
 
     cfg_path = Path(args.config)
     cfg = feature_config.load(cfg_path)
+    why = refusal(cfg, cfg_path)
+    if why:
+        print(f"refused: {why}")
+        return 2
     print(f"config    schema_version={cfg.schema_version}  "
           f"{len(cfg.enabled)} columns -> {cfg.input_width} values/bar, "
           f"plus {len(cfg.data_only)} data only")
