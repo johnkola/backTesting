@@ -62,10 +62,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import datetime as dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Iterable
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from psycopg import Connection
@@ -153,14 +155,15 @@ class SliceDiff:
                 "priceChanged": self.price_changed, "priceExamples": list(self.price_examples)}
 
 
-def diff_slices(old_rows: Iterable[str], new_rows: Iterable[str]) -> SliceDiff:
+def diff_slices(old_rows: Iterable[str], new_rows: Iterable[str],
+                timeframe: str = "D1") -> SliceDiff:
     """Compare two slices as parsed bars, not as text.
 
     Parsed so that a change of spacing or number formatting ("1.50" vs "1.5")
     is not reported as a data change. Pure.
     """
-    old = {t[0]: t[1:] for t in parse_rows_to_tuples(old_rows)}
-    new = {t[0]: t[1:] for t in parse_rows_to_tuples(new_rows)}
+    old = {t[0]: t[1:] for t in parse_rows_to_tuples(old_rows, timeframe)}
+    new = {t[0]: t[1:] for t in parse_rows_to_tuples(new_rows, timeframe)}
     changed = sorted(ts for ts in old.keys() & new.keys() if old[ts] != new[ts])
     # The values are (open, high, low, close, volume).
     price_changed = [ts for ts in changed if old[ts][:4] != new[ts][:4]]
@@ -251,7 +254,7 @@ class SkippedRows:
 
 
 def scan_and_bucket(
-    stream: IO[bytes], skipped: SkippedRows | None = None,
+    stream: IO[bytes], skipped: SkippedRows | None = None, timeframe: str = "D1",
 ) -> tuple[str | None, dict[int, list[str]]]:
     """Single streaming pass over the upload. Captures the header line
     (first non-empty), then groups each subsequent row by year extracted
@@ -280,7 +283,7 @@ def scan_and_bucket(
                 skipped.add(line_no, "no yyyy-MM-dd date at the start", line)
             continue
         if skipped is not None:
-            parsed = parse_row(line)
+            parsed = parse_row(line, timeframe)
             if isinstance(parsed, str):
                 skipped.add(line_no, parsed, line)
         year = int(m.group(1))
@@ -344,13 +347,44 @@ def sha256_hex(content: str) -> str:
 
 CandleTuple = tuple[str, float, float, float, float, float]
 
+#: The clock an intraday file's bare times are on (G22 I7, the author's
+#: decision 2026-11-19): New York, the exchange's. Before it a bare 09:30 was
+#: stored as 09:30 UTC, four or five hours from the bar it describes and from
+#: any vendor file already in UTC.
+FILE_ZONE = ZoneInfo("America/New_York")
+#: Timeframes whose key is the bar's date: a bare time in such a file is not a
+#: wall-clock time, and the bar stays at that date in UTC as it always was.
+DATE_KEYED = ("D1", "W1", "MN1")
 
-def parse_row(line: str) -> CandleTuple | str:
+
+def new_york_to_utc(stamp: str) -> str | None:
+    """A bare `yyyy-MM-ddTHH:mm:ss` New York wall-clock time as its UTC instant
+    (`...Z`), or None for a time that clock never showed or showed twice: the
+    hour skipped in March and the one repeated in November. Both are in the
+    small hours, outside any session, and neither can be stored as one instant
+    without a guess."""
+    try:
+        wall = dt.datetime.fromisoformat(stamp[:19])
+    except ValueError:
+        return None
+    first = wall.replace(tzinfo=FILE_ZONE, fold=0)
+    second = wall.replace(tzinfo=FILE_ZONE, fold=1)
+    if first.utcoffset() != second.utcoffset():
+        return None
+    return first.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%S") + stamp[19:] + "Z"
+
+
+def parse_row(line: str, timeframe: str) -> CandleTuple | str:
     """One CSV row as a candle upsert tuple, or the reason it is not one.
 
     The single definition of a readable row: `parse_rows_to_tuples` keeps
     the tuples and `scan_and_bucket` reports the reasons, so what is
-    reported as skipped is exactly what is not stored."""
+    reported as skipped is exactly what is not stored.
+
+    The time (G22 I7): a time that states its own offset (`Z`, `+00:00`) is
+    taken as written. A bare one is New York time on an intraday `timeframe`
+    and stored as the UTC instant; on a daily or coarser one it is the bar's
+    date and stays in UTC, so no daily bar moves."""
     parts = line.split(",")
     if len(parts) < 6:
         return f"{len(parts)} fields, 6 needed"
@@ -360,7 +394,14 @@ def parse_row(line: str) -> CandleTuple | str:
     elif _DATE_TIME.match(date_str):
         iso = date_str.replace(" ", "T", 1)
         if not re.search(r"[Zz]|[+-]\d{2}:?\d{2}$", iso):
-            iso += "Z"
+            if timeframe in DATE_KEYED:
+                iso += "Z"
+            else:
+                utc = new_york_to_utc(iso)
+                if utc is None:
+                    return (f"time {date_str!r} does not exist or occurs twice in New York "
+                            "(a clock change); give it an offset, as in 06:30:00Z")
+                iso = utc
     else:
         return f"date {date_str!r} is not yyyy-MM-dd or yyyy-MM-dd HH:mm:ss"
     values: list[float] = []
@@ -373,7 +414,7 @@ def parse_row(line: str) -> CandleTuple | str:
     return (iso, o, h, lo, c, v)
 
 
-def parse_rows_to_tuples(rows: Iterable[str]) -> list[CandleTuple]:
+def parse_rows_to_tuples(rows: Iterable[str], timeframe: str) -> list[CandleTuple]:
     """Parse raw CSV row strings (no header) into candle upsert tuples.
     Same lenient skipping as the Java importer: anything that doesn't
     parse cleanly is dropped without raising. `scan_and_bucket` is what
@@ -381,7 +422,7 @@ def parse_rows_to_tuples(rows: Iterable[str]) -> list[CandleTuple]:
 
     out: list[CandleTuple] = []
     for line in rows:
-        parsed = parse_row(line)
+        parsed = parse_row(line, timeframe)
         if not isinstance(parsed, str):
             out.append(parsed)
     return out
@@ -507,7 +548,7 @@ def plan_slices(
             # Without the archived slice there is nothing to compare against,
             # so the year is a conflict exactly as before this check existed.
             old_rows = _read_archived_rows(existing.archivePath or ap)
-            diff = diff_slices(old_rows, rows) if old_rows is not None else None
+            diff = diff_slices(old_rows, rows, timeframe) if old_rows is not None else None
             if diff is not None and diff.is_extension:
                 plan = "extend"
             elif diff is not None and diff.added == diff.changed == diff.removed == 0:
@@ -598,8 +639,8 @@ _UPSERT_FILE = """
 """
 
 
-def _iso_of(line: str) -> str | None:
-    parsed = parse_rows_to_tuples([line])
+def _iso_of(line: str, timeframe: str) -> str | None:
+    parsed = parse_rows_to_tuples([line], timeframe)
     return parsed[0][0] if parsed else None
 
 
@@ -614,8 +655,8 @@ def record_file(
     not a new version.
     """
     ordered = sorted(slices, key=lambda sl: sl.year)
-    first = _iso_of(ordered[0].rows[0]) if ordered and ordered[0].rows else None
-    last = _iso_of(ordered[-1].rows[-1]) if ordered and ordered[-1].rows else None
+    first = _iso_of(ordered[0].rows[0], timeframe) if ordered and ordered[0].rows else None
+    last = _iso_of(ordered[-1].rows[-1], timeframe) if ordered and ordered[-1].rows else None
     diffs = {str(sl.year): sl.diff.to_dict() for sl in ordered if sl.diff is not None}
     with conn.cursor() as cur:
         cur.execute(_UPSERT_FILE, (
@@ -709,7 +750,7 @@ def _commit(
                 )
                 continue
 
-            candles = parse_rows_to_tuples(slice_.rows)
+            candles = parse_rows_to_tuples(slice_.rows, timeframe)
             if not candles:
                 # Defensive: shouldn't happen in practice because scan_and_bucket
                 # already filtered. If it does, skip the slice rather than write

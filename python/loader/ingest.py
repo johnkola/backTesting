@@ -162,7 +162,7 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
 
     with open(path, "rb") as stream:
         skipped = SkippedRows()
-        header, rows_by_year = scan_and_bucket(stream, skipped)
+        header, rows_by_year = scan_and_bucket(stream, skipped, timeframe)
     if not header or not rows_by_year:
         print(f"  SKIP  {path.name}: no parseable data rows")
         return "empty"

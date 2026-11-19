@@ -1,5 +1,7 @@
 # datagen — intraday test data from daily CSVs
 
+> **Revision 2026-11-19-1** · 2026-11-19 17:27 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+
 A standalone tool for inventing M30 / H1 / M15 / ... candles out of a daily
 OHLCV file, for when there is no intraday feed to import. **It is not part of
 the app**: no database, no network, no service, no shared code — one script,
@@ -80,7 +82,9 @@ close, which keeps every timestamp inside its own day.
 ## Feeding a generated file to the app, if you want to
 
 The output is `Date,Open,High,Low,Close,Volume` with `YYYY-MM-DD HH:MM:SS`
-timestamps — the shape the app's importer already reads. Import it under a
+timestamps — the shape the app's importer already reads. The times are New
+York wall-clock times, which is how the importer reads a bare time on an
+intraday file (it stores the UTC instant). Import it under a
 **distinct source name** so invented bars never mix with real ones:
 
 ```bash
@@ -166,3 +170,9 @@ result, not a bug: the intraday path is a Brownian bridge, so by construction
 there is no intraday structure to predict. The daily inputs in `test-data/`
 are themselves a random walk from `generateTestData`. Use this pipeline to
 prove the plumbing works end to end — not to evaluate a model.
+
+## Revision history
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-19-1 | 2026-11-19 17:27 | Claude Code (Claude Fable 5.2) | The generated times are New York times, as the importer now reads them |

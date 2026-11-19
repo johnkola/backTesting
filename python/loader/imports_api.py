@@ -100,7 +100,7 @@ async def post_imports(
 
         with open(tmp_path, "rb") as stream:
             skipped = SkippedRows()
-            header, rows_by_year = scan_and_bucket(stream, skipped)
+            header, rows_by_year = scan_and_bucket(stream, skipped, timeframe)
         if not header or not rows_by_year:
             return _bad("CSV contains no parseable data rows")
 

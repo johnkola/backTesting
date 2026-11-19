@@ -338,5 +338,5 @@ def check_import(
     rows: list[str] = []
     for year in sorted(rows_by_year):
         rows.extend(rows_by_year[year])
-    candles = parse_rows_to_tuples(rows)
+    candles = parse_rows_to_tuples(rows, timeframe)
     return check_candles(candles, timeframe, **kwargs)  # type: ignore[arg-type]

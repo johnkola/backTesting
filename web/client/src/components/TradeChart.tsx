@@ -5,6 +5,7 @@ import {
 } from 'lightweight-charts'
 import { api, isAbortError, type CandleSeries, type Trade } from '../lib/api'
 import { tipClass } from './FieldLabel'
+import { chartSeconds } from '../lib/marketTime'
 
 /**
  * Price, with the points where the strategy actually bought and sold.
@@ -31,9 +32,6 @@ type Props = {
   to: string
   trades: Trade[]
 }
-
-/** Seconds since epoch, which is what lightweight-charts wants for every scale. */
-const secs = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp
 
 /**
  * Any CSS colour the browser understands, as plain `r, g, b` numbers.
@@ -123,6 +121,8 @@ export default function TradeChart({ instrument, source, timeframe, from, to, tr
       borderUpColor: colors.up, borderDownColor: colors.down,
       wickUpColor: colors.up, wickDownColor: colors.down,
     })
+    // Intraday bars on the New York clock, daily ones at their date (lib/marketTime).
+    const secs = (iso: string) => chartSeconds(iso, timeframe) as UTCTimestamp
     candles.setData(series.items.map((c) => ({
       time: secs(c.timestamp), open: c.open, high: c.high, low: c.low, close: c.close,
     })))

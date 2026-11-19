@@ -5,6 +5,7 @@ import { tipClass } from '../components/FieldLabel'
 import { isTradeable } from '../lib/api'
 import { categoryHint } from '../lib/cohesionHints'
 import { useTimeframe } from '../lib/useTimeframe'
+import { barStamp } from '../lib/marketTime'
 
 // Rollups we offer to build from a D1 series (matches the old
 // candles_weekly / candles_monthly continuous aggregates).
@@ -128,7 +129,7 @@ function AuditButton({ symbol }: { symbol: string }) {
                       <span className={tipClass} data-tip={categoryHint(f.category) ?? f.category}>
                         <span className="badge badge-xs badge-outline mr-2 cursor-help">{f.category}</span>
                       </span>
-                      {f.timestamp?.slice(0, 19) ?? ''} — {f.detail}
+                      {f.timestamp ? barStamp(f.timestamp, s.timeframe) : ''} — {f.detail}
                     </li>
                   ))}
                 </ul>

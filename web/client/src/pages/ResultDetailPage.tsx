@@ -21,6 +21,7 @@ import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import { barStamp } from '../lib/marketTime'
 
 function pct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -349,8 +350,8 @@ export default function ResultDetailPage() {
                 const pnlClass = pnl == null ? '' : pnl > 0 ? 'text-success' : pnl < 0 ? 'text-error' : ''
                 return (
                   <tr key={idx}>
-                    <td className="whitespace-nowrap">{t.entryTime ? new Date(t.entryTime).toLocaleDateString() : '—'}</td>
-                    <td className="whitespace-nowrap">{t.exitTime ? new Date(t.exitTime).toLocaleDateString() : '—'}</td>
+                    <td className="whitespace-nowrap">{barStamp(t.entryTime, detail.timeframe)}</td>
+                    <td className="whitespace-nowrap">{barStamp(t.exitTime, detail.timeframe)}</td>
                     <td className="font-mono">{t.side ?? '—'}</td>
                     <td className="text-right tabular-nums">{num(t.quantity ?? null, 4)}</td>
                     <td className="text-right tabular-nums">{num(t.entryPrice ?? null)}</td>

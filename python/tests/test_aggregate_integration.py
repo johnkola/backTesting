@@ -105,3 +105,46 @@ def test_invalid_target_is_rejected(client):
     )
     assert r.status_code == 400
     assert "higher timeframe" in r.json()["error"]
+
+
+def test_an_h4_roll_up_keeps_its_new_york_edges_across_a_clock_change():
+    """G22 I7: intraday bars are New York times stored as UTC instants, so a
+    UTC bucket would give a session three H4 bars in winter and two in summer,
+    with different edges. On the New York clock it is 08:00 and 12:00 always,
+    and the D1 roll-up of the same bars is still one bar a UTC date."""
+    from loader import aggregate
+    from loader.csv_import import (
+        get_or_create_data_source,
+        get_or_create_instrument,
+        parse_rows_to_tuples,
+        upsert_candles,
+    )
+    from loader.db import close_pool, pool
+
+    symbol = "ZZAGGNY"
+    lines = [f"{day} {h:02d}:{m:02d}:00,1,2,0.5,1.5,10"
+             for day in ("2024-01-02", "2024-07-01")            # EST, then EDT
+             for h, m in [(9, 30)] + [(hh, mm) for hh in range(10, 16) for mm in (0, 30)]]
+    try:
+        with pool().connection() as conn:
+            src = get_or_create_data_source(conn, SOURCE)
+            inst = get_or_create_instrument(conn, symbol, "STOCK")
+            upsert_candles(conn, inst, src, "M30", parse_rows_to_tuples(lines, "M30"))
+            for target in ("H4", "D1"):
+                aggregate.aggregate(conn, instrument_id=inst, source_id=src,
+                                    source_tf="M30", target_tf=target)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT timeframe, to_char(timestamp AT TIME ZONE 'America/New_York', "
+                    "'YYYY-MM-DD HH24:MI'), to_char(timestamp AT TIME ZONE 'UTC', 'HH24:MI') "
+                    "FROM candles WHERE instrument_id = %s AND source_id = %s "
+                    "AND timeframe IN ('H4', 'D1') ORDER BY 1, timestamp", (inst, src))
+                got = cur.fetchall()
+            conn.commit()
+        assert [(tf, ny) for tf, ny, _ in got if tf == "H4"] == [
+            ("H4", "2024-01-02 08:00"), ("H4", "2024-01-02 12:00"),
+            ("H4", "2024-07-01 08:00"), ("H4", "2024-07-01 12:00")]
+        assert [utc for tf, _, utc in got if tf == "D1"] == ["00:00", "00:00"]
+    finally:
+        purge_instrument(symbol, SOURCE)
+        close_pool()

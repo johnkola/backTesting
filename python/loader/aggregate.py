@@ -99,13 +99,21 @@ def aggregate(
 
     where_sql = " AND ".join(where_clauses)
 
+    # An intraday target is bucketed on the New York clock (G22 I7): intraday
+    # bars are stored as UTC instants of New York times, so UTC buckets would
+    # move an H4 bar's edges, and the number of H4 bars in a session, with
+    # daylight saving. A daily or coarser target keeps its UTC date key.
+    bucket_sql = ("time_bucket(%(interval)s::interval, timestamp)"
+                  if TIMEFRAME_ORDER[target_tf] >= TIMEFRAME_ORDER["D1"] else
+                  "time_bucket(%(interval)s::interval, timestamp, 'America/New_York')")
+
     sql = f"""
         INSERT INTO candles (instrument_id, source_id, timeframe, timestamp,
                              open, high, low, close, volume)
         SELECT instrument_id,
                source_id,
                %(target_tf)s,
-               time_bucket(%(interval)s::interval, timestamp) AS bucket,
+               {bucket_sql} AS bucket,
                FIRST(open, timestamp) AS open,
                MAX(high)              AS high,
                MIN(low)               AS low,

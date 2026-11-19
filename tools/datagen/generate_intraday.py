@@ -65,7 +65,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # (timestamp, open, high, low, close, volume). Timestamps stay naive
-# throughout; the importer reads a bare `YYYY-MM-DD HH:MM:SS` as UTC.
+# throughout; the importer reads a bare `YYYY-MM-DD HH:MM:SS` on an intraday
+# file as New York time (G22 I7), which is the clock the session presets are on.
 Bar = tuple[datetime, float, float, float, float, float]
 
 HEADER = ["Date", "Open", "High", "Low", "Close", "Volume"]

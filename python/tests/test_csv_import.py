@@ -60,10 +60,61 @@ def test_parse_rows_accepts_date_only_and_datetime():
         "2008-01-04,not_a_number,2,0,1.5,100",  # numeric coercion fail
         "2008-01-05,1,2,0,1.5",                  # too few cols
     ]
-    tuples = parse_rows_to_tuples(rows)
+    tuples = parse_rows_to_tuples(rows, "D1")
     assert len(tuples) == 2
     assert tuples[0] == ("2008-01-02T00:00:00Z", 1.0, 2.0, 0.0, 1.5, 100.0)
     assert tuples[1] == ("2008-01-03T09:30:00Z", 2.0, 3.0, 1.0, 2.5, 200.0)
+
+
+# -- G22 I7: a bare intraday time is New York time ---------------------------
+
+
+def _stamp(text, timeframe):
+    parsed = parse_row(f"{text},1,2,0,1.5,100", timeframe)
+    return parsed if isinstance(parsed, str) else parsed[0]
+
+
+def test_a_bare_intraday_time_is_new_york_time_stored_as_its_utc_instant():
+    """The author's decision (2026-11-19). 09:30 in New York is 14:30 UTC in
+    winter and 13:30 in summer; before, it was stored as 09:30 UTC."""
+    assert _stamp("2024-01-02 09:30:00", "M30") == "2024-01-02T14:30:00Z"
+    assert _stamp("2024-07-01 09:30:00", "H1") == "2024-07-01T13:30:00Z"
+    assert _stamp("2024-07-01T15:30:00", "M30") == "2024-07-01T19:30:00Z"
+
+
+def test_a_time_that_states_its_offset_is_taken_as_written():
+    assert _stamp("2024-01-02 14:30:00Z", "M30") == "2024-01-02T14:30:00Z"
+    assert _stamp("2024-01-02 09:30:00-05:00", "M30") == "2024-01-02T09:30:00-05:00"
+    assert _stamp("2024-01-02 14:30:00+00:00", "H1") == "2024-01-02T14:30:00+00:00"
+
+
+@pytest.mark.parametrize("timeframe", ["D1", "W1", "MN1"])
+def test_a_daily_or_coarser_bar_never_moves(timeframe):
+    """Its key is its date: a bare time on it is not a wall-clock time."""
+    assert _stamp("2024-01-02", timeframe) == "2024-01-02T00:00:00Z"
+    assert _stamp("2024-01-02 00:00:00", timeframe) == "2024-01-02T00:00:00Z"
+    assert _stamp("2024-01-02", "M30") == "2024-01-02T00:00:00Z"
+
+
+def test_an_hour_new_york_skipped_or_repeated_is_refused_not_guessed():
+    """02:30 on 2024-03-10 never happened and 01:30 on 2024-11-03 happened
+    twice; neither is one instant. Both are outside any session, and a row
+    that states its offset is still read."""
+    assert "clock change" in _stamp("2024-03-10 02:30:00", "M30")
+    assert "clock change" in _stamp("2024-11-03 01:30:00", "M30")
+    assert _stamp("2024-11-03 01:30:00-04:00", "M30") == "2024-11-03T01:30:00-04:00"
+    assert _stamp("2024-11-03 09:30:00", "M30") == "2024-11-03T14:30:00Z"
+    assert "clock change" in _stamp("2024-02-30 09:30:00", "M30")
+
+
+def test_a_refused_time_is_reported_as_a_skipped_row():
+    csv = ("Date,Open,High,Low,Close,Volume\n"
+           "2024-03-08 15:30:00,1,2,0,1.5,100\n"
+           "2024-03-10 02:30:00,1,2,0,1.5,100\n").encode()
+    skipped = SkippedRows()
+    _, by_year = scan_and_bucket(io.BytesIO(csv), skipped, "M30")
+    assert skipped.count == 1 and skipped.examples[0]["line"] == 3
+    assert [t[0] for t in parse_rows_to_tuples(by_year[2024], "M30")] == ["2024-03-08T20:30:00Z"]
 
 
 # -- R6: rows that produce no candle are reported, not silently dropped ------
@@ -92,13 +143,13 @@ def test_scan_reports_every_skipped_row_with_its_line_and_reason():
     # A dated row that will not parse stays in its year, so the slice and its
     # hash are what they were before R6; it just produces no candle.
     assert len(by_year[2008]) == 5
-    assert len(parse_rows_to_tuples(by_year[2008])) == 2
+    assert len(parse_rows_to_tuples(by_year[2008], "D1")) == 2
 
 
 def test_what_is_reported_skipped_is_exactly_what_is_not_stored():
     rows = ["2008-01-02,1,2,0,1.5,100", "2008-01-03,1,x,0,1.5,100", "2008-01-04,1,2,0,1.5,1e3"]
-    assert [isinstance(parse_row(r), str) for r in rows] == [False, True, False]
-    assert len(parse_rows_to_tuples(rows)) == 2
+    assert [isinstance(parse_row(r, "D1"), str) for r in rows] == [False, True, False]
+    assert len(parse_rows_to_tuples(rows, "D1")) == 2
 
 
 def test_skipped_counts_everything_but_quotes_only_a_few():
