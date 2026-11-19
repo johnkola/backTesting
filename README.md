@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-18-2** · 2026-11-18 23:40 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-19-1** · 2026-11-19 10:44 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -110,8 +110,10 @@ files may not claim the same calendar. D1 and intraday calendars build; W1 and
 MN1 are refused.
 
 **Intraday calendars** (phase two's groundwork, G22). `calendars/QQQ-synthetic-H1.toml`
-is QQQ on the synthetic hourly bars `tools/datagen` makes: not market data, only
-for building the path before intraday data is bought.
+and `calendars/QQQ-synthetic-M30.toml` are QQQ on the synthetic hourly and 30-minute
+bars `tools/datagen` makes: not market data, only for building the path before
+intraday data is bought. The commands are the same for M30, with its file and
+`--timeframe M30`.
 
 ```bash
 docker compose exec loader python -m nn.feature_build --config nn/calendars/QQQ-synthetic-H1.toml
@@ -753,21 +755,20 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 
 Phase two groundwork, on synthetic intraday data. Phase one is answered (see Done), and
 the design's next phase rebuilds the model on intraday bars (Design Notes, "Two Phases").
-The NN path is still daily by construction and refuses any timeframe but D1 on purpose
-([`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md) G22, I1 to I4). First, I3: a feature set with
-its own calendar, so an intraday set no longer means editing the one D1 `[alignment]`
-that every daily strategy's hash depends on. It can be built and tested on `tools/datagen`
-M30 and H1 before any intraday data is bought.
+The NN path now builds and runs walk-forward by bar on H1 and M30
+([Intraday calendars](#feature-table-and-training-window), [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md) G22,
+I1 to I4), checked end to end on `tools/datagen` bars. What is left before real intraday
+data is the author's: which data to buy, and the timezone its files are read in (I7).
 
 ### Next
 
 *Ordered by what blocks phase two. Full list: [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).*
 
-1. Reads keyed by bar rather than date, and an as-of join of daily series (FRED, VIX, gold)
-   onto intraday bars (G22 I1, I2, I4); then lift the D1 guard on the walk-forward.
-2. The author's decisions: buying FirstRate Data, the timezone of imported intraday files
+1. The author's decisions: buying FirstRate Data, the timezone of imported intraday files
    (I7), and whether the Spring Boot move comes first (C1 in
    [`docs/QUESTIONS-FOR-JOHN.md`](docs/QUESTIONS-FOR-JOHN.md)).
+2. The Strategy tab and the runner agree on what can run (G54): the tab still saves W1,
+   MN1 and schemes the runner refuses.
 3. Phase one's leftovers that phase two will want too: walk-forward runs on Results (G57),
    results that keep their run settings (G40), folds that keep their models (G50).
 
@@ -1264,6 +1265,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-19-1 | 2026-11-19 10:44 | Claude Code (Claude Fable 5.2) | The M30 calendar file; roadmap Now and Next moved past G22 I1 to I4 |
 | 2026-11-18-2 | 2026-11-18 23:40 | Claude Code (Claude Opus 5.5) | G22 I1, I2, I4: calendar files inherit features.toml; intraday calendars build and run, with their rules |
 | 2026-11-18-1 | 2026-11-18 13:26 | Claude Code (Claude Opus 5.5) | G22 I3: one config file per calendar, and only D1 builds for now |
 | 2026-11-17-2 | 2026-11-17 12:06 | Claude Code (Claude Opus 5.5) | G69: "How to read a result" and "Known limitations" written against today's code; 12 links into the deleted Architecture guide now point here or at the code |

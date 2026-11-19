@@ -332,6 +332,31 @@ class Context:
         return self._closes[key]
 
 
+def series_timeframes(cfg) -> dict[tuple[str, str], set[str]]:
+    """The timeframe(s) each required series is read at, by the build's own
+    rule (`feature_build.series_timeframe`, G22 I2): on an intraday calendar
+    only the calendar instrument's bars are intraday and every other series is
+    daily. Checking them all at the calendar's timeframe called every daily
+    series missing on H1 and M30."""
+    from nn import feature_build
+
+    out: dict[tuple[str, str], set[str]] = {}
+
+    def walk(spec: dict[str, Any]) -> None:
+        if "op" in spec:
+            walk(spec["a"])
+            walk(spec["b"])
+        elif "symbol" in spec and "source" in spec:
+            out.setdefault((spec["symbol"], spec["source"]), set()).add(
+                feature_build.series_timeframe(spec, cfg))
+
+    for f in cfg.built:
+        walk(f.series)
+    for c in cfg.live_checks:
+        walk(c.published)
+    return out
+
+
 def data_stage(ctx: Context) -> dict[str, Any]:
     from loader.feeds import core as feeds_core
     from loader.feeds import registry as feeds_registry
@@ -339,13 +364,18 @@ def data_stage(ctx: Context) -> dict[str, Any]:
     if ctx.cfg is None:
         return {"state": "unknown", "reasons": [reason("config", ctx.cfg_error or "no config")]}
     required = sorted(ctx.cfg.required_series())
-    last = _last_dates(ctx.cur, ctx.timeframe)
+    read_at = series_timeframes(ctx.cfg)
+    last_by_tf = {tf: _last_dates(ctx.cur, tf)
+                  for tf in sorted({tf for tfs in read_at.values() for tf in tfs})}
     feeds, running = _latest_feed_results(ctx.cur)
     cutoff = feeds_core.session_cutoff(ctx.now)
     reasons: list[dict] = []
-    missing = [f"{s}/{src}" for s, src in required if (s, src) not in last]
-    for key in missing:
-        reasons.append(reason("missing", f"{key} is not stored at {ctx.timeframe}", series=key))
+    missing = [(f"{s}/{src}", tf) for s, src in required
+               for tf in sorted(read_at.get((s, src), {ctx.timeframe}))
+               if (s, src) not in last_by_tf.get(tf, {})]
+    for key, tf in missing:
+        reasons.append(reason("missing", f"{key} is not stored at {tf}", series=key))
+    last = last_by_tf.get("D1", {})
     for sym, src in required:
         key = f"{sym}/{src}"
         r = feeds.get(key)
@@ -357,7 +387,7 @@ def data_stage(ctx: Context) -> dict[str, Any]:
         elif r and r.get("status") == "error":
             reasons.append(reason("error", f"{key} failed its last refresh: {r.get('error')}",
                                   series=key))
-        if ctx.timeframe == "D1" and (sym, src) in last:
+        if "D1" in read_at.get((sym, src), ()) and (sym, src) in last:
             feed = feeds_registry.BY_KEY.get(key)
             provider = feed.provider if feed else "manual"
             behind = sessions_behind(last[(sym, src)], cutoff)

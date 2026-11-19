@@ -177,3 +177,19 @@ def test_the_shipped_calendar_files_load_and_claim_distinct_calendars():
     names = list(feature_config.configs())
     assert names[0] == "features.toml"
     assert "calendars/QQQ-synthetic-H1.toml" in names
+    assert "calendars/QQQ-synthetic-M30.toml" in names
+
+
+def test_the_data_stage_looks_for_each_series_where_the_build_reads_it():
+    """Found by the M30 run (2026-11-19): the stage looked for every series at
+    the calendar's timeframe, so on H1 and M30 it called FRED, gold and the
+    breadth series missing, when the build reads them daily (G22 I2)."""
+    daily = staleness.series_timeframes(feature_config.load())
+    assert {tf for tfs in daily.values() for tf in tfs} == {"D1"}
+
+    m30 = feature_config.load(feature_config.config_path("calendars/QQQ-synthetic-M30.toml"))
+    at = staleness.series_timeframes(m30)
+    assert at[("QQQ", "synthetic")] == {"M30"}
+    assert ("QQQ", "yahoo-adj") not in at
+    assert at[("DGS10", "fred")] == {"D1"}
+    assert set(at) == m30.required_series()
