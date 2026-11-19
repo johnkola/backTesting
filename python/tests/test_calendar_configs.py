@@ -103,15 +103,77 @@ def test_staleness_checks_each_timeframe_against_its_own_file(calendars):
     assert intraday.cfg.alignment.calendar_timeframe == "H1"
 
 
-def test_an_intraday_calendar_is_refused_before_the_database(calendars):
+def test_d1_and_intraday_calendars_build_and_weekly_is_refused(calendars):
     h1 = _calendar_file(calendars / "calendars", "QQQ-synthetic-H1.toml", "H1")
-    why = feature_build.refusal(feature_config.load(h1), h1)
-    assert why and "H1 calendar" in why and "I1" in why
+    assert feature_build.refusal(feature_config.load(h1), h1) is None
     d1 = feature_config.DEFAULT_PATH
     assert feature_build.refusal(feature_config.load(d1), d1) is None
+    w1 = _calendar_file(calendars / "calendars", "QQQ-synthetic-W1.toml", "W1")
+    why = feature_build.refusal(feature_config.load(w1), w1)
+    assert why and "W1 calendar" in why
 
 
 def test_a_build_from_outside_nn_is_refused(calendars, tmp_path):
     outside = tmp_path / "elsewhere.toml"
     outside.write_text(DEFAULT_TEXT, encoding="utf-8")
     assert "not under" in feature_build.refusal(feature_config.load(outside), outside)
+
+
+# The author's choice (2026-11-18): a calendar file inherits features.toml and
+# overrides only its alignment, its defaults and the sources that differ.
+
+INHERITING = """inherit = "features.toml"
+
+[alignment]
+calendar_symbol = "QQQ"
+calendar_source = "synthetic"
+calendar_timeframe = "H1"
+
+[remap]
+"QQQ/yahoo-adj" = "QQQ/synthetic"
+"""
+
+
+def _inheriting(calendars, text=INHERITING):
+    path = calendars / "calendars" / "QQQ-synthetic-H1.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_an_inheriting_file_takes_the_parents_features_and_moves_its_sources(calendars):
+    child = feature_config.load(_inheriting(calendars))
+    parent = feature_config.load(feature_config.DEFAULT_PATH)
+    assert [f.name for f in child.features] == [f.name for f in parent.features]
+    assert child.alignment.calendar_timeframe == "H1"
+    assert child.alignment.fill == parent.alignment.fill            # kept from the parent
+    assert child.alignment.available_after == parent.alignment.available_after
+    sources = {(f.series.get("symbol"), f.series.get("source")) for f in child.features}
+    assert ("QQQ", "synthetic") in sources and ("QQQ", "yahoo-adj") not in sources
+
+
+def test_its_digest_covers_both_files_and_the_parents_is_unchanged(calendars):
+    path = _inheriting(calendars)
+    parent_before = feature_config.config_digest(feature_config.DEFAULT_PATH)
+    import hashlib
+    assert parent_before == hashlib.sha256(feature_config.DEFAULT_PATH.read_bytes()).hexdigest()
+    child_before = feature_config.config_digest(path)
+    feature_config.DEFAULT_PATH.write_text(DEFAULT_TEXT + "\n# an edit\n", encoding="utf-8")
+    assert feature_config.config_digest(path) != child_before
+
+
+def test_an_inheriting_file_cannot_redefine_features_or_chain(calendars):
+    with pytest.raises(feature_config.FeatureConfigError, match="features and checks come from"):
+        feature_config.load(_inheriting(calendars, INHERITING + "\n[[feature]]\nname = \"x\"\n"))
+    first = _inheriting(calendars)
+    second = first.with_name("second.toml")
+    second.write_text(INHERITING.replace('"features.toml"', '"calendars/QQQ-synthetic-H1.toml"')
+                      .replace('"H1"', '"M30"'), encoding="utf-8")
+    with pytest.raises(feature_config.FeatureConfigError, match="one level only"):
+        feature_config.load(second)
+
+
+def test_the_shipped_calendar_files_load_and_claim_distinct_calendars():
+    names = list(feature_config.configs())
+    assert names[0] == "features.toml"
+    assert "calendars/QQQ-synthetic-H1.toml" in names

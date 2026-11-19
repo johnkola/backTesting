@@ -392,6 +392,8 @@ def load(path: Path | str = DEFAULT_PATH) -> FeatureConfig:
     path = Path(path)
     with path.open("rb") as fh:
         raw = tomllib.load(fh)
+    if "inherit" in raw:
+        raw = _inherited(path, raw)
 
     if "schema_version" not in raw:
         raise FeatureConfigError("`schema_version` is required — it keys the model cache")
@@ -547,4 +549,74 @@ def for_timeframe(timeframe: str) -> tuple[str, FeatureConfig]:
         if cfg.alignment.calendar_timeframe == timeframe:
             return name, cfg
     return default, all_[default]
+
+
+#: What an inheriting calendar file may say besides `inherit`. Features and
+#: checks come from the parent whole: a list cannot be overridden in part, and
+#: a calendar that needs other features is a file of its own.
+_INHERIT_KEYS = frozenset({"inherit", "alignment", "defaults", "remap"})
+
+
+def _inherited(path: Path, child: dict[str, Any]) -> dict[str, Any]:
+    """A calendar file built on another (the author's choice, 2026-11-18): the
+    parent's features and checks, the child's `[alignment]` and `[defaults]`
+    over the parent's, and every series the child's `[remap]` names moved to
+    its new SYMBOL/source (`"QQQ/yahoo-adj" = "QQQ/synthetic"`). One level only.
+    """
+    import copy
+
+    extra = sorted(set(child) - _INHERIT_KEYS)
+    if extra:
+        raise FeatureConfigError(
+            f"{path.name}: an inheriting file sets only {sorted(_INHERIT_KEYS - {'inherit'})}, "
+            f"not {extra}; features and checks come from {child['inherit']}")
+    parent_path = config_path(str(child["inherit"]))
+    with parent_path.open("rb") as fh:
+        parent = tomllib.load(fh)
+    if "inherit" in parent:
+        raise FeatureConfigError(f"{path.name}: {child['inherit']} inherits too; one level only")
+    raw = copy.deepcopy(parent)
+    for table in ("alignment", "defaults"):
+        if table in child:
+            merged = {**raw.get(table, {}), **child[table]}
+            if table == "alignment" and "available_after" in child[table]:
+                merged["available_after"] = {**raw.get("alignment", {}).get("available_after", {}),
+                                             **child[table]["available_after"]}
+            raw[table] = merged
+    remap: dict[tuple[str, str], tuple[str, str]] = {}
+    for old, new in child.get("remap", {}).items():
+        parts_old, parts_new = str(old).split("/"), str(new).split("/")
+        if len(parts_old) != 2 or len(parts_new) != 2 or not all(parts_old + parts_new):
+            raise FeatureConfigError(f"{path.name}: [remap] {old!r} = {new!r} must be "
+                                     "SYMBOL/source = SYMBOL/source")
+        remap[(parts_old[0], parts_old[1])] = (parts_new[0], parts_new[1])
+
+    def move(spec: Any) -> None:
+        if not isinstance(spec, dict):
+            return
+        if "op" in spec:
+            move(spec.get("a"))
+            move(spec.get("b"))
+            return
+        key = (spec.get("symbol"), spec.get("source"))
+        if key in remap:
+            spec["symbol"], spec["source"] = remap[key]
+
+    for block in [*raw.get("feature", []), *raw.get("check", [])]:
+        for field_name in ("series", "published"):
+            move(block.get(field_name))
+    return raw
+
+
+def config_digest(path: Path | str) -> str:
+    """What a set's `config_hash` is: the SHA-256 of the file's bytes, and for
+    an inheriting file, of its bytes and its parent's digest, so an edit to
+    either marks its sets stale. `features.toml` inherits nothing, so its
+    digest is exactly the hash every set built before I3 carries."""
+    own = Path(path).read_bytes()
+    raw = tomllib.loads(own.decode("utf-8"))
+    if "inherit" not in raw:
+        return hashlib.sha256(own).hexdigest()
+    parent = config_digest(config_path(str(raw["inherit"])))
+    return hashlib.sha256(own + b"\0inherit\0" + parent.encode()).hexdigest()
 

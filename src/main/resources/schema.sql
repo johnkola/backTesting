@@ -573,6 +573,11 @@ ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS lib_versions_json TEXT;
 -- (span_backfilled).
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_from DATE;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_to DATE;
+-- Bars a year on an intraday run's axis (G22 I4), for its Sharpe and parked
+-- carry: 252 times the bars it has per session, measured once over the whole
+-- axis and stored, so a recalculation from one fold's signals uses the same
+-- number. NULL on a daily run, which is 252.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS periods_per_year DOUBLE PRECISION;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS last_used DATE;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS window_end DATE;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS span_snapshot VARCHAR(64);
@@ -687,8 +692,8 @@ ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS levered_return DOUBLE PRE
 CREATE TABLE IF NOT EXISTS walkforward_signals (
     run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
     fold INT NOT NULL,
-    bar_date DATE NOT NULL,
-    exit_date DATE,
+    bar_date TIMESTAMPTZ NOT NULL,
+    exit_date TIMESTAMPTZ,
     output DOUBLE PRECISION[] NOT NULL,
     call_class SMALLINT NOT NULL,
     label SMALLINT NOT NULL,
@@ -715,6 +720,22 @@ ALTER TABLE walkforward_signals ADD COLUMN IF NOT EXISTS engine VARCHAR(16) NOT 
 ALTER TABLE walkforward_signals DROP CONSTRAINT IF EXISTS walkforward_signals_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_walkforward_signals_run_engine_date
     ON walkforward_signals (run_id, engine, bar_date);
+-- A signal is a bar's, not a day's (G22 I4, the author's choice 2026-11-18):
+-- an intraday run has several bars a day, so bar_date and exit_date hold the
+-- bar's time. A daily run's rows become midnight UTC, the same instant as the
+-- date they held, and the reader gives a daily run its dates back
+-- (walkforward_store.load_engine_signals). The names stay, so nothing that
+-- selects them by name changes. Guarded so a database already widened is not
+-- rewritten on every start.
+DO $$
+BEGIN
+    IF (SELECT data_type FROM information_schema.columns
+        WHERE table_name = 'walkforward_signals' AND column_name = 'bar_date') = 'date' THEN
+        ALTER TABLE walkforward_signals
+            ALTER COLUMN bar_date TYPE TIMESTAMPTZ USING (bar_date::timestamp AT TIME ZONE 'UTC'),
+            ALTER COLUMN exit_date TYPE TIMESTAMPTZ USING (exit_date::timestamp AT TIME ZONE 'UTC');
+    END IF;
+END $$;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS engines_json TEXT;
 ALTER TABLE walkforward_runs DROP COLUMN IF EXISTS margin_train;
 

@@ -777,7 +777,13 @@ def test_load_signals_groups_rows_by_engine_and_fold_in_date_order():
 
     class Cur:
         def execute(self, sql, params):
-            assert "ORDER BY engine, fold, bar_date" in sql and params == (5,)
+            # The run's timeframe first, to key its bars (G22 I4); this one is daily.
+            self.timeframe_query = sql.startswith("SELECT timeframe FROM walkforward_runs")
+            if not self.timeframe_query:
+                assert "ORDER BY engine, fold, bar_date" in sql and params == (5,)
+
+        def fetchone(self):
+            return ("D1",)
 
         def fetchall(self):
             return [("mlp", 1, date(2020, 1, 2), date(2020, 1, 3), [0.4], 2, None),

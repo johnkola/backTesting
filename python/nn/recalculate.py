@@ -272,7 +272,18 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
         psq, dff = walkforward.load_margin_series(cur, run["source"])
     # Faber and dual momentum (B7), recalculated with everything else.
     spy, dtb3 = walkforward.load_rule_inputs(cur, run["source"])
-    decisions = rules.decide(run["symbol"], px, spy, dtb3)
+    intraday = walkforward.is_intraday(run["timeframe"])
+    periods = run.get("periods_per_year") or profit.TRADING_DAYS
+    if intraday:
+        # The rules on the D1 market over the run's sessions, as the run scored
+        # them (`walkforward.RuleView`), and the stored bars a year (G22 I4).
+        all_dates = sorted({d for sigs in signals.values() for sg in sigs.values()
+                            for d in sg.dates})
+        rule_args = argparse.Namespace(symbol=run["symbol"], source=run["source"],
+                                       park=settings.park)
+        view = walkforward.intraday_rule_view(cur, rule_args, all_dates, park_obs, spy, dtb3)
+    else:
+        view = walkforward.RuleView(rules.decide(run["symbol"], px, spy, dtb3))
     markets: dict[int, profit.Market] = {}
     for r in before:
         if r.fold in markets:
@@ -285,8 +296,10 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
                            f"scored, from {gone[0]}; the candles changed under it, so "
                            f"rerun it instead")
             continue
-        m = profit.market(px, sig.dates, sig.exits, park_obs, settings.park, psq, dff,
-                          spy=spy, dtb3=dtb3)
+        m = (profit.market(px, sig.dates, sig.exits, park_obs, settings.park, psq, dff,
+                           periods=periods) if intraday else
+             profit.market(px, sig.dates, sig.exits, park_obs, settings.park, psq, dff,
+                           spy=spy, dtb3=dtb3))
         holes = [d for d, g, h in zip(sig.dates, m.gap, m.intra, strict=True)
                  if np.isnan(g) or np.isnan(h)]
         if holes:
@@ -312,8 +325,8 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
         after.append(dataclasses.replace(
             r, accuracy=walkforward.fold_accuracy(pred, truth, truth, settings.loss,
                                                   settings.target, sig.output)[0],
-            rules=walkforward.score_rules(decisions, sig.dates, markets[r.fold], settings,
-                                          run["symbol"]),
+            rules=walkforward.fold_rules(view, sig.dates, markets[r.fold], settings,
+                                         run["symbol"]),
             **money.fields()))
 
     outcome = Outcome(run_id, None, "in place" if in_place else "new run", dry_run,
@@ -332,7 +345,7 @@ def recalculate(conn, run_id: int, strategy_id: int | None = None,
     args.test = False
     keep = ("feature_run_id", "input_snapshot", "snapshot_json", "code_hash", "git_sha",
             "lib_versions_json", "span_from", "span_to", "last_used", "window_end",
-            "span_snapshot", "span_parts_json", "span_backfilled")
+            "span_snapshot", "span_parts_json", "span_backfilled", "periods_per_year")
     provenance = {
         "strategy_id": target.id, "strategy_name": target.name,
         "strategy_version": target.version,

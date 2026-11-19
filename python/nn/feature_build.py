@@ -25,7 +25,6 @@ the discrepancy would be invisible in the output.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -39,6 +38,8 @@ from typing import Any
 import psycopg
 
 from nn import data_checks, feature_config, lineage
+from nn.feature_store import DATE_KEYED, is_intraday, session_of  # noqa: F401 - re-exported
+from nn.feature_store import key_sql as _key_sql
 from nn import normalize as nz
 from nn.feature_config import Feature, FeatureConfig
 from nn.indicators import macd as macd_series
@@ -50,32 +51,9 @@ from nn.indicators import rsi as rsi_series
 # days exist and only the calendar's opinion counts.
 Observed = dict[date, float]
 
-#: Calendars whose bars are whole sessions or longer keep the date as their key,
-#: exactly as every set built before G22 did, so their values, hashes and the
-#: runs read from them do not move. A finer calendar keys each bar by its UTC
-#: time (a `datetime`, which is a `date`, so the date-typed paths carry it).
-#: Never put both in one sorted list: Python refuses to compare a datetime
-#: with a date. Daily series reach an intraday calendar through
-#: `join_daily`, by session date.
-DATE_KEYED = ("D1", "W1", "MN1")
-
 #: Computed series that are a function of the calendar alone. On an intraday
 #: calendar they are computed per session and given to each bar of it.
 CALENDAR_DERIVED = frozenset({"day_of_week", "day_of_year", "day_of_month", "holiday_proximity"})
-
-
-def is_intraday(timeframe: str) -> bool:
-    return timeframe not in DATE_KEYED
-
-
-def _key_sql(timeframe: str) -> str:
-    return ("c.timestamp::date" if not is_intraday(timeframe)
-            else "(c.timestamp AT TIME ZONE 'UTC')")
-
-
-def session_of(key: date) -> date:
-    """The session a calendar key falls in: itself for a date, its day for a bar."""
-    return key.date() if isinstance(key, datetime) else key
 
 
 def join_daily(calendar: list[date], observed: Observed, delay: int,
@@ -539,7 +517,7 @@ def store(
     inputs: lineage.InputLog | None = None,
 ) -> tuple[int, int]:
     """Write the set and its values, and record the build. Returns (set id, build id)."""
-    cfg_hash = hashlib.sha256(cfg_path.read_bytes()).hexdigest()
+    cfg_hash = feature_config.config_digest(cfg_path)
     cfg_file = feature_config.config_name(cfg_path)
     a = cfg.alignment
 
@@ -606,11 +584,10 @@ def connect():
     )
 
 
-#: The one calendar timeframe the feature table can hold today (G22). Every
-#: series is read as {date: value}, so an intraday calendar would collapse to
-#: one row a day, its last bar's, without an error (I1). Lifted when the reads
-#: are keyed by bar (I1, I4) and daily series have an as-of join (I2).
-BUILDABLE_TIMEFRAMES = ("D1",)
+#: The calendars the feature table can hold: D1, as always, and since G22 I1
+#: to I4 any intraday one, keyed by bar. A weekly or monthly calendar is keyed
+#: by date like D1 but has never been built or scored, so it is refused.
+UNBUILDABLE_TIMEFRAMES = ("W1", "MN1")
 
 
 def refusal(cfg: FeatureConfig, cfg_path: Path) -> str | None:
@@ -622,9 +599,9 @@ def refusal(cfg: FeatureConfig, cfg_path: Path) -> str | None:
     except feature_config.FeatureConfigError as e:
         return str(e)
     tf = cfg.alignment.calendar_timeframe
-    if tf not in BUILDABLE_TIMEFRAMES:
-        return (f"{name} is a {tf} calendar, and the feature table is one row per date "
-                "until bars are read as bars (G22 I1, I2, I4); only D1 builds")
+    if tf in UNBUILDABLE_TIMEFRAMES:
+        return (f"{name} is a {tf} calendar; the feature table builds D1 and intraday "
+                "calendars only")
     return None
 
 

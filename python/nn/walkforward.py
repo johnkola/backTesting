@@ -79,6 +79,7 @@ from nn import (
     trees,
     walkforward_store,
 )
+from nn.feature_store import is_intraday, session_of
 from nn.labels import CLASS_SELL, NUM_CLASSES
 from nn.model import ArchSpec, build
 
@@ -186,7 +187,7 @@ def make_test_fold(
     """
     tr = purged([i for i, d in enumerate(dates) if train_start <= d.year < first_test], purge)
     te = [i for i, d in enumerate(dates)
-          if d.year >= first_test and (last_day is None or d <= last_day)]
+          if d.year >= first_test and (last_day is None or session_of(d) <= last_day)]
     if not tr or not te:
         return []
     return [(first_test, tr, te)]
@@ -237,7 +238,8 @@ def trim_to_window(
     out = []
     for year, tr, va in folds:
         kept = [i for i in va
-                if i + forward < len(label_dates) and label_dates[i + forward] <= window_end]
+                if i + forward < len(label_dates)
+                and session_of(label_dates[i + forward]) <= window_end]
         if kept:
             out.append((year, tr, kept))
     return out
@@ -515,6 +517,9 @@ def load_margin_series(cur, source: str) -> tuple[profit.Prices, dict[date, floa
 def margin_refusals(args, folds, margin: MarginInputs) -> list[str]:
     """Why this run cannot be scored under Strategy 2, or []."""
     out = profit.Settings.from_args(args, execution="margin").margin_config().refusals()
+    if is_intraday(getattr(args, "timeframe", "D1")):
+        out.append(f"Strategy 2 hedges with PSQ, which has no {args.timeframe} bars; "
+                   "it runs on D1 only")
     if args.symbol != "QQQ":
         out.append(f"Strategy 2 holds a QQQ core and hedges with PSQ, the inverse of "
                    f"QQQ; it cannot be run on {args.symbol}")
@@ -618,7 +623,7 @@ def fit_network(
 def run_fold(
     fold_no: int, year: int, tr: list[int], va: list[int],
     x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
-    dates: list[date], args, decisions: rules.Decisions | None = None,
+    dates: list[date], args, decisions: RuleView | rules.Decisions | None = None,
     record=None, labels_all: np.ndarray | None = None, values_all: np.ndarray | None = None,
 ) -> list[tuple[FoldResult, profit.Signals]]:
     """Train every enabled engine on `tr`, predict `va`, and hand each engine's
@@ -640,8 +645,8 @@ def run_fold(
     settings = profit.Settings.from_args(args)
     market = full.take(va)
     va_dates = [dates[i] for i in va]
-    benchmarks = (score_rules(decisions, va_dates, market, settings, args.symbol)
-                  if decisions is not None else ())
+    view = decisions if isinstance(decisions, RuleView) or decisions is None else RuleView(decisions)
+    benchmarks = fold_rules(view, va_dates, market, settings, args.symbol)
     out: list[tuple[FoldResult, profit.Signals]] = []
     for name, saved in walkforward_store.engines_of(args).items():
         stopper = None
@@ -695,6 +700,55 @@ def score_rules(decisions: rules.Decisions, dates: list[date], m: profit.Market,
     return tuple(profit.score_rule(c.name, c.calls if c.available else None, c.reason, m, s,
                                    symbol)
                  for c in rules.window_calls(decisions, dates))
+
+
+@dataclass(frozen=True)
+class RuleView:
+    """What Faber and dual momentum are scored on (B7).
+
+    A daily run: its own bars, as before. An intraday run (G22 I4, the
+    author's rule 2026-11-18): decided on D1 closes, traded at the first bar
+    of the next session. That bar's open is the session's open, which is D1's
+    next-open fill, so the rules are scored on the D1 market over the run's
+    sessions (`sessions`, `daily`). Only QQQ has intraday bars, and dual
+    momentum trades SPY, which could not be priced bar by bar anyway.
+    """
+    decisions: rules.Decisions
+    sessions: list[date] | None = None
+    daily: profit.Market | None = None
+    closes: dict[date, float] | None = None
+
+
+def intraday_rule_view(cur, args, scored: list[date], park_obs, spy, dtb3) -> RuleView:
+    """The rules' D1 view over the sessions of an intraday run's SCORED bars.
+
+    Those bars and no others, because a recalculation has only them (its
+    stored signals) and must build the same view; and because the last
+    scored session then has no next one to run to, so the view never reads
+    past the run's window (G38), which the whole axis would: the last
+    validation day ran on into the test block."""
+    px_d1 = load_prices(cur, args.symbol, args.source, "D1")
+    if not px_d1.closes:
+        raise SystemExit(f"the rule benchmarks need {args.symbol} ({args.source}, D1): "
+                         "roll the intraday bars up with POST /api/aggregate")
+    sessions = sorted({session_of(d) for d in scored})
+    daily = profit.market(px_d1, sessions, profit.next_dates(sessions), park_obs, args.park,
+                          spy=spy, dtb3=dtb3)
+    return RuleView(rules.decide(args.symbol, px_d1, spy, dtb3), sessions, daily, px_d1.closes)
+
+
+def fold_rules(view: RuleView | None, dates: list[date], m: profit.Market,
+               s: profit.Settings, symbol: str) -> tuple:
+    """A fold's rule benchmarks on the view's market: the fold's own bars for a
+    daily run, the D1 sessions its bars fall in for an intraday one."""
+    if view is None:
+        return ()
+    if view.daily is None:
+        return score_rules(view.decisions, dates, m, s, symbol)
+    at = {d: i for i, d in enumerate(view.sessions)}
+    idx = np.array(sorted({at[session_of(d)] for d in dates if session_of(d) in at}), dtype=int)
+    return score_rules(view.decisions, [view.sessions[i] for i in idx], view.daily.take(idx),
+                       s, symbol)
 
 
 def load_rule_inputs(cur, source: str) -> tuple[profit.Prices | None, dict | None]:
@@ -805,7 +859,8 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
     mean_hold_comm = float(np.mean([r.hold_commissions for r in results]))
     mean_hold_tax = float(np.mean([r.hold_gains_tax for r in results]))
     print("\nWHERE THE GAP COMES FROM  (pp per fold; only `timing` is the model)")
-    print(f"  days out of the market     {mean_out:>8.0f}")
+    unit = "bars" if is_intraday(getattr(args, "timeframe", "D1")) else "days"
+    print(f"  {unit} out of the market     {mean_out:>8.0f}")
     verdict = ("the skipped days really were worse than average" if mean_timing > 0.05
                else "the skipped days were no worse than random")
     print(f"  drift tax                  {mean_drift:>+8.2f}   "
@@ -1220,9 +1275,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"refused: {why}")
             return 2
         args.engines = {n: args.engines[n] for n in engines.ordered(args.engines)}
-    if args.strategy_id is None and args.timeframe != "D1":
-        print(f"refused: timeframe {args.timeframe!r} cannot run yet: walk-forward is "
-              f"daily only (one row per date, {TRADING_DAYS} periods a year); use D1")
+    if args.strategy_id is None and args.timeframe in ("W1", "MN1"):
+        print(f"refused: timeframe {args.timeframe!r} cannot run yet: walk-forward runs on "
+              f"D1 or an intraday calendar (G22); use D1")
         return 2
 
     conn = connect()
@@ -1306,9 +1361,23 @@ def main(argv: list[str] | None = None) -> int:
         psq, dff = load_margin_series(cur, args.source)
     # The rule benchmarks (B7): decided once over the whole history, scored per fold.
     spy, dtb3 = load_rule_inputs(cur, args.source)
-    decisions = rules.decide(args.symbol, px, spy, dtb3)
-    full = profit.market(px, wdates, exits, profit.load_park(cur, args.park), args.park,
-                         psq, dff, spy=spy, dtb3=dtb3)
+    park_obs = profit.load_park(cur, args.park)
+    if is_intraday(args.timeframe):
+        # G22 I4: bars a year measured on this axis, and the rules on the D1
+        # market over the run's sessions (`RuleView`).
+        view = intraday_rule_view(cur, args, [wdates[i] for _, _, va in folds for i in va],
+                                  park_obs, spy, dtb3)
+        decisions = view.decisions
+        rule_closes = view.closes
+        args.periods_per_year = profit.periods_per_year(wdates, args.timeframe)
+        full = profit.market(px, wdates, exits, park_obs, args.park, psq, dff,
+                             periods=args.periods_per_year)
+    else:
+        decisions = rules.decide(args.symbol, px, spy, dtb3)
+        view = RuleView(decisions)
+        rule_closes = px.closes
+        full = profit.market(px, wdates, exits, park_obs, args.park, psq, dff,
+                             spy=spy, dtb3=dtb3)
     holes = [d for d, g, h in zip(wdates, full.gap, full.intra, strict=True)
              if np.isnan(g) or np.isnan(h)]
     if holes:
@@ -1351,7 +1420,9 @@ def main(argv: list[str] | None = None) -> int:
               f"signal acted on the next session")
     else:
         print(f"simulation   long unless SELL, {args.cost_bps:.0f} bps per change, "
-              f"signal acted on the next session")
+              + ("signal acted at the next bar's open, bars a year "
+                 f"{args.periods_per_year:.0f} (measured)" if is_intraday(args.timeframe)
+                 else "signal acted on the next session"))
     print("tax          " + (f"{args.tax_rate:g}% on each realized gain, buy-and-hold taxed "
                              "the same way (it never sells); scoring only"
                              if args.tax_rate else "off: scored before tax"))
@@ -1409,12 +1480,12 @@ def main(argv: list[str] | None = None) -> int:
         held, _, tax = profit.hold(full.take(va), settings)
         line = (f"buy & hold   fold {i} ({year}): {(held[-1] - 1.0) * 100.0:+.2f}%"
                 + (f" after {-tax:.2f} pts tax" if tax else "") + ", costs paid")
-        for f in score_rules(decisions, [wdates[j] for j in va], full.take(va), settings,
-                             args.symbol):
+        for f in fold_rules(view, [wdates[j] for j in va], full.take(va), settings,
+                            args.symbol):
             line += (f"; {f.name} {f.return_pct:+.2f}%" if f.available
                      else f"; {f.name} not available")
         print(line)
-    for check in data_checks.rule_checks(decisions, px.closes):
+    for check in data_checks.rule_checks(decisions, rule_closes):
         print(f"data check   {check.summary()}")
     print(header_line())
     results: list[FoldResult] = []
@@ -1437,7 +1508,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for i, (year, tr, va) in enumerate(folds, 1):
         try:
-            fold_results = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, decisions,
+            fold_results = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, view,
                                     record=recorder(i), labels_all=labels_all,
                                     values_all=values_all)
         except NonFiniteLoss as exc:

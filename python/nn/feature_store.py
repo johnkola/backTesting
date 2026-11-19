@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 import numpy as np
 
@@ -46,6 +46,29 @@ class FeatureMatrix:
             f"FeatureMatrix(set={self.set_id}, {len(self.dates)} days "
             f"{self.dates[0]}..{self.dates[-1]}, {len(self.names)} columns)"
         )
+
+
+#: Calendars whose bars are whole sessions or longer keep the date as their
+#: key, exactly as every set and run before G22 did, so their values, hashes
+#: and runs do not move. A finer one keys each bar by its naive UTC time (a
+#: `datetime`, which is a `date`, so date-typed paths carry it). Never put the
+#: two in one sorted list: Python refuses to compare a datetime with a date, so
+#: anything daily meets an intraday axis by session (`session_of`).
+DATE_KEYED = ("D1", "W1", "MN1")
+
+
+def is_intraday(timeframe: str) -> bool:
+    return timeframe not in DATE_KEYED
+
+
+def key_sql(timeframe: str, column: str = "c.timestamp") -> str:
+    """The SQL that keys a row of `timeframe` as the NN path does."""
+    return f"{column}::date" if not is_intraday(timeframe) else f"({column} AT TIME ZONE 'UTC')"
+
+
+def session_of(key: date) -> date:
+    """The session a key falls in: itself for a date, its day for a bar."""
+    return key.date() if isinstance(key, datetime) else key
 
 
 def latest_set_id(cur, symbol: str, source: str, timeframe: str) -> int:
@@ -122,8 +145,11 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
         clauses.append("timestamp < %(until)s")
         params["until"] = until
 
+    cur.execute("SELECT timeframe FROM feature_sets WHERE id = %s", (set_id,))
+    tf_row = cur.fetchone()
+    key = key_sql(tf_row[0] if tf_row else "D1", "timestamp")
     cur.execute(
-        f"SELECT timestamp::date, feature_name, value FROM feature_values "  # noqa: S608
+        f"SELECT {key}, feature_name, value FROM feature_values "  # noqa: S608 - key is fixed
         f"WHERE {' AND '.join(clauses)} ORDER BY timestamp",
         params,
     )

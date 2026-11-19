@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, datetime
 
 import numpy as np
 
@@ -188,6 +188,10 @@ def _carried(obs: dict[date, float]):
     def at(d: date | None) -> float | None:
         if d is None:
             return None
+        # A daily series is looked up by a bar's session (G22 I4): an intraday
+        # bar key is a datetime, which cannot be compared with the dates here.
+        if isinstance(d, datetime):
+            d = d.date()
         j = bisect_right(keys, d)
         return obs[keys[j - 1]] if j else None
 
@@ -247,7 +251,8 @@ def segments(px: Prices, dates: list[date], exits: list[date | None],
 
 
 def park_returns(obs: dict[date, float] | None, dates: list[date],
-                 exits: list[date | None], mode: str) -> np.ndarray:
+                 exits: list[date | None], mode: str,
+                 periods: float = TRADING_DAYS) -> np.ndarray:
     """What money out of equities earns over each bar, the same span as the
     instrument's return (G68).
 
@@ -267,7 +272,7 @@ def park_returns(obs: dict[date, float] | None, dates: list[date],
         y0, y1 = at(d), at(e)
         if y0 is None or y1 is None:
             continue
-        out[i] = (y0 / 100.0) / TRADING_DAYS
+        out[i] = (y0 / 100.0) / periods
         if mode == "bonds":
             out[i] -= BOND_DURATION * (y1 - y0) / 100.0
     return out
@@ -295,7 +300,9 @@ def margin_inputs(psq: Prices, dff: dict[date, float], dates: list[date],
             if d not in psq.closes:
                 psq_gap[i] = psq_intra[i] = np.nan
             continue
-        days[i] = (e - d).days
+        # Fractional for an intraday bar, whose span is hours (G22 I4); whole
+        # days, exactly as before, for dates.
+        days[i] = (e - d).total_seconds() / 86400.0
     return psq_gap, psq_intra, rates, days
 
 
@@ -319,10 +326,13 @@ class Market:
     spy_gap: np.ndarray | None = None
     spy_intra: np.ndarray | None = None
     bills: np.ndarray | None = None
+    #: Bars a year, for the Sharpe and the parked carry: 252 for D1, more for
+    #: an intraday axis (`periods_per_year`, G22 I4).
+    periods: float = TRADING_DAYS
 
     def take(self, idx) -> Market:
         """The bars at `idx`, from a market built over a whole date axis."""
-        return Market(**{f: (None if v is None else v[idx])
+        return Market(**{f: (v if v is None or not isinstance(v, np.ndarray) else v[idx])
                          for f, v in vars(self).items()})
 
     @property
@@ -335,19 +345,31 @@ def market(px: Prices, dates: list[date], exits: list[date | None],
            psq: Prices | None = None,
            dff: dict[date, float] | None = None,
            spy: Prices | None = None,
-           dtb3: dict[date, float] | None = None) -> Market:
+           dtb3: dict[date, float] | None = None,
+           periods: float = TRADING_DAYS) -> Market:
     """The market over `dates` for the instrument priced by `px`. Pass `psq`
-    and `dff` for Strategy 2, `spy` and `dtb3` for the rule benchmarks."""
+    and `dff` for Strategy 2, `spy` and `dtb3` for the rule benchmarks, and
+    `periods` for an intraday axis."""
     r = instrument_returns(px.closes, dates, exits)
     gap, intra, tradable = segments(px, dates, exits)
-    p = park_returns(park_obs, dates, exits, park)
+    p = park_returns(park_obs, dates, exits, park, periods)
     margin = (margin_inputs(psq, dff, dates, exits, px) if psq is not None and dff is not None
               else (None, None, None, None))
     spy_gap, spy_intra = (segments(spy, dates, exits, sessions=px)[:2] if spy is not None
                           else (None, None))
-    bills = park_returns(dtb3, dates, exits, "bills") if dtb3 is not None else None
+    bills = park_returns(dtb3, dates, exits, "bills", periods) if dtb3 is not None else None
     return Market(r, gap, intra, tradable, p, *margin, spy_gap=spy_gap, spy_intra=spy_intra,
-                  bills=bills)
+                  bills=bills, periods=periods)
+
+
+def periods_per_year(dates: list[date], timeframe: str) -> float:
+    """Bars a year on a run's axis: 252 for a daily one, and for an intraday
+    one 252 times the bars it has per session, measured, as the engine does
+    since I5 (`MetricsCalculator.periodsPerYear`)."""
+    if timeframe in ("D1", "W1", "MN1") or not dates:
+        return {"W1": 52.0, "MN1": 12.0}.get(timeframe, float(TRADING_DAYS))
+    sessions = {d.date() if isinstance(d, datetime) else d for d in dates}
+    return TRADING_DAYS * len(dates) / len(sessions)
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +426,7 @@ def margin_signals(output: np.ndarray, pred: np.ndarray, s: Settings) -> np.ndar
 # ---------------------------------------------------------------------------
 
 
-def sharpe(daily: np.ndarray) -> float:
+def sharpe(daily: np.ndarray, periods: float = TRADING_DAYS) -> float:
     """Annualised Sharpe of a daily return series, excess of zero.
 
     A risk-free rate is deliberately left out: every variant is compared over
@@ -420,7 +442,7 @@ def sharpe(daily: np.ndarray) -> float:
     # poisons the mean Sharpe across folds while looking like a number.
     if sd < 1e-12:
         return 0.0
-    return float(daily.mean() / sd * np.sqrt(TRADING_DAYS))
+    return float(daily.mean() / sd * np.sqrt(periods))
 
 
 def max_drawdown(equity: np.ndarray) -> float:
@@ -661,7 +683,7 @@ def score_rule(name: str, calls: list[str | None] | None, reason: str | None, m:
         calls, segs, cash, cost_bps=s.cost_bps, tax_rate=s.tax_fraction, tradable=m.tradable)
     return RuleFigures(
         name, True, None, return_pct=float((equity[-1] - 1.0) * 100.0),
-        sharpe=sharpe(_daily(equity)), maxdd=max_drawdown(equity), trades=trades,
+        sharpe=sharpe(_daily(equity), m.periods), maxdd=max_drawdown(equity), trades=trades,
         bars_held=held, commissions=-trades * s.cost_bps / 10_000.0 * 100.0, gains_tax=tax)
 
 
@@ -786,7 +808,7 @@ def score(output: np.ndarray, m: Market, s: Settings) -> Profit:
     return Profit(
         strat_return=float((equity[-1] - 1.0) * 100.0),
         hold_return=float((held[-1] - 1.0) * 100.0),
-        strat_sharpe=sharpe(_daily(equity)), hold_sharpe=sharpe(_daily(held)),
+        strat_sharpe=sharpe(_daily(equity), m.periods), hold_sharpe=sharpe(_daily(held), m.periods),
         strat_maxdd=max_drawdown(equity), hold_maxdd=max_drawdown(held),
         trades=trades, days_out=days_out, drift_tax=drift_tax,
         commissions=commissions, timing=timing, gains_tax=gains_tax,

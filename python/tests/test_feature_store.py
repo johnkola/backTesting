@@ -27,6 +27,11 @@ class FakeCursor:
         self.last_params = None
 
     def execute(self, sql, params=None):
+        # read_matrix asks the set's timeframe to key its rows (G22 I4); these
+        # sets are daily, and the answer is not one of the queued result sets.
+        if "SELECT timeframe FROM feature_sets" in sql:
+            self._current = [("D1",)]
+            return
         self.last_sql = sql
         self.last_params = params
         self._current = self._queue.pop(0) if self._queue else []

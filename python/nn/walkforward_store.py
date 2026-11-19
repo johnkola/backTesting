@@ -52,6 +52,7 @@ own, so no value is written in two places where they could disagree.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 from typing import TYPE_CHECKING, Any
@@ -89,7 +90,7 @@ INSERT INTO walkforward_runs
      feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
      execution, leverage_pct, hedge_pct, margin_spread_pct, maintenance_pct, long_threshold,
      span_from, span_to, last_used, window_end, span_snapshot, span_parts_json,
-     span_backfilled, recalculated_from, engines_json, target, label_json)
+     span_backfilled, recalculated_from, engines_json, target, label_json, periods_per_year)
 VALUES
     (%(label)s, %(instrument_id)s, %(source_id)s, %(timeframe)s,
      %(feature_set_id)s, %(input_width)s,
@@ -106,7 +107,7 @@ VALUES
      %(maintenance_pct)s, %(long_threshold)s,
      %(span_from)s, %(span_to)s, %(last_used)s, %(window_end)s, %(span_snapshot)s,
      %(span_parts_json)s, %(span_backfilled)s, %(recalculated_from)s, %(engines_json)s,
-     %(target)s, %(label_json)s)
+     %(target)s, %(label_json)s, %(periods_per_year)s)
 RETURNING id
 """
 
@@ -242,6 +243,8 @@ def run_row(args: Any, set_id: int, input_width: int,
         # What it predicted, and the thresholds that make its calls (G49, R71).
         "target": getattr(args, "target", None) or "class",
         "label_json": label_json_of(args),
+        # Bars a year on an intraday axis (G22 I4); None on a daily run, which is 252.
+        "periods_per_year": getattr(args, "periods_per_year", None),
         # Each engine trained, with its settings, library version and seed (B9).
         "engines_json": json.dumps(engines.record(engines_of(args), hyperparams(args)),
                                    sort_keys=True),
@@ -448,8 +451,23 @@ def save_fold(conn, run_id: int, r: FoldResult, sig: profit.Signals | None = Non
     conn.commit()
 
 
+def _bar_key(stamp, daily: bool):
+    """A stored bar time as the run's own key: the date for a daily run, as
+    its matrix had it; the naive UTC time for an intraday one, as the feature
+    build keys a bar (G22 I4)."""
+    if stamp is None:
+        return None
+    if isinstance(stamp, dt.datetime):
+        utc = stamp.astimezone(dt.UTC).replace(tzinfo=None) if stamp.tzinfo else stamp
+        return utc.date() if daily else utc
+    return stamp
+
+
 def load_engine_signals(cur, run_id: int) -> dict[str, dict[int, profit.Signals]]:
     """A run's stored signals, by engine and fold; empty for a run that stored none."""
+    cur.execute("SELECT timeframe FROM walkforward_runs WHERE id = %s", (run_id,))
+    row = cur.fetchone()
+    daily = row is None or row[0] in ("D1", "W1", "MN1")
     cur.execute(
         "SELECT engine, fold, bar_date, exit_date, output, label, target_value "
         "FROM walkforward_signals WHERE run_id = %s ORDER BY engine, fold, bar_date",
@@ -457,7 +475,8 @@ def load_engine_signals(cur, run_id: int) -> dict[str, dict[int, profit.Signals]
     )
     grouped: dict[str, dict[int, list[tuple]]] = {}
     for engine, fold, d, e, out, label, value in cur.fetchall():
-        grouped.setdefault(engine, {}).setdefault(int(fold), []).append((d, e, out, label, value))
+        grouped.setdefault(engine, {}).setdefault(int(fold), []).append(
+            (_bar_key(d, daily), _bar_key(e, daily), out, label, value))
     return {
         engine: {
             fold: profit.Signals(

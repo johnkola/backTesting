@@ -203,9 +203,9 @@ def test_the_runner_refuses_a_training_switch_with_d9_before_touching_the_db(mon
     assert wf.main([flag, "--tax-rate", "25"]) == 2
 
 
-@pytest.mark.parametrize("tf", ["M30", "H1", "W1"])
-def test_the_runner_refuses_a_non_daily_timeframe_before_touching_the_db(monkeypatch, tf):
-    # DESIGN-GAPS I5: 252 periods a year and date-keyed rows are daily only.
+@pytest.mark.parametrize("tf", ["W1", "MN1"])
+def test_the_runner_refuses_a_weekly_or_monthly_timeframe_before_touching_the_db(monkeypatch, tf):
+    # G22: walk-forward runs on D1 and intraday calendars; W1 and MN1 neither.
     def no_db():
         raise AssertionError("connected to the database")
     monkeypatch.setattr(wf, "connect", no_db)

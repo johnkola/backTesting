@@ -41,7 +41,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
-import hashlib
 import json
 import sys
 from collections.abc import Sequence
@@ -50,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from nn import feature_config, lineage
+from nn.feature_store import session_of
 
 #: Sessions a series may trail the newest finished session before Data calls it
 #: stale. Prices settle the same evening; FRED prints a day's yields the next
@@ -120,7 +120,10 @@ def run_span(dates: Sequence[dt.date], folds: Sequence[tuple[int, Sequence[int],
     hi = max(max(va) for _, _, va in folds if va)
     last = hi + lookback - 1
     end = min(len(dates) - 1, last + forward)
-    return Span(start=dates[lo], end=dates[end], last_used=dates[last], window_end=window_end)
+    # Sessions, for an intraday axis too (G22 I4): the span columns are DATEs
+    # and name the sessions a run read; for D1 `session_of` is the date itself.
+    return Span(start=session_of(dates[lo]), end=session_of(dates[end]),
+                last_used=session_of(dates[last]), window_end=window_end)
 
 
 def window_end_of(last_val: int, is_test: bool, test_end: dt.date | None) -> dt.date | None:
@@ -131,7 +134,7 @@ def window_end_of(last_val: int, is_test: bool, test_end: dt.date | None) -> dt.
 
 def restrict(fm, start: dt.date, end: dt.date):
     """The feature matrix's rows within [start, end]."""
-    idx = [i for i, d in enumerate(fm.dates) if start <= d <= end]
+    idx = [i for i, d in enumerate(fm.dates) if start <= session_of(d) <= end]
     return dataclasses.replace(fm, dates=[fm.dates[i] for i in idx], values=fm.values[idx])
 
 
@@ -151,8 +154,8 @@ def new_days_in_window(dates: Sequence[dt.date], last_used: dt.date,
     row inside the window, since no fold reads past its window (G38)."""
     n = len(dates)
     return [d for i, d in enumerate(dates)
-            if d > last_used and i + forward <= n - 1
-            and (window_end is None or dates[i + forward] <= window_end)]
+            if session_of(d) > last_used and i + forward <= n - 1
+            and (window_end is None or session_of(dates[i + forward]) <= window_end)]
 
 
 def fix_days(diff_json: str | None, prices_only: bool = False) -> tuple[set[dt.date], set[int]]:
@@ -218,7 +221,7 @@ def reason(kind: str, text: str, **extra: Any) -> dict[str, Any]:
 
 def config_hash(path: Path = feature_config.DEFAULT_PATH) -> str:
     """The same hash `feature_build.store` keys a set by."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return feature_config.config_digest(path)
 
 
 def _ids(cur, symbol: str, source: str) -> tuple[int | None, int | None]:

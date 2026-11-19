@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-18-1** · 2026-11-18 13:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-18-2** · 2026-11-18 23:40 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -98,13 +98,39 @@ what gets written, not the way to choose a training range. Prefer `--from` /
 different windows read the same table.
 
 **One config file per calendar.** `python/nn/features.toml` is the QQQ
-(`yahoo-adj`, D1) calendar. Another calendar is a file of its own in
-`python/nn/calendars/`, with its own features and `[alignment]`, built with
-`--config nn/calendars/<file>.toml`. Each set records the file that built it, and
-the Features stage and the preview check a set against that file, so adding a
-calendar leaves every existing set fresh. Two files may not claim the same
-calendar. Only D1 builds for now: an intraday calendar is refused until bars are
-read as bars (`docs/DESIGN-GAPS.md` G22, I1, I2 and I4).
+(`yahoo-adj`, D1) calendar. Another calendar is a file in `python/nn/calendars/`
+that inherits it (`inherit = "features.toml"`) and sets only its `[alignment]`,
+any `[defaults]`, and a `[remap]` of the series that move
+(`"QQQ/yahoo-adj" = "QQQ/synthetic"`); its features and checks are the parent's.
+Build it with `--config nn/calendars/<file>.toml`. Each set records the file that
+built it, and the Features stage and the preview check a set against that file,
+so adding a calendar leaves every existing set fresh; an inheriting file's hash
+covers both files, so an edit to `features.toml` marks its sets stale too. Two
+files may not claim the same calendar. D1 and intraday calendars build; W1 and
+MN1 are refused.
+
+**Intraday calendars** (phase two's groundwork, G22). `calendars/QQQ-synthetic-H1.toml`
+is QQQ on the synthetic hourly bars `tools/datagen` makes: not market data, only
+for building the path before intraday data is bought.
+
+```bash
+docker compose exec loader python -m nn.feature_build --config nn/calendars/QQQ-synthetic-H1.toml
+docker compose exec loader python -m nn.walkforward --source synthetic --timeframe H1 \
+  --set-id <the set it wrote> --first-val 2020 --last-val 2021
+```
+
+- **Rows are bars.** QQQ's own columns are read and normalized per bar. Every other
+  series is daily: normalized on the sessions exactly as a D1 build does (windows
+  in days), then given to the bars of the session **after** the one it became
+  known on, so nothing on a day's bars depends on that day's close. Weekday and
+  holiday columns are known in advance and go to their own session.
+- **Scoring is per bar.** A signal fills at the next bar's open. Sharpe and the
+  parked carry use bars a year measured on the run (252 × its bars per session),
+  stored with the run so a recalculation uses the same number; margin interest
+  accrues over the hours a bar spans. Faber and dual momentum are decided on D1
+  closes and scored on the D1 market of the run's sessions, which is trading them
+  at each session's first bar. Strategy 2 runs on D1 only: PSQ has no intraday
+  bars.
 
 Restricting the window does not change any feature value. Every column is
 normalized causally at build time, so a z-score on a given date is the same
@@ -1238,6 +1264,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-18-2 | 2026-11-18 23:40 | Claude Code (Claude Opus 5.5) | G22 I1, I2, I4: calendar files inherit features.toml; intraday calendars build and run, with their rules |
 | 2026-11-18-1 | 2026-11-18 13:26 | Claude Code (Claude Opus 5.5) | G22 I3: one config file per calendar, and only D1 builds for now |
 | 2026-11-17-2 | 2026-11-17 12:06 | Claude Code (Claude Opus 5.5) | G69: "How to read a result" and "Known limitations" written against today's code; 12 links into the deleted Architecture guide now point here or at the code |
 | 2026-11-17-1 | 2026-11-17 11:34 | Claude Code (Claude Opus 5.5) | Roadmap: phase one answered (Done), phase two groundwork (Now, Next); Strategy 2 gets its own section |

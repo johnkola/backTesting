@@ -65,11 +65,16 @@ class TestFoldPlan:
             train_start=2003, first_val=2016, last_val=2021, test_end=date(2026, 6, 30),
         )
 
-    @pytest.mark.parametrize("tf", ["M30", "H1", "W1"])
-    def test_a_non_daily_timeframe_is_refused(self, tf):
-        # DESIGN-GAPS I4/I5: rows keyed by date and 252 periods a year.
+    @pytest.mark.parametrize("tf", ["W1", "MN1"])
+    def test_a_weekly_or_monthly_timeframe_is_refused(self, tf):
+        # G22: walk-forward runs on D1 and intraday calendars only.
         with pytest.raises(ss.StrategyRefused, match=f"timeframe '{tf}'"):
             ss.fold_plan(a_strategy(timeframe=tf))
+
+    @pytest.mark.parametrize("tf", ["M30", "H1"])
+    def test_an_intraday_timeframe_plans_its_folds(self, tf):
+        # G22 I4: rows keyed by bar, bars a year measured on the run's axis.
+        assert ss.fold_plan(a_strategy(timeframe=tf)) is not None
 
     @pytest.mark.parametrize("scheme", ["single", "kfold_time"])
     def test_a_scheme_with_no_runner_is_refused_not_run_as_walkforward(self, scheme):

@@ -70,6 +70,7 @@ from typing import Any
 
 from nn import engines as engine_registry
 from nn import label_kinds
+from nn.feature_store import session_of
 from nn.profit import D9_REASON
 
 #: Saved hyperparameter -> walk-forward argument. Mirrors PARAM_SPEC in
@@ -286,14 +287,13 @@ def _ends_a_year(d: date) -> bool:
 def fold_plan(s: Strategy) -> FoldPlan:
     """The strategy's windows as year folds, or `StrategyRefused`."""
     errors: list[str] = []
-    if s.timeframe != "D1":
-        # DESIGN-GAPS I4/I5: the feature table, the matrix and the scoring are
-        # daily by construction (rows keyed by date, 252 periods a year), so an
-        # intraday or weekly strategy would collapse to one row a day and be
-        # annualised as if each bar were a day. Refused until they are not.
+    if s.timeframe in ("W1", "MN1"):
+        # G22: the feature table and the scoring run on D1 and on intraday
+        # calendars (rows keyed by bar, bars a year measured, I1 to I4). A
+        # weekly or monthly calendar has neither a build nor a test yet.
         errors.append(
-            f"timeframe {s.timeframe!r} cannot run yet: walk-forward is daily "
-            f"only (one row per date, 252 periods a year); use D1"
+            f"timeframe {s.timeframe!r} cannot run yet: walk-forward runs on D1 or an "
+            f"intraday calendar; use D1"
         )
     if s.validation_scheme != "walkforward":
         errors.append(
@@ -502,7 +502,7 @@ def train_coverage(
     The caller prints this and stores it on the run whether or not it is short:
     a full window is a fact worth recording too.
     """
-    inside = [d for d in dates if since <= d < until]
+    inside = [d for d in dates if since <= session_of(d) < until]
     return TrainCoverage(
         first=inside[0] if inside else None, last=inside[-1] if inside else None,
         used=len(inside), bars=train_bars,

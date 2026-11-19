@@ -68,7 +68,7 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
             end: str | None = None, days: int | None = None) -> dict[str, Any]:
     """The before/after of `column` in set `set_id` over [start, end], or the
     last `days` (DEFAULT_DAYS) up to `end` when no start is given."""
-    from nn import feature_build, feature_config, staleness
+    from nn import feature_build, feature_config, feature_store, staleness
 
     cur.execute(
         "SELECT method, params_json, series_json, role FROM feature_spec "
@@ -81,8 +81,9 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
     params = (json.loads(params_json) if isinstance(params_json, str) else params_json) or {}
 
     # Against the file that built this set (I3), not features.toml by name.
-    cur.execute("SELECT config_hash, config_file FROM feature_sets WHERE id = %s", (set_id,))
-    set_hash, cfg_file = cur.fetchone()
+    cur.execute("SELECT config_hash, config_file, timeframe FROM feature_sets WHERE id = %s",
+                (set_id,))
+    set_hash, cfg_file, set_tf = cur.fetchone()
     cfg_path = feature_config.config_path(cfg_file)
     cfg = feature_config.load(cfg_path)
     _, _, calendar, _ = feature_build.load_calendar(cur, cfg)
@@ -92,7 +93,8 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
     lo, hi = window(calendar, start, end, days or DEFAULT_DAYS)
     before = feature_build.resolve_aligned(cur, series, cfg, calendar)
     cur.execute(
-        "SELECT timestamp::date, value FROM feature_values WHERE feature_set_id = %s "
+        f"SELECT {feature_store.key_sql(set_tf, 'timestamp')}, value FROM feature_values "  # noqa: S608
+        "WHERE feature_set_id = %s "
         "AND feature_name = %s AND timestamp >= %s AND timestamp < %s",
         (set_id, column, lo.isoformat(), (hi + dt.timedelta(days=1)).isoformat()))
     after = {d: (None if v is None else float(v)) for d, v in cur.fetchall()}
