@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-19-2** · 2026-11-19 10:44 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-19-5** · 2026-11-19 12:55 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -913,6 +913,69 @@ Effort: L. **Decided by the author, 2026-11-18:** the as-of rule as above (next 
 
 Not before a decision: G51, G52, G53, G56, G58 and G60 are L or XL and each depends on C1 (the Spring Boot move) or on which requirements the author keeps.
 
+**I7 plan (G22), 2026-11-19.** **Decided by the author, 2026-11-19: imported intraday files are in New York time.** Today a bare `09:30` is stored as `09:30Z`, so a browser in New York shows 04:30 or 05:30, and a vendor file already in UTC would sit hours away from it.
+
+The shape:
+- **Storage stays UTC.** The import reads a bare intraday time as `America/New_York` and stores the instant: 09:30 is `14:30Z` in winter and `13:30Z` in summer. A time that carries its own offset (`Z`, `+00:00`) is taken as written. Daily, weekly and monthly bars do not move: their key is the date.
+- **A session is still one UTC date** (09:30 to 16:00 New York is 13:30 to 21:00 UTC at the widest), so `session_of`, the folds, the D1 roll-up and the cohesion gap check keep working as they are. The H4 roll-up buckets in New York time, or its bars would shift with daylight saving.
+- **Shown in New York time:** charts, tables and cohesion findings for intraday bars.
+- **Stored data it touches:** the synthetic M30 and H1 candles and their H4 roll-up (re-imported; D1 rolled up from them must come out identical), sets 54 and 56 (rebuilt), runs 953 and 978 (rerun). No `yahoo-adj` series, no D1 set and no D1 run moves.
+
+- [ ] Import: bare intraday times read as New York, offsets honoured, D1 and coarser untouched; the nonexistent and repeated hours at a clock change cannot occur inside 09:30 to 16:00, and a file that has one outside it is refused with the row named. Tests
+- [ ] `tools/datagen` comment and README say New York, not UTC; the H4 roll-up buckets in New York time. Tests
+- [ ] Client and cohesion findings show intraday times in New York time. Tests
+- [ ] Checkpoint before stored data moves: back up the synthetic candles, sets 54 and 56, runs 953 and 978; show what a dry re-import would change
+- [ ] Re-import synthetic M30 and H1; roll up; synthetic D1 identical to before, bar for bar
+- [ ] Rebuild sets 54 and 56; rerun 953 and 978. Faber must come out as before (it is decided on D1); every other stored run recalculates exactly
+- [ ] All four CI jobs; rebuild loader, api, client and engine; the I7 row says done
+
+Effort: M.
+
+
+
+**Decisions and work order, 2026-11-19.** The author answered every open question, asked one at a time, and then: "we get all answers, start to fix it".
+
+| Question | The author's answer | What it means for the code |
+|---|---|---|
+| I7, intraday timezone | New York time; a time carrying its own offset is trusted | the I7 plan above |
+| Synthetic M30 and H1 data | Re-import as New York time, rebuild sets 54 and 56, rerun 953 and 978 | part of I7 |
+| Held QQQ `yahoo-adj` | Apply, then rebuild | back up, apply, rebuild the daily set, rerun or recalculate what reads stale |
+| Intraday data | The author buys FirstRate Data | the import is made ready for its files (New York time) |
+| C1, the stack (G16) | After phase two works on real data | no Spring Boot move now; G51, G52, G53, G56, G58, G60 are built on the current stack when their turn comes |
+| C2, checks (D11) | Errors stop, warnings continue | new work: a finding has a severity, and an error blocks the import or build until fixed or overridden (R12, R65) |
+| C3, nulls (D2) | Keep NULLs, dropped at read | no change; D2 closes as a departure from R3 |
+| C4, DL4J and ONNX (D13) | Drop it, PyTorch only | no change; D13 closes as a departure from R62 |
+| C5, TA-Lib (D14) | Keep the hand-written indicators | no change; D14 closes as a departure from R66 |
+| C6, window (D3) | Offer both, expanding the default | new work: a sliding window (length and step) on the strategy; existing strategies unchanged |
+| C7, RSI, MACD, realized volatility | Selectable per strategy, off by default | new work: `data only` becomes selectable; stored runs unchanged |
+| C8, the five rule strategies | Benchmarks only | new work: kept runnable for comparison, not offered as strategies |
+| F1, VIX term structure | Selectable input, off by default | new feature column |
+| F2, QQQ/SPY relative strength | Selectable input, off by default | new feature column |
+| F3, high-yield credit spread | Drop it | closes |
+| Requirements doc | Approve after re-checking the statuses | re-verify each status against the code, then it stops being a draft |
+
+The readonly design set is the author's to update where an answer departs from it (C3, C4, C5, C1's timing).
+
+**Work order.** One job at a time, each with its own plan and record here, and a stop before any stored data moves:
+
+- [x] 1. Apply the held QQQ series; rebuild the daily set; rerun or recalculate what reads stale (S). *Done 2026-11-19; see the record below*
+- [ ] 2. I7: New York time on import, per the plan above (M)
+- [ ] 3. FirstRate import readiness: its file layout and names through the drop folder (S, after 2)
+- [ ] 4. G54: the Strategy tab and the runner agree on what can run (S)
+- [ ] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
+- [ ] 6. C6: the sliding window option (M)
+- [ ] 7. C8: the rule strategies as benchmarks only (S)
+- [ ] 8. C2: severities and the hard stop (M)
+- [ ] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
+- [ ] 10. Then the earlier list: G57, G50, G40 and G41, and the small ones
+
+**Job 1 record: the held feeds, 2026-11-19 12:55.** Six series were held, not one: QQQ, SPY and PSQ on `yahoo` and `yahoo-adj`, each for two settled volumes (2026-11-13, 11-16) and, on QQQ and PSQ, a cent on an 11-16 price.
+
+- **What went wrong.** All six were applied on the claim that only those two days would move and no stored run could, the days being past every window. That was not checked and was wrong: Apply re-downloads the whole history, and Yahoo's adjusted prices came back different in the seventh digit on most of it (QQQ 5,723 days, SPY 7,084, PSQ 3,893, largest 1.5e-5 relative; the unadjusted series moved on the fixed days only). 11 of 13 runs stopped recalculating exactly and Training read stale. The candles had been backed up first (`feeds-apply/candles-before.csv.gz` in the session scratchpad).
+- **Put right, as the author chose** (restore the old history, keep the real fixes): the three adjusted series re-applied through the feeds' own path with every day before 2026-11-13 as it was and 11-13 onward as fetched (feed runs 21 to 23). Against the backup the six series now differ on 2026-11-13 and 11-16 only, plus the new days 11-17 and 11-18. All 13 runs, 101 folds, recalculate exactly; every stage passes on D1, H1 and M30; the daily set is rebuilt to 2026-11-18 (6,968 rows).
+- **So it cannot recur:** `core.keep_unchanged`. An Apply leaves a day byte for byte as stored when it is the same data by the hold's own rule (`core.differs`: prices within `PRICE_REL_TOL`, volume equal), and writes the rest; a dividend rescale is beyond the tolerance everywhere and is written in full. Live: a second Apply of QQQ `yahoo-adj` against Yahoo's real download answered up-to-date and changed no stored bar (feed run 24).
+- **Tests:** `test_feeds_core.TestKeepUnchanged` (3), on the values that came back.
+- **Left open:** a quarterly dividend re-adjustment still moves the whole adjusted history legitimately and makes every run stale; that is the design (README, Data feeds), and the answer then is rerun or recalculate.
 
 ### Status per requirement
 
@@ -1170,7 +1233,7 @@ outlier, the 2008-09-15 open). Roll-up: synthetic D1 from M30 matches yahoo-adj 
 | I4 | The walk-forward path is keyed by date as well: `read_matrix`, `load_closes` and the park series all reduce to `timestamp::date`. Even with an intraday feature set it would collapse to one row a day | `feature_store.py:109`, `train_features.py:75`, `walkforward.py:553` | M | done 2026-11-18: see the I1, I2 and I4 record in Pass 4 |
 | I5 | Annualising counts bars as days. Engine: return, Sharpe, Sortino and Calmar use 252 per bar, and `tradingDays` is the bar count. Synthetic 2024-2025: M30 total -9.34% annualised to -0.38%, H1 +14.12% to +0.97% (about +6.8% is right) with `tradingDays` 6,462 and 3,456. Python has the same constant in the Sharpe, the `calmar` loss and the parked return (an annual rate divided by 252 per bar would pay 13x the interest on M30) | `MetricsCalculator.java:17,42,149`; `walkforward.py:52,126,581`; `money_loss.py:33,203,244` | S | done: engine annualises with `MetricsCalculator.periodsPerYear` (D1 252, W1 52, MN1 12, intraday 252 x measured bars per day; W1/MN1 were wrong too), and `tradingDays` is now distinct days. Python walk-forward refuses any timeframe but D1 (`fold_plan` and the flags path) until I4. Live: M30 -9.34% now -4.83% a year (was -0.38%), H1 +14.12% now +6.96% (was +0.97%), D1 identical in every figure |
 | I6 | A `to` date is read as midnight, so on intraday the last day is dropped while D1 keeps it: `to = 2025-12-31` ended the M30 run at 2025-12-30 15:30 and the D1 run at 2025-12-31. The Strategy tab's per-window bar counts use the same endpoint | `server.js` `/api/candles` (`timestamp <= to`); `EngineApi.parseDate` | S | done: `DateTimeUtils.parseEnd` (last microsecond of a bare date) for `to` in `/api/run` and the `run`, `train` and `signals` commands; `web/api/dateRange.js` makes `/api/candles` use `< next midnight UTC`. Live: M30 and H1 runs now end 2025-12-31 15:30; D1 unchanged |
-| I7 | Exchange-local times are stored as UTC: the file's 09:30 is stored as `09:30Z`, which a browser in New York shows as 04:30 or 05:30, and a vendor file already in UTC would sit five hours away from it. There is no timezone setting on import | `/api/candles` returns `2025-12-29T09:30:00.000Z` for the first NYSE bar | M | decision |
+| I7 | Exchange-local times are stored as UTC: the file's 09:30 is stored as `09:30Z`, which a browser in New York shows as 04:30 or 05:30, and a vendor file already in UTC would sit five hours away from it. There is no timezone setting on import | `/api/candles` returns `2025-12-29T09:30:00.000Z` for the first NYSE bar | M | open. Decided by the author 2026-11-19: New York time; see the I7 plan in Pass 4 |
 | I8 | Labels count bars: `horizonBars` 5 is five days on D1 and two and a half hours on M30, and the Strategy tab says nothing about it | `labels.py:4`; Strategy tab section 2 | S | done: `strategyForm.horizonSpan` shows the horizon as time under the field ("5 bars on M30 = 2.5 hours of trading ahead"; past a day, trading days on a 6.5-hour NYSE session), and the field hint says it counts bars |
 
 **Readiness, re-checked 2026-11-10: not ready for H1 or M30 beyond the read path and the
@@ -1719,6 +1782,9 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-19-5 | 2026-11-19 12:55 | Claude Code (Claude Fable 5.2) | Job 1: the held feeds applied, the noise it wrote put back, Apply fixed |
+| 2026-11-19-4 | 2026-11-19 12:48 | Claude Code (Claude Fable 5.2) | The author's answers to every open question, and the work order |
+| 2026-11-19-3 | 2026-11-19 12:37 | Claude Code (Claude Fable 5.2) | I7 decided by the author (New York time), and its plan |
 | 2026-11-19-2 | 2026-11-19 10:44 | Claude Code (Claude Fable 5.2) | M30 end to end done: set 56, run 978; the Data stage reads each series at its own timeframe; the plan for the next jobs |
 | 2026-11-19-1 | 2026-11-19 10:30 | Claude Code (Claude Opus 5.5) | M30 end to end plan (G22) |
 | 2026-11-18-4 | 2026-11-18 23:40 | Claude Code (Claude Opus 5.5) | I1, I2 and I4 done: intraday built and scored by bar; signals widened to timestamps; run 953 |

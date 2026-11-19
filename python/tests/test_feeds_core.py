@@ -244,3 +244,36 @@ def test_the_volume_window_never_lets_a_price_or_an_older_day_through():
     dropped = [bar("2026-11-09", 10.0, 1639), bar("2026-11-11", 12.0, 864)]
     assert core.plan_update(WINDOWED, dropped, "2026-11-11", "2026-11-09",
                             volume_window=1).status == "held"
+
+
+# --------------------------------------------------------------------------
+# An Apply rewrites only what really differs (2026-11-19)
+# --------------------------------------------------------------------------
+
+
+class TestKeepUnchanged:
+    STORED = {
+        "2020-04-06": "2020-04-06,183.567161,190.476948,182.323984,189.349411,64763500.0",
+        "2020-04-07": "2020-04-07,195.025711,195.305195,188.886892,189.272369,69904500.0",
+    }
+
+    def test_rounding_noise_leaves_the_stored_bar_byte_for_byte(self):
+        """What Yahoo's adjusted history came back as: the seventh digit moved."""
+        noisy = [("2020-04-06", 183.567191, 190.476979, 182.324013, 189.349442, 64763500.0),
+                 ("2020-04-07", 195.025695, 195.305179, 188.886877, 189.272354, 69904500.0)]
+        bars, changed = core.keep_unchanged(self.STORED, noisy)
+        assert changed == 0
+        assert [core.format_row(b) for b in bars] == list(self.STORED.values())
+
+    def test_a_settled_volume_a_new_day_and_a_real_revision_are_written(self):
+        fetched = [("2020-04-06", 183.567161, 190.476948, 182.323984, 189.349411, 64999999.0),
+                   ("2020-04-07", 195.03, 195.31, 188.89, 189.28, 69904500.0),
+                   ("2020-04-08", 190.0, 192.0, 189.0, 191.5, 50000000.0)]
+        bars, changed = core.keep_unchanged(self.STORED, fetched)
+        assert changed == 3
+        assert bars == fetched
+
+    def test_a_dividend_rescale_rewrites_every_day(self):
+        scaled = [(d, *(v * 0.998 for v in core.parse_line(ln)[1][:4]), core.parse_line(ln)[1][4])
+                  for d, ln in self.STORED.items()]
+        assert core.keep_unchanged(self.STORED, scaled)[1] == 2

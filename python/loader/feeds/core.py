@@ -268,6 +268,31 @@ def bucket_by_year(bars: Iterable[Bar]) -> dict[int, list[str]]:
     return out
 
 
+def keep_unchanged(stored: dict[str, str], bars: Iterable[Bar]) -> tuple[list[Bar], int]:
+    """An Apply's bars, with every day that is the same data as its stored bar
+    (`differs`) left exactly as stored. Returns the bars and how many changed.
+
+    A full re-download of adjusted prices comes back with rounding noise in
+    the seventh digit on most of the history (PRICE_REL_TOL). Writing that
+    over the stored bars changes no information and every hash: on 2026-11-19
+    an Apply for two settled volumes rewrote 5,723 QQQ days, and 11 stored
+    runs stopped recalculating exactly. A real revision (a dividend rescale, a
+    corrected print) is beyond the tolerance on every day it touches, and is
+    written as before."""
+    out: list[Bar] = []
+    changed = 0
+    for bar in sorted(bars, key=lambda b: b[0]):
+        line = stored.get(bar[0])
+        if line is not None:
+            old = parse_line(line)[1]
+            if not differs(old, bar[1:6]):
+                out.append((bar[0], *old))
+                continue
+        changed += 1
+        out.append(bar)
+    return out, changed
+
+
 def cut(bars: Iterable[Bar], cutoff: dt.date, start: dt.date | None = None) -> list[Bar]:
     """Bars dated within [start, cutoff], oldest first."""
     hi = cutoff.isoformat()

@@ -322,9 +322,15 @@ def load_full(conn, feed: Feed, ctx: RunContext, *, apply: bool) -> dict:
     bars = fetch_bars(feed, None, ctx)
     if not bars:
         raise FeedError("the provider returned no bars")
+    written = len(bars)
+    if apply:
+        # Only what really differs is rewritten (`core.keep_unchanged`).
+        stored = {ln[:10]: ln for y in sorted({core.year_of(b[0]) for b in bars})
+                  for ln in (stored_rows(conn, feed, y) or [])}
+        bars, written = core.keep_unchanged(stored, bars)
     rows_by_year = core.bucket_by_year(bars)
     out: dict = {"feed": feed.key, "status": "applied" if apply else "loaded",
-                 "added": len(bars), "fixed": None}
+                 "added": written, "fixed": None}
     _import(conn, feed, ctx, rows_by_year, force=apply, fix_days=[], guarded=False, out=out)
     out["lastAfter"] = bars[-1][0]
     if not ctx.dry_run and out.get("status") != "up-to-date":
