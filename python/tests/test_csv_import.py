@@ -18,6 +18,7 @@ from loader.csv_import import (
     conflict_preview,
     parse_row,
     parse_rows_to_tuples,
+    regular_hours_only,
     scan_and_bucket,
     sha256_hex,
     synthesize_slice,
@@ -167,7 +168,7 @@ def test_a_clean_file_skips_nothing():
     csv = b"Date,Open,High,Low,Close,Volume\n2008-01-02,1,2,0,1.5,100\n"
     skipped = SkippedRows()
     scan_and_bucket(io.BytesIO(csv), skipped)
-    assert skipped.to_dict() == {"count": 0, "examples": []}
+    assert skipped.to_dict() == {"count": 0, "examples": [], "outsideSession": 0}
 
 
 def test_conflict_preview_maps_plan_to_status():
@@ -229,3 +230,78 @@ def test_any_other_layout_is_refused_and_names_the_expected_header(header):
     why = check_header(header)
     assert why is not None
     assert "Date,Open,High,Low,Close,Volume" in why
+
+
+# -- Regular session only, on an intraday stock file (FirstRate readiness) ----
+
+
+def _kept(csv: str, timeframe: str = "M30") -> tuple[list[str], SkippedRows]:
+    skipped = SkippedRows()
+    _, by_year = scan_and_bucket(io.BytesIO(csv.encode()), skipped, timeframe, True)
+    return [r[:19] for rows in by_year.values() for r in rows], skipped
+
+
+def test_only_an_intraday_stock_file_is_cut_to_the_regular_session():
+    assert regular_hours_only("STOCK", "M30") and regular_hours_only("STOCK", "M1")
+    assert not regular_hours_only("STOCK", "D1")
+    assert not regular_hours_only("FOREX", "M30")
+    assert not regular_hours_only("CRYPTO", "H1")
+
+
+def test_bars_before_the_open_and_from_the_close_on_are_left_out():
+    """FirstRate's layout: `timestamp` header, New York times, 04:00 to 19:30.
+    A bar belongs to the session by its start, so 15:30 stays and 16:00 goes."""
+    csv = ("timestamp,open,high,low,close,volume\r\n"
+           "2024-07-08 04:00:00,1,2,0,1.5,100\r\n"
+           "2024-07-08 09:00:00,1,2,0,1.5,100\r\n"
+           "2024-07-08 09:30:00,1,2,0,1.5,100\r\n"
+           "2024-07-08 15:30:00,1,2,0,1.5,100\r\n"
+           "2024-07-08 16:00:00,1,2,0,1.5,100\r\n"
+           "2024-07-08 19:30:00,1,2,0,1.5,100.5\r\n")
+    kept, skipped = _kept(csv)
+    assert kept == ["2024-07-08 09:30:00", "2024-07-08 15:30:00"]
+    assert skipped.outside_session == 4 and skipped.count == 0
+    assert skipped.to_dict()["outsideSession"] == 4
+
+
+def test_the_session_is_the_same_clock_hours_in_winter_and_summer():
+    csv = ("timestamp,open,high,low,close,volume\n"
+           "2024-01-08 09:00:00,1,2,0,1.5,100\n"
+           "2024-01-08 09:30:00,1,2,0,1.5,100\n"
+           "2024-01-08 15:30:00,1,2,0,1.5,100\n"
+           "2024-01-08 16:00:00,1,2,0,1.5,100\n")
+    assert _kept(csv)[0] == ["2024-01-08 09:30:00", "2024-01-08 15:30:00"]
+
+
+def test_a_time_with_its_own_offset_is_judged_by_its_new_york_hour():
+    csv = ("timestamp,open,high,low,close,volume\n"
+           "2024-07-08T13:30:00Z,1,2,0,1.5,100\n"     # 09:30 New York
+           "2024-07-08T13:00:00Z,1,2,0,1.5,100\n")    # 09:00 New York
+    assert _kept(csv)[0] == ["2024-07-08T13:30:00"]
+
+
+def test_a_half_day_ends_at_one_oclock():
+    """2024-11-29 is the day after Thanksgiving; after-hours trading goes on
+    past 13:00 and the vendor's file has those bars."""
+    csv = ("timestamp,open,high,low,close,volume\n"
+           "2024-11-29 12:30:00,1,2,0,1.5,100\n"
+           "2024-11-29 13:00:00,1,2,0,1.5,100\n"
+           "2024-11-29 15:30:00,1,2,0,1.5,100\n"
+           "2024-12-02 15:30:00,1,2,0,1.5,100\n")
+    assert _kept(csv)[0] == ["2024-11-29 12:30:00", "2024-12-02 15:30:00"]
+
+
+def test_a_row_that_does_not_parse_is_still_reported_not_counted_as_outside():
+    csv = ("timestamp,open,high,low,close,volume\n"
+           "2024-07-08 10:00:00,1,2,0,oops,100\n"
+           "2024-07-08 04:00:00,1,2,0,1.5,100\n")
+    kept, skipped = _kept(csv)
+    assert skipped.count == 1 and skipped.outside_session == 1
+    assert kept == ["2024-07-08 10:00:00"]      # stays in its slice, as before
+
+
+def test_without_the_cut_every_bar_is_kept():
+    csv = ("timestamp,open,high,low,close,volume\n"
+           "2024-07-08 04:00:00,1,2,0,1.5,100\n")
+    _, by_year = scan_and_bucket(io.BytesIO(csv.encode()), None, "M30")
+    assert len(by_year[2024]) == 1

@@ -68,3 +68,40 @@ def test_a_file_with_the_wrong_header_fails_before_the_database(tmp_path, capsys
                  "2008-01-02,1,2,0,1.5,1.4,100\n", encoding="utf-8")
     assert ingest._process_one(f, force=False, dry_run=False) == "parse-error"
     assert "Adj Close" in capsys.readouterr().out
+
+
+# -- FirstRate Data's own file names -----------------------------------------
+
+
+def test_a_firstrate_name_is_read_without_renaming():
+    assert parse_filename("QQQ_full_30min_adjsplitdiv.txt") == (
+        "firstrate-adj", "QQQ", "STOCK", "M30")
+    assert parse_filename("QQQ_full_1min_adjsplit.txt") == ("firstrate-split", "QQQ", "STOCK", "M1")
+    assert parse_filename("QQQ_full_1day_UNADJUSTED.txt") == ("firstrate-raw", "QQQ", "STOCK", "D1")
+    assert parse_filename("qqq_30min_sample.csv") == ("firstrate", "QQQ", "STOCK", "M30")
+
+
+def test_each_adjustment_is_its_own_source():
+    names = ["QQQ_full_5min_adjsplitdiv.txt", "QQQ_full_5min_adjsplit.txt",
+             "QQQ_full_5min_UNADJUSTED.txt"]
+    assert len({parse_filename(n)[0] for n in names}) == 3
+
+
+def test_a_firstrate_hourly_file_is_refused_with_the_reason():
+    with pytest.raises(ValueError, match="pre-market"):
+        parse_filename("QQQ_full_1hour_adjsplitdiv.txt")
+
+
+def test_a_firstrate_name_with_an_unknown_adjustment_is_not_guessed():
+    with pytest.raises(ValueError, match="not one of its adjustments"):
+        parse_filename("QQQ_full_30min_mystery.txt")
+    with pytest.raises(ValueError, match="not one of its adjustments"):
+        parse_filename("QQQ_full_30min.txt")
+
+
+def test_our_own_names_are_untouched_by_the_firstrate_reader():
+    assert parse_filename("yahoo__QQQ_1day__D1.csv") == ("yahoo", "QQQ_1day", "STOCK", "D1")
+    with pytest.raises(ValueError, match="SYMBOL__TIMEFRAME"):
+        parse_filename("my_data.csv")
+    with pytest.raises(ValueError):
+        parse_filename("__readme_documentation.txt")

@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-19-3** · 2026-11-19 17:27 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-19-4** · 2026-11-19 19:00 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -387,7 +387,7 @@ Three binaries. `backtest` is the Java CLI (`./gradlew run --args="<command>"`, 
 
 ### `backtest-ingest` — batch CSV import
 
-`--inbox DIR` · `--dry-run` · `--force`. Scans an inbox (default `data/csv-inbox`, or `$CSV_INBOX_DIR`) for `*.csv` named `SYMBOL__TF.csv`, `SOURCE__SYMBOL__TF.csv` or `SOURCE__SYMBOL__TYPE__TF.csv`, imports each through the same pipeline as the upload endpoint, and moves files to `processed/` or `failed/`. Non-zero exit if any file failed.
+`--inbox DIR` · `--dry-run` · `--force`. Scans an inbox (default `data/csv-inbox`, or `$CSV_INBOX_DIR`) for `*.csv` named `SYMBOL__TF.csv`, `SOURCE__SYMBOL__TF.csv` or `SOURCE__SYMBOL__TYPE__TF.csv`, and for FirstRate Data files under their own names (`.txt` or `.csv`), imports each through the same pipeline as the upload endpoint, and moves files to `processed/` or `failed/`. Non-zero exit if any file failed.
 
 ### `backtest-audit` — cohesion audit
 
@@ -464,7 +464,7 @@ cp yahoo__AAPL__D1.csv yahoo__EURUSD__FOREX__H1.csv data/csv-inbox/
 cd python && python -m loader.ingest            # --dry-run to preview, --force to overwrite
 ```
 
-Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / extend / overwrite / conflict), and upserted into `candles` in one transaction. Every distinct file is recorded as a version in `import_files` and labelled `new`, `update` (later days only), `fix` (past bars changed or dropped) or `update+fix`. An identical file prints `SAME` and is not parsed, and a changed year prints its diff with the first changed dates. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
+Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / extend / overwrite / conflict), and upserted into `candles` in one transaction. Every distinct file is recorded as a version in `import_files` and labelled `new`, `update` (later days only), `fix` (past bars changed or dropped) or `update+fix`. An identical file prints `SAME` and is not parsed, and a changed year prints its diff with the first changed dates. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). **FirstRate Data files keep their own names:** `QQQ_full_30min_adjsplitdiv.txt` is filed as `firstrate-adj/QQQ` at M30, `..._adjsplit.txt` as `firstrate-split`, `..._UNADJUSTED.txt` as `firstrate-raw`, and the free sample (`QQQ_30min_sample.csv`) as `firstrate`. The three adjustments are three price series, so each has its own source and none can overwrite another. Their 1-hour file is refused, because its bars start on the clock hour and the 09:00 bar mixes pre-market trading into the session; import the 30-minute file. **An intraday stock file keeps only its regular-session bars** (those starting from 09:30 up to, not including, 16:00 New York time, or 13:00 on a half day), on this path and on `POST /api/imports` alike; the number left out is printed. Forex and crypto files are stored whole. After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
 
 ## Data feeds
 
@@ -1265,6 +1265,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-19-4 | 2026-11-19 19:00 | Claude Code (Claude Fable 5.2) | The drop folder reads FirstRate Data file names; an intraday stock import keeps the regular session only |
 | 2026-11-19-3 | 2026-11-19 17:27 | Claude Code (Claude Fable 5.2) | Imported intraday times are New York time (G22 I7) |
 | 2026-11-19-2 | 2026-11-19 12:55 | Claude Code (Claude Fable 5.2) | Apply rewrites only the days that differ beyond rounding |
 | 2026-11-19-1 | 2026-11-19 10:44 | Claude Code (Claude Fable 5.2) | The M30 calendar file; roadmap Now and Next moved past G22 I1 to I4 |

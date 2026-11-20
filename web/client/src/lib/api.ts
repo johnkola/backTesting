@@ -237,6 +237,9 @@ export type CohesionReport = {
 export type SkippedRows = {
   count: number
   examples: { line: number, reason: string, text: string }[]
+  /** Readable bars left out of an intraday stock file because they start
+   *  outside the regular New York session. Not a fault in the file. */
+  outsideSession?: number
 }
 
 /** Discriminated union of POST /api/imports response shapes. */

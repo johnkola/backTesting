@@ -26,6 +26,21 @@ last and validated; a type segment is recognised anywhere by membership):
           yahoo__AAPL__D1.csv
           yahoo__EURUSD__FOREX__H1.csv
 
+FirstRate Data's own file names are read as they come, so a download can be
+dropped in without renaming (`.txt` or `.csv`):
+
+    QQQ_full_30min_adjsplitdiv.txt     -> firstrate-adj/QQQ STOCK M30
+    QQQ_full_1min_adjsplit.txt         -> firstrate-split/QQQ STOCK M1
+    QQQ_full_1day_UNADJUSTED.txt       -> firstrate-raw/QQQ STOCK D1
+    QQQ_30min_sample.csv               -> firstrate/QQQ STOCK M30
+
+The source says which of the three adjustments the prices carry, because they
+are three different price series and must never overwrite one another. Its
+1-hour files are refused: see `parse_firstrate_name`.
+
+An intraday stock file keeps only its regular-session bars
+(`csv_import.regular_hours_only`); the count left out is printed.
+
 After a file imports cleanly it is moved to `<inbox>/processed/`; files
 that fail to parse, conflict (without `--force`), or error out are moved
 to `<inbox>/failed/`. `--dry-run` moves nothing.
@@ -53,6 +68,7 @@ from loader.csv_import import (
     is_compressed_chunk_error,
     plan_slices,
     read_header,
+    regular_hours_only,
     scan_and_bucket,
     write_archive_files,
 )
@@ -75,6 +91,55 @@ def resolve_inbox_dir(override: str | None) -> Path:
     return DEFAULT_INBOX_DIR
 
 
+#: FirstRate Data's timeframe words. `1hour` is recognised so it can be refused.
+FIRSTRATE_TIMEFRAMES = {"1min": "M1", "5min": "M5", "30min": "M30", "1hour": "H1", "1day": "D1"}
+#: Its adjustment words, and the source each is filed under. `sample` is the
+#: free sample, which does not say how it is adjusted.
+FIRSTRATE_SOURCES = {
+    "adjsplitdiv": "firstrate-adj",
+    "adjsplit": "firstrate-split",
+    "unadjusted": "firstrate-raw",
+    "sample": "firstrate",
+}
+
+
+def parse_firstrate_name(name: str) -> tuple[str, str, str, str] | None:
+    """(source, symbol, type, timeframe) for a FirstRate Data file name, or None
+    when the name is not one of theirs.
+
+    Theirs is `TICKER_full_TIMEFRAME_ADJUSTMENT.txt` (the sample:
+    `TICKER_TIMEFRAME_sample.csv`), single underscores, where ours uses `__`.
+    A name that has their timeframe word but not a known adjustment raises
+    ValueError rather than being filed under a guessed source.
+
+    The 1-hour file is refused. Its bars start on the clock hour, so the 09:00
+    bar mixes the last half hour before the open into the session, and no
+    filter on start times can take it back out. An hourly series is rolled up
+    from the 30-minute file instead.
+    """
+    stem, dot, ext = name.rpartition(".")
+    if not dot or ext.lower() not in ("txt", "csv") or "__" in stem:
+        return None
+    parts = stem.split("_")
+    words = [w.lower() for w in parts[1:]]
+    found = [w for w in words if w in FIRSTRATE_TIMEFRAMES]
+    if len(parts) < 3 or len(found) != 1 or not parts[0]:
+        return None
+    rest = [w for w in words if w != found[0] and w != "full"]
+    if len(rest) != 1 or rest[0] not in FIRSTRATE_SOURCES:
+        raise ValueError(
+            f"looks like a FirstRate Data file, but {'_'.join(rest) or 'nothing'!r} is not "
+            f"one of its adjustments ({', '.join(FIRSTRATE_SOURCES)}); "
+            "rename it SOURCE__SYMBOL__TIMEFRAME.csv to say what it is"
+        )
+    if found[0] == "1hour":
+        raise ValueError(
+            "FirstRate Data's 1-hour bars start on the clock hour, so the 09:00 bar "
+            "mixes pre-market trading into the session; import the 30min file instead"
+        )
+    return FIRSTRATE_SOURCES[rest[0]], parts[0].upper(), "STOCK", FIRSTRATE_TIMEFRAMES[found[0]]
+
+
 def parse_filename(name: str) -> tuple[str, str, str, str]:
     """Derive (source, symbol, type, timeframe) from a file name.
 
@@ -83,6 +148,10 @@ def parse_filename(name: str) -> tuple[str, str, str, str]:
     membership in ALLOWED_TYPES. What's left is the symbol, optionally
     preceded by a source. Raises ValueError with a human-readable reason
     if the name doesn't fit the convention."""
+
+    theirs = parse_firstrate_name(name)
+    if theirs is not None:
+        return theirs
 
     stem = name[:-4] if name.lower().endswith(".csv") else name
     segments = [s for s in stem.split("__") if s != ""]
@@ -162,10 +231,14 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
 
     with open(path, "rb") as stream:
         skipped = SkippedRows()
-        header, rows_by_year = scan_and_bucket(stream, skipped, timeframe)
+        header, rows_by_year = scan_and_bucket(
+            stream, skipped, timeframe, regular_hours_only(type_, timeframe))
     if not header or not rows_by_year:
         print(f"  SKIP  {path.name}: no parseable data rows")
         return "empty"
+    if skipped.outside_session:
+        print(f"  NOTE  {path.name}: left out {skipped.outside_session} bars "
+              "outside the regular session (09:30 to 16:00 New York time)")
     # R6: say which rows produced no candle; the rest still import.
     if skipped.count:
         print(f"  WARN  {path.name}: {skipped.summary()}")
@@ -272,9 +345,12 @@ def main(argv: list[str] | None = None) -> int:
     inbox.mkdir(parents=True, exist_ok=True)
     print(f"Inbox: {inbox.resolve()}")
 
-    files = sorted(p for p in inbox.glob("*.csv") if p.is_file())
+    # `.txt` is FirstRate Data's extension; any other .txt fails on its name
+    # and is moved to failed/ with the reason, like a misnamed .csv.
+    files = sorted(p for p in inbox.iterdir()
+                   if p.is_file() and p.suffix.lower() in (".csv", ".txt"))
     if not files:
-        print("Nothing to do — no .csv files in the inbox.")
+        print("Nothing to do — no .csv or .txt files in the inbox.")
         return 0
 
     print(f"Found {len(files)} file(s)." + (" (dry run — no writes)" if args.dry_run else ""))

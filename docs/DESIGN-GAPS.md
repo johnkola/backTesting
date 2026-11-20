@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-19-6** · 2026-11-19 17:42 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-19-7** · 2026-11-19 19:00 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -970,7 +970,7 @@ The readonly design set is the author's to update where an answer departs from i
 
 - [x] 1. Apply the held QQQ series; rebuild the daily set; rerun or recalculate what reads stale (S). *Done 2026-11-19; see the record below*
 - [x] 2. I7: New York time on import, per the plan above (M). *Done 2026-11-19; see the I7 record*
-- [ ] 3. FirstRate import readiness: its file layout and names through the drop folder (S, after 2)
+- [x] 3. FirstRate import readiness: its file layout and names through the drop folder (S, after 2). *Done 2026-11-19; see the job 3 record*
 - [ ] 4. G54: the Strategy tab and the runner agree on what can run (S)
 - [ ] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
 - [ ] 6. C6: the sliding window option (M)
@@ -986,6 +986,26 @@ The readonly design set is the author's to update where an answer departs from i
 - **So it cannot recur:** `core.keep_unchanged`. An Apply leaves a day byte for byte as stored when it is the same data by the hold's own rule (`core.differs`: prices within `PRICE_REL_TOL`, volume equal), and writes the rest; a dividend rescale is beyond the tolerance everywhere and is written in full. Live: a second Apply of QQQ `yahoo-adj` against Yahoo's real download answered up-to-date and changed no stored bar (feed run 24).
 - **Tests:** `test_feeds_core.TestKeepUnchanged` (3), on the values that came back.
 - **Left open:** a quarterly dividend re-adjustment still moves the whole adjusted history legitimately and makes every run stale; that is the design (README, Data feeds), and the answer then is rerun or recalculate.
+
+**Job 3: FirstRate import readiness, 2026-11-19 19:00.** Checked against FirstRate's own free ETF sample (QQQ, SPY, IWM, two weeks, all five timeframes) and its readme, not its web pages, which disagree with each other on the header and the file names.
+
+*What the files are.* A `timestamp,open,high,low,close,volume` header, which the import already accepted. New York times at the bar's start, which job 2 made the rule. `yyyy-MM-dd` on the daily file. Bars with no trades are left out. Three adjustments (none, splits, splits and dividends). Two things the import did not handle:
+
+- The intraday files run from 04:00 to 19:30, 32 half-hour bars a day where every reader here expects the session's 13.
+- The 1-hour bars start on the clock hour, so the 09:00 bar holds the half hour before the open and the first half hour of the session together.
+
+*Plan and what was done.*
+
+- [x] An intraday stock import keeps the regular session only: bars starting from 09:30 up to, not including, 16:00 New York time. Done where data comes in (`csv_import.regular_hours_only`, `in_regular_session`), on the upload route and the drop folder, so the archive slice holds exactly the stored bars and no reader has to filter. Forex and crypto are stored whole; daily files are untouched. The count left out is reported apart from rows that did not parse (the upload card and the drop folder's output).
+- [x] Half days end at 13:00: the day after Thanksgiving, Christmas Eve, and July 3 before a weekday 4th (`market_calendar.nyse_early_closes`). The vendor's file carries after-hours bars past 13:00 on those days. One-off early closes are not modelled; a missed one keeps six thin bars on that day.
+- [x] The drop folder reads FirstRate's own names, `.txt` included: `QQQ_full_30min_adjsplitdiv.txt` to `firstrate-adj/QQQ` M30, `adjsplit` to `firstrate-split`, `UNADJUSTED` to `firstrate-raw`, the sample to `firstrate`. One source per adjustment, so none overwrites another. An unknown adjustment word is refused, not guessed.
+- [x] The 1-hour file is refused with the reason. An hourly series comes from the 30-minute file.
+- [x] The real sample through the import code (no database): 30-minute 143 bars kept of 352, 13 on every one of the 11 days; 5-minute 78 a day; 1-minute 390 a day; daily 11; no row unparsed; the 1-hour file refused.
+- [x] Tests: `test_csv_import` (7 new), `test_ingest` (5 new), `test_market_calendar` (1 new). No vendor data is committed; the fixtures are hand-written in its layout.
+
+*Found, and not something the import can fix.* The session's bars do not add up to the vendor's own daily bar. Over the 11 sample days the last 30-minute close differs from the daily close on 9, by about 1 basis point as a rule and by 11 and 9 on two days; the open differs by up to 3 cents on 6; the session's volume is 54 to 67 percent of the daily figure. The daily bar carries the opening and closing auction prices, and the closing auction prints at 16:00, after the last session bar. So a daily bar rolled up from 30-minute bars is close to the official one and not equal to it. It matters in one place: on the intraday calendar QQQ's own columns come from the bars, and every daily series stays on the official daily prices.
+
+*Left for when the files arrive* (each needs the data): a calendar file for the real series (`QQQ-firstrate-M30.toml`, the synthetic one with the source changed); which adjustment to train on (the split-and-dividend one matches `yahoo-adj`, and is rewritten in full at each dividend, which is a fix import by design); the hourly roll-up, which today buckets on the clock hour and would give a half bar at 09:30 followed by six whole ones, where the synthetic H1 starts at 09:30.
 
 ### Status per requirement
 
@@ -1792,6 +1812,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-19-7 | 2026-11-19 19:00 | Claude Code (Claude Fable 5.2) | Job 3 done: the import is ready for FirstRate Data files, checked on its sample |
 | 2026-11-19-6 | 2026-11-19 17:42 | Claude Code (Claude Fable 5.2) | I7 done: New York time on import; synthetic data re-read; runs 1015 and 1016. G22 done |
 | 2026-11-19-5 | 2026-11-19 12:55 | Claude Code (Claude Fable 5.2) | Job 1: the held feeds applied, the noise it wrote put back, Apply fixed |
 | 2026-11-19-4 | 2026-11-19 12:48 | Claude Code (Claude Fable 5.2) | The author's answers to every open question, and the work order |

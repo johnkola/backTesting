@@ -63,3 +63,15 @@ def test_missing_trading_days_skips_weekends_and_holidays():
     assert missing_trading_days(date(2023, 1, 9), date(2023, 1, 12)) == 2
     # Friday -> Monday over a normal weekend: nothing missing.
     assert missing_trading_days(date(2023, 1, 6), date(2023, 1, 9)) == 0
+
+
+def test_the_half_days_follow_the_standing_rules():
+    from loader.market_calendar import is_early_close
+    assert is_early_close(date(2024, 11, 29))        # day after Thanksgiving
+    assert is_early_close(date(2024, 12, 24)) and is_early_close(date(2024, 7, 3))
+    assert is_early_close(date(2023, 7, 3))          # a Monday before a Tuesday 4th
+    assert not is_early_close(date(2020, 7, 3))      # the observed holiday itself
+    assert not is_early_close(date(2020, 7, 2))
+    assert not is_early_close(date(2021, 12, 24))    # Christmas observed
+    assert not is_early_close(date(2022, 7, 1))      # the 4th was a Monday
+    assert not is_early_close(date(2024, 12, 23))

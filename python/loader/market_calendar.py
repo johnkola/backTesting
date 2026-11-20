@@ -95,6 +95,31 @@ def is_trading_holiday(d: date) -> bool:
     return d in nyse_holidays(d.year)
 
 
+@lru_cache(maxsize=256)
+def nyse_early_closes(year: int) -> frozenset[date]:
+    """The sessions in `year` that end at 13:00 New York time instead of 16:00.
+
+    The standing rules: the day after Thanksgiving, Christmas Eve, and July 3
+    when the 4th is a weekday; each only when the day is itself a session. The
+    import uses this to leave after-hours bars out of a half day
+    (`csv_import.in_regular_session`). One-off early closes and the different
+    hours of the years before these rules settled are not modelled: a missed
+    one keeps six thin after-hours bars on that day, never drops a real one.
+    """
+    holidays = nyse_holidays(year)
+    days = [
+        _nth_weekday(year, 11, 3, 4) + timedelta(days=1),
+        date(year, 12, 24),
+    ]
+    if date(year, 7, 4).weekday() < _SAT:
+        days.append(date(year, 7, 3))
+    return frozenset(d for d in days if d.weekday() < _SAT and d not in holidays)
+
+
+def is_early_close(d: date) -> bool:
+    return d in nyse_early_closes(d.year)
+
+
 def missing_trading_days(a: date, b: date) -> int:
     """Count weekdays strictly between `a` and `b` that are NOT NYSE
     holidays — i.e. trading days for which a D1 bar is genuinely missing.

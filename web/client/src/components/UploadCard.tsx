@@ -236,6 +236,12 @@ function UploadFeedback({ state }: { state: UploadState }) {
           )}
           <SliceList rows={result.imports} />
           {result.skipped && result.skipped.count > 0 && <SkippedPanel skipped={result.skipped} />}
+          {!!result.skipped?.outsideSession && (
+            <div className="text-xs opacity-70">
+              Left out {result.skipped.outsideSession.toLocaleString()} bars outside the regular
+              session (09:30 to 16:00 New York time).
+            </div>
+          )}
           {result.cohesion && <CohesionPanel report={result.cohesion} />}
         </div>
       </div>

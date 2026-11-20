@@ -28,6 +28,7 @@ from loader.csv_import import (
     is_compressed_chunk_error,
     plan_slices,
     read_header,
+    regular_hours_only,
     scan_and_bucket,
     write_archive_files,
 )
@@ -100,7 +101,8 @@ async def post_imports(
 
         with open(tmp_path, "rb") as stream:
             skipped = SkippedRows()
-            header, rows_by_year = scan_and_bucket(stream, skipped, timeframe)
+            header, rows_by_year = scan_and_bucket(
+                stream, skipped, timeframe, regular_hours_only(type, timeframe))
         if not header or not rows_by_year:
             return _bad("CSV contains no parseable data rows")
 

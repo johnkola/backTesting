@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from psycopg import Connection
 
 from loader.archive_path import relative_path, resolve_archive_root
+from loader.market_calendar import is_early_close
 
 ALLOWED_TIMEFRAMES = {"M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"}
 ALLOWED_TYPES = {"STOCK", "FOREX", "CRYPTO", "INDEX", "COMMODITY"}
@@ -240,6 +241,9 @@ class SkippedRows:
 
     count: int = 0
     examples: list[dict[str, object]] = field(default_factory=list)
+    #: Readable bars left out because they are outside the regular session
+    #: (`regular_hours_only`). Not a fault in the file, so counted apart.
+    outside_session: int = 0
 
     def add(self, line_no: int, reason: str, text: str) -> None:
         self.count += 1
@@ -247,7 +251,8 @@ class SkippedRows:
             self.examples.append({"line": line_no, "reason": reason, "text": text[:120]})
 
     def to_dict(self) -> dict[str, object]:
-        return {"count": self.count, "examples": list(self.examples)}
+        return {"count": self.count, "examples": list(self.examples),
+                "outsideSession": self.outside_session}
 
     def summary(self) -> str:
         return f"skipped {self.count} row{'' if self.count == 1 else 's'} that did not parse"
@@ -255,6 +260,7 @@ class SkippedRows:
 
 def scan_and_bucket(
     stream: IO[bytes], skipped: SkippedRows | None = None, timeframe: str = "D1",
+    regular_hours: bool = False,
 ) -> tuple[str | None, dict[int, list[str]]]:
     """Single streaming pass over the upload. Captures the header line
     (first non-empty), then groups each subsequent row by year extracted
@@ -264,7 +270,11 @@ def scan_and_bucket(
     do but will not parse into a candle stay in their year (so the slice and
     its hash are what they always were) but produce no bar. Both are recorded
     in `skipped` when one is passed, with the same reasons
-    `parse_rows_to_tuples` applies."""
+    `parse_rows_to_tuples` applies.
+
+    With `regular_hours`, a readable bar outside the regular New York session
+    is left out of its year altogether, so the slice, its hash and the archive
+    hold exactly the bars that are stored (see `regular_hours_only`)."""
 
     header: str | None = None
     rows_by_year: dict[int, list[str]] = {}
@@ -282,10 +292,15 @@ def scan_and_bucket(
             if skipped is not None:
                 skipped.add(line_no, "no yyyy-MM-dd date at the start", line)
             continue
-        if skipped is not None:
+        if skipped is not None or regular_hours:
             parsed = parse_row(line, timeframe)
             if isinstance(parsed, str):
-                skipped.add(line_no, parsed, line)
+                if skipped is not None:
+                    skipped.add(line_no, parsed, line)
+            elif regular_hours and not in_regular_session(parsed[0]):
+                if skipped is not None:
+                    skipped.outside_session += 1
+                continue
         year = int(m.group(1))
         rows_by_year.setdefault(year, []).append(line)
 
@@ -372,6 +387,35 @@ def new_york_to_utc(stamp: str) -> str | None:
     if first.utcoffset() != second.utcoffset():
         return None
     return first.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%S") + stamp[19:] + "Z"
+
+
+#: The regular New York session, as minutes of the day: a bar belongs to it by
+#: its start time. A half day ends at 13:00 (`market_calendar.is_early_close`).
+SESSION_OPEN = 9 * 60 + 30
+SESSION_CLOSE = 16 * 60
+EARLY_CLOSE = 13 * 60
+
+
+def regular_hours_only(type_: str, timeframe: str) -> bool:
+    """Whether an import keeps only the regular session's bars.
+
+    An intraday stock or ETF file does. Vendor files (FirstRate Data) run from
+    04:00 to 20:00 New York time, and every reader here, from the bars-a-year
+    count to the daily roll-up, takes an intraday stock bar to be a
+    09:30 to 16:00 one. Leaving the rest out at the one place data comes in is
+    what keeps that true for all of them. Forex and crypto trade round the
+    clock and are stored whole; a date-keyed bar has no time of day.
+    """
+    return type_ == "STOCK" and timeframe not in DATE_KEYED
+
+
+def in_regular_session(iso: str) -> bool:
+    """Whether the bar starting at this stored instant (as `parse_row` returns
+    it) starts inside the regular New York session of its day."""
+    wall = dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(FILE_ZONE)
+    minute = wall.hour * 60 + wall.minute
+    close = EARLY_CLOSE if is_early_close(wall.date()) else SESSION_CLOSE
+    return SESSION_OPEN <= minute < close
 
 
 def parse_row(line: str, timeframe: str) -> CandleTuple | str:
