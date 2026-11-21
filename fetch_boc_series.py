@@ -17,7 +17,7 @@ Then import it (the API must be running):
 Series this project uses:
     AVG.INTWO   CORRA, the Canadian Overnight Repo Rate Average, percent, business
                 daily from 1997-08-12. The realised overnight rate the Bank's target
-                steers (Features.md 42), the Canadian counterpart of Fed funds (DFF).
+                steers (backTesting-02-Features.md 42), the Canadian counterpart of Fed funds (DFF).
                 The target itself (V39079) is daily only from 2009-04-21, which
                 would set the training floor for the whole table.
 """

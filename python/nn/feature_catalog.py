@@ -15,7 +15,7 @@ rather than about configuration:
   range_start / range_end  the feature's OWN available range, read back from
                            `feature_values`. NULL until the column has been
                            built once, which is the honest answer: its range is
-                           not yet known. Design.md is explicit that the table
+                           not yet known. backTesting-OLD-Design.md is explicit that the table
                            is never trimmed to the overlap and never padded, so
                            each feature's range really is its own.
 

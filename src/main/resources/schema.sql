@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS feature_spec (
 );
 
 -- `input` feeds the network; `data` is stored beside it and never does.
--- Features.md B keeps RSI, MACD and realized volatility "computed and stored for
+-- backTesting-02-Features.md B keeps RSI, MACD and realized volatility "computed and stored for
 -- charts and rule-based strategies, but kept out of the network", so a set holds
 -- both, and every reader that builds the network's matrix reads `input` only
 -- (`feature_store.read_matrix`, `column_names`). The default makes every set
@@ -426,7 +426,7 @@ CREATE TABLE IF NOT EXISTS walkforward_runs (
 CREATE INDEX IF NOT EXISTS idx_walkforward_runs_recent
     ON walkforward_runs (timeframe, started_at DESC);
 
--- What trained the model and what it covered (Architecture.md §6.1, §6.2).
+-- What trained the model and what it covered (backTesting-04-Architecture.md §6.1, §6.2).
 -- Added after the table shipped, so nullable: older runs predate them.
 --
 -- columns_json is the input columns in order. It used to be implied by
@@ -503,7 +503,7 @@ ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS epochs_run INT;
 -- ---------------------------------------------------------------------------
 -- Lineage: which code and which inputs produced a feature build and a run (G3)
 -- ---------------------------------------------------------------------------
--- Architecture.md §1: "A feature or model run is identified by code version
+-- backTesting-04-Architecture.md §1: "A feature or model run is identified by code version
 -- plus input snapshot, so it can be recomputed and compared." §3.5 names
 -- feature_runs; §6.1 asks every run for an input snapshot id.
 --
@@ -768,7 +768,7 @@ CREATE TABLE IF NOT EXISTS feature_definitions (
     -- timestamp, and cannot without this.
     cadence VARCHAR(16) NOT NULL,
     -- The feature's OWN available range, from the stored values -- not the
-    -- table's overlap. Design.md: "The feature table is never trimmed to the
+    -- table's overlap. backTesting-OLD-Design.md: "The feature table is never trimmed to the
     -- overlap, and it is never padded either." NULL until the feature has been
     -- built once, which is honest: its range is not yet known.
     range_start TIMESTAMPTZ,

@@ -1,7 +1,7 @@
 import type { ObjectiveSpec, SavedStrategy, StrategyObjective } from './api'
 
 /**
- * The pure logic behind the Strategy tab (Architecture.md §8.1a / §8.2a).
+ * The pure logic behind the Strategy tab (backTesting-04-Architecture.md §8.1a / §8.2a).
  *
  * Kept out of the component so it can be tested without rendering anything,
  * and so the browser refuses the same strategies the server refuses. The
@@ -104,7 +104,7 @@ export function windowDays(w: DateWindow | undefined): number | null {
 /**
  * The design's own split, as the form's starting point.
  *
- * Design.md: train from 2003, walk-forward validation folds on 2016–2021, and
+ * backTesting-OLD-Design.md: train from 2003, walk-forward validation folds on 2016–2021, and
  * the 2022-onward block held back. Offered as a default because it is the
  * split the whole document argues for — not because the form fixes it; every
  * date stays editable, which is the point of the tab.

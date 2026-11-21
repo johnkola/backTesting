@@ -791,7 +791,7 @@ export type FeatureColumn = {
  * A computed column checked against the vendor's own version of the same
  * number — a `[[check]]` block in features.toml.
  *
- * Features.md 23: the yield curve is computed from DGS10 - DGS2 and FRED's
+ * backTesting-02-Features.md 23: the yield curve is computed from DGS10 - DGS2 and FRED's
  * published T10Y2Y is imported "only as a cross-check: any day where computed
  * and published values differ is flagged as a possible data problem". Reading
  * the published spread straight gave one number nobody could verify.
@@ -1159,7 +1159,7 @@ export type StrategyLabel = {
 
 /**
  * A saved strategy: every choice a training run makes, named and versioned
- * (Architecture.md §8.2a).
+ * (backTesting-04-Architecture.md §8.2a).
  *
  * `version` matters. Saving never overwrites — an edit stores a new version —
  * so a run can keep pointing at exactly the configuration it was trained from.
@@ -1250,7 +1250,7 @@ export type SaveStrategyRequest = {
 }
 
 /**
- * One row of the feature catalogue (Architecture.md §8.1a/§8.2a).
+ * One row of the feature catalogue (backTesting-04-Architecture.md §8.1a/§8.2a).
  *
  * A projection of `features.toml` into `feature_definitions`, plus the two
  * fields that are facts about stored data rather than config: `rangeStart` and

@@ -5,8 +5,8 @@ Why this exists. Reading FRED's own T10Y2Y gave the model a number nobody could
 verify: if a Treasury bar were missing or wrong, the spread would simply be
 wrong too and look fine. Computing the spread from DGS10 - DGS2 and keeping the
 published series beside it as a cross-check turns one unverifiable column into
-three series that have to agree. Features.md 23 asks for exactly that, and
-Features.md 7-8 asks for the same shape on MACD and RSI against a published
+three series that have to agree. backTesting-02-Features.md 23 asks for exactly that, and
+backTesting-02-Features.md 7-8 asks for the same shape on MACD and RSI against a published
 indicator API.
 
 Two rules the rest of the module follows from.

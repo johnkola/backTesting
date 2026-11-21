@@ -155,7 +155,7 @@ def test_an_empty_subset_is_an_error():
 
 
 # --------------------------------------------------------------------------
-# data-only columns (Features.md B: stored, kept out of the network)
+# data-only columns (backTesting-02-Features.md B: stored, kept out of the network)
 # --------------------------------------------------------------------------
 
 

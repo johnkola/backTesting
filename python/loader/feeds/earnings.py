@@ -1,4 +1,4 @@
-"""The Nasdaq-100 earnings series (Features.md 39-40), computed from each
+"""The Nasdaq-100 earnings series (backTesting-02-Features.md 39-40), computed from each
 member's SEC filings: used by `build_ndx_earnings.py` and by the feeds, so the
 stored series is the same whichever produced it. The filings themselves are
 fetched and cached by `sec`.

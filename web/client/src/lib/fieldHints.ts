@@ -1,7 +1,7 @@
 /**
  * Every tooltip in the app, in one place.
  *
- * Architecture.md §8.2a ("Tooltips everywhere"): "Every label, button, column
+ * backTesting-04-Architecture.md §8.2a ("Tooltips everywhere"): "Every label, button, column
  * header, tab title and form field carries a short description shown on hover
  * (and on focus for keyboard users). Descriptions live in one dictionary keyed
  * by element id, not inline in components, so they can be reviewed and edited

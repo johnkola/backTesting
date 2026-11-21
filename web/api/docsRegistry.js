@@ -7,16 +7,16 @@
 // KNOWN_DOCS from these keys so a doc can never render without recording a
 // revision.
 //
-// The first two are the project's own docs (docs/GETTING-STARTED.md and the
+// The first two are the project's own docs (docs/backTesting-10-Getting-Started.md and the
 // repo-root README.md): how to operate it,
 // and what to type. The last three are the QQQ model's design set, which
-// describes the model rather than this codebase (Architecture.md §8.1a asks for
+// describes the model rather than this codebase (backTesting-04-Architecture.md §8.1a asks for
 // them on the Docs tab).
 //
 // Those three come from `docs/readonly-doc/`, which the author maintains by hand and
 // nothing in this repo may write to. It supersedes
 // `docs/reference/qqq-backtesting-model/`, which is an earlier revision of the same
-// three documents and is deliberately NOT served: its Design.md still fits
+// three documents and is deliberately NOT served: its backTesting-OLD-Design.md still fits
 // normalization statistics on each feature's full history, where the current
 // text fits them on the training window only, per walk-forward fold. Serving
 // the stale copy would put a description of a data leak on the Docs tab.
@@ -26,29 +26,28 @@
 // redirects in server.js therefore point at `qqq-architecture`, which is the
 // only Architecture document left.
 //
-// `file` is a path relative to DOCS_DIR, and its spelling is load-bearing in two
-// ways. Case: `docsRegistry.test.js` checks each path against the real directory
-// entry case-sensitively, because Windows and macOS would open `DESIGN.md` for a
-// file named `Design.md` while Docker's build context and any Linux deploy will
-// not -- a case drift here is a doc tab that 404s only in production. And the
-// space in `Design Notes.md` is real; it has to survive into web/Dockerfile's
-// COPY (JSON form, so the space is not an argument break) and the compose bind
-// mounts, which the tests below check.
+// `file` is a path relative to DOCS_DIR, and its case is load-bearing:
+// `docsRegistry.test.js` checks each path against the real directory entry
+// case-sensitively, because Windows and macOS would open `DESIGN.md` for a file
+// named `Design.md` while Docker's build context and any Linux deploy will not
+// -- a case drift here is a doc tab that 404s only in production. The same
+// spelling has to appear in web/Dockerfile's COPY and the compose bind mounts,
+// which the tests below check.
 const DOCS = {
-  GETTING_STARTED: { file: 'docs/GETTING-STARTED.md', label: 'Getting Started', slug: 'getting-started' },
+  GETTING_STARTED: { file: 'docs/backTesting-10-Getting-Started.md', label: 'Getting Started', slug: 'getting-started' },
   README: { file: 'README.md', label: 'README', slug: 'readme' },
   QQQ_DESIGN: {
-    file: 'docs/readonly-doc/Design Notes.md',
+    file: 'docs/readonly-doc/backTesting-03-Design-Notes.md',
     label: 'QQQ Design Notes',
     slug: 'qqq-design',
   },
   QQQ_ARCHITECTURE: {
-    file: 'docs/readonly-doc/Architecture.md',
+    file: 'docs/readonly-doc/backTesting-04-Architecture.md',
     label: 'QQQ Architecture',
     slug: 'qqq-architecture',
   },
   QQQ_FEATURES: {
-    file: 'docs/readonly-doc/Features.md',
+    file: 'docs/readonly-doc/backTesting-02-Features.md',
     label: 'QQQ Features',
     slug: 'qqq-features',
   },

@@ -10,7 +10,7 @@ the rows happen to come back in. A model's weights are positional, so a set
 read back with its columns permuted would score nonsense while looking fine.
 
 Only `role = 'input'` columns are ever read into a matrix. A set also stores
-data-only columns (RSI, MACD, realized volatility: Features.md B keeps them
+data-only columns (RSI, MACD, realized volatility: backTesting-02-Features.md B keeps them
 "computed and stored ... but kept out of the network"), and this module is the
 boundary that keeps them out. They are read by name from `feature_values` by
 whatever wants them for a chart or a rule; never through here.

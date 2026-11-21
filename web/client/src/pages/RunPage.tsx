@@ -119,7 +119,7 @@ export default function RunPage() {
    * Fill the form from a saved strategy.
    *
    * The window defaults to the strategy's **test** block, not its train block.
-   * Design.md is explicit about why: the test bars are "held out and scored
+   * backTesting-OLD-Design.md is explicit about why: the test bars are "held out and scored
    * once, after training", so they are the only honest out-of-sample read.
    * Backtesting over the train window would score the model on the bars it was
    * fitted on and report a flattering number that means nothing.

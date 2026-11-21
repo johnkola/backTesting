@@ -88,7 +88,7 @@ describe('docs registry', () => {
       .filter(([, conf]) => conf.file === 'ARCHITECTURE.md')
       .map(([key]) => key);
     assert.deepEqual(rootArchitecture, [], `points at the deleted root doc: ${rootArchitecture}`);
-    assert.equal(DOCS.QQQ_ARCHITECTURE.file, `${DESIGN_DOC_DIR}Architecture.md`);
+    assert.equal(DOCS.QQQ_ARCHITECTURE.file, `${DESIGN_DOC_DIR}backTesting-04-Architecture.md`);
   });
 
   it('gives every doc its own file, so none shadows another', () => {
@@ -110,7 +110,7 @@ describe('docs registry', () => {
   it('serves the design set out of docs/readonly-doc/, not the stale reference/ copy', () => {
     // docs/readonly-doc/ is the set the author maintains by hand.
     // docs/reference/qqq-backtesting-model/ holds an earlier revision of the same
-    // three documents: its Design.md still fits normalization statistics on
+    // three documents: its backTesting-OLD-Design.md still fits normalization statistics on
     // each feature's full history, where the current text fits them on the
     // training window only, per fold. Serving the old copy would publish a
     // description of a data leak, so pointing back at it is a failure, not

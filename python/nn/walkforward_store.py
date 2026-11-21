@@ -2,7 +2,7 @@
 
 Why this module exists. `walkforward.py` printed every fold to a terminal and
 stored none of it, so the Training tab could list the models on disk and nothing
-else — and `Design Notes.md` asks for exactly the opposite: "validation-fold
+else — and `backTesting-03-Design-Notes.md` asks for exactly the opposite: "validation-fold
 results against buy-and-hold as they come in". A fold result nobody can read
 afterwards is not an artifact, and the design's staged architecture says stages
 communicate only through stored artifacts.

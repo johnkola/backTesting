@@ -62,14 +62,13 @@ services:
       MAINTENANCE_MESSAGE: ${MAINTENANCE_MESSAGE:-}
     volumes:
       - ./data/models:/data/models:ro
-      - ./docs/GETTING-STARTED.md:/app/docs/docs/GETTING-STARTED.md:ro
+      - ./docs/backTesting-10-Getting-Started.md:/app/docs/docs/backTesting-10-Getting-Started.md:ro
       - ./README.md:/app/docs/README.md:ro
-      # The design set, at the path the DOCS registry addresses it by. Quoted
-      # because `Design Notes.md` contains a space, and :ro because nothing in
-      # this repo may write to docs/readonly-doc/.
-      - "./docs/readonly-doc/Architecture.md:/app/docs/docs/readonly-doc/Architecture.md:ro"
-      - "./docs/readonly-doc/Design Notes.md:/app/docs/docs/readonly-doc/Design Notes.md:ro"
-      - "./docs/readonly-doc/Features.md:/app/docs/docs/readonly-doc/Features.md:ro"
+      # The design set, at the path the DOCS registry addresses it by. :ro
+      # because nothing in this repo may write to docs/readonly-doc/.
+      - "./docs/readonly-doc/backTesting-04-Architecture.md:/app/docs/docs/readonly-doc/backTesting-04-Architecture.md:ro"
+      - "./docs/readonly-doc/backTesting-03-Design-Notes.md:/app/docs/docs/readonly-doc/backTesting-03-Design-Notes.md:ro"
+      - "./docs/readonly-doc/backTesting-02-Features.md:/app/docs/docs/readonly-doc/backTesting-02-Features.md:ro"
 
   # The React SPA, static files behind nginx. No backend of its own: it calls
   # the API by the URL baked in at build time.

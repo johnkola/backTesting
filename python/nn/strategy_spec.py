@@ -1,6 +1,6 @@
 """Turns a saved strategy into what a runner executes, or refuses it.
 
-Architecture.md §8.1a: a strategy is the set of choices and Train "runs a saved
+backTesting-04-Architecture.md §8.1a: a strategy is the set of choices and Train "runs a saved
 strategy"; §8.2a: nothing is fixed in code. Until this module the feature list
 was recorded and ignored, so two strategies that differed only in their features
 trained the same model and the comparison meant nothing. This is the one place a
@@ -97,7 +97,7 @@ RUNNER_ARGS = {
 }
 
 #: Saved objective setting -> walk-forward argument. The settings that decide
-#: the verdict rather than the network's shape (R2 in DESIGN-GAPS.md).
+#: the verdict rather than the network's shape (R2 in backTesting-07-Design-Gaps.md).
 OBJECTIVE_ARGS = {
     "loss": "loss",
     "classWeights": "class_weights",

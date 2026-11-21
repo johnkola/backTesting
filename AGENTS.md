@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-17-1** · 2026-11-17 10:50 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-21-1** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -14,12 +14,12 @@ in order, and what has to be true before each one is done.
 
 It does not repeat how to run anything. Commands and settings are in
 [`README.md`](README.md), and the end-to-end walkthrough is in
-[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md). Each step links to the section it
+[`docs/backTesting-10-Getting-Started.md`](docs/backTesting-10-Getting-Started.md). Each step links to the section it
 needs. The design these steps come from is
-[`docs/readonly-doc/Design Notes.md`](docs/readonly-doc/Design%20Notes.md) ("Staged Pipeline
+[`docs/readonly-doc/backTesting-03-Design-Notes.md`](docs/readonly-doc/backTesting-03-Design-Notes.md) ("Staged Pipeline
 Architecture" and "Web Monitoring App"), with the tab lineup in
-[`docs/readonly-doc/Architecture.md`](docs/readonly-doc/Architecture.md) §8.1a. Open gaps
-are tracked in [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).
+[`docs/readonly-doc/backTesting-04-Architecture.md`](docs/readonly-doc/backTesting-04-Architecture.md) §8.1a. Open gaps
+are tracked in [`docs/backTesting-07-Design-Gaps.md`](docs/backTesting-07-Design-Gaps.md).
 
 **How each condition is checked**
 
@@ -75,7 +75,7 @@ steps.
 
   Check that the reruns reproduce the results. Never mark stale records as expired
   and keep them.
-- **Keep work followable.** Write the plan as a checklist in `docs/DESIGN-GAPS.md`, tick
+- **Keep work followable.** Write the plan as a checklist in `docs/backTesting-07-Design-Gaps.md`, tick
   it as you go, and stop at a checkpoint before applying anything.
 - **Commit or push only when the author asks**, and then do just that.
 - **Stamp every doc you change.** Bump the revision line under its title
@@ -94,7 +94,7 @@ steps.
 ## 0. The stack is running
 
 The database, Java engine, Python loader, Node API and React client are up.
-See [GETTING-STARTED §1](docs/GETTING-STARTED.md#1-start-the-stack) and
+See [GETTING-STARTED §1](docs/backTesting-10-Getting-Started.md#1-start-the-stack) and
 [Services and ports](README.md#services-and-ports).
 
 **Done when**
@@ -112,7 +112,7 @@ See [GETTING-STARTED §1](docs/GETTING-STARTED.md#1-start-the-stack) and
 Every raw series the model reads is stored at D1 and current: prices, rates,
 breadth and earnings. The data feeds keep the series current every weekday
 evening. See [Data feeds](README.md#data-feeds) and
-[GETTING-STARTED §2](docs/GETTING-STARTED.md#2-get-candles-in).
+[GETTING-STARTED §2](docs/backTesting-10-Getting-Started.md#2-get-candles-in).
 Tab: **Pipeline → Data**.
 
 **Done when**
@@ -301,7 +301,7 @@ Tab: **Pipeline → Training**.
 Signals run through the Java engine's accounting: equity curve, trades, costs, and
 metrics against the stored buy-and-hold benchmark. See
 [Execution engine](README.md#execution-engine) and
-[GETTING-STARTED §4–5](docs/GETTING-STARTED.md#4-run-your-first-backtest).
+[GETTING-STARTED §4–5](docs/backTesting-10-Getting-Started.md#4-run-your-first-backtest).
 Tab: **Pipeline → Backtest**.
 
 **Done when**
@@ -377,7 +377,7 @@ phase one's question.
 Steps 0 to 8 check the app as it is. These are the changes still to make, in the order
 to make them. B1 to B5 correct numbers the app already stores. B6 to B9 add what the
 design asks for and the app does not have. Each has a row in
-[`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md), Pass 3, which holds the evidence and, once work
+[`docs/backTesting-07-Design-Gaps.md`](docs/backTesting-07-Design-Gaps.md), Pass 3, which holds the evidence and, once work
 starts, the plan checklist. This section holds only what has to be true before that row
 is marked done.
 
@@ -608,6 +608,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Doc files renamed with the app name and a reading-order number (`backTesting-NN-…`); paths and links follow, at the author's request |
 | 2026-11-17-1 | 2026-11-17 10:50 | Claude Code (Claude Opus 5.5) | Step 8 done: phase1-full v5's held-out test (run 881) does not beat buy-and-hold |
 | 2026-11-16-16 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | Step 4 done, waived: the author keeps the 2022 to 2026-06 test block as step 8's final exam |
 | 2026-11-16-15 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | G49: step 6's review row gains the first direction and return runs (855, 856) |

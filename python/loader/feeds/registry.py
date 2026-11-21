@@ -88,7 +88,7 @@ FEEDS: tuple[Feed, ...] = (
     Feed("NDXAD", "computed", "INDEX", "breadth", "advance-decline", "breadth"),
     Feed("NDXDISP", "computed", "INDEX", "breadth", "dispersion", "breadth"),
     Feed("NDXNHNL", "computed", "INDEX", "breadth", "new-highs-lows", "breadth"),
-    # The SEC earnings series (Features.md 39-40), computed from the members'
+    # The SEC earnings series (backTesting-02-Features.md 39-40), computed from the members'
     # filings (`earnings`, `sec`). Manual until 2026-11-12.
     Feed("NDXERN5D", "computed", "INDEX", "sec", "release-share", "earnings"),
     Feed("NDXERNSEASON", "computed", "INDEX", "sec", "season", "earnings"),

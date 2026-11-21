@@ -248,7 +248,7 @@ describe('coverage and the resolved feature list (§6.2)', () => {
   })
 
   it('keeps a partial feature but flags it', () => {
-    // Design.md is explicit that a short history is not a disqualification,
+    // backTesting-OLD-Design.md is explicit that a short history is not a disqualification,
     // and padding it would be worse than its absence.
     const r = resolveFeatures(['price_close', 'breakeven_inflation'], {
       price_close: full,

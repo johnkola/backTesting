@@ -95,7 +95,7 @@ _CADENCES = {"daily", "weekly", "monthly", "quarterly"}
 _COSTS = {"free", "paid"}
 _UNITS = {"percent", "level", "count", "ratio"}
 
-#: The one status that changes what the build does. Features.md B: RSI, MACD and
+#: The one status that changes what the build does. backTesting-02-Features.md B: RSI, MACD and
 #: realized volatility are "computed and stored for charts and rule-based
 #: strategies, but kept out of the network". So a data-only column is built,
 #: normalized and stored like any other, and is never a network input. Every

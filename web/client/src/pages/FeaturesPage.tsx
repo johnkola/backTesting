@@ -8,7 +8,7 @@ import { hintFor } from '../lib/fieldHints'
 import { useApiData } from '../lib/useApiData'
 
 /**
- * The Features tab — the catalogue and the coverage view (Architecture.md §8.1a).
+ * The Features tab — the catalogue and the coverage view (backTesting-04-Architecture.md §8.1a).
  *
  * "The feature catalogue from `feature_definitions`: every feature with its
  * range, cadence, scope, status, cost, units and lineage, plus a coverage view:
@@ -28,7 +28,7 @@ import { useApiData } from '../lib/useApiData'
  * into one "missing" figure is how a short history gets mistaken for a broken
  * pipeline.
  *
- * Disabled and blocked columns are listed, not filtered out. Design.md keeps a
+ * Disabled and blocked columns are listed, not filtered out. backTesting-OLD-Design.md keeps a
  * blocked column in the table on purpose — it is a recorded decision, and the
  * tab has to be able to say *why* a feature is unavailable.
  */

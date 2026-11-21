@@ -18,14 +18,13 @@ COPY web/api/ ./
 # from there.
 RUN mkdir -p /app/docs
 COPY README.md /app/docs/
-COPY docs/GETTING-STARTED.md /app/docs/docs/
+COPY docs/backTesting-10-Getting-Started.md /app/docs/docs/
 # The QQQ design set keeps its docs/readonly-doc/ path, because that is the path the
-# DOCS registry addresses it by. JSON form because `Design Notes.md` contains a
-# space, which the shell form would split into two arguments.
+# DOCS registry addresses it by.
 #
 # Not docs/reference/qqq-backtesting-model/: that is an earlier revision of these
 # same three documents and the registry deliberately no longer serves it.
-COPY ["docs/readonly-doc/Architecture.md", "docs/readonly-doc/Design Notes.md", "docs/readonly-doc/Features.md", "/app/docs/docs/readonly-doc/"]
+COPY ["docs/readonly-doc/backTesting-04-Architecture.md", "docs/readonly-doc/backTesting-03-Design-Notes.md", "docs/readonly-doc/backTesting-02-Features.md", "/app/docs/docs/readonly-doc/"]
 
 ENV NODE_ENV=production
 ENV DOCS_DIR=/app/docs

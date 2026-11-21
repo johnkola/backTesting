@@ -1,4 +1,4 @@
-"""The earnings builder's arithmetic (G7, Features.md 39-40), offline.
+"""The earnings builder's arithmetic (G7, backTesting-02-Features.md 39-40), offline.
 
 `build_ndx_earnings.py` lives at the repo root beside `build_ndx_breadth.py`,
 so it is loaded by path.

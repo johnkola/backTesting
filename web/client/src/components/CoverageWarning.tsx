@@ -4,11 +4,11 @@ import type { FeatureCoverage } from '../lib/api'
 /**
  * What the chosen features actually cover, and what a run would drop.
  *
- * Architecture.md §8.1a ("Coverage before training"): "A feature with no values
+ * backTesting-04-Architecture.md §8.1a ("Coverage before training"): "A feature with no values
  * in the train window is flagged and dropped from the resolved list, as §6.2
  * requires; a partial one is flagged but kept. Nothing is padded."
  *
- * A warning rather than a block. Design.md is explicit that a short history is
+ * A warning rather than a block. backTesting-OLD-Design.md is explicit that a short history is
  * not a disqualification, so refusing to save would be stricter than the
  * document — but training on a feature that is silently absent is exactly the
  * confusion this tab exists to prevent, so it is said out loud, with the

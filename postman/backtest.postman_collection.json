@@ -3076,7 +3076,7 @@
                   "});",
                   "",
                   "pm.test('the yield curve is computed from its legs, not read published', function () {",
-                  "    // Features.md 23. Reading T10Y2Y directly gave one unverifiable number.",
+                  "    // backTesting-02-Features.md 23. Reading T10Y2Y directly gave one unverifiable number.",
                   "    const d = pm.response.json();",
                   "    const yc = d.columns.find(c => c.name === 'yield_curve_10y2y');",
                   "    pm.expect(yc, 'yield_curve_10y2y exists').to.exist;",

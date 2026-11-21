@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download a vendor's own RSI or MACD from Twelve Data, in the app's CSV format.
 
-Why this exists. Features.md 7-8: RSI and MACD are "computed from our own
+Why this exists. backTesting-02-Features.md 7-8: RSI and MACD are "computed from our own
 prices, then compared with values published by a data API (e.g. Twelve Data).
 Differences beyond a small tolerance are flagged; they point to bad or missing
 price bars." We compute both in `nn/indicators.py`; this fetches the vendor's

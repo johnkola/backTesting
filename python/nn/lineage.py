@@ -1,6 +1,6 @@
 """What produced a number: the code, the libraries and the inputs (DESIGN-GAPS G3).
 
-Architecture.md §1: "A feature or model run is identified by code version plus
+backTesting-04-Architecture.md §1: "A feature or model run is identified by code version plus
 input snapshot, so it can be recomputed and compared." This module is the one
 definition of each of those, so the feature build, the walk-forward run and the
 check that compares them later cannot disagree about what a hash covers.

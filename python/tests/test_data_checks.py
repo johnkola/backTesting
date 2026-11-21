@@ -295,7 +295,7 @@ class TestReport:
 
 class TestShippedConfig:
     def test_the_yield_curve_is_computed_from_its_legs(self):
-        # Features.md 23: computed from DGS10 - DGS2, with the published spread
+        # backTesting-02-Features.md 23: computed from DGS10 - DGS2, with the published spread
         # kept only as a cross-check. Reading T10Y2Y directly would give one
         # number nobody can verify.
         f = fc.load().by_name("yield_curve_10y2y")
@@ -330,7 +330,7 @@ class TestShippedConfig:
         assert c.tolerance == pytest.approx(0.02)
 
     def test_fed_funds_is_enabled_and_reads_dff(self):
-        # Features.md 41. Enabled once DFF was imported (2026-11-10); before
+        # backTesting-02-Features.md 41. Enabled once DFF was imported (2026-11-10); before
         # that it shipped off, because an all-NULL column makes read_matrix
         # drop every date. No status: it is a plain enabled column now.
         f = fc.load().by_name("fed_funds")

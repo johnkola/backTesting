@@ -386,7 +386,7 @@ describe('removing a saved strategy', () => {
 });
 
 describe('dataOnlyFeatures (G9)', () => {
-  // The save route refuses a strategy naming a data-only column (Features.md B:
+  // The save route refuses a strategy naming a data-only column (backTesting-02-Features.md B:
   // stored for charts and rules, kept out of the network). The lookup is the
   // catalogue; the pool is stubbed so this runs without Postgres.
   const { pool } = require('./db');

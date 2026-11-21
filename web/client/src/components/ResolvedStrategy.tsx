@@ -6,7 +6,7 @@ import { labelLine, targetOf } from '../lib/targets'
 /**
  * What a saved strategy resolved to, read-only.
  *
- * Architecture.md §8.1a, on the Train tab: "Runs a saved strategy and records
+ * backTesting-04-Architecture.md §8.1a, on the Train tab: "Runs a saved strategy and records
  * the run (§6.1). **No choices are made here**: it shows the strategy, the
  * exact feature list and windows it resolved to after per-feature
  * availability, then launches and reports progress."

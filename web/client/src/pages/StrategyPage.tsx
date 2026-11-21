@@ -30,7 +30,7 @@ import {
 } from '../lib/targets'
 
 /**
- * The Strategy tab — the builder (Architecture.md §8.1a / §8.2a).
+ * The Strategy tab — the builder (backTesting-04-Architecture.md §8.1a / §8.2a).
  *
  * Compose a strategy *before* anything is trained: the feature subset, the four
  * date windows, the validation scheme, the model type, the engines that compete

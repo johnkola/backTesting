@@ -113,7 +113,7 @@ def test_every_committed_design_column_is_defined():
 def test_every_committed_column_is_enabled_unless_its_data_is_blocked():
     """credit_spread_ig was the one named exception, while FRED's three-year cap
     on the ICE BofA series blocked it. It now reads BAA10Y, the fallback
-    Features.md names (G6), so it is on. breakeven_inflation stays off by
+    backTesting-02-Features.md names (G6), so it is on. breakeven_inflation stays off by
     decision (D1, its 2003 start). Any OTHER committed column being off is a
     regression, not a decision."""
     cfg = fc.load()
@@ -475,7 +475,7 @@ tolerance = 0.01
 
 
 # --------------------------------------------------------------------------
-# data-only columns (Features.md B, G9): built and stored, never an input
+# data-only columns (backTesting-02-Features.md B, G9): built and stored, never an input
 # --------------------------------------------------------------------------
 
 DATA_ONLY_RSI = """

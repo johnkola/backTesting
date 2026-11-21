@@ -1,9 +1,9 @@
 # Design gap tracker
 
-> **Revision 2026-11-21-2** · 2026-11-21 18:10 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-3** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
-project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
+project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
 Newest pass at the top.
 
 Status values: **open** · **partial** (some of it exists) · **decision** (needs the
@@ -14,11 +14,11 @@ Effort is an estimate: S is under a day, M a few days, L a week or more, XL a re
 
 ---
 
-## Pass 4 — 2026-11-15 (HEAD `6cdc664`): `Requirements.md` R1 to R76 against the code
+## Pass 4 — 2026-11-15 (HEAD `6cdc664`): `backTesting-01-Requirements.md` R1 to R76 against the code
 
 Scope: the author refreshed `docs/readonly-doc/` on 2026-11-15 (`5f7a8c2`, `ee02e90`). That
-refresh added `Requirements.md` (R1 to R76, numbered for one-by-one review), expanded
-`Architecture.md`, and adjusted `Design Notes.md`. Four read-only agents checked every
+refresh added `backTesting-01-Requirements.md` (R1 to R76, numbered for one-by-one review), expanded
+`backTesting-04-Architecture.md`, and adjusted `backTesting-03-Design-Notes.md`. Four read-only agents checked every
 requirement against the code and the live database. Each finding that changes a
 conclusion was checked again before it was written here.
 
@@ -30,7 +30,7 @@ contradictions inside `docs/readonly-doc/` itself.
 holds. The four requirement groups it quoted now sit in `docs/readonly-doc/`: R76 (B1), R36
 and R39 (B6, B7), R72 (B8), and R21 to R23 with R74 (B9). Where they differ from the
 quotes, `docs/readonly-doc/` wins.
-- `Design Notes.md` now validates on 2016 to 2021 and tests on 2022 onward (the
+- `backTesting-03-Design-Notes.md` now validates on 2016 to 2021 and tests on 2022 onward (the
   contradiction the step 4 review found is gone).
 - It recalculates the benchmark on every run (D6).
 - It sells and taxes a position still open at the end (D8).
@@ -46,7 +46,7 @@ chain). The pass waits for the author's go.
 
 | # | Conflict | One side | The other side | Stored data it touches |
 |---|---|---|---|---|
-| D9 | Do engines learn costs, tax and margin? **Decided 2026-11-15 by the author: R75**, engines blind, profit recalculated on demand. **Built 2026-11-15 (B10)**: see the B10 record | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `Design Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
+| D9 | Do engines learn costs, tax and margin? **Decided 2026-11-15 by the author: R75**, engines blind, profit recalculated on demand. **Built 2026-11-15 (B10)**: see the B10 record | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `backTesting-03-Design-Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
 | D2 (updated) | Null padding | R3: "no trimming to overlap, no null padding" | `schema.sql`: "value is NULLABLE on purpose". The database confirms what D2 called unconfirmed: set 27 holds 9,565 NULL rows of 264,670, every column spans the whole calendar from 1999-03-10, and the NULLs include padding before each series starts (`ndx_net_income_qoq` 3,013, `earnings_season_*` 1,166, `vxn_*` 532), not only warm-up. Waived for step 2 on 2026-11-14 | every feature set |
 | D10 | Is raw data immutable? **Decided 2026-11-15 by the author: every archived CSV version is kept**, so any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider (G66, G67) | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `data/csv-archive` |
 | D11 | Do checks stop the chain? | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
@@ -91,12 +91,12 @@ stored run.
 | G61 | The lineage chain cannot be followed and two hops are missing. `candles` carry no audit columns and no link to their import slice, rolled-up H4/W1/MN1 candles have no audit record at all, `feed_runs` has no audit columns, and `backtest_results` record no code version or input snapshot | R1, R4, R5, R54 | `schema.sql` (`candles` excluded from the audit loop, "nothing rewrites it" no longer true); 27,092 rolled-up rows with no `data_imports` row | all candles; 16 results | M | open |
 | G62 | Models are files only: no database record with path and file hash, no hash check on load | R49 | `nn/store.py` (`metadata.json`); `backtest_results.model_version_id` only | 6 model versions | S | open |
 | G63 | The engine and benchmark catalogue: buy-and-hold, Faber and dual momentum have no entries, and nothing is shown on Results, Docs or in tooltips. B9 covers engine entries on the Strategy tab only | R74 | `metricHints.ts` (buy-and-hold only) | none | S | open |
-| G64 | `Requirements.md` does not show on the Docs tab: it is not in the `DOCS` registry and not mounted into the api container | R59 | `web/api/docsRegistry.js`; `docker-compose.yml` (three design files mounted) | none | S | open |
+| G64 | `backTesting-01-Requirements.md` does not show on the Docs tab: it is not in the `DOCS` registry and not mounted into the api container | R59 | `web/api/docsRegistry.js`; `docker-compose.yml` (three design files mounted) | none | S | open |
 | G65 | Signal voting (Phase 2): per-bar votes per signal, a voting setup with a minimum count, and its backtest | R73 | none in code | none | L | gated: after Phase 1 |
 | G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `data/csv-archive` | none | S | open |
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
 | G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `docs/readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
-| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `docs/readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `GETTING-STARTED.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | done 2026-11-17: see the G69 record in Pass 4 |
+| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `docs/readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `backTesting-10-Getting-Started.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | done 2026-11-17: see the G69 record in Pass 4 |
 | G70 | An engine cannot train on a subset of the strategy's features. R21 lets an engine override the strategy's feature list with its own subset, recorded on its engine row and its run result; every engine reads the strategy's list | R21 | `nn/engines.py`, `strategy_engines` (no feature column) | none | S | open: found during B9 |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
@@ -904,12 +904,12 @@ Effort: L. **Decided by the author, 2026-11-18:** the as-of rule as above (next 
 
 **Next jobs, 2026-11-19.** The author asked for the plan to be brought up to date. The intraday path now runs end to end on H1 and M30, so what is left of G22 is I7 only. In order:
 
-1. **The author's decisions**, which nothing else can stand in for: Apply the held QQQ `yahoo-adj` series on the Data stage (D1 reads stale until then); I7, the timezone imported intraday files are read in; whether to buy FirstRate Data; C1 to C8 in `QUESTIONS-FOR-JOHN.md`.
+1. **The author's decisions**, which nothing else can stand in for: Apply the held QQQ `yahoo-adj` series on the Data stage (D1 reads stale until then); I7, the timezone imported intraday files are read in; whether to buy FirstRate Data; C1 to C8 in `backTesting-06-Questions-for-John.md`.
 2. **G54 (S): the Strategy tab and the runner agree on what can run.** The runner now takes intraday and refuses W1 and MN1; the tab still saves W1, MN1, the `single` and `kfold_time` schemes, and instruments with no feature set. One list, read from the runner. Phase two's strategies are made on that tab.
 3. **G57 (M): walk-forward runs on Results.** Runs 953 and 978 can be seen only in the log and the database.
 4. **G50 (M): a fold keeps its model and scaler,** which a live signal from a walk-forward model needs.
 5. **G40 (M): a stored result keeps its run settings,** and **G41 (S)**, the backtest staleness check reading through the feature table.
-6. **Small and independent, any time:** G64 (`Requirements.md` on the Docs tab), G63 (catalogue entries for the benchmarks), G62 (models recorded with a file hash), G70 (an engine's own feature subset), G66 (reload a series from its archive in one action).
+6. **Small and independent, any time:** G64 (`backTesting-01-Requirements.md` on the Docs tab), G63 (catalogue entries for the benchmarks), G62 (models recorded with a file hash), G70 (an engine's own feature subset), G66 (reload a series from its archive in one action).
 
 Not before a decision: G51, G52, G53, G56, G58 and G60 are L or XL and each depends on C1 (the Spring Boot move) or on which requirements the author keeps.
 
@@ -1111,7 +1111,7 @@ trainers, plus four requirements the repo's design copy does not carry. Nothing 
 and no stored run was checked. What each row needs before it counts as done is in
 [`AGENTS.md`, Build steps](../AGENTS.md#build-steps).
 
-**The design copy is behind.** `docs/readonly-doc/Architecture.md` is an older snapshot of the
+**The design copy is behind.** `docs/readonly-doc/backTesting-04-Architecture.md` is an older snapshot of the
 author's Architecture document. The current one has a numbered Requirements list, and four
 groups of its entries have no text in `docs/readonly-doc/`: trading at the next bar's open
 (Requirement 76), three benchmarks beside every run (36, 39), a naive prediction baseline
@@ -1419,7 +1419,7 @@ Found in run 8, not fixed: COPPER and GOLD held on 2026-11-11..11-12. The 18:30 
 
 ## Pass 1 — 2026-11-06 (HEAD `84acc6e`)
 
-Scope: every requirement in `Architecture.md`, `Design Notes.md` and `Features.md`,
+Scope: every requirement in `backTesting-04-Architecture.md`, `backTesting-03-Design-Notes.md` and `backTesting-02-Features.md`,
 checked by reading the code. Nothing was run: the project's containers were down, so this
 says nothing about what the stored runs scored, and the tests were not executed.
 
@@ -1433,7 +1433,7 @@ buy-and-hold once real costs are charged? Gaps that block that answer come first
 | G1 | A saved strategy does not decide what is trained. Its feature list is recorded and ignored, and the walk-forward runner has no way to take a strategy | Architecture §8.1a, §8.2a | `CoverageWarning.tsx:36` says so on screen; `walkforward.py` has no strategy or feature argument | M | done (`eba3198`) |
 | G2 | Tax is not inside the objective, and there is no tax toggle. `money_loss` charges `cost_bps` only, so the model never feels tax | Design Notes, Tax and Trading Costs | `money_loss.py:43-55`; `BacktestStage.tsx:92` says returns are gross | M | done (`afe1224`, `36d77f5`; both switches, see G2 progress) |
 | G3 | No run can be recomputed from its record: no input snapshot id, no `feature_runs` table | Architecture §3.5, §6.1 | no `feature_runs` or `snapshot_id` anywhere in the code or `schema.sql` | M | done (see G3 progress) |
-| G4 | Fed funds (41) is configured but never imported. Strategy 2's margin interest needs it | Features.md 41 | `features.toml`: `fed_funds` is `not-imported` | S | done (see G4 progress) |
+| G4 | Fed funds (41) is configured but never imported. Strategy 2's margin interest needs it | backTesting-02-Features.md 41 | `features.toml`: `fed_funds` is `not-imported` | S | done (see G4 progress) |
 | G5 | Strategy 2 does not exist: margin long and inverse, PSQ, the 50% ceiling, variable interest | Design Notes, Strategy 2 | no `PSQ` or margin interest anywhere in the code | L | done (see G5 plan) |
 
 **G19 progress.** Done, uncommitted, with the leak found while planning it (R9).
@@ -1627,16 +1627,16 @@ from the Train tab.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G6 | Investment-grade credit (25) is "Yes" in the design but blocked here, because FRED restricts the series. `Features.md` names `BAA10Y` as a free fallback from 1986 | Design Notes row 25; Features.md table | `features.toml`: `credit_spread_ig` is `blocked` | S | done: author chose BAA10Y. `credit_spread_ig` reads it (FRED, daily from 1986-01-02, 10,214 bars, import file 286, made from FRED's table page as DFF was), rolling z-score 60 as designed, enabled. Not the same measure as ICE's all-grades OAS (Baa is the lowest IG rating, and a yield gap to the 10-year, not an option-adjusted spread); the note says so. Its gaps are US bond-market holidays |
+| G6 | Investment-grade credit (25) is "Yes" in the design but blocked here, because FRED restricts the series. `backTesting-02-Features.md` names `BAA10Y` as a free fallback from 1986 | Design Notes row 25; backTesting-02-Features.md table | `features.toml`: `credit_spread_ig` is `blocked` | S | done: author chose BAA10Y. `credit_spread_ig` reads it (FRED, daily from 1986-01-02, 10,214 bars, import file 286, made from FRED's table page as DFF was), rolling z-score 60 as designed, enabled. Not the same measure as ICE's all-grades OAS (Baa is the lowest IG rating, and a yield gap to the 10-year, not an option-adjusted spread); the note says so. Its gaps are US bond-market holidays |
 | G7 | Earnings season (39) and aggregate EPS (40) are absent. Both are committed columns | Design Notes rows 39-40 | no `earnings` anywhere in the code | L | done (`c361be7`, see G7 plan): columns 39 and 40 built from SEC EDGAR; forward EPS `later-paid` |
-| G8 | Bank of Canada rate (42) is absent | Features.md 42 | no row in `features.toml` | S | done: `boc_policy_rate` reads CORRA (Bank of Canada Valet `AVG.INTWO`, the realised overnight rate the target steers, daily from 1997-08-12, source `boc`, import file 287) via the new `fetch_boc_series.py`. The target itself (`V39079`) is daily only from 2009-04-21, which would set the training floor; monthly before. Rescaled on fed_funds' 0..25 band so the two policy rates share a scale. Built with G6 as feature set 16: set 10 value for value plus the two columns, first complete date still 2001-04-18. Python 585 |
-| G9 | MACD and RSI have no vendor cross-check; only the yield curve has one. Also unconfirmed: whether the three data-only columns are stored when `enabled = false` | Features.md 7-8 | one `[[check]]` block in `features.toml` | S | partial: G9a done; G9b waits for a Twelve Data key (see G9 plan; now M) |
+| G8 | Bank of Canada rate (42) is absent | backTesting-02-Features.md 42 | no row in `features.toml` | S | done: `boc_policy_rate` reads CORRA (Bank of Canada Valet `AVG.INTWO`, the realised overnight rate the target steers, daily from 1997-08-12, source `boc`, import file 287) via the new `fetch_boc_series.py`. The target itself (`V39079`) is daily only from 2009-04-21, which would set the training floor; monthly before. Rescaled on fed_funds' 0..25 band so the two policy rates share a scale. Built with G6 as feature set 16: set 10 value for value plus the two columns, first complete date still 2001-04-18. Python 585 |
+| G9 | MACD and RSI have no vendor cross-check; only the yield curve has one. Also unconfirmed: whether the three data-only columns are stored when `enabled = false` | backTesting-02-Features.md 7-8 | one `[[check]]` block in `features.toml` | S | partial: G9a done; G9b waits for a Twelve Data key (see G9 plan; now M) |
 
 **G9 plan, 2026-11-10.** Checked first: **the three data-only columns are never stored.**
 `enabled = false` means "not built". `feature_build` builds `cfg.enabled` only, and
 `live_checks` skips a check whose feature is off. Feature sets 10 and 16 hold none of
 `rsi_14`, `macd` or `realized_vol`. The Features tab's "data only" badge therefore says
-the opposite of the truth: Features.md B says these are "computed and stored for charts
+the opposite of the truth: backTesting-02-Features.md B says these are "computed and stored for charts
 and rule-based strategies, but kept out of the network". Two parts.
 
 G9a, store the data-only columns. Done, uncommitted, 2026-11-10:
@@ -1664,7 +1664,7 @@ G9a, store the data-only columns. Done, uncommitted, 2026-11-10:
       `rsi_14` is refused with 422 and nothing saved. Tests: Python 596, API 117, client
       103; API and client lint and `tsc` clean
 
-G9b, the vendor check (Features.md 7-8):
+G9b, the vendor check (backTesting-02-Features.md 7-8):
 
 - [~] `fetch_twelvedata_indicator.py` beside `fetch_fred_series.py` (written, not yet run): QQQ daily RSI(14) and
       the MACD(12,26) line from Twelve Data, `adjust=all` (split and dividend adjusted, the
@@ -1836,6 +1836,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-3 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `DESIGN-GAPS.md`; the other doc files renamed the same way, references follow |
 | 2026-11-21-2 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | Job 4 done: G54, a save is checked by the runner |
 | 2026-11-21-1 | 2026-11-21 17:25 | Claude Code (Claude Fable 5.2) | Job 4 plan (G54) |
 | 2026-11-19-7 | 2026-11-19 19:00 | Claude Code (Claude Fable 5.2) | Job 3 done: the import is ready for FirstRate Data files, checked on its sample |
@@ -1892,5 +1893,5 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 | 2026-11-15-5 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | B3 record (G29 done) and the old-to-new result id mapping (`e7c94a8`) |
 | 2026-11-15-4 | 2026-11-15 12:43 | Claude Code (Claude Opus 5.5) | G47 done, with the per-column effect and the reruns (`d04cee5`) |
 | 2026-11-15-3 | 2026-11-15 09:34 | Claude Code (Claude Opus 5.5) | G46 plan and done (`59678d2`) |
-| 2026-11-15-2 | 2026-11-15 09:21 | Claude Code (Claude Opus 5.5) | Pass 4: Requirements.md R1-R76 against the code (G46-G65, D9-D14) (`23e9e6a`) |
+| 2026-11-15-2 | 2026-11-15 09:21 | Claude Code (Claude Opus 5.5) | Pass 4: backTesting-01-Requirements.md R1-R76 against the code (G46-G65, D9-D14) (`23e9e6a`) |
 | 2026-11-15-1 | 2026-11-15 09:10 | Claude Code (Claude Opus 5.5) | G36 and G43 done, step 3 plan and G39 done (`6cdc664`) |

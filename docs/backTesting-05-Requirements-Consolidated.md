@@ -1,16 +1,16 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-16-2** · 2026-11-16 16:33 Toronto time · author: Claude (Claude Fable 5.2), for John · **draft for review** · in the repo at `docs/REQUIREMENTS-CONSOLIDATED.md`
+> **Revision 2026-11-21-1** · 2026-11-21 17:54 Toronto time · author: Claude (Claude Fable 5.2), for John · **draft for review** · in the repo at `docs/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
 - **R1 to R76 keep their numbers**; code, tests and trackers cite them.
-- **R77 to R88 are new numbers** for requirements that existed only in `Design Notes.md`, `Features.md`, `AGENTS.md` or a recorded decision.
+- **R77 to R88 are new numbers** for requirements that existed only in `backTesting-03-Design-Notes.md`, `backTesting-02-Features.md`, `AGENTS.md` or a recorded decision.
 - Decisions already made (D6 to D10, D12) are applied to the text. Where two docs disagreed and nothing is decided, the item is in [Decisions needed](#decisions-needed) and the requirement is marked **conflict**.
-- **Status** comes from `DESIGN-GAPS.md` Pass 4 and the `AGENTS.md` build table. It was not re-verified against the code.
-- Not repeated here: the feature list (`Features.md` owns it), how to run anything (`README.md`, `GETTING-STARTED.md`), definitions of done (`AGENTS.md`), gap evidence (`DESIGN-GAPS.md`).
+- **Status** comes from `backTesting-07-Design-Gaps.md` Pass 4 and the `AGENTS.md` build table. It was not re-verified against the code.
+- Not repeated here: the feature list (`backTesting-02-Features.md` owns it), how to run anything (`README.md`, `backTesting-10-Getting-Started.md`), definitions of done (`AGENTS.md`), gap evidence (`backTesting-07-Design-Gaps.md`).
 
-Source tags: **DN** Design Notes · **A §n** Architecture · **F** Features · **AG** AGENTS.md · **D/G/B n** rows in DESIGN-GAPS.md.
+Source tags: **DN** Design Notes · **A §n** Architecture · **F** Features · **AG** AGENTS.md · **D/G/B n** rows in backTesting-07-Design-Gaps.md.
 
 Status: **done** · **partial** · **missing** · **conflict** (code or another doc says the opposite) · **gated** (waits for an earlier phase).
 
@@ -86,7 +86,7 @@ Each blocks the requirements listed. Until answered, the code and the design say
 - **R19** Only active features are offered for selection. · *done; see C7 for the data-only status*
 - **R20** Feature lineage: `feature_runs` keyed by code version + input snapshot. Old values are not kept; they are rebuilt on demand from stored inputs. [D12, amends "earlier values stay"] · *partial*
 - **R66** Technical indicators come from TA-Lib through one shared module, for features and benchmarks, cross-checked per R55. · *conflict (C5)*
-- **R78** The feature set is the table in `Features.md` / Design Notes: each row has a status of in the model, data only, undecided, blocked, or later (paid). Free columns are built first; paid columns wait until the free table works. Column 40 sums members' net income, not EPS (D5). The breadth family carries a survivorship-bias caveat. [DN, F] · *partial (C7)*
+- **R78** The feature set is the table in `backTesting-02-Features.md` / Design Notes: each row has a status of in the model, data only, undecided, blocked, or later (paid). Free columns are built first; paid columns wait until the free table works. Column 40 sums members' net income, not EPS (D5). The breadth family carries a survivorship-bias caveat. [DN, F] · *partial (C7)*
 - **R79** Nothing enters the model as a raw value. Each feature is tagged with its data type and the pipeline picks the method: rolling z-score (bounded, mean-reverting), returns or rolling z-score (drifting), ratio to rolling average (volume), rescale (fixed scale), sine/cosine (calendar). Adding a feature = tag its type. [DN] · *done*
 
 ## D. Strategy
@@ -184,5 +184,6 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 | Revision | When | Who | Change |
 |---|---|---|---|
-| 2026-11-16-2 | 2026-11-16 16:33 | Claude (Claude Fable 5.2) | Added to the repo at `docs/REQUIREMENTS-CONSOLIDATED.md` and to Drive; requirement text unchanged |
+| 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `REQUIREMENTS-CONSOLIDATED.md`; references to the other renamed docs follow; requirement text unchanged |
+| 2026-11-16-2 | 2026-11-16 16:33 | Claude (Claude Fable 5.2) | Added to the repo at `docs/backTesting-05-Requirements-Consolidated.md` and to Drive; requirement text unchanged |
 | 2026-11-16-1 | 2026-11-16 13:15 | Claude (Claude Fable 5.2) | First consolidated draft from the repo docs at `499c6e4` |

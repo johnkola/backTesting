@@ -792,7 +792,7 @@ async function insertVersion(client, v) {
 
 /**
  * Which of `names` are data-only columns: stored for charts and rules, never a
- * network input (Features.md B; `feature_definitions.status = 'data-only'`).
+ * network input (backTesting-02-Features.md B; `feature_definitions.status = 'data-only'`).
  *
  * A strategy that names one is refused on save rather than having it dropped
  * at run time: the strategy's feature list is a claim about what the model

@@ -2,13 +2,13 @@
 
 Nov 16, 2026 · @John
 
-> **Revision 2026-11-19-1** · 2026-11-19 12:48 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-1** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
-**All 14 were answered by the author on 2026-11-19**, one at a time; the answers are in the last column, and the work that follows from them is in `DESIGN-GAPS.md` ("Decisions and work order, 2026-11-19"). They were: 8 design-vs-code conflicts, 3 feature calls, 3 about the requirements doc. Type your answer in the last column of each table.
+**All 14 were answered by the author on 2026-11-19**, one at a time; the answers are in the last column, and the work that follows from them is in `backTesting-07-Design-Gaps.md` ("Decisions and work order, 2026-11-19"). They were: 8 design-vs-code conflicts, 3 feature calls, 3 about the requirements doc. Type your answer in the last column of each table.
 
 ## Design vs code conflicts
 
-From *Decisions needed* in `REQUIREMENTS-CONSOLIDATED.md` (revision 2026-11-16-1). Until each is answered, the design and the code say different things.
+From *Decisions needed* in `backTesting-05-Requirements-Consolidated.md` (revision 2026-11-16-1). Until each is answered, the design and the code say different things.
 
 | # | Question | A: design says | B: code says | You said earlier | Blocks | Your answer |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ Where your earlier position already matches column A, a plain "A" confirms it an
 
 ## Feature calls
 
-Three features had no decision in the notes from Oct 18. This list was not re-checked against the current `Features.md`, so strike any you have settled since.
+Three features had no decision in the notes from Oct 18. This list was not re-checked against the current `backTesting-02-Features.md`, so strike any you have settled since.
 
 | # | Feature | Status on record | Question | Your answer |
 | --- | --- | --- | --- | --- |
@@ -38,13 +38,14 @@ Three features had no decision in the notes from Oct 18. This list was not re-ch
 | # | Question | Why it is open | Your answer |
 | --- | --- | --- | --- |
 | Q1 | Is the consolidated requirements doc approved to replace reading the four design docs and three trackers? | It is marked draft for review | **Approve, after re-checking the statuses** (2026-11-19) |
-| Q2 | Should the status on each requirement be re-verified against the code? | Statuses were copied from `DESIGN-GAPS.md` Pass 4 and the `AGENTS.md` build table, not checked | **Yes (it is the condition on Q1)** (2026-11-19) |
-| Q3 | Should C8 get a row in `DESIGN-GAPS.md`? | It is the only conflict that is not tracked there | **Yes: C8 is answered and gets its row** (2026-11-19) |
+| Q2 | Should the status on each requirement be re-verified against the code? | Statuses were copied from `backTesting-07-Design-Gaps.md` Pass 4 and the `AGENTS.md` build table, not checked | **Yes (it is the condition on Q1)** (2026-11-19) |
+| Q3 | Should C8 get a row in `backTesting-07-Design-Gaps.md`? | It is the only conflict that is not tracked there | **Yes: C8 is answered and gets its row** (2026-11-19) |
 
-*Generated 2026-11-16 by Claude (Claude Fable 5.2) for John, from `REQUIREMENTS-CONSOLIDATED.md` revision 2026-11-16-1 and earlier session notes.*
+*Generated 2026-11-16 by Claude (Claude Fable 5.2) for John, from `backTesting-05-Requirements-Consolidated.md` revision 2026-11-16-1 and earlier session notes.*
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `QUESTIONS-FOR-JOHN.md`; references to the other renamed docs follow |
 | 2026-11-19-1 | 2026-11-19 12:48 | Claude Code (Claude Fable 5.2) | The author's 14 answers recorded |

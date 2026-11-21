@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the two Nasdaq-100 earnings columns (Features.md 39-40) from SEC EDGAR,
+"""Build the two Nasdaq-100 earnings columns (backTesting-02-Features.md 39-40) from SEC EDGAR,
 as daily CSVs in the app's format.
 
     python build_ndx_earnings.py              # fetch what is not cached, write all four
