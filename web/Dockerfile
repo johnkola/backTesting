@@ -18,7 +18,7 @@ COPY web/api/ ./
 # from there.
 RUN mkdir -p /app/docs
 COPY README.md /app/docs/
-COPY docs/backTesting-10-Getting-Started.md /app/docs/docs/
+COPY docs/readonly-doc/backTesting-10-Getting-Started.md /app/docs/docs/readonly-doc/
 # The QQQ design set keeps its docs/readonly-doc/ path, because that is the path the
 # DOCS registry addresses it by.
 #

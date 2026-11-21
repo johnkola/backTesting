@@ -62,10 +62,10 @@ services:
       MAINTENANCE_MESSAGE: ${MAINTENANCE_MESSAGE:-}
     volumes:
       - ./data/models:/data/models:ro
-      - ./docs/backTesting-10-Getting-Started.md:/app/docs/docs/backTesting-10-Getting-Started.md:ro
+      - ./docs/readonly-doc/backTesting-10-Getting-Started.md:/app/docs/docs/readonly-doc/backTesting-10-Getting-Started.md:ro
       - ./README.md:/app/docs/README.md:ro
       # The design set, at the path the DOCS registry addresses it by. :ro
-      # because nothing in this repo may write to docs/readonly-doc/.
+      # because nothing in this repo may write to the design set.
       - "./docs/readonly-doc/backTesting-04-Architecture.md:/app/docs/docs/readonly-doc/backTesting-04-Architecture.md:ro"
       - "./docs/readonly-doc/backTesting-03-Design-Notes.md:/app/docs/docs/readonly-doc/backTesting-03-Design-Notes.md:ro"
       - "./docs/readonly-doc/backTesting-02-Features.md:/app/docs/docs/readonly-doc/backTesting-02-Features.md:ro"

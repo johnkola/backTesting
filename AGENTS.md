@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-21-1** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-2** · 2026-11-21 18:00 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -81,9 +81,11 @@ steps.
 - **Stamp every doc you change.** Bump the revision line under its title
   (`Revision YYYY-MM-DD-N`, Toronto time, your name and model) and add a row to its
   Revision history at the end: revision, time, who and model, what changed. This
-  covers the project docs and trackers, never `docs/readonly-doc/`, whose revision line
-  is the author's.
-- **`docs/readonly-doc/` is never edited.** Each new fact goes in exactly one place:
+  covers the project docs and trackers, never the design set (`backTesting-01` to
+  `-04` in `docs/readonly-doc/`), whose revision line is the author's.
+- **The design set is never edited.** That is the four files `backTesting-01` to
+  `-04` in `docs/readonly-doc/`. The trackers and Getting Started (`-05` to `-10`)
+  share the folder and are edited as usual. Each new fact goes in exactly one place:
   see [`CLAUDE.md`](CLAUDE.md).
 - **Settings the user chooses don't change the signal.** The app may become a
   signal provider, so per-user settings such as tax must not change the signal it
@@ -608,6 +610,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | The never-edited rule now names the four design files (`backTesting-01` to `-04`); the trackers the author moved into `docs/readonly-doc/` stay editable |
 | 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Doc files renamed with the app name and a reading-order number (`backTesting-NN-…`); paths and links follow, at the author's request |
 | 2026-11-17-1 | 2026-11-17 10:50 | Claude Code (Claude Opus 5.5) | Step 8 done: phase1-full v5's held-out test (run 881) does not beat buy-and-hold |
 | 2026-11-16-16 | 2026-11-16 22:29 | Claude Code (Claude Opus 5.5) | Step 4 done, waived: the author keeps the 2022 to 2026-06 test block as step 8's final exam |

@@ -7,14 +7,16 @@
 // KNOWN_DOCS from these keys so a doc can never render without recording a
 // revision.
 //
-// The first two are the project's own docs (docs/backTesting-10-Getting-Started.md and the
+// The first two are the project's own docs (docs/readonly-doc/backTesting-10-Getting-Started.md and the
 // repo-root README.md): how to operate it,
 // and what to type. The last three are the QQQ model's design set, which
 // describes the model rather than this codebase (backTesting-04-Architecture.md §8.1a asks for
 // them on the Docs tab).
 //
-// Those three come from `docs/readonly-doc/`, which the author maintains by hand and
-// nothing in this repo may write to. It supersedes
+// Those three come from `docs/readonly-doc/`. The author maintains the design
+// set there (backTesting-01 to -04) by hand and nothing in this repo may write
+// to it; the trackers and Getting Started (-05 to -10) share the folder and are
+// edited as usual. The design set supersedes
 // `docs/reference/qqq-backtesting-model/`, which is an earlier revision of the same
 // three documents and is deliberately NOT served: its backTesting-OLD-Design.md still fits
 // normalization statistics on each feature's full history, where the current
@@ -34,7 +36,7 @@
 // spelling has to appear in web/Dockerfile's COPY and the compose bind mounts,
 // which the tests below check.
 const DOCS = {
-  GETTING_STARTED: { file: 'docs/backTesting-10-Getting-Started.md', label: 'Getting Started', slug: 'getting-started' },
+  GETTING_STARTED: { file: 'docs/readonly-doc/backTesting-10-Getting-Started.md', label: 'Getting Started', slug: 'getting-started' },
   README: { file: 'README.md', label: 'README', slug: 'readme' },
   QQQ_DESIGN: {
     file: 'docs/readonly-doc/backTesting-03-Design-Notes.md',

@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-21-1** · 2026-11-21 17:54 Toronto time · author: Claude (Claude Fable 5.2), for John · **draft for review** · in the repo at `docs/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-21-2** · 2026-11-21 18:00 Toronto time · author: Claude (Claude Fable 5.2), for John · **draft for review** · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -184,6 +184,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | Header path follows the move into `docs/readonly-doc/`; requirement text unchanged |
 | 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `REQUIREMENTS-CONSOLIDATED.md`; references to the other renamed docs follow; requirement text unchanged |
 | 2026-11-16-2 | 2026-11-16 16:33 | Claude (Claude Fable 5.2) | Added to the repo at `docs/backTesting-05-Requirements-Consolidated.md` and to Drive; requirement text unchanged |
 | 2026-11-16-1 | 2026-11-16 13:15 | Claude (Claude Fable 5.2) | First consolidated draft from the repo docs at `499c6e4` |
