@@ -759,7 +759,7 @@ The roadmap is organised as **Done / Now / Next** so the current focus is always
 Phase two groundwork, on synthetic intraday data. Phase one is answered (see Done), and
 the design's next phase rebuilds the model on intraday bars (Design Notes, "Two Phases").
 The NN path now builds and runs walk-forward by bar on H1 and M30
-([Intraday calendars](#feature-table-and-training-window), [`docs/backTesting-07-Design-Gaps.md`](docs/backTesting-07-Design-Gaps.md) G22,
+([Intraday calendars](#feature-table-and-training-window), [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md) G22,
 I1 to I4), checked end to end on `tools/datagen` bars. Imported intraday
 files are read as New York time (I7), the import takes FirstRate Data's files as they
 come, and the Strategy tab saves only what the runner can run (G54). What is left before
@@ -767,10 +767,10 @@ real intraday data is the data itself.
 
 ### Next
 
-*Ordered by what blocks phase two. Full list: [`docs/backTesting-07-Design-Gaps.md`](docs/backTesting-07-Design-Gaps.md).*
+*Ordered by what blocks phase two. Full list: [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md).*
 
 1. The Strategy tab's remaining choices, in the order of the work list in
-   [`docs/backTesting-07-Design-Gaps.md`](docs/backTesting-07-Design-Gaps.md) ("Decisions and work order, 2026-11-19"):
+   [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md) ("Decisions and work order, 2026-11-19"):
    selectable inputs with the two new columns (C7, F1, F2), a sliding window beside the
    expanding one (C6), the rule strategies as benchmarks only (C8), and data checks with a
    severity that can stop the chain (C2).
@@ -779,14 +779,14 @@ real intraday data is the data itself.
    results that keep their run settings (G40), folds that keep their models (G50).
 
 The author's decisions of 2026-11-19 are recorded in
-[`docs/backTesting-06-Questions-for-John.md`](docs/backTesting-06-Questions-for-John.md): FirstRate Data is the intraday
+[`docs/readonly-doc/backTesting-06-Questions-for-John.md`](docs/readonly-doc/backTesting-06-Questions-for-John.md): FirstRate Data is the intraday
 source, and the Spring Boot move waits until phase two works on real data.
 
 ### Done
 
 Compressed view — see git log for per-step detail.
 
-- **Phase one, answered: no** (2026-11-17). Steps 0 to 8 of [`AGENTS.md`](AGENTS.md) are done. On the held-out test, scored once (run 881, 2022-01 to 2026-06), phase1-full v5 returned +57.71% after 25% tax and costs against buy-and-hold's +61.07%, and its calls were no better than always predicting the training majority. Built on the way: the feature store and its data checks, walk-forward validation with blind engines and recalculation on demand (B10), Strategy 2 (G5), the network beside XGBoost and LightGBM (B9), buy-and-hold, Faber and dual momentum under the run's own costs and tax (B6, B7), the naive baseline (B8), direction and return targets (G49), after-tax backtests (G20), the corrections B1 to B5, and each run's commit (G45). Per item: [`docs/backTesting-07-Design-Gaps.md`](docs/backTesting-07-Design-Gaps.md).
+- **Phase one, answered: no** (2026-11-17). Steps 0 to 8 of [`AGENTS.md`](AGENTS.md) are done. On the held-out test, scored once (run 881, 2022-01 to 2026-06), phase1-full v5 returned +57.71% after 25% tax and costs against buy-and-hold's +61.07%, and its calls were no better than always predicting the training majority. Built on the way: the feature store and its data checks, walk-forward validation with blind engines and recalculation on demand (B10), Strategy 2 (G5), the network beside XGBoost and LightGBM (B9), buy-and-hold, Faber and dual momentum under the run's own costs and tax (B6, B7), the naive baseline (B8), direction and return targets (G49), after-tax backtests (G20), the corrections B1 to B5, and each run's commit (G45). Per item: [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md).
 - **Split into four services, with a complete API**: the system was a CLI plus a Node process that was simultaneously the API and the thing serving the React app, which meant the client could not be deployed without a backend attached and the web UI could display backtest results it had no way to produce. Now: `client` (static SPA behind nginx, `:3000`, reaching the API through a build-time `VITE_API_URL`), `api` (Node, `:8001`, every read plus proxying), `engine` (Java, internal `:8002`), `loader` (Python, host `:8003` for the CLI). The engine is new — `backtest serve` on the JDK's `com.sun.net.httpserver`, no framework — and answers what only Java can: `GET /api/strategies` (registered strategies with descriptions, default parameters and whether they need a trained model) and `POST /api/run` (runs a backtest synchronously and returns the saved result; `409` when a model-backed strategy has no cached model). Also new: `DELETE /api/results/:id`, `POST /api/audit` (the cohesion checks over stored candles), and `DELETE /api/imports/:id` (undoes one import's candles within its slice year, `dry_run` supported, archive deliberately kept). CORS and preflight handling on both Java and Node, since the client is now cross-origin. **Fixed on the way**: Java had no `PG*` environment-variable support — `AppConfig` read `localhost:5432` out of `application.properties` regardless — so the engine container could not reach the database at all; it now prefers `PG*` when set, matching what Node's `db.js` has always done. Both web Dockerfiles used `npm ci` with no lockfile in the build context (both are gitignored since `344b38d`), so neither image could rebuild; they use `npm install` now.
 - **CLI parity with the web UI**: three new subcommands and two widened ones close the gaps where the terminal could not answer a question the browser could. `list-sources` and `list-instruments --detail` expose the per-source, per-timeframe breakdown (counts + date ranges) that `GET /api/instruments` has always returned, so choosing `--source`/`-t` no longer means guessing or opening the UI; `list-imports` shows the import audit log, `list-models` asks the loader's `GET /api/nn/models` for cached models, which is where `run --model-version` ids come from — its help text used to send you to the web page; `aggregate` exposes `POST /api/aggregate` for the one case `run`'s aggregate-if-missing deliberately won't cover, rebuilding a rollup that already has rows (`--force`). `report` gained `--id N` plus `-s`/`-i`/`--source`/`-n` filters mirroring `GET /api/results`, and its listing now shows the data source — runs of the same strategy against different sources were previously indistinguishable. Java→loader HTTP moved onto a shared `LoaderClient`. **Fixed on the way**: that client (and `NeuralNetworkStrategy`'s own) used the JDK's default HTTP/2-with-h2c-upgrade, which drops the request body against uvicorn — every live POST from Java to the loader came back `422` with the whole body reported missing, so `train` and `run -s nn-feedforward` could not work outside the Python tests (which drive FastAPI through `TestClient` and never cross a socket). Both clients now pin HTTP/1.1, guarded by a test each.
 - **Aggregate-if-missing on `run`**: a backtest at a timeframe with no candles for the `(instrument, source)` pair now builds that timeframe first instead of failing, so `run -t W1` is turnkey from the CLI after a D1-only import — the CLI half of the on-demand rollup work whose UI half shipped with the Instruments button. `BacktestCommand` calls the new `LoaderAggregator` (`loader/`), which resolves the pair, checks the target is empty, picks the coarsest available timeframe still finer than the target via `CandleRepository.findAvailableTimeframes`, and posts the missing-only `POST /api/aggregate` form. The aggregation math stays in `python/loader/aggregate.py`; Java only decides whether and from what. Opt out with `--no-aggregate`; an unreachable loader is a warning, not a failure. Fixed alongside it: the monthly `Timeframe` constant was named `MN` while the loader, the `candles` rows and the web UI all use `MN1`, so `run -t MN1` threw "Unknown timeframe code" and `run -t MN` queried a timeframe that never exists in the table — monthly backtests couldn't run at all. The constant is now `MN1` (enum names are what get written to and queried from `candles.timeframe`), with `MN` kept as a parse alias.
@@ -842,7 +842,7 @@ same `decompress_chunk(...)` hint the import path gives.
 
 ## Docs in the UI
 
-`docs/backTesting-10-Getting-Started.md`, `README.md` and `ARCHITECTURE.md` are readable inside the app at
+`docs/readonly-doc/backTesting-10-Getting-Started.md`, `README.md` and `ARCHITECTURE.md` are readable inside the app at
 **`/docs`**, rendered live from the files on disk (compose mounts them read-only, so an
 edit shows on the next load) with a revision captured whenever the content hash changes.
 `/docs` with no slug lands on Getting Started, which is what a first-time reader wants.

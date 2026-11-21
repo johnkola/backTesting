@@ -64,7 +64,7 @@ seeded random walk: it looks like a stock and behaves like none. Naming it after
 real ticker once had the app reporting that Apple lost money over 2020–2023, a
 period in which it gained 156%.
 
-`test-data/` also ships real daily history for `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN`.
+`../../test-data` also ships real daily history for `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN`.
 
 **Real data.** No API key needed; this pulls from Yahoo's chart API and writes the same
 CSV shape:
@@ -94,13 +94,13 @@ python fetch_fred_series.py BAA10Y       # Baa corporate minus 10-year: the inve
 python fetch_boc_series.py AVG.INTWO --out test-data/CORRA_daily.csv   # Bank of Canada overnight rate; import with source boc
 ```
 
-**Nasdaq-100 breadth.** `build_ndx_breadth.py` downloads the current constituents and
+**Nasdaq-100 breadth.** `../../build_ndx_breadth.py` downloads the current constituents and
 computes the percent trading above their own 200-day moving average, as one `INDEX`
 series. It caches each name's closes under `data/ndx-constituents/`, so `--offline`
 recomputes at a different window without re-downloading. Read the survivorship-bias
 warning in its docstring before a backtest leans on the output.
 
-**Nasdaq-100 earnings.** `build_ndx_earnings.py` reads the same member list and pulls each
+**Nasdaq-100 earnings.** `../../build_ndx_earnings.py` reads the same member list and pulls each
 company's filings from SEC EDGAR: release dates from its earnings 8-Ks (from late 2003) and
 net income from its XBRL facts (from 2011). It writes four `INDEX` series, `NDXERN5D`,
 `NDXERNSEASON`, `NDXNIQOQ` and `NDXNITTM`, imported with source `computed` like breadth.
@@ -112,7 +112,7 @@ Data's own RSI and MACD for QQQ, which the feature build compares ours against. 
 `TWELVEDATA_API_KEY` in `.env`.
 
 **Intraday bars.** Every source above gives you daily candles. If you need `M30` or
-`H1` and have no intraday feed, `tools/datagen/` invents them from a daily file — the
+`H1` and have no intraday feed, `../../tools/datagen` invents them from a daily file — the
 generated bars aggregate back to exactly the daily ones, so a D1 and an M30 backtest see
 the same market. They are fiction; import them under their own source name and don't read
 anything into the result. See `tools/datagen/README.md`.
@@ -148,7 +148,7 @@ out-of-order timestamps, structural breaks, outliers. Findings are advice, not a
 blocker: the import still succeeds. Read them anyway; a gap in your data quietly
 becomes a gap in your results.
 
-Importing many files at once is a separate path — drop them in `data/csv-inbox/` named
+Importing many files at once is a separate path — drop them in `../../data/csv-inbox` named
 `SOURCE__SYMBOL__TYPE__TF.csv` and run `backtest-ingest`. See
 [Bulk CSV import](/docs/readme#bulk-csv-import-drop-folder).
 
@@ -256,19 +256,19 @@ the portfolio accounting and the cost model are documented in
 
 ## Where your CSV files live
 
-Two directories hold CSVs, and they do different jobs. `test-data/` is committed sample
+Two directories hold CSVs, and they do different jobs. `../../test-data` is committed sample
 data you import *from*; everything under `data/` is runtime state the running system
 writes — gitignored, and safe to delete if you accept losing what's in it.
 
 | Path | In git | Written by | Holds |
 |---|---|---|---|
-| `test-data/` | yes | `./gradlew generateTestData`, the three fetch scripts | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history; `DGS10`, `T10YIE` and `DCOILWTICO` are FRED macro series; `NDXBREADTH` is computed, and ships with the `.members.txt` naming the constituents it used; the four `NDXERN*` / `NDXNI*` earnings series likewise, beside `NDXEARNINGS_daily.members.txt` |
-| `data/csv-inbox/` | no | you | Files waiting for the batch importer (`backtest-ingest`), named `SOURCE__SYMBOL__TYPE__TF.csv` |
-| `data/csv-archive/` | no | the loader | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
-| `data/models/` | no | the loader | Trained NN models, one directory per cache key. The **Models** page reads this |
-| `data/features/` | no | nobody | Vestigial — the Java feature store it belonged to was removed in the Python port |
-| `data/ndx-constituents/` | no | `build_ndx_breadth.py` | One JSON of daily closes per Nasdaq-100 member, so breadth recomputes at another window without re-downloading 101 symbols |
-| `data/ndx-earnings/` | no | `build_ndx_earnings.py` | One JSON per member company of its 8-K dates and net income facts from SEC EDGAR, so `--offline` recomputes without re-downloading |
+| `../../test-data` | yes | `./gradlew generateTestData`, the three fetch scripts | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history; `DGS10`, `T10YIE` and `DCOILWTICO` are FRED macro series; `NDXBREADTH` is computed, and ships with the `.members.txt` naming the constituents it used; the four `NDXERN*` / `NDXNI*` earnings series likewise, beside `NDXEARNINGS_daily.members.txt` |
+| `../../data/csv-inbox` | no | you | Files waiting for the batch importer (`backtest-ingest`), named `SOURCE__SYMBOL__TYPE__TF.csv` |
+| `../../data/csv-archive` | no | the loader | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
+| `../../data/models` | no | the loader | Trained NN models, one directory per cache key. The **Models** page reads this |
+| `../../data/features` | no | nobody | Vestigial — the Java feature store it belonged to was removed in the Python port |
+| `../../data/ndx-constituents` | no | `../../build_ndx_breadth.py` | One JSON of daily closes per Nasdaq-100 member, so breadth recomputes at another window without re-downloading 101 symbols |
+| `../../data/ndx-earnings` | no | `../../build_ndx_earnings.py` | One JSON per member company of its 8-K dates and net income facts from SEC EDGAR, so `--offline` recomputes without re-downloading |
 
 Every CSV in either tree has the same header, whichever path it came in by:
 
@@ -279,9 +279,9 @@ Date,Open,High,Low,Close,Volume
 
 A file you upload one at a time can live anywhere — you point the form or the `curl` at
 it. Only the batch importer cares where the file sits and what it is called, and that
-path is `data/csv-inbox/`.
+path is `../../data/csv-inbox`.
 
-Candles themselves are not in `data/` — they live in Postgres, in the
+Candles themselves are not in `../../data` — they live in Postgres, in the
 `timescaledb-data` Docker volume, which survives `docker compose down` and is removed
 by `docker compose down -v`.
 
@@ -311,7 +311,7 @@ by `docker compose down -v`.
 
 ## Revision history
 
-Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules).
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`../../AGENTS.md`, Working rules).
 
 | Revision | When | Who | Change |
 |---|---|---|---|

@@ -2,7 +2,7 @@
 
 > **Revision 2026-11-21-3** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
-What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
+What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
 Newest pass at the top.
 
@@ -16,7 +16,7 @@ Effort is an estimate: S is under a day, M a few days, L a week or more, XL a re
 
 ## Pass 4 — 2026-11-15 (HEAD `6cdc664`): `backTesting-01-Requirements.md` R1 to R76 against the code
 
-Scope: the author refreshed `docs/readonly-doc/` on 2026-11-15 (`5f7a8c2`, `ee02e90`). That
+Scope: the author refreshed `` on 2026-11-15 (`5f7a8c2`, `ee02e90`). That
 refresh added `backTesting-01-Requirements.md` (R1 to R76, numbered for one-by-one review), expanded
 `backTesting-04-Architecture.md`, and adjusted `backTesting-03-Design-Notes.md`. Four read-only agents checked every
 requirement against the code and the live database. Each finding that changes a
@@ -24,10 +24,10 @@ conclusion was checked again before it was written here.
 
 **Result: 12 done, 33 partial, 21 missing, 10 in conflict.** The conflicts are with a
 deliberate code choice or a recorded decision, and four of them are also
-contradictions inside `docs/readonly-doc/` itself.
+contradictions inside `` itself.
 
 **What the refresh settled.** Pass 3's note that "the design copy is behind" no longer
-holds. The four requirement groups it quoted now sit in `docs/readonly-doc/`: R76 (B1), R36
+holds. The four requirement groups it quoted now sit in ``: R76 (B1), R36
 and R39 (B6, B7), R72 (B8), and R21 to R23 with R74 (B9). Where they differ from the
 quotes, `docs/readonly-doc/` wins.
 - `backTesting-03-Design-Notes.md` now validates on 2016 to 2021 and tests on 2022 onward (the
@@ -48,10 +48,10 @@ chain). The pass waits for the author's go.
 |---|---|---|---|---|
 | D9 | Do engines learn costs, tax and margin? **Decided 2026-11-15 by the author: R75**, engines blind, profit recalculated on demand. **Built 2026-11-15 (B10)**: see the B10 record | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `backTesting-03-Design-Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
 | D2 (updated) | Null padding | R3: "no trimming to overlap, no null padding" | `schema.sql`: "value is NULLABLE on purpose". The database confirms what D2 called unconfirmed: set 27 holds 9,565 NULL rows of 264,670, every column spans the whole calendar from 1999-03-10, and the NULLs include padding before each series starts (`ndx_net_income_qoq` 3,013, `earnings_season_*` 1,166, `vxn_*` 532), not only warm-up. Waived for step 2 on 2026-11-14 | every feature set |
-| D10 | Is raw data immutable? **Decided 2026-11-15 by the author: every archived CSV version is kept**, so any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider (G66, G67) | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `data/csv-archive` |
+| D10 | Is raw data immutable? **Decided 2026-11-15 by the author: every archived CSV version is kept**, so any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider (G66, G67) | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `../../data/csv-archive` |
 | D11 | Do checks stop the chain? | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
 | D12 | Keep old feature values? **Decided 2026-11-15 by the author: no.** Feature values are rebuilt on demand from the stored inputs, which D10 keeps reloadable, so a rebuild replacing a set's values stays. Architecture §4 and R20 ("earlier values stay") remain a departure until the author updates them | Architecture §4 and R20: "earlier values stay, each tied to its run"; every value row points at its run | G3 progress: "Not done, by decision: keeping old values"; a rebuild replaces a set's values (`feature_build.py`), and `feature_values` has no build id | every feature set |
-| D13 | Deeplearning4j and ONNX check (R62) | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
+| D13 | Deeplearning4j and ONNX check (R62) | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `../../build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
 | D14 | Indicators from TA-Lib (R66) | R66: TA-Lib through one shared module, for features and benchmarks | `nn/indicators.py` is hand-written "TA4J-compatible … line up bit-for-bit with the Java side" | every set's RSI, MACD and moving-average columns |
 
 **The author's principle, 2026-11-15.** "Anything that can recalculate should be recalculated by demand or code change", and "any data can be repopulated: if you have the original CSV, or if pulling from an API, it can be done on demand". So a derived figure is never baked in where only a retrain could redo it, and raw data can always be rebuilt from its source. D9 follows from it. It also bears on two open rows:
@@ -87,16 +87,16 @@ stored run.
 | G57 | Results: walk-forward runs never reach Results; there is no side-by-side comparison by feature list, windows and metric; no trades per year or average holding time; buy-and-hold has a return but no Sharpe or drawdown | R38, R39, R40 | `ResultsPage.tsx`, `ResultDetailPage.tsx`; `benchmarks` columns | none | M | open |
 | G58 | Train and Run are still two tabs, each with its own ad hoc form; the design has one Train & Run tab that runs a saved strategy with no choices | R33, R41 | `Layout.tsx`, `TrainPage.tsx` ("the ad-hoc path"), `RunPage.tsx` | none | M | open |
 | G59 | Tooltips come from three dictionaries plus about 29 hard-coded `data-tip` strings, and the nav tabs and the Pipeline sub-tabs have none | R43 | `fieldHints.ts`, `metricHints.ts`, `cohesionHints.ts` | none | S | open |
-| G60 | Testing layers the design asks for: React Testing Library component tests, Postman run in CI by Newman and mirroring JUnit endpoint tests, one scripted end-to-end path, Python job-layer tests, a reproducibility test (same seed and snapshot give the same model and predictions), and indicators checked against published values. G15 was closed with these left out | R50, R51, R52, R61 | `ci.yml` (no Newman step); `package.json` (no RTL); `tools/datagen/pipeline.py` is manual | none | L | open |
+| G60 | Testing layers the design asks for: React Testing Library component tests, Postman run in CI by Newman and mirroring JUnit endpoint tests, one scripted end-to-end path, Python job-layer tests, a reproducibility test (same seed and snapshot give the same model and predictions), and indicators checked against published values. G15 was closed with these left out | R50, R51, R52, R61 | `ci.yml` (no Newman step); `package.json` (no RTL); `../../tools/datagen/pipeline.py` is manual | none | L | open |
 | G61 | The lineage chain cannot be followed and two hops are missing. `candles` carry no audit columns and no link to their import slice, rolled-up H4/W1/MN1 candles have no audit record at all, `feed_runs` has no audit columns, and `backtest_results` record no code version or input snapshot | R1, R4, R5, R54 | `schema.sql` (`candles` excluded from the audit loop, "nothing rewrites it" no longer true); 27,092 rolled-up rows with no `data_imports` row | all candles; 16 results | M | open |
 | G62 | Models are files only: no database record with path and file hash, no hash check on load | R49 | `nn/store.py` (`metadata.json`); `backtest_results.model_version_id` only | 6 model versions | S | open |
 | G63 | The engine and benchmark catalogue: buy-and-hold, Faber and dual momentum have no entries, and nothing is shown on Results, Docs or in tooltips. B9 covers engine entries on the Strategy tab only | R74 | `metricHints.ts` (buy-and-hold only) | none | S | open |
-| G64 | `backTesting-01-Requirements.md` does not show on the Docs tab: it is not in the `DOCS` registry and not mounted into the api container | R59 | `web/api/docsRegistry.js`; `docker-compose.yml` (three design files mounted) | none | S | open |
+| G64 | `backTesting-01-Requirements.md` does not show on the Docs tab: it is not in the `DOCS` registry and not mounted into the api container | R59 | `../../web/api/docsRegistry.js`; `docker-compose.yml` (three design files mounted) | none | S | open |
 | G65 | Signal voting (Phase 2): per-bar votes per signal, a voting setup with a minimum count, and its backtest | R73 | none in code | none | L | gated: after Phase 1 |
-| G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `data/csv-archive` | none | S | open |
+| G66 | Reloading a series from its archive is not one action. The feeds' Apply reloads a series from its provider on demand, but from the archived CSVs the only way is to upload or drop each file again by hand. The author's principle (2026-11-15) asks for both on demand: one action (CLI, API and the Imports page) that rebuilds a series' candles from its archived slices | R2, R11, D10 | `loader/feeds/runner.py` `load_full` (the API side exists); nothing similar reads `../../data/csv-archive` | none | S | open |
 | G67 | The archive keeps only the newest version of a slice. A fix rewrites the archived file in place (`csv_import.write_archive_files`), so an older version cannot be reloaded, contrary to D10. Each version needs its own archived file (for example named by its hash), with its `import_files` row pointing at it, and undo and reload able to pick a version | R2, D10 | `csv_import.write_archive_files`; `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv` holds one file per slice | 37 fix versions whose earlier CSVs are already gone | M | open |
-| G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `docs/readonly-doc/` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
-| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `docs/readonly-doc/` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `README.md` lines 166, 509, 1015; `backTesting-10-Getting-Started.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | done 2026-11-17: see the G69 record in Pass 4 |
+| G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
+| G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `../../README.md` lines 166, 509, 1015; `backTesting-10-Getting-Started.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | done 2026-11-17: see the G69 record in Pass 4 |
 | G70 | An engine cannot train on a subset of the strategy's features. R21 lets an engine override the strategy's feature list with its own subset, recorded on its engine row and its run result; every engine reads the strategy's list | R21 | `nn/engines.py`, `strategy_engines` (no feature column) | none | S | open: found during B9 |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
@@ -116,7 +116,7 @@ stored run.
 - [x] `feature_build.resolve_aligned` applies it to every stored series (and so to each side of an op); the data check's published series shifts with it
 - [x] `holiday_proximity` from the scheduled NYSE holidays (`loader.market_calendar`) instead of the next stored session, so an unscheduled closure is not known in advance and the newest row is computed too. Tests
 - [x] Rebuild the feature table; show per column how many values moved. Checkpoint: the stored runs this makes stale (those selecting a shifted column) wait for the author's go before back-up, delete and rerun
-- [x] README, `features.toml` notes, `AGENTS.md` step 2 gains the condition; the G47 row says done
+- [x] README, `features.toml` notes, `../../AGENTS.md` step 2 gains the condition; the G47 row says done
 
 *Done, 2026-11-15.* Tests: Python 751. Set 28 (built with the delays) against set 27: exactly ten columns moved.
 - Nine fed by a delayed series moved on most days: `dollar_index` 6,905, `yield_curve_10y2y` 6,891, `credit_spread_ig` 6,881, `oil_wti` 6,829, `treasury_10y` 6,752, `gold` and `copper_gold_ratio` 6,532, `treasury_2y` 6,509, `boc_policy_rate` 5,750, `fed_funds` 3,248.
@@ -133,20 +133,20 @@ The verdicts stand: no timing skill, and Strategy 2's edge is leverage.
 
 Still under R17 and not changed here: `earnings_season_share` counts actual 8-K dates over the next five sessions, a deliberate proxy for an announced earnings calendar (`features.toml` says so). It is look-ahead by R17's letter, and the author may want it in D9's company.
 
-**B3 record (G29), 2026-11-15.** The author: build step B3. The plan was not written here before the work (a slip against the working rules), so it is recorded after the fact, against the B3 conditions in `AGENTS.md`.
+**B3 record (G29), 2026-11-15.** The author: build step B3. The plan was not written here before the work (a slip against the working rules), so it is recorded after the fact, against the B3 conditions in `../../AGENTS.md`.
 
 - [x] Sortino is the mean over the downside deviation, the root of the mean squared losing return over all bars, annualised as Sharpe (`MetricsCalculator.calculateSortinoRatio`). Tested against a hand-worked series: returns +10%, −10%, +10%, 0 give 0.5 × √252. The old formula gave 0 for it
 - [x] Total slippage: `ExecutionSimulator` adds |fill − bar price| × quantity over every fill, and the end-of-run close now fills through it (same price and commission as before). The engine passes the total to `MetricsCalculator`
 - [x] A zero-P&L trade is break-even (`Trade.isLoss` is `pnl < 0`): left out of the win rate, the average loss and both streaks, and counted in `breakEvenTrades`
 - [x] Sortino with no losing bar and profit factor with no losing trade are `null`, absent from `result_json`, and a dash in the CLI report, on the Run page and on the result page (which now shows Sortino, profit factor and slippage). The field was also misspelled `sortingRatio`, so the stored key never matched what the client read
-- [x] Tests: Java 128 (9 new; they use the new API and fail on the old values), client 142. README (how the trade metrics count), `AGENTS.md` step 7 (the "do not quote" limit is now an app condition)
+- [x] Tests: Java 128 (9 new; they use the new API and fail on the old values), client 142. README (how the trade metrics count), `../../AGENTS.md` step 7 (the "do not quote" limit is now an app condition)
 - [x] Stale records, with the author's go: all 16 results were backed up (`rerun-b3-20261115/before.sql.gz`). Each was rerun with its request rebuilt from its strategy's warm-up (default parameters, pinned model version, 706 with 200 epochs). The rebuild reproduced the four requests known from 2026-11-12 exactly. All 16 reproduced window, model, trades, return, final equity and Sharpe exactly. Only the fixed metrics changed: slippage from 0 to the real cost (713: $2,070), Sortino recomputed, and 709's profit factor from 0 to not available (7 wins, no loss). The originals were then deleted in one transaction. This also settles step 7's reproduction check for the 11 results never rerun before
 
 Result ids after the rerun (older rows in this file use the old ones): 686→714, 697→715, 698→716, 699→717, 702→718, 703→719, 704→720, 705→721, 706→722, 707→723, 708→724, 709→725, 710→726, 711→727, 712→728, 713→729.
 
 Also recorded against existing rows: G14 (R45) now covers a third charting approach, the hand-written SVG preview added 2026-11-15 (`FeaturePreview.tsx`). G10 (R46) is unchanged. G34 and B8 should follow R72: the baseline is scored on the test window, it is "always up" or the historical mean return per target, and it shows on Results. B6 (R36) does not cover dividends, currency or the superficial-loss rule, which wait on G53.
 
-**B10 plan (D9, R75), 2026-11-15.** The author: do B10. The conditions are in `AGENTS.md`, build step B10.
+**B10 plan (D9, R75), 2026-11-15.** The author: do B10. The conditions are in `../../AGENTS.md`, build step B10.
 
 The shape:
 - **Signals.** A new table `walkforward_signals`, one row per scored bar, linked to the run and deleted with it. Each row holds the bar's date, the date its return runs to, the model's raw output, the call and the bar's label. The raw output is a money model's position, or a classifier's three class probabilities.
@@ -179,7 +179,7 @@ Checklist:
   - Back up, delete and rerun all nine runs. 374, 375, 394, 395 and 396 trained with costs, tax or margin. 255, 256, 259 and 299 are classifiers and should reproduce exactly, and they get stored signals, so they can be recalculated too.
   - *The author, 2026-11-15: drop the duplicates.* 375 (postman-smoke v9) differs from 374 (v8) only by `taxTrain`, and 395 (strategy2-trained v1) from 394 (strategy2-scored v1) only by `marginTrain`. Blind, each would rerun as an exact copy, so they were deleted and not rerun, and only phase1-full got a new version.
 - [x] Live: recalculating a rerun at its own settings reproduces its folds; another tax rate by recalculation equals a rerun at it (on postman-smoke v6 and v7, see below, rather than a new phase1-full version, which would have made run 440 stale)
-- [x] README (the recalculate command and route, the removed flags), `AGENTS.md` B10 ticked and step 6 conditions, the G68 row and this record say done
+- [x] README (the recalculate command and route, the removed flags), `../../AGENTS.md` B10 ticked and step 6 conditions, the G68 row and this record say done
 
 *Done, 2026-11-15 20:19.*
 - **Strategy and backup.** phase1-full v5 (strategy 38) is v4 without `taxTrain`, saved through the API. The four tables, now including `walkforward_signals`, were backed up to `rerun-b10-20261115/before-delete.sql.gz`. The nine runs (54 folds) were deleted in one transaction and seven rerun, each with its own feature set and label.
@@ -199,7 +199,7 @@ Checklist:
 - **Recalculating at another tax rate equals a rerun.** postman-smoke v7 is v6 plus a 25% tax, with the model side identical. Run 434 (v6, before tax) recalculated as a dry run under v7 matches run 435, the full rerun at 25%, in all 60 fields compared: return, Sharpe, drawdown, trades, tax, days out, drift, commission, timing and accuracy.
 - **Why the money runs moved.** Training without commission lets the return loss change position more often: 374's fold 5 trades 3 times instead of once, and 394's fold 1 trades 19 times instead of 9. That is the training-side change D9 intends, not a scoring one. 374 gained 0.16 pp a fold; 394 lost 0.63 and phase1-full 2.03.
 
-**B1 plan (G27, R76), 2026-11-15.** The author: do B1. The conditions are in `AGENTS.md`, build step B1. The adjusted source scales a whole bar by one factor (`yahoo-adj` open/close equals `yahoo`'s, 0.99009 on QQQ 2010-03-01), and every QQQ and PSQ open lies inside its bar's range, so opens can be used as stored.
+**B1 plan (G27, R76), 2026-11-15.** The author: do B1. The conditions are in `../../AGENTS.md`, build step B1. The adjusted source scales a whole bar by one factor (`yahoo-adj` open/close equals `yahoo`'s, 0.99009 on QQQ 2010-03-01), and every QQQ and PSQ open lies inside its bar's range, so opens can be used as stored.
 
 The shape:
 - **A bar in the scorer.** Bar *i* runs from the close of its date *d* to the close of its exit *e*, the next matrix date. Its signal, computed at *d*'s close, trades at the open of the next session after *d* (the instrument's next candle; that is *e* unless the matrix skipped a day). So the bar has two segments:
@@ -211,7 +211,7 @@ The shape:
 - **Attribution.** `days_out` counts bars that end out of the market. `drift_tax` keeps its formula. `timing` becomes the rest of the shortfall before costs, bar by bar, so drift and timing still add to it exactly, and the gap segments count as timing.
 - **Training.** The money loss uses the same two segments, so a model trains on the curve it is scored on.
 - **Engine.** A signal on bar *t* waits and fills at bar *t+1*'s open, through the slippage model. A signal on the last bar is never filled. The end-of-run close-out stays at the last close. Buy-and-hold is B6's.
-- **Cross-check.** One fixture (`src/test/resources/crosscheck/next-open.json`) holds the bars and a long-or-flat signal series, with the expected trade dates and return. The Python and Java tests each read it, so the scorer and the engine are held to the same answer.
+- **Cross-check.** One fixture (`../../src/test/resources/crosscheck/next-open.json`) holds the bars and a long-or-flat signal series, with the expected trade dates and return. The Python and Java tests each read it, so the scorer and the engine are held to the same answer.
 
 Checklist:
 - [x] Plan here
@@ -233,7 +233,7 @@ Checklist:
   - 438-440 (money losses): backed up, deleted and rerun, since their loss changes.
   - Backtest results 714-729: backed up, deleted and rerun with their stored requests.
   - *The author: rerun all.* All seven walk-forward runs were rerun, rather than recalculating 434-437 in place, so that every snapshot covers opens.
-- [x] README, `AGENTS.md` (B1 ticked; steps 6 and 7 conditions), G27 and this record say done
+- [x] README, `../../AGENTS.md` (B1 ticked; steps 6 and 7 conditions), G27 and this record say done
 
 *Done, 2026-11-16 00:04.*
 - **Backup and deletes.** The six tables were backed up to `rerun-b1-20261115/before.sql.gz`. The seven walk-forward runs (42 folds) were deleted in one transaction and rerun with their own sets and labels. The 16 results were rerun first, from the requests B3 rebuilt, and the originals then deleted in one transaction.
@@ -256,7 +256,7 @@ Checklist:
   - The Training stage reads all four strategies' newest runs as fresh.
 - **Found:** G69, the Known limitations and How to read a result links go to `/docs/architecture`, a page that no longer exists.
 
-**B6 plan (G32, D6, D8), 2026-11-16.** The author: do B6. The conditions are in `AGENTS.md`, build step B6. R36 asks for buy-and-hold to be stored with each run and recalculated every time, under that run's own cost and tax settings.
+**B6 plan (G32, D6, D8), 2026-11-16.** The author: do B6. The conditions are in `../../AGENTS.md`, build step B6. R36 asks for buy-and-hold to be stored with each run and recalculated every time, under that run's own cost and tax settings.
 
 The shape:
 - **Buy-and-hold is a strategy that is always long, scored by the same code.**
@@ -280,7 +280,7 @@ Checklist:
 - [x] **Checkpoint, the author's go.**
   - Walk-forward 456-462: recalculated in place from their stored signals, with nothing retrained, since B6 changes only the profit step.
   - Backtest results 730-745: backed up, rerun and the originals deleted.
-- [x] README, `AGENTS.md`, G32 and this record say done
+- [x] README, `../../AGENTS.md`, G32 and this record say done
 
 *Done, 2026-11-16 00:23.* The author chose: recalculate the walk-forward runs, rerun the results.
 - **Tests:** Python 767, Java 121, API 107, client 138. New tests:
@@ -306,7 +306,7 @@ Checklist:
 - **Buy-and-hold under tax.** It now pays tax on its final sale (D8): 6.77 pts a fold at 25%. That is why the taxed classifier (457) gains 4.5 pp against it.
 - **Backtest results.** 730-745 were rerun as 746-761 from their stored requests. Every strategy return and trade count is identical. Only buy-and-hold moved: it now buys at the first fill's open and pays commission and slippage (761: 1,252.10% → 1,240.79%). The originals were deleted in one transaction. The result page draws each run's own buy-and-hold curve, 6,860 points for 761, one per equity point.
 
-**B7 plan (G33, D7), 2026-11-16.** The author: do B7. The conditions are in `AGENTS.md`, build step B7.
+**B7 plan (G33, D7), 2026-11-16.** The author: do B7. The conditions are in `../../AGENTS.md`, build step B7.
 
 The shape:
 - **The rules, once: `nn/rules.py`.** From a daily price history, at each month's last bar:
@@ -331,7 +331,7 @@ Checklist:
 - [x] Client: the side-by-side table on the Training tab and the result page; three curves on the chart; Postman
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go.** Walk-forward 456-462 recalculated in place; backtest results 746-761 rerun and the originals deleted.
-- [x] README, `AGENTS.md`, G33 and this record say done
+- [x] README, `../../AGENTS.md`, G33 and this record say done
 
 *Done, 2026-11-16 00:57.* The author chose: recalculate the walk-forward runs, rerun the results.
 - **Tests:** Python 786, Java 127, API 107, client 141.
@@ -356,7 +356,7 @@ Checklist:
   - Trades are position changes in walk-forward and round trips in results, the same in every row of a table.
 
 
-**B8 plan (G34, R72), 2026-11-16.** The author: do B8. The conditions are in `AGENTS.md`, build step B8.
+**B8 plan (G34, R72), 2026-11-16.** The author: do B8. The conditions are in `../../AGENTS.md`, build step B8.
 
 The shape:
 - **Stored per fold, derived per run.** Each fold already stores `baseline_acc`, its accuracy on the decision the model makes against the naive predictor (G43). A run's accuracy and baseline are the fold means, computed on read like every run summary: the Java reader adds `meanAccuracy`, `meanBaselineAcc` and `beatsNaive`. Storing a copy would be a second source of truth.
@@ -371,7 +371,7 @@ Checklist:
 - [x] Label registry with baselines (Python and API), tests
 - [x] Runner `NAIVE` line; Java run summary fields; Training tab badge; tests
 - [x] All four CI jobs; rebuild; live check
-- [x] README, `AGENTS.md`, G34 and this record say done
+- [x] README, `../../AGENTS.md`, G34 and this record say done
 
 *Done, 2026-11-16 09:17.* No stored figure changed, so nothing was rerun.
 - **Tests:** Python 795, Java 128, API 109, client 143. New tests:
@@ -393,7 +393,7 @@ Checklist:
 - **Found and fixed: 14 orphaned runs.** The store's database tests failed during B6, before the schema had the new columns, and left their aborted transactions unable to clean up. That left 14 empty, unfinished runs (464-470, 472-478). The cleanup now rolls back first. With the author's go, the runs were backed up (`cleanup-b8-20261116/before.sql.gz`) and deleted.
 
 
-**B2 plan (G28), 2026-11-16.** The author: do B2. The conditions are in `AGENTS.md`, build step B2.
+**B2 plan (G28), 2026-11-16.** The author: do B2. The conditions are in `../../AGENTS.md`, build step B2.
 
 The shape:
 - **Sized on what the fill will cost.** `ExecutionSimulator.affordableQuantity(budget, price, side)` returns the largest quantity whose slipped fill price times quantity, plus its commission, is no more than the budget. It works for any commission model: the quantity is solved as a fixed point, `(budget − commission(quantity)) ÷ slipped price`, and then trimmed until the exact cost `openPosition` charges fits. With commission and slippage at zero it is `budget ÷ price`, exactly today's quantity.
@@ -405,7 +405,7 @@ Checklist:
 - [x] `affordableQuantity` and every entry through it; tests for each commission and slippage model, long and short, and the frictionless case
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go:** results 762-777 backed up, rerun and the originals deleted
-- [x] README, `AGENTS.md`, G28 and this record say done
+- [x] README, `../../AGENTS.md`, G28 and this record say done
 
 *Done, 2026-11-16 09:22.* The author chose: back up, rerun, delete.
 - **Tests:** Java 155. Every combination of four commission models (zero, a $4.95 fee, 0.1%, 2%), three slippage models (zero, 0.15%, $0.05) and both sides leaves cash at zero or more and under a cent idle after an entry, at prices from $0.37 to $4,321. The old sizing went negative. Frictionless sizing is exactly cash ÷ price, so the B1 cross-check still makes its fixture's return. The rule benchmark test now expects cash never below zero.
@@ -413,7 +413,7 @@ Checklist:
 - **Walk-forward is unaffected:** the profit step charges costs as fractions of equity, so an entry there can never overspend.
 
 
-**B4 plan (G30), 2026-11-16.** The author: do B4. The conditions are in `AGENTS.md`, build step B4.
+**B4 plan (G30), 2026-11-16.** The author: do B4. The conditions are in `../../AGENTS.md`, build step B4.
 
 The training window is in each model version's `metadata.json`, under `extra.training_window`, as `since` and `until` plus the series. Two stored versions have neither date, and every nn result names its version (`model_version_id`).
 
@@ -435,7 +435,7 @@ Checklist:
 - [x] API and client: the Results badge and the result-page banner; Postman
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go:** the backfill over results 778-793, dry run first
-- [x] README, `AGENTS.md`, G30 and this record say done
+- [x] README, `../../AGENTS.md`, G30 and this record say done
 
 *Done, 2026-11-16 11:17.* The author chose: write the backfill.
 - **Tests:** Python 802, Java 160, API 109, client 145. New tests:
@@ -453,7 +453,7 @@ Checklist:
 - **Seen on the way:** result 781's model was trained on GOLD and tested on GOLD. This note first said it was tested on QQQ; corrected in B5.
 
 
-**B5 plan (G31), 2026-11-16.** The author: do B5. The conditions are in `AGENTS.md`, build step B5.
+**B5 plan (G31), 2026-11-16.** The author: do B5. The conditions are in `../../AGENTS.md`, build step B5.
 
 Both single-split trainers cut their rows by `train_split_ratio` and label each row from the close `forward` rows ahead, so the last `forward` training rows are labelled from validation closes. All 16 stored model versions were trained that way: 14 by `nn/train.py`, 2 by `nn/train_features.py`. Six of them back the 8 nn results (778-781, 786, 791-793).
 
@@ -472,7 +472,7 @@ Checklist:
 - [x] The API reads an inclusive `until`; test
 - [x] Python and API tests; rebuild
 - [x] **Checkpoint, the author's go:** the stored models and the results that use them
-- [x] README, `AGENTS.md`, G31 and this record say done
+- [x] README, `../../AGENTS.md`, G31 and this record say done
 
 *Done, 2026-11-16 13:06.* The author chose: retrain the 6 models and rerun the 8 results; delete the 10 versions no result used.
 - **Tests:** Python 813, API 110. New tests:
@@ -504,7 +504,7 @@ Checklist:
 
 
 
-**B9 plan (G35), 2026-11-16.** The author: do B9. The conditions are in `AGENTS.md`, build step B9.
+**B9 plan (G35), 2026-11-16.** The author: do B9. The conditions are in `../../AGENTS.md`, build step B9.
 
 Today the runner trains one engine, the network (`mlp`), and the builder's list of model types is hard-coded twice (`strategy_spec.MODEL_TYPES`, `strategies.js`). Neither library is installed.
 
@@ -529,7 +529,7 @@ Checklist:
 - [x] Client: the Strategy tab's engine sections, the Training tab's lines per engine; Postman
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go:** runs with the tree engines on
-- [x] README, `AGENTS.md`, G35 and this record say done
+- [x] README, `../../AGENTS.md`, G35 and this record say done
 
 *Done, 2026-11-16 13:47.* The author chose: a new three-engine strategy, run once; and a model of each tree engine trained and backtested.
 - **Tests:** Python 839, Java 164, API 116, client 169. New tests:
@@ -591,7 +591,7 @@ Checklist:
 - [x] G48: the Results marks, the result-page banner, the `run` warning and the Run tab's default; tests; Postman
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go:** rerun the stored runs (G38); backfill the log (G48)
-- [x] README, `AGENTS.md`, G38, G48 and this record say done
+- [x] README, `../../AGENTS.md`, G38, G48 and this record say done
 
 *Done, 2026-11-16 14:24.* The author chose: back up, rerun and delete the 8 runs; backfill all 81 looks.
 - **Tests:** Python 844, Java 165, API 119, client 172. New tests:
@@ -625,7 +625,7 @@ Checklist:
 - [x] `plan_folds` in the runner; `nn/split.py` and its route; tests
 - [x] The Split tab; the API's constants removed; Postman
 - [x] All four CI jobs; rebuild
-- [x] README, `AGENTS.md`, G37 and this record say done
+- [x] README, `../../AGENTS.md`, G37 and this record say done
 
 *Done, 2026-11-16 14:37.*
 - **Tests:** Python 849, API 119, client 174. New tests:
@@ -661,7 +661,7 @@ Checklist:
 - [x] The setting: CLI, `/api/run`, the column, the report; tests
 - [x] API and client: the Run tab's switch, the Results mark, the result page; Postman
 - [x] All four CI jobs; rebuild
-- [x] README, `AGENTS.md`, G20 and this record say done
+- [x] README, `../../AGENTS.md`, G20 and this record say done
 
 *Done, 2026-11-16 15:14.* The author chose: run one after-tax backtest live and keep it.
 - **Tests:** Java 171, Python 850, API 119, client 176. New tests:
@@ -699,7 +699,7 @@ Checklist:
 - [x] Client: the live progress line, the loss curves, the fold table's loss column, a failed run; the old notes go; Postman
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go:** rerun the stored runs for their curves
-- [x] README, `AGENTS.md`, G11, G44 and this record say done
+- [x] README, `../../AGENTS.md`, G11, G44 and this record say done
 
 *Done, 2026-11-16 15:43.* The author chose: back up, rerun, delete.
 - **Tests:** Python 855, Java 173, API 119, client 179. New tests:
@@ -750,7 +750,7 @@ Checklist:
 - [x] Client: the target on the Strategy tab, the score's name on the Training tab; Postman
 - [x] All four CI jobs; rebuild
 - [x] **Checkpoint, the author's go:** runs with the new targets
-- [x] README, `AGENTS.md`, G49 and this record say done
+- [x] README, `../../AGENTS.md`, G49 and this record say done
 
 *Done, 2026-11-16 16:26.* The author chose: run both targets.
 - **Tests:** Python 869, Java 174, API 121, client 218. New tests:
@@ -773,7 +773,7 @@ Checklist:
   - **856:** every engine loses (−4.59 to −10.03 pp a fold). Each forecast's mean absolute error (0.0195 to 0.0204) is above the training mean's (0.0190): below naive.
 - **What it says:** the direction target gives the network a different behaviour from the 3-class label's long-throughout. But one well-timed fold is not yet an edge, and every engine is still below its naive baseline. Whether run 855 counts as passing step 6 is the author's call.
 
-**G45 plan, 2026-11-16.** The author: G45 before step 8, so the held-out run can be tied to a commit. Architecture §1: "a feature or model run is identified by code version plus input snapshot" (R1, R5). `code_hash` already pins the exact code that ran. `git_sha` names the commit, and it is NULL on all 10 walk-forward runs and 15 feature builds: the loader image has no `.git` (`.dockerignore` keeps it out) and nothing sets `$GIT_SHA`.
+**G45 plan, 2026-11-16.** The author: G45 before step 8, so the held-out run can be tied to a commit. Architecture §1: "a feature or model run is identified by code version plus input snapshot" (R1, R5). `code_hash` already pins the exact code that ran. `git_sha` names the commit, and it is NULL on all 10 walk-forward runs and 15 feature builds: the loader image has no `.git` (`../../.dockerignore` keeps it out) and nothing sets `$GIT_SHA`.
 
 The shape: compose hands the loader's build the repo's `.git` as a second build context (`additional_contexts`). The Dockerfile reads HEAD from those files with the code it has just copied, since the image has no `git` binary, and writes the sha to `/app/GIT_SHA`. `lineage.git_sha()` reads `$GIT_SHA`, then that file, then `git rev-parse HEAD`. So every `docker compose build` records the commit, with nothing for the operator to remember. A plain `docker build` without the context gets an empty stage of the same name and records nothing, as today.
 
@@ -781,7 +781,7 @@ The limit, said where the sha is described: a build from a tree with uncommitted
 
 - [x] `lineage.head_sha(gitdir)`: HEAD from a `.git` directory's files (a branch's loose ref, a packed ref, a detached HEAD), None when it cannot tell. `python -m nn.lineage --head DIR` prints it. Tests
 - [x] `lineage.git_sha()` reads the baked `GIT_SHA` file between the environment and git. Test
-- [x] `python/Dockerfile` and `docker-compose.yml`: the `.git` context and the bake step, last, so a new commit rebuilds only that layer
+- [x] `../../python/Dockerfile` and `docker-compose.yml`: the `.git` context and the bake step, last, so a new commit rebuilds only that layer
 - [x] All four CI jobs, locally; rebuild the loader; live: the container's `git_sha()` equals the host's `git rev-parse HEAD`
 - [ ] Checkpoint: the stored runs and builds keep NULL, since their commit cannot be recovered honestly. A rerun would only add the sha; the author decides
 - [x] README (where the sha comes from). The G45 row says done
@@ -816,16 +816,16 @@ The limit, said where the sha is described: a build from a tree with uncommitted
 
 
 
-**G69 plan, 2026-11-17.** The author: rewrite, then relink. 15 links point at `/docs/architecture`, the project `ARCHITECTURE.md` deleted in `2294b24`: README 11 (lines 103, 183 twice, 501 four times, 510, 512, 629, 851, 1140) and GETTING-STARTED 4 (lines 8, 213, 219, 305). Restoring the old text would not do: its "How to read a result" and "Known limitations" say fills are at the close (B1 made it the next open), that entries overdraw by the commission (B2), that there is no margin (Strategy 2) and that NN training is not walk-forward. By `CLAUDE.md`, the operator half goes in README and the code half in the owning module's comment.
+**G69 plan, 2026-11-17.** The author: rewrite, then relink. 15 links point at `/docs/architecture`, the project `ARCHITECTURE.md` deleted in `2294b24`: README 11 (lines 103, 183 twice, 501 four times, 510, 512, 629, 851, 1140) and GETTING-STARTED 4 (lines 8, 213, 219, 305). Restoring the old text would not do: its "How to read a result" and "Known limitations" say fills are at the close (B1 made it the next open), that entries overdraw by the commission (B2), that there is no margin (Strategy 2) and that NN training is not walk-forward. By `../../CLAUDE.md`, the operator half goes in README and the code half in the owning module's comment.
 
 - [x] A test that fails today: every `/docs/<slug>` link in README and GETTING-STARTED names a registered doc, every `#anchor` on it names a heading that doc has, and every in-page `#anchor` names one of its own. `slugify` moves out of `server.js` into a module the test can load, unchanged
 - [x] README gains "How to read a result" and "Known limitations", written against today's engine, walk-forward runner and Results page
-- [x] README relinks: lines 183, 629 and 1140 to those sections; 103 ("build wide, train narrow") to the top of `python/nn/normalize.py`; 501, 510 and 512 to the comments on `BacktestEngine.run` and `trade`, `PortfolioManager`, `ExecutionSimulator` and `StrategyRegistry`; 851 to the compression comment in `schema.sql`. Code is named in backticks, not linked, since `/docs` cannot render a source file
+- [x] README relinks: lines 183, 629 and 1140 to those sections; 103 ("build wide, train narrow") to the top of `../../python/nn/normalize.py`; 501, 510 and 512 to the comments on `BacktestEngine.run` and `trade`, `PortfolioManager`, `ExecutionSimulator` and `StrategyRegistry`; 851 to the compression comment in `schema.sql`. Code is named in backticks, not linked, since `/docs` cannot render a source file
 - [x] GETTING-STARTED: 213 and 219 to the README sections; 8 and 305 drop the Architecture guide, pointing at the README and at the design set (`/docs/qqq-architecture`) for what the system is for
 - [x] Module comments where the old doc held a fact still true that the code does not say: `StrategyRegistry` (how to register, fresh instances, warm-up), `PortfolioManager` (the cash model: a short's notional is held as collateral, tax on a realized gain is paid at the close); `fillMarketOrder`'s parameter still says "current bar close"
 - [x] API and Java jobs; rebuild api and engine; the G69 row says done
 
-*Done, 2026-11-17 12:05.* The links pointed at 16, not 15: line 501 holds four. The new test (`web/api/docLinks.test.js`) listed exactly those 16 before the change and none after; every in-page anchor already landed. API 125 (4 new), lint clean; Java passes. Rebuilt api and engine: the live `/api/docs/readme` carries `how-to-read-a-result`, `known-limitations`, `strategy-2--margin-long-and-inverse` and `execution-engine`, and no `/docs/architecture`.
+*Done, 2026-11-17 12:05.* The links pointed at 16, not 15: line 501 holds four. The new test (`../../web/api/docLinks.test.js`) listed exactly those 16 before the change and none after; every in-page anchor already landed. API 125 (4 new), lint clean; Java passes. Rebuilt api and engine: the live `/api/docs/readme` carries `how-to-read-a-result`, `known-limitations`, `strategy-2--margin-long-and-inverse` and `execution-engine`, and no `/docs/architecture`.
 - **README:** "How to read a result" covers the backtest result (trades, the three benchmarks under the same costs and tax, drawdown, profit factor with win rate, the ratios, the four marks) and the walk-forward run (folds, the gap's sources, below naive, leverage not timing). "Known limitations" holds what the engine section does not: no leverage in the engine, tax as one rate, one instrument and daily for the network, the `earnings_season_share` proxy, fake data by default, a test block used once. The engine's three simplifications stay where they were, linked.
 - **Code side:** the bar loop (`BacktestEngine.run`, `trade`), sizing (`ExecutionSimulator.affordableQuantity`) and causal normalization (`nn/normalize.py`) were already explained where they live; the README names them. Added: `StrategyRegistry` (adding a strategy; warm-up is load-bearing, since the benchmarks start on that bar too), `PortfolioManager` (the cash model, no borrowing cost, tax at each close with the loss carried, D8 at the end), and `fillMarketOrder`'s price is the next open or the last close, not "current bar close".
 - **Dropped, not moved:** the old guide's glossaries and "Where to start reading the code". The metric glossary lives in the app's tooltips (`metricHints.ts`), and GETTING-STARTED now points at the design set for what the system is for.
@@ -861,7 +861,7 @@ The shape:
 
 - [x] Bar keys: one helper decides the key by timeframe; every NN read uses it. Test: a dry-run rebuild of set 28 gives its stored values hash, and a stored run recalculates exactly. *Build side done: `feature_build._key_sql`; HEAD and the new code give the same D1 values hash on today's data (6,966 rows, `e056b174`). The walk-forward reads are I4's*
 - [x] I2: `timeframe` per series in a calendar file; the as-of join. Tests: a daily value never reaches a bar of its own session or earlier. *Each feature has a cadence (`feature_build.cadence`): `bar` when it reads the calendar's own bars, normalized per bar; `session` for daily data, resolved and normalized on the sessions exactly as a D1 build would (windows in days) and then given to the next session's bars; `calendar` for a weekday or a scheduled holiday, known in advance, to its own session's bars. Normalizing daily data per bar instead made a daily change a spike on the opening bar and a 60-day z-score a 60-bar one (found in the first dry build). Live: on synthetic QQQ H1, every daily and calendar column equals the D1 build's value for the session before (or the same session), 207,877 pairs, none differing. `test_intraday_build.py`*
-- [x] I1: a synthetic QQQ H1 calendar (`tools/datagen`, source `synthetic`) builds one row per bar, each bar's own open, high, low and volume; H1 and M30 join `BUILDABLE_TIMEFRAMES`. *Dry build done: 48,510 rows, one per bar, 38 columns, none empty, 2.8 s. The guard stays until I4, since the matrix and the preview still read an intraday set by date*
+- [x] I1: a synthetic QQQ H1 calendar (`../../tools/datagen`, source `synthetic`) builds one row per bar, each bar's own open, high, low and volume; H1 and M30 join `BUILDABLE_TIMEFRAMES`. *Dry build done: 48,510 rows, one per bar, 38 columns, none empty, 2.8 s. The guard stays until I4, since the matrix and the preview still read an intraday set by date*
 - [x] I4: the matrix, labels, folds and the profit step by bar, with periods a year and fractional days; the walk-forward D1 guard lifts for a timeframe with a built set
 - [x] Benchmarks on intraday as confirmed
 - [x] One synthetic H1 walk-forward run end to end. No stored D1 set or run should change; if one would, a checkpoint first
@@ -922,7 +922,7 @@ The shape:
 - **Stored data it touches:** the synthetic M30 and H1 candles and their H4 roll-up (re-imported; D1 rolled up from them must come out identical), sets 54 and 56 (rebuilt), runs 953 and 978 (rerun). No `yahoo-adj` series, no D1 set and no D1 run moves.
 
 - [x] Import: bare intraday times read as New York, offsets honoured, D1 and coarser untouched; a time New York skipped or repeated at a clock change is skipped with its reason (it cannot occur inside 09:30 to 16:00). Tests
-- [x] `tools/datagen` comment and README say New York, not UTC; the H4 roll-up buckets in New York time. Tests
+- [x] `../../tools/datagen` comment and README say New York, not UTC; the H4 roll-up buckets in New York time. Tests
 - [x] Client shows intraday times in New York time. Tests
 - [x] Checkpoint before stored data moves: the author's answer of 2026-11-19 (re-import and rerun, backed up first) stood in for it
 - [x] Re-read synthetic M30 and H1; roll up; synthetic D1 identical to before, bar for bar
@@ -1109,9 +1109,9 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R22 (G54, 2026-11-21), R24, R32 (B10,
 Scope: a read of the Java engine, the walk-forward scorer and the two single-split
 trainers, plus four requirements the repo's design copy does not carry. Nothing was run
 and no stored run was checked. What each row needs before it counts as done is in
-[`AGENTS.md`, Build steps](../AGENTS.md#build-steps).
+[`../../AGENTS.md`, Build steps](../../AGENTS.md#build-steps).
 
-**The design copy is behind.** `docs/readonly-doc/backTesting-04-Architecture.md` is an older snapshot of the
+**The design copy is behind.** `backTesting-04-Architecture.md` is an older snapshot of the
 author's Architecture document. The current one has a numbered Requirements list, and four
 groups of its entries have no text in `docs/readonly-doc/`: trading at the next bar's open
 (Requirement 76), three benchmarks beside every run (36, 39), a naive prediction baseline
@@ -1126,7 +1126,7 @@ references in this repo's docs and code comments need a pass when it lands.
 ### Fix what is built
 
 Each of these changes numbers that are already stored, so each ends with the stale-records
-rule in `AGENTS.md`.
+rule in `../../AGENTS.md`.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
@@ -1134,7 +1134,7 @@ rule in `AGENTS.md`.
 | G28 | An entry spends more cash than there is. The quantity is all of cash divided by the close; the fill then pays the slipped price plus commission, so cash is negative after every entry with costs on and the run is slightly leveraged without saying so | Design Notes, Staged Pipeline Architecture, stage 6 ("costs applied") | `PortfolioManager.calculatePositionSize` returns `cash * riskPercent / price`; `BacktestEngine.processSignal` sizes on `closePrice`, and `openPosition` then subtracts `filledPrice * quantity + commission` | S | done 2026-11-16 (B2): see the B2 record in Pass 4 |
 | G29 | Four engine metrics are wrong or empty. (a) Sortino divides by the standard deviation of the losing bars about their own mean, which is not the downside deviation, and is 0 when no bar loses. (b) Total slippage is always 0. (c) A trade with zero profit counts as a loss. (d) Profit factor is 0 when no trade loses, which reads as the worst case | Design Notes, Staged Pipeline Architecture, stage 6 ("metrics computed") | `MetricsCalculator.calculateSortinoRatio`; `.totalSlippage(0.0)` in `calculate`; `Trade.isWin` is `pnl > 0` and every other trade is counted as losing; `MathUtils.safeDiv` returns 0 on a zero divisor | S | done 2026-11-15: see the B3 record in Pass 4 |
 | G30 | Nothing stops or marks a backtest of a model over the bars it was trained on. A model is found by its configuration, and its training window is only written to `metadata.json`, so an in-sample result is stored beside honest ones with nothing to tell them apart | Design Notes, Three-Way Chronological Split ("always test forward in time") | `nn_api.py:266` and `train_features.py:347` write `training_window`; neither NN strategy nor `BacktestEngine` reads it | S | done 2026-11-16 (B4): see the B4 record in Pass 4 |
-| G36 | A selected cyclical feature is never trained on. The strategy names a catalogue feature (`day_of_week`), but the feature set stores a cyclical feature as two columns (`day_of_week_sin`, `day_of_week_cos`). `resolve_columns` compares the two names, finds no match, and drops the feature as "not in this feature set". phase1-full and both Strategy 2 variants select `day_of_week`, `day_of_year` and `day_of_month`, so all their runs trained without those six columns, while reporting that the features were simply absent | Architecture §8.2a (the strategy decides which features go in; a feature is dropped only when it has no values in the train window) | `nn/strategy_spec.py` `resolve_columns` compares `selected` with the set's column names; `feature_spec` for sets 10, 18 and 23 holds `day_of_week_sin` ... `day_of_month_cos` (columns 24 to 29 in set 23); `walkforward_runs.dropped_json` for runs 300, 301 and 348 lists the three as "not in this feature set". Found in the `AGENTS.md` step 1 review, 2026-11-14. The step 5 review found the other half: the coverage grid maps a base name to its `_sin`/`_cos` columns (`web/api/featureCatalogue.js` `VALUE_JOIN`), so the builder shows all three at 100% and kept, and the Train tab lists 26 features where the runner uses 23. Runs 300, 301 and 348 have `input_width` 460 where 580 was selected. No other selectable feature is cyclical | S | done (`fb6c5fe`): `strategy_spec.feature_columns`; runs 300, 301 and 348 were backed up, deleted and rerun on 2026-11-14 as 376, 377 and 378, each on 580 inputs with nothing dropped |
+| G36 | A selected cyclical feature is never trained on. The strategy names a catalogue feature (`day_of_week`), but the feature set stores a cyclical feature as two columns (`day_of_week_sin`, `day_of_week_cos`). `resolve_columns` compares the two names, finds no match, and drops the feature as "not in this feature set". phase1-full and both Strategy 2 variants select `day_of_week`, `day_of_year` and `day_of_month`, so all their runs trained without those six columns, while reporting that the features were simply absent | Architecture §8.2a (the strategy decides which features go in; a feature is dropped only when it has no values in the train window) | `nn/strategy_spec.py` `resolve_columns` compares `selected` with the set's column names; `feature_spec` for sets 10, 18 and 23 holds `day_of_week_sin` ... `day_of_month_cos` (columns 24 to 29 in set 23); `walkforward_runs.dropped_json` for runs 300, 301 and 348 lists the three as "not in this feature set". Found in the `../../AGENTS.md` step 1 review, 2026-11-14. The step 5 review found the other half: the coverage grid maps a base name to its `_sin`/`_cos` columns (`web/api/featureCatalogue.js` `VALUE_JOIN`), so the builder shows all three at 100% and kept, and the Train tab lists 26 features where the runner uses 23. Runs 300, 301 and 348 have `input_width` 460 where 580 was selected. No other selectable feature is cyclical | S | done (`fb6c5fe`): `strategy_spec.feature_columns`; runs 300, 301 and 348 were backed up, deleted and rerun on 2026-11-14 as 376, 377 and 378, each on 580 inputs with nothing dropped |
 | G31 | The two single-split trainers do not purge. Both cut training from validation by a ratio and label each row from the close `forward` bars ahead, so the last `forward` training rows are labelled from validation prices. The walk-forward runner already drops them (`purged`) | Design Notes, Three-Way Chronological Split | `nn/train.py` `train_model` (`split = int(n * cfg.train_split_ratio)`); `nn/train_features.py:212` | S | done 2026-11-16 (B5): see the B5 record in Pass 4 |
 
 ### Missing pieces
@@ -1142,7 +1142,7 @@ rule in `AGENTS.md`.
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
 | G32 | Buy-and-hold pays no costs or tax and ignores the strategy's settings. The stored row is frictionless and keyed without them, and a fold's benchmark is the raw compounded return. The requirement is one buy and one final sale under the same enabled costs and tax as the strategy beside it | Requirement 36 ("pays the same costs and tax"); Design Notes, Tax and Trading Costs ("taxed on the same honest basis") | `schema.sql` `benchmarks` ("Frictionless on purpose"), unique on instrument, source, timeframe, dates and capital; `walkforward.py:686` `hold = np.cumprod(1.0 + r)` | M | done 2026-11-16 (B6): see the B6 record in Pass 4 |
-| G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `python/` or `src/`; `benchmarks` has no column for which benchmark a row is | L | done 2026-11-16 (B7): see the B7 record in Pass 4 |
+| G33 | One benchmark where the design has three. Every run should show buy-and-hold, Faber's 10-month moving average and Antonacci's dual momentum, computed for the run's window with nothing to set up, each with trades, trades a year, holding time, max drawdown and Sharpe beside the strategy's | Requirement 36, 39 | no rule benchmark in `../../python` or `src/`; `benchmarks` has no column for which benchmark a row is | L | done 2026-11-16 (B7): see the B7 record in Pass 4 |
 | G34 | The naive baseline is half there. Each fold stores the accuracy of always predicting the training majority class and the fold view shows it, but no run is flagged for failing to beat it | Requirement 72 ("flag runs that do not beat it") | `walkforward.py:689` `baseline_cls`; `TrainingStage.tsx:426` prints it; no flag in `walkforwardView.ts` | S | done 2026-11-16 (B8): see the B8 record in Pass 4 |
 | G35 | One engine type where the design has three. The runner and the builder accept `mlp` only. The design's engines are the neural network, XGBoost and LightGBM: one strategy runs every enabled engine on the same features, windows, costs and benchmarks, stores one result per engine, and shows a catalogue entry for each | Requirement 21, 22, 23, 74 | `strategy_spec.MODEL_TYPES = ("mlp",)`; `strategies.js` ("the only one registered"); no `xgboost` or `lightgbm` in `pyproject.toml` | L | done 2026-11-16 (B9): see the B9 record in Pass 4 |
 
@@ -1150,7 +1150,7 @@ rule in `AGENTS.md`.
 
 Each of these blocks a row above. The answer goes here, and into the design, before the
 work starts. All three were answered on 2026-11-14 and the author's design documents now
-say so; `docs/readonly-doc/` will say so once it is refreshed.
+say so; `` will say so once it is refreshed.
 
 | # | Question | What exists today | Status |
 |---|---|---|---|
@@ -1164,15 +1164,15 @@ Scope: a review of the uncommitted G1 work (`nn/strategy_spec.py`, `read_matrix(
 plus anything Pass 1 missed. Nothing has been committed since Pass 1, so every Pass 1 item
 stands. The Python suite was run this time: 345 passed, 30 skipped (they need the database).
 
-### Found in the `AGENTS.md` review, 2026-11-14
+### Found in the `../../AGENTS.md` review, 2026-11-14
 
-Found by reviewing steps 3 to 7 against `AGENTS.md` with four read-only agents, each
+Found by reviewing steps 3 to 7 against `../../AGENTS.md` with four read-only agents, each
 finding checked again before it was written here. "Stored data" says what each one makes
 wrong today.
 
 | # | Gap | Found in | Evidence | Stored data | Effort | Status |
 |---|---|---|---|---|---|---|
-| G37 | The Split tab shows no strategy's split. It cuts the newest set on two API constants (`SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`, defaults 2016-01-01 and 2022-01-01, undocumented), with no train start and no test end. So its train block starts 1999-03-10 where the strategies train from 2003 or 2007, and its test block runs to today where they stop at 2026-06-30. Its comment says "train from 2003", and the tab's footnote says runs set their boundaries on the command line; both are wrong | step 4 | `web/api/server.js` lines 47-48 and the `split` query near line 1159; `SplitStage.tsx` footnote | none: runs record their own windows | S | done 2026-11-16: see the G37 record in Pass 4 |
+| G37 | The Split tab shows no strategy's split. It cuts the newest set on two API constants (`SPLIT_FIRST_VAL`, `SPLIT_FIRST_TEST`, defaults 2016-01-01 and 2022-01-01, undocumented), with no train start and no test end. So its train block starts 1999-03-10 where the strategies train from 2003 or 2007, and its test block runs to today where they stop at 2026-06-30. Its comment says "train from 2003", and the tab's footnote says runs set their boundaries on the command line; both are wrong | step 4 | `../../web/api/server.js` lines 47-48 and the `split` query near line 1159; `SplitStage.tsx` footnote | none: runs record their own windows | S | done 2026-11-16: see the G37 record in Pass 4 |
 | G38 | Nothing separates the last validation year from the test block. Training is purged before validation (`purged`), but the 2021 fold's labels read closes to 2022-01-07 and its score includes the 2021-12-31 to 2022-01-03 return | step 4 | every run's `span_to` is 2022-01-07; benchmark 208 ends 2022-01-03; `walkforward.make_folds` | the 2021 fold of all 9 runs and benchmark 208, by one session | S | done 2026-11-16: see the G38 and G48 record in Pass 4 |
 | G39 | The Normalization check passes what it cannot see. A NaN or infinite value reaches the client as a null statistic, and `checkColumn` returns no problem on a null, although the design asks this gate to catch NaNs. Six columns (four `ratio_to_prev_close`, two `daily_change`) have no rule at all and always show ok. The design's before/after previews are not built | step 3 | `NormalizationStage.tsx` `checkColumn` (`if (min === null ...) return null`) | none: set 27 holds no NaN or infinite value | S | done 2026-11-15: `lib/normalizationCheck.ts` (NaN and infinite values counted by the API, flags checked for 0/1, rules for returns and changes, no silent pass) and the previews (`GET /api/nn/features/preview`, the Normalization tab's Preview) |
 | G40 | A stored backtest result does not keep its run settings: no strategy parameters, no requested from/to (`start_date` is the first bar after warm-up), no commission or slippage. "Rerun with the same settings" (step 7) has to rebuild them by hand, and for the ta4j results it cannot | step 7 | `BacktestResultRepository` INSERT columns | all 16 results | M | open |
@@ -1180,7 +1180,7 @@ wrong today.
 | G42 | The span backfill bakes in fixes made after a run. It hashes closes, park and margin as stored at backfill time, without checking for a fix between the run and the backfill. Runs 299, 300 and 301 (finished 2026-11-10) were backfilled on 2026-11-12 18:19, 39 minutes after the PSQ fix (import 351), so they read fresh while `--check-snapshot` says their margin input changed. The G12 plan calls the backfill exact; its proof covered the matrix only | step 6 | `nn/staleness.py` `backfill`; `walkforward_runs.updated_at` against `import_files` 351 | `span_snapshot` of run 299 (300 and 301 were rerun on 2026-11-14 as 376 and 377, whose spans are recorded at run time) | S | open |
 | G43 | The accuracy of a money-trained run is measured against the wrong labels. Its prediction is stored as SELL or 0 (BUY) and compared with the 3-class label, so a long day counts only when labelled BUY and the majority HOLD can never match. Runs 300, 301 and 348 show identical accuracy in 2016, 2017, 2018 and 2021 (the share of BUY labels), whatever they traded. B8 as written would flag every money-trained run | step 6 | `nn/walkforward.py` `pred = np.where(pos < args.threshold, CLASS_SELL, 0)` and `accuracy=float((pred == y_va).mean())` | `walkforward_folds.accuracy` of runs 257, 258, 300, 301, 348 | S | done (`fb6c5fe`): `walkforward.fold_accuracy`; the five runs were rerun on 2026-11-14 as 374 to 378. 257 and 258 reproduced every fold's return and trades exactly, and only their accuracy changed (2016: 17.1% against 69.8% became 86.9% against an always-long 86.9%) |
 | G44 | The Training tab says the runner prints per-epoch loss to its terminal. The walk-forward runner prints nothing per epoch; only `nn/train_features.py` does | step 6 | `TrainingStage.tsx` near line 106 | none | S | done 2026-11-16: see the G11 record in Pass 4 |
-| G45 | `git_sha` is never recorded on the stack. Lineage reads `$GIT_SHA`, but no Dockerfile or compose file sets it and the image has no `.git`, so no run can be tied to a commit (`code_hash` still is) | step 6 | `nn/lineage.py`; `python/Dockerfile`; `docker-compose.yml` | `git_sha` NULL on all 9 runs and 13 feature builds | S | done 2026-11-16: see the G45 record in Pass 4. Runs and builds before it keep NULL, by the author's choice |
+| G45 | `git_sha` is never recorded on the stack. Lineage reads `$GIT_SHA`, but no Dockerfile or compose file sets it and the image has no `.git`, so no run can be tied to a commit (`code_hash` still is) | step 6 | `nn/lineage.py`; `../../python/Dockerfile`; `docker-compose.yml` | `git_sha` NULL on all 9 runs and 13 feature builds | S | done 2026-11-16: see the G45 record in Pass 4. Runs and builds before it keep NULL, by the author's choice |
 
 **G36 and G43 plan, 2026-11-14.** The author's order: these two first, then step 3.
 
@@ -1205,7 +1205,7 @@ Found on the way: rerunning the v9 fixture made Training stale, because the chec
 - [x] The check moves to `lib/normalizationCheck.ts` with tests. It fails on any non-finite value, on unavailable statistics, on a flag holding anything but 0 or 1, and on a method it has no rule for. Returns (`ratio_to_prev_close`, `daily_return`) stay within ±0.5 a day with a mean near 0, and `daily_change` within ±2 points
 - [x] `GET /api/nn/features/preview?set=&column=&from=&to=` (loader): a column's input before its method (`feature_build.resolve_aligned` on the set's own stored series spec) beside its stored value, per date. Pure parts tested. Postman request, README row
 - [x] The Normalization tab previews any column: two charts on one date axis, before and after
-- [x] `AGENTS.md` step 3: the previews condition becomes an app condition, and the shape rules list the new checks
+- [x] `../../AGENTS.md` step 3: the previews condition becomes an app condition, and the shape rules list the new checks
 - [x] Rebuild and check live; the G39 row says done
 
 *Done, 2026-11-15.* Tests: Python 739, client 139, API 114. After the rebuild, set 27's 38 columns all carry the new counts, and none fails the new rules. One column per method previews live (`day_of_week_sin`, `treasury_10y`, `holiday_proximity`, `price_open`, `volume`, `fed_funds`, `vxn_open`), for example `fed_funds` 3.88 rescaled to 0.1552. An unknown column answers 404 and a reversed window 400. The tab itself has not been opened in a browser.
@@ -1236,7 +1236,7 @@ form has a section 7 for it, Train shows it, and `strategy_spec.runner_args` alw
 returns all six. A row saved before this reads back as the defaults with
 `objectiveDefaulted` set. Still to do, as part of wiring `--strategy-id` (R3): refuse
 these flags when a strategy is given. Not yet run: Vitest and ESLint, because
-`web/client/node_modules` was installed on Windows and lacks the Linux native binaries.
+`../../web/client/node_modules` was installed on Windows and lacks the Linux native binaries.
 
 **R3 progress (closes R1-R4).** Done, uncommitted: `walkforward.py --strategy-id N` runs a
 saved strategy. The strategy sets the instrument, the windows, the feature subset, the
@@ -1270,7 +1270,7 @@ R3/R7 columns exist after `schema.sql` ran in the engine. Found:
 
 ### G22 review: intraday (M30, H1) on synthetic data, 2026-11-08
 
-Data: QQQ M30 (90,090 bars) and H1 (48,510) generated by `tools/datagen` from
+Data: QQQ M30 (90,090 bars) and H1 (48,510) generated by `../../tools/datagen` from
 `test-data/QQQ_adjusted.csv`, full history, imported as source `synthetic`, rolled up
 M30 -> H4, D1. Only the read path and the engine were run; nothing was changed.
 
@@ -1286,7 +1286,7 @@ outlier, the 2008-09-15 open). Roll-up: synthetic D1 from M30 matches yahoo-adj 
 | I3 | One global calendar: `[alignment]` in `features.toml` fixes QQQ / yahoo-adj / D1, so an intraday feature set means editing the shared config, which changes the hash every daily strategy is keyed on | `features.toml:71-76` | M | done 2026-11-18: one config file per calendar; see the I3 record in Pass 4 |
 | I4 | The walk-forward path is keyed by date as well: `read_matrix`, `load_closes` and the park series all reduce to `timestamp::date`. Even with an intraday feature set it would collapse to one row a day | `feature_store.py:109`, `train_features.py:75`, `walkforward.py:553` | M | done 2026-11-18: see the I1, I2 and I4 record in Pass 4 |
 | I5 | Annualising counts bars as days. Engine: return, Sharpe, Sortino and Calmar use 252 per bar, and `tradingDays` is the bar count. Synthetic 2024-2025: M30 total -9.34% annualised to -0.38%, H1 +14.12% to +0.97% (about +6.8% is right) with `tradingDays` 6,462 and 3,456. Python has the same constant in the Sharpe, the `calmar` loss and the parked return (an annual rate divided by 252 per bar would pay 13x the interest on M30) | `MetricsCalculator.java:17,42,149`; `walkforward.py:52,126,581`; `money_loss.py:33,203,244` | S | done: engine annualises with `MetricsCalculator.periodsPerYear` (D1 252, W1 52, MN1 12, intraday 252 x measured bars per day; W1/MN1 were wrong too), and `tradingDays` is now distinct days. Python walk-forward refuses any timeframe but D1 (`fold_plan` and the flags path) until I4. Live: M30 -9.34% now -4.83% a year (was -0.38%), H1 +14.12% now +6.96% (was +0.97%), D1 identical in every figure |
-| I6 | A `to` date is read as midnight, so on intraday the last day is dropped while D1 keeps it: `to = 2025-12-31` ended the M30 run at 2025-12-30 15:30 and the D1 run at 2025-12-31. The Strategy tab's per-window bar counts use the same endpoint | `server.js` `/api/candles` (`timestamp <= to`); `EngineApi.parseDate` | S | done: `DateTimeUtils.parseEnd` (last microsecond of a bare date) for `to` in `/api/run` and the `run`, `train` and `signals` commands; `web/api/dateRange.js` makes `/api/candles` use `< next midnight UTC`. Live: M30 and H1 runs now end 2025-12-31 15:30; D1 unchanged |
+| I6 | A `to` date is read as midnight, so on intraday the last day is dropped while D1 keeps it: `to = 2025-12-31` ended the M30 run at 2025-12-30 15:30 and the D1 run at 2025-12-31. The Strategy tab's per-window bar counts use the same endpoint | `server.js` `/api/candles` (`timestamp <= to`); `EngineApi.parseDate` | S | done: `DateTimeUtils.parseEnd` (last microsecond of a bare date) for `to` in `/api/run` and the `run`, `train` and `signals` commands; `../../web/api/dateRange.js` makes `/api/candles` use `< next midnight UTC`. Live: M30 and H1 runs now end 2025-12-31 15:30; D1 unchanged |
 | I7 | Exchange-local times are stored as UTC: the file's 09:30 is stored as `09:30Z`, which a browser in New York shows as 04:30 or 05:30, and a vendor file already in UTC would sit five hours away from it. There is no timezone setting on import | `/api/candles` returns `2025-12-29T09:30:00.000Z` for the first NYSE bar | M | done 2026-11-19: New York time, decided by the author; see the I7 record in Pass 4 |
 | I8 | Labels count bars: `horizonBars` 5 is five days on D1 and two and a half hours on M30, and the Strategy tab says nothing about it | `labels.py:4`; Strategy tab section 2 | S | done: `strategyForm.horizonSpan` shows the horizon as time under the field ("5 bars on M30 = 2.5 hours of trading ahead"; past a day, trading days on a 6.5-hour NYSE session), and the field hint says it counts bars |
 
@@ -1326,7 +1326,7 @@ because all of them (Yahoo prices, market series, FRED) arrive through this impo
 Imports page shows it: `FileVersions.tsx` lists each series' files newest first with their
 change kind and, for a fix, the diff (from `GET /api/import-files`, `importFiles.js`), and
 `UploadCard.tsx` counts and badges `extended` years. Not yet run against Postgres, and
-Vitest has not run (`web/client/node_modules` is a Windows install). Later: record which file versions a
+Vitest has not run (`../../web/client/node_modules` is a Windows install). Later: record which file versions a
 feature set was built from, which is what G3 (an input snapshot id) needs.
 
 ### New gaps
@@ -1335,12 +1335,12 @@ feature set was built from, which is what G3 (an input snapshot id) needs.
 |---|---|---|---|---|---|
 | G26 | Data only arrives as CSV files someone downloads and uploads, so every series stops on the day of its last download: on 2026-11-11 the feature table's inputs were up to seven weeks old. The design's flow is providers into Python ingestion into the tables, and the Data tab shows each series' last refresh time | Architecture §2 (Flow); Design Notes, A tab per stage (Data) | refreshed by hand on 2026-11-11 (`f0149e9`) | L | done: running daily since 2026-11-12, SEC earnings included (see G26 plan) |
 | G25 | Strategy 2 is judged only against plain buy-and-hold, so leverage reads as skill. Borrowing 20% in a rising market beats holding with no model at all (+4.74 pp a fold, 5/6, 2016-2021), and both live Strategy 2 runs scored below that baseline while their verdict said BEATS. The design's benchmark stays plain buy-and-hold QQQ; what is missing is the same-leverage baseline beside it (always long on margin, same interest and costs), so the run says how much of its excess is the model's timing | Design Notes, Strategy 2 and "Buy-and-hold is one fixed benchmark" | runs 285, 286; baseline from `strategy2.simulate_margin` with every signal UP | S | done: each Strategy 2 fold is also scored with every signal UP (same dials, interest, costs, tax) as `walkforward_folds.levered_return`; the runner prints a `TIMING` line under the verdict and says when a win over buy-and-hold is leverage; Java serves `leveredReturn`, `execution.meanLeveredReturn`, `foldsBeatLevered` and `beatsLeveredOnReturn`; the Training tab adds a "vs always long" fold column, the comparison in the run line, and a "leverage, not timing" badge beside "beat hold". Buy-and-hold stays the benchmark. Live, after deleting the three pre-G25 runs and re-running: strategy 35 (run 299) -5.30 pp a fold vs always long, 0/6; 36 (run 300) beats hold +3.62 but -1.13 vs always long, 0/6, flagged; 37 (run 301) beats hold +0.37 but -4.37, 2/6, flagged. Tests: Python 584, Java 119, client 103 |
-| G24 | The Results chart has no benchmark curve. The stored buy-and-hold row (§6.3) reaches results as figures only (the Results column and the verdict banner); the design's Results view is the equity curve against it, as an overlay | Architecture §6.3 table row "Results", §8.4 ("benchmark overlay") | `TradeChart.tsx` draws price, trades and model equity; nothing in it reads the benchmark | S | done: `GET /api/results/:id` returns the stored row as `benchmark` and the curve as `holdEquity` (`web/api/holdCurve.js`: capital x close / first close over the row's window, paired with the equity history by position, because the engine stamps equity at bar end). Null with a reason unless today's candles reproduce the row (bar count, first and last close). The result page draws it dashed on the equity chart. Live: all 34 results with a benchmark draw it, ending on the stored final equity to the cent on D1, H1 and M30 (706, 704, 703); result 672 (no row) says why. API tests 101, client lint, tsc, Vitest 88. Not yet seen in a browser |
+| G24 | The Results chart has no benchmark curve. The stored buy-and-hold row (§6.3) reaches results as figures only (the Results column and the verdict banner); the design's Results view is the equity curve against it, as an overlay | Architecture §6.3 table row "Results", §8.4 ("benchmark overlay") | `TradeChart.tsx` draws price, trades and model equity; nothing in it reads the benchmark | S | done: `GET /api/results/:id` returns the stored row as `benchmark` and the curve as `holdEquity` (`../../web/api/holdCurve.js`: capital x close / first close over the row's window, paired with the equity history by position, because the engine stamps equity at bar end). Null with a reason unless today's candles reproduce the row (bar count, first and last close). The result page draws it dashed on the equity chart. Live: all 34 results with a benchmark draw it, ending on the stored final equity to the cent on D1, H1 and M30 (706, 704, 703); result 672 (no row) says why. API tests 101, client lint, tsc, Vitest 88. Not yet seen in a browser |
 | G23 | Walk-forward folds do not use the stored benchmark. Each fold computes buy-and-hold inline and stores it in `walkforward_folds.hold_*`, so two runs over the same fold recompute it rather than point at one row, which §6.3 asks for ("Two runs on the same window always point at the same benchmark row"). The Java backtest does use the `benchmarks` table | Architecture §6.3; Design Notes, "Buy-and-hold is one fixed benchmark" | `walkforward_store.py:96` writes `hold_return`, `hold_sharpe`; no `benchmark_id` on `walkforward_folds` | M | done: `walkforward.hold_window` gives the bars a fold's buy-and-hold spans (first validation close to the close its last return runs to, which is what the fold compounded); `walkforward_store.find_or_create_benchmark` looks the row up and stores it only on a miss, as Java's `BenchmarkRepository` does, never recalculating one (a revised close prints WARN and the stored figure stands). Rows keyed on capital 1, since a fold is the growth of 1. `walkforward_folds.benchmark_id` (schema.sql) links each fold; Java serves it as `benchmarkId`. Sharpe and drawdown stay per fold (the row holds the return only). Unsaved runs write nothing and use the same formula. Live: strategy 23 as runs 233 and 234, every fold on the same rows 168-173, figures equal to run 201's inline ones to 1e-13. Tests: Python 534, Java 117 (JDK 21 container) |
-| G22 | Review task, started 2026-11-08, findings I1-I8 below: check the whole app end to end on H1 and M30 candles. Import, cohesion and roll-up already know the intraday timeframes, and `tools/datagen` makes synthetic M30/H1 data. Nobody has checked the rest for hidden daily assumptions: features (daily FRED and market series lined up against intraday bars, rolling windows counted in bars), labels (`horizonBars` means hours, not days), walk-forward (calendar-year folds; `252` annualisation in `walkforward.py` and `money_loss.py`), the money loss and tax per bar, the Java engine backtest, session gaps and the NYSE calendar in cohesion, the bar counts and window dates on the Strategy tab, and the charts. Output: a list of what breaks or misleads, each a new row here | Design Notes, Two Phases (intraday is phase two, G17) | `csv_import.ALLOWED_TIMEFRAMES`, `cohesion.INTRADAY`, `aggregate.py` accept M30/H1; `252` in `walkforward.py`, `money_loss.py`, `StrategyPage.tsx`; `features.toml` cadence is daily throughout | M | done 2026-11-19: I1 to I8, checked end to end on H1 and M30 |
+| G22 | Review task, started 2026-11-08, findings I1-I8 below: check the whole app end to end on H1 and M30 candles. Import, cohesion and roll-up already know the intraday timeframes, and `../../tools/datagen` makes synthetic M30/H1 data. Nobody has checked the rest for hidden daily assumptions: features (daily FRED and market series lined up against intraday bars, rolling windows counted in bars), labels (`horizonBars` means hours, not days), walk-forward (calendar-year folds; `252` annualisation in `walkforward.py` and `money_loss.py`), the money loss and tax per bar, the Java engine backtest, session gaps and the NYSE calendar in cohesion, the bar counts and window dates on the Strategy tab, and the charts. Output: a list of what breaks or misleads, each a new row here | Design Notes, Two Phases (intraday is phase two, G17) | `csv_import.ALLOWED_TIMEFRAMES`, `cohesion.INTRADAY`, `aggregate.py` accept M30/H1; `252` in `walkforward.py`, `money_loss.py`, `StrategyPage.tsx`; `features.toml` cadence is daily throughout | M | done 2026-11-19: I1 to I8, checked end to end on H1 and M30 |
 | G21 | A new strategy always starts on the design's QQQ windows (train from 2003), so a series with a shorter history (AAPL was stored from 2019-12-02 only) gets an empty train window and a warning. A "fit windows to this series" action would propose windows from the stored range | Architecture §8.2a | `strategyForm.ts:117` | S | done: `fitWindowsToSeries` + a "Fit windows to this series" button on the Strategy tab. Whole years only (what `fold_plan` accepts), about 55/25/20, a part year left as prediction, null under three whole years. Uses the instrument's range, not the features'. Vitest (80), tsc, ESLint pass; not yet seen in the browser (the client container is a built image) |
 | G20 | The Java Backtest tab is still pre-tax. G2 taxes the walk-forward scoring only; the engine's backtest has no tax switch | Design Notes, Tax and Trading Costs ("the tax and strategy toggles") | `BacktestStage.tsx:92` says returns are gross | M | done 2026-11-16: see the G20 record in Pass 4 |
-| G19 | No early stopping. The validation window is only used for scoring, while the design says it is for early stopping and hyperparameter choice, and §8.2a lists early stopping as a hyperparameter | Architecture §8.1a, §8.2a | no `patience` or early stopping anywhere in `python/nn/` | M | done (`a7519ad`; see G19 progress) |
+| G19 | No early stopping. The validation window is only used for scoring, while the design says it is for early stopping and hyperparameter choice, and §8.2a lists early stopping as a hyperparameter | Architecture §8.1a, §8.2a | no `patience` or early stopping anywhere in `../../python/nn` | M | done (`a7519ad`; see G19 progress) |
 
 **G26 plan, 2026-11-11.** Decided by the author: a daily run plus a Refresh button; the
 previous last stored day is fixed automatically (it was a preliminary bar: a settling
@@ -1360,7 +1360,7 @@ re-adjustment) until someone presses Apply, which re-downloads the full history 
 imports it with `force`. Rows go through the same importer as uploads (year slices,
 hashes, archive, an `import_files` version with its diff), with each year built from the
 stored slice's own text plus the new rows, so a refresh cannot rewrite stored history by
-accident. Breadth keeps its member closes under `data/ndx-constituents`, now mounted into
+accident. Breadth keeps its member closes under `../../data/ndx-constituents`, now mounted into
 the loader: each member is extended incrementally, a uniform rescale of the overlap (a
 split) re-downloads that member, and a re-download shorter than the cache (WBD on
 2026-11-11) is refused, keeping the cached history.
@@ -1379,7 +1379,7 @@ split) re-downloads that member, and a re-download shorter than the cache (WBD o
 - [x] Live: dry run on the stack, 2026-11-11 22:04 New York: 13 series +1 day (2026-11-11), QQQ, SPY, copper and gold also settle 2026-11-10, FRED and CORRA nothing new (Veterans Day), PSQ held (imported mid-session on 11-10: its 11-10 bar is a 10:38 snapshot, and 11-09's volume settled), WBD kept by the shrink guard. First real run 2026-11-12 (feed run 1, from the button's API): 14 series +1 day, 6 settled their last day, feature table rebuilt to 2026-11-11 (build 20). PSQ applied (runs 2, 3): raw changed only 11-09..11-10 plus the new day; adjusted rewrote 3,851 older days by at most 7e-7, the rounding of the download it was first imported from. XIU loaded (run 4). First scheduled run 2026-11-12 18:30 New York (run 6): every series +1 day, six settled their last day, feature table rebuilt (build 21), WBD kept by the shrink guard again
 
 **G26 earnings feed, 2026-11-12.** The four SEC series (`NDXERN5D`, `NDXERNSEASON`,
-`NDXNIQOQ`, `NDXNITTM`) were left to `build_ndx_earnings.py`, and its cache never refetched
+`NDXNIQOQ`, `NDXNITTM`) were left to `../../build_ndx_earnings.py`, and its cache never refetched
 a company once stored, so they stopped on the last build. NDXERN5D and NDXERNSEASON end on
 2026-11-03, 7 sessions behind, so Data would have turned stale around 2026-11-18. They
 join the daily run as provider `sec`. Each company's submissions are refetched (the recent
@@ -1400,7 +1400,7 @@ NDXERN5D, and correcting them needs Apply.
 - [x] Earnings math moves to `loader/feeds/earnings.py`, the SEC client and incremental cache to `loader/feeds/sec.py`; the root script calls them; the end-of-window fix, with a test. Offline from the untouched cache, the script reproduces all four shipped files byte for byte except NDXERN5D's four undercounted days
 - [x] Provider `sec` in the registry (the four series, group `earnings`), the runner refreshes the cache once per run; `MANUAL` empties; tests (17 in `test_feeds_sec.py`). Found on the first dry run: `www.sec.gov` (the ticker list) answers 403 to the generic User-Agent where `data.sec.gov` does not, and the error stopped the whole run. Now a refused ticker list falls back to the cached one, and an SEC failure fails only the four SEC series
 - [x] Data-stage lag: NDXERN5D and NDXERNSEASON trail by 4 sessions by construction (allowed 5), the net income pair by 1
-- [x] Compose: `SEC_USER_AGENT`, the `data/ndx-earnings` mount; client group; docs (README Data feeds and env vars, GETTING-STARTED, `.env.example`, the `features.toml` notes)
+- [x] Compose: `SEC_USER_AGENT`, the `../../data/ndx-earnings` mount; client group; docs (README Data feeds and env vars, GETTING-STARTED, `.env.example`, the `features.toml` notes)
 - [x] Live: dry run, then a real run; Apply NDXERN5D only after you've seen the four-day diff. Feed run 7, 2026-11-12 22:50 New York: 99 companies in about 50 s, 11 with new filings (5 facts refetched after a 10-Q); NDXERNSEASON +3 to 11-06, NDXNIQOQ and NDXNITTM +1 to 11-12, NDXERN5D held on exactly the four days; features rebuilt. Scheduled run 8 (2026-11-13) held it again on the same four days. Applied by the author's go, feed run 9 (2026-11-14): import version 436 changed 2026 only, the four days plus four new ones to 11-09; features rebuilt to 2026-11-13; no walk-forward run or backtest result reads those days
 
 Found in run 8, not fixed: COPPER and GOLD held on 2026-11-11..11-12. The 18:30 run on 11-12 stored gold's 11-12 bar as 3881.8 with volume 710 and a $5 range: Yahoo stamps futures daily bars at midnight New York, and after CME reopens at 18:00 it fills the current day's bar from the new session, so the live-quote filter (which drops a trailing bar at a different time) cannot see it. Futures volumes also settle a day late (the 196,165 stored for 11-11 is what Yahoo now gives 11-10), which a last-day-only fix turns into a hold. Likely to recur on weekday evenings.
@@ -1497,7 +1497,7 @@ rates and position shapes, and the new backward also passes `gradcheck`.
 Also found: the ingest integration tests failed against Postgres because `purge_instrument`
 did not delete the R7 `import_files` rows; fixed in `tests/dbfixtures.py`.
 
-**Data, 2026-11-08.** All 101 current Nasdaq-100 members (`data/ndx-constituents/`) downloaded
+**Data, 2026-11-08.** All 101 current Nasdaq-100 members (`../../data/ndx-constituents`) downloaded
 from Yahoo, full history, as `yahoo` (raw) and `yahoo-adj` (dividend-adjusted): 202 series, all
 imported; only AAPL raw needed `force` (its stored 2019 year gained earlier days, and the
 2026-09-18 bar's volume was revised by Yahoo). AAPL now runs from 1980-12-12. Survivorship
@@ -1629,7 +1629,7 @@ from the Train tab.
 |---|---|---|---|---|---|
 | G6 | Investment-grade credit (25) is "Yes" in the design but blocked here, because FRED restricts the series. `backTesting-02-Features.md` names `BAA10Y` as a free fallback from 1986 | Design Notes row 25; backTesting-02-Features.md table | `features.toml`: `credit_spread_ig` is `blocked` | S | done: author chose BAA10Y. `credit_spread_ig` reads it (FRED, daily from 1986-01-02, 10,214 bars, import file 286, made from FRED's table page as DFF was), rolling z-score 60 as designed, enabled. Not the same measure as ICE's all-grades OAS (Baa is the lowest IG rating, and a yield gap to the 10-year, not an option-adjusted spread); the note says so. Its gaps are US bond-market holidays |
 | G7 | Earnings season (39) and aggregate EPS (40) are absent. Both are committed columns | Design Notes rows 39-40 | no `earnings` anywhere in the code | L | done (`c361be7`, see G7 plan): columns 39 and 40 built from SEC EDGAR; forward EPS `later-paid` |
-| G8 | Bank of Canada rate (42) is absent | backTesting-02-Features.md 42 | no row in `features.toml` | S | done: `boc_policy_rate` reads CORRA (Bank of Canada Valet `AVG.INTWO`, the realised overnight rate the target steers, daily from 1997-08-12, source `boc`, import file 287) via the new `fetch_boc_series.py`. The target itself (`V39079`) is daily only from 2009-04-21, which would set the training floor; monthly before. Rescaled on fed_funds' 0..25 band so the two policy rates share a scale. Built with G6 as feature set 16: set 10 value for value plus the two columns, first complete date still 2001-04-18. Python 585 |
+| G8 | Bank of Canada rate (42) is absent | backTesting-02-Features.md 42 | no row in `features.toml` | S | done: `boc_policy_rate` reads CORRA (Bank of Canada Valet `AVG.INTWO`, the realised overnight rate the target steers, daily from 1997-08-12, source `boc`, import file 287) via the new `../../fetch_boc_series.py`. The target itself (`V39079`) is daily only from 2009-04-21, which would set the training floor; monthly before. Rescaled on fed_funds' 0..25 band so the two policy rates share a scale. Built with G6 as feature set 16: set 10 value for value plus the two columns, first complete date still 2001-04-18. Python 585 |
 | G9 | MACD and RSI have no vendor cross-check; only the yield curve has one. Also unconfirmed: whether the three data-only columns are stored when `enabled = false` | backTesting-02-Features.md 7-8 | one `[[check]]` block in `features.toml` | S | partial: G9a done; G9b waits for a Twelve Data key (see G9 plan; now M) |
 
 **G9 plan, 2026-11-10.** Checked first: **the three data-only columns are never stored.**
@@ -1666,12 +1666,12 @@ G9a, store the data-only columns. Done, uncommitted, 2026-11-10:
 
 G9b, the vendor check (backTesting-02-Features.md 7-8):
 
-- [~] `fetch_twelvedata_indicator.py` beside `fetch_fred_series.py` (written, not yet run): QQQ daily RSI(14) and
-      the MACD(12,26) line from Twelve Data, `adjust=all` (split and dividend adjusted, the
-      basis `yahoo-adj` uses), from QQQ's first bar in windows under the 5,000-bar cap,
-      written as FRED series are (open = high = low = close = value, volume 0). Imported as
-      INDEX, source `twelvedata`. Needs `TWELVEDATA_API_KEY` (free Basic plan: 800 credits a
-      day, 1 a request, about 4 requests per indicator)
+- [~] `../../fetch_twelvedata_indicator.py` beside `fetch_fred_series.py` (written, not yet run): QQQ daily RSI(14) and
+  the MACD(12,26) line from Twelve Data, `adjust=all` (split and dividend adjusted, the
+  basis `yahoo-adj` uses), from QQQ's first bar in windows under the 5,000-bar cap,
+  written as FRED series are (open = high = low = close = value, volume 0). Imported as
+  INDEX, source `twelvedata`. Needs `TWELVEDATA_API_KEY` (free Basic plan: 800 credits a
+  day, 1 a request, about 4 requests per indicator)
 - [ ] Two `[[check]]` blocks, RSI and MACD against the vendor; `live_checks` runs a check on
       a data-only column too
 - [ ] Measure, then set tolerance and warm-up from the measurement, as the yield-curve
@@ -1693,10 +1693,10 @@ income with the date each was filed, starting with filings from 2009-07. Free co
 (survivorship-biased, same caveat). Foreign filers (ASML, ARM and a few others file 6-K
 and 20-F, with no Item 2.02 and IFRS facts) drop out of both columns.
 
-- [x] `build_ndx_earnings.py` beside `build_ndx_breadth.py` (12 offline tests in
+- [x] `../../build_ndx_earnings.py` beside `build_ndx_breadth.py` (12 offline tests in
       `tests/test_ndx_earnings.py`): ticker to CIK from SEC's
-      ticker file, each member's submissions (with the older pages) and companyfacts,
-      cached; written as degenerate bars, imported as INDEX, source `computed`
+  ticker file, each member's submissions (with the older pages) and companyfacts,
+  cached; written as degenerate bars, imported as INDEX, source `computed`
 - [x] Column 39, two series. The share of members releasing in the 5 trading days
       starting today, out of members covered (first release to 130 days after the last),
       on days covering at least 45 members. Plus a 0/1 in-season flag: 1 when that share
@@ -1804,13 +1804,13 @@ a stored result now, since every result left is newer than every such fix.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G15 | No CI, no Newman run, no end-to-end path. Vitest has three test files and no React Testing Library | Architecture §10 | no `.github/`; `postman/README.md:33`; `web/client/package.json` | M | done: `.github/workflows/ci.yml`, four jobs (python, java, api, client) on every push and PR, each database job on an empty TimescaleDB service. The five walk-forward round-trip tests that skipped on an empty database now seed and remove their own feature set. Rehearsed locally on an empty database: Java 117, Python, api lint and tests, client lint, build and Vitest. Not run on GitHub yet: it runs on the first push. Not covered: Postman/Newman (needs the stack), end-to-end, React Testing Library, ruff (pre-existing errors) |
+| G15 | No CI, no Newman run, no end-to-end path. Vitest has three test files and no React Testing Library | Architecture §10 | no `../../.github`; `postman/README.md:33`; `web/client/package.json` | M | done: `../../.github/workflows/ci.yml`, four jobs (python, java, api, client) on every push and PR, each database job on an empty TimescaleDB service. The five walk-forward round-trip tests that skipped on an empty database now seed and remove their own feature set. Rehearsed locally on an empty database: Java 117, Python, api lint and tests, client lint, build and Vitest. Not run on GitHub yet: it runs on the first push. Not covered: Postman/Newman (needs the stack), end-to-end, React Testing Library, ruff (pre-existing errors) |
 
 ### F. Bigger or later
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G16 | Spring Boot and Next.js replace Node and Vite, and Python stops serving HTTP. New work still lands in Node (`web/api/strategies.js`) | Architecture §2, §3.5 | `web/api/`, `python/nn/nn_api.py`, `EngineApi.java` | XL | decision |
+| G16 | Spring Boot and Next.js replace Node and Vite, and Python stops serving HTTP. New work still lands in Node (`../../web/api/strategies.js`) | Architecture §2, §3.5 | `../../web/api`, `python/nn/nn_api.py`, `EngineApi.java` | XL | decision |
 | G17 | Intraday, phase two: paid data, after the daily model is proven | Design Notes, Two Phases | follows the phase-one answer | XL | gated |
 | G18 | Live X sentiment, monitoring only and never a training input | Design Notes, News & Sentiment | not started | L | gated |
 
@@ -1832,7 +1832,7 @@ Training tab, the yield-curve check, audit columns, field hints, the Postman sui
 
 ## Revision history
 
-Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules). Rows before revision 6 were added afterwards from the commits that made them, which went in under the author's git user with Claude as co-author.
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`../../AGENTS.md`, Working rules). Rows before revision 6 were added afterwards from the commits that made them, which went in under the author's git user with Claude as co-author.
 
 | Revision | When | Who | Change |
 |---|---|---|---|

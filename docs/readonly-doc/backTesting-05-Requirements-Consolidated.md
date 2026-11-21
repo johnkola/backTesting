@@ -5,10 +5,10 @@
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
 - **R1 to R76 keep their numbers**; code, tests and trackers cite them.
-- **R77 to R88 are new numbers** for requirements that existed only in `backTesting-03-Design-Notes.md`, `backTesting-02-Features.md`, `AGENTS.md` or a recorded decision.
+- **R77 to R88 are new numbers** for requirements that existed only in `backTesting-03-Design-Notes.md`, `backTesting-02-Features.md`, `../../AGENTS.md` or a recorded decision.
 - Decisions already made (D6 to D10, D12) are applied to the text. Where two docs disagreed and nothing is decided, the item is in [Decisions needed](#decisions-needed) and the requirement is marked **conflict**.
 - **Status** comes from `backTesting-07-Design-Gaps.md` Pass 4 and the `AGENTS.md` build table. It was not re-verified against the code.
-- Not repeated here: the feature list (`backTesting-02-Features.md` owns it), how to run anything (`README.md`, `backTesting-10-Getting-Started.md`), definitions of done (`AGENTS.md`), gap evidence (`backTesting-07-Design-Gaps.md`).
+- Not repeated here: the feature list (`backTesting-02-Features.md` owns it), how to run anything (`../../README.md`, `backTesting-10-Getting-Started.md`), definitions of done (`AGENTS.md`), gap evidence (`backTesting-07-Design-Gaps.md`).
 
 Source tags: **DN** Design Notes · **A §n** Architecture · **F** Features · **AG** AGENTS.md · **D/G/B n** rows in backTesting-07-Design-Gaps.md.
 

@@ -1,6 +1,6 @@
 # Front-end review tracker
 
-Rolling record of reviews of the React client (`web/client/`) and the API surface
+Rolling record of reviews of the React client (`../../web/client`) and the API surface
 it consumes. One section per pass, newest first. Each item says what was wrong,
 what proves it, and its status.
 
@@ -12,7 +12,7 @@ Status values: **fixed** (edit applied) · **open** (agreed, not yet done) · **
 
 Scope: all 8 pages + `lib/api.ts` read against the Node API's routes
 (`web/server/server.js`), the engine's (`api/EngineApi.java`) and the loader's
-(`python/loader/*_api.py`, `python/nn/nn_api.py`).
+(`python/loader/*_api.py`, `../../python/nn/nn_api.py`).
 
 Trigger: "the UI does not work" — root cause was **not** code. The `api`
 container had exited 3 days earlier, so the client's every request failed with
@@ -48,10 +48,10 @@ defects the review then found.
 
 | # | Where | What | Status |
 |---|-------|------|--------|
-| 8 | `ModelsPage.tsx:135` · `server.js` model walker | **`/models` rendered as a blank page.** Two writers have produced `metadata.json`: Java's `ModelMetadata` (camelCase) and, since the Python port, `python/nn/store.py` (snake_case with a nested `extra`). The Node walker still read camelCase only — its comment said so — so every model trained after the port came back with `cacheKey`, `strategyName`, `createdAt` and the rest `undefined`. `m.cacheKey.slice(0, 12)` then threw, React unmounted the tree, and the page was white with no error anywhere on screen. Fixed at the source with `normaliseMetadata` (both dialects → one shape; fields the loader genuinely does not record stay null), and the page hardened so a bad row degrades to a dash. | fixed |
+| 8 | `ModelsPage.tsx:135` · `server.js` model walker | **`/models` rendered as a blank page.** Two writers have produced `metadata.json`: Java's `ModelMetadata` (camelCase) and, since the Python port, `../../python/nn/store.py` (snake_case with a nested `extra`). The Node walker still read camelCase only — its comment said so — so every model trained after the port came back with `cacheKey`, `strategyName`, `createdAt` and the rest `undefined`. `m.cacheKey.slice(0, 12)` then threw, React unmounted the tree, and the page was white with no error anywhere on screen. Fixed at the source with `normaliseMetadata` (both dialects → one shape; fields the loader genuinely does not record stay null), and the page hardened so a bad row degrades to a dash. | fixed |
 | 9 | everywhere | A render crash blanked the **whole app**. Added `ErrorBoundary` around the router outlet, keyed by route so navigating away clears it — the navbar survives and the error is on screen instead of in the console. | fixed |
 | 10 | `server.js` `/api/health` | Health only answered for its own process, so "the API is up" told you nothing about the engine or the loader. Now probes all three in parallel behind a 3 s `HEALTH_TIMEOUT_MS`, and always returns 200 with the verdict in the body — a status code would collapse "the API is down" and "the API is up but the engine is not". | fixed |
-| 11 | `server.js` · `docker-compose.yml` · `lib/api.ts` | Added a global maintenance switch. `MAINTENANCE=1 docker compose up -d api` forces the maintenance page while every service keeps running; `VITE_MAINTENANCE=1` is the build-time equivalent for when the API itself is being replaced. | fixed |
+| 11 | `server.js` · `../../docker-compose.yml` · `lib/api.ts` | Added a global maintenance switch. `MAINTENANCE=1 docker compose up -d api` forces the maintenance page while every service keeps running; `VITE_MAINTENANCE=1` is the build-time equivalent for when the API itself is being replaced. | fixed |
 | 12 | 6 pages | The same fetch/abort/error effect was copied into every page. Extracted to `lib/useApiData.ts`, which also settles #6 — it reports staleness by comparing the settled key against the current one instead of resetting state in the effect body. | fixed |
 
 ### Verified end to end (headless Chrome against the running stack)
@@ -85,7 +85,7 @@ pages were the older one, left behind by the service split.
 | 1 | **Two design systems.** The doc shell (`server.js` `layout()`) pulled daisyUI **4.12.23** off jsDelivr plus the Tailwind **play CDN**; the client bundles Tailwind 4.3 + daisyUI 5.5.19. Two majors apart on both. | fixed |
 | 2 | **Two themes.** `<html data-theme="corporate">` hard-coded on the docs; the client had no theme at all. They could not match. | fixed |
 | 3 | **Two navbars.** Docs offered `Home · README · Architecture`; the client offers the app's seven. No page served from the API linked back to the client — verified across all four. | fixed |
-| 4 | **"Home" was a dead end.** The brand and Home both pointed at the API's `/`, which rendered a dev-only fallback saying *"The React UI isn't built — run `npm run build` in `web/client/`"*. Its own comment claimed it was unreachable in production because "express.static serves index.html" — but there is no `express.static` in the file any more and `web/Dockerfile` never copies the client, so it was the only thing `/` ever rendered. | fixed |
+| 4 | **"Home" was a dead end.** The brand and Home both pointed at the API's `/`, which rendered a dev-only fallback saying *"The React UI isn't built — run `npm run build` in `../../web/client`"*. Its own comment claimed it was unreachable in production because "express.static serves index.html" — but there is no `express.static` in the file any more and `../../web/Dockerfile` never copies the client, so it was the only thing `/` ever rendered. | fixed |
 | 5 | **Tailwind Play CDN in production**, which compiles in the browser and warns it is dev-only — and left the documentation blank with no internet. | fixed |
 | 6 | **Every in-page doc link was dead.** `marked` stopped emitting heading ids in v5, so the 21 `](#anchor)` links across the two docs went nowhere. Confirmed: rendered output had bare `<h2>`. | fixed |
 | 7 | `web/server/package.json` still described the service as *"Web frontend … serves rendered docs and (later) read-only API endpoints"*. | fixed |
