@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-21-4** · 2026-11-21 18:10 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-5** · 2026-11-21 18:12 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1015,6 +1015,87 @@ The readonly design set is the author's to update where an answer departs from i
 
 *Gated by the design.* G65 (signal voting) and G18 (live sentiment).
 
+**Steps for jobs 5 to 9, written 2026-11-21 18:12.** The author asked for all five to be written out before any of them starts. Each list is the plan as the code stands today; a step is ticked when it is done, and a job's record is written under its list. Every job ends the same way, so it is said once: the CI jobs pass, the containers it touches are rebuilt, every stored run recalculates exactly (or the ones that should move are named first), and the README, the Postman collection and this tracker's rows say what changed. A line marked **STOP** waits for the author. A line marked **ASK** is a choice the plan cannot make; the default it names is what is built if the author says nothing else.
+
+*Job 5 steps: selectable inputs (C7, F1, F2), M.*
+
+What "selectable, off by default" means in the code: the column is built and stored in every set, a strategy may select it, and no existing strategy or default selection includes it. Today a `data-only` column is stored but refused on save (`strategies.dataOnlyFeatures`) and dropped by the runner (`strategy_spec.resolve_columns`), and a disabled `undecided` column is not built at all.
+
+- [ ] 5.1 A VIX3M feed: `Feed("VIX3M", "yahoo", "INDEX", "yahoo", "^VIX3M", "prices")` in `feeds/registry.py`, and `VIX3M` among `yahoo.KNOWN_INDICES`. Dry run first, to see the first date and the row count Yahoo returns. Tests
+- [ ] 5.2 **STOP**: show the dry run, then Apply the feed. It adds a series; it changes no stored one
+- [ ] 5.3 `features.toml`: a new status, `selectable`, for a column that is built and offered but not selected by default. `rsi_14`, `macd` and `realized_vol` move from `data-only` to it; `vix_term_structure` and `qqq_spy_relative` move from `undecided` to it; `credit_spread_hy` is removed (F3). The section comment that says these stay out of the network is rewritten to the author's decision. `feature_config` validates the status. Tests
+- [ ] 5.4 The build stores a `selectable` column with the network's role, so `read_matrix` can read it; `data-only` stays in the code for a column that is truly for charts only, with no column using it today. Tests
+- [ ] 5.5 The runner and the API stop refusing them: `resolve_columns` keeps a selected `selectable` column, and the save route's data-only refusal no longer fires for one. The catalogue (`feature_catalog`, `featureCatalogue.js`) carries the status. Tests
+- [ ] 5.6 The Strategy tab lists them in their own group, unticked, with a note on each (`vix_term_structure` has no values before 2006-07-17, so on a 2003 train start it is partial and the coverage grid says so). The Features page and stage show the status. Tests
+- [ ] 5.7 The intraday calendar files inherit the change; check that `macd` and `rsi_14` on an intraday calendar are the daily values as of the session before, as every daily column is, and say so on the tab
+- [ ] 5.8 **STOP** before stored data moves: the config hash changes, so every set reads stale. Show what a rebuild touches, then rebuild the daily, H1 and M30 sets once, together. Old sets are kept (D12 rebuilds on demand; nothing is deleted)
+- [ ] 5.9 Check: the 29 columns `phase1-full` v5 trains on are value for value what they were, so all 13 stored runs still recalculate exactly; if one does not, stop and report before going on
+- [ ] 5.10 One new strategy version with the five columns selected, validation folds only, as the live proof that a selected column is trained on. The test block is not touched
+- [ ] 5.11 Rows: C7, F1, F2, F3 and D4 closed here; `backTesting-06` needs no change
+
+Done when: a strategy can select any of the five and its run's column list shows them; no existing strategy's columns or figures changed.
+
+*Job 6 steps: a sliding window beside the expanding one (C6, D3), M.*
+
+- [ ] 6.1 **ASK**: the window's shape. Default: two whole-number settings on the strategy, `trainYears` (the length) and `stepYears` (how far each fold moves, default 1), in calendar years, because the folds are calendar years. Expanding stays the default and is what `window: "expanding"` or no setting means
+- [ ] 6.2 `walkforward.make_folds` takes the window: a sliding fold trains on the `trainYears` years before its validation year, purged as now; with `stepYears` above 1 the validation block is that many years. The expanding path is unchanged, by test, fold for fold
+- [ ] 6.3 The strategy holds it: saved with the windows, validated by the API (bounds), and checked by the runner at save (`strategy_spec.fold_plan`, the job 4 path): `trainYears` must fit between `train.from` and `validation.from`, and the validation years must divide by the step. Refused, never rounded. Tests
+- [ ] 6.4 The holdout fold: under a sliding window the test block's model trains on the last `trainYears` before it, not on everything. Say so on the tab, and test it
+- [ ] 6.5 The run records the window (`walkforward_runs`, a nullable column; NULL is expanding, which is what every stored run was). `recalculate` and the staleness check read it
+- [ ] 6.6 Early stopping holds the last year of each fold's training out; with `trainYears` 1 nothing is left to fit. Refused with the reason
+- [ ] 6.7 Split tab and Training tab draw the sliding spans from the runner's own code (`nn/split.py`), as they do for expanding. Strategy tab: the choice, the two fields, the fold count it gives
+- [ ] 6.8 Live: one strategy version on a 5-year sliding window, validation folds only, beside `phase1-full` v5. Its figures go in the record; no conclusion about which is better is drawn from one run
+- [ ] 6.9 Rows: D3 and C6 closed
+
+Done when: the same strategy saved both ways gives two runs whose fold spans differ as the Split tab shows, and every stored run recalculates exactly.
+
+*Job 7 steps: the five rule strategies as benchmarks only (C8), S.*
+
+Today `sma-crossover`, `ema-triple`, `macd`, `rsi` and `bollinger` are registered in the engine's `StrategyRegistry` beside the model strategies and offered on the Run tab's list and by the `run` command.
+
+- [ ] 7.1 The C8 row in this tracker (the author's Q3), with the answer
+- [ ] 7.2 **ASK**: what "kept as benchmarks" shows. Default: the five stay runnable from the Run tab and the CLI, under a separate heading "Rule benchmarks", and are not added to every run's benchmark set (that set stays buy-and-hold, Faber and dual momentum, R36). The other reading, all five computed beside every run, is an L job, not this one
+- [ ] 7.3 The registry gives each strategy a kind, `model` or `benchmark`; `GET /api/strategies` serves it. Tests (Java)
+- [ ] 7.4 Run tab: two groups in the list. A result of a rule benchmark is labelled a benchmark on Results and on its page, and the verdict banner does not call it a strategy that beat or lost to holding. CLI `run --help` and `list` say the same. Tests
+- [ ] 7.5 The Strategy tab already cannot build one (it saves model strategies only): confirm, and say so in the record
+- [ ] 7.6 README: the opening paragraph and the strategy table call them rule benchmarks. `tools/datagen` uses `sma-crossover` as its smoke run and keeps doing so
+- [ ] 7.7 Stored results of the five keep their figures; only the label changes. Count them in the record
+- [ ] 7.8 Rows: C8 closed, R21 and R22 re-read
+
+Done when: nowhere in the app or the README is one of the five offered as a strategy, and each still runs.
+
+*Job 8 steps: checks with a severity, and errors that stop the chain (C2, D11, R12, R65), M.*
+
+Today every check reports and nothing blocks: the import's cohesion report (`loader/cohesion.py`), the feeds' hold, and the build's computed-against-published checks (`nn/data_checks.py`, whose module comment states "flag, never block").
+
+- [ ] 8.1 **ASK**: which findings are errors. Default, from the design's own words ("two or more flags on a row = error"): on import, a bar that fails the OHLC structure check, a duplicate or out-of-order timestamp, and any bar carrying two or more flags are errors; a gap or a single outlier is a warning. On a build, a check that compared nothing is an error (it already counts as not ok); a disagreement within its tolerance count is a warning. The list goes in the record for the author to change
+- [ ] 8.2 One severity on a finding, `error` or `warning`, set where the finding is made. Tests
+- [ ] 8.3 Import (upload, drop folder, feeds): a file with an error is not stored; the answer names every error. An override is one deliberate act, recorded with who and why on the import's audit row, and never the default. The drop folder moves the file to `failed/` with the report beside it. Tests
+- [ ] 8.4 Build: an error stops the build before it writes a set, the dry run included; the override is a flag, recorded on the set. Tests
+- [ ] 8.5 Stages: Data and Features read `failed` with the errors, and a later stage is not done while an earlier one has an unoverridden error (the `AGENTS.md` rule, now enforced by the status call)
+- [ ] 8.6 UI: errors and warnings shown apart on the import card, the Imports page and the Features stage; the override shown wherever it was used
+- [ ] 8.7 **STOP**: run the new rule over everything stored, changing nothing, and show what would now be an error. Stored history is not rejected after the fact: each such finding is listed, and the author says fix, override or leave
+- [ ] 8.8 The two module comments that say nothing blocks are rewritten to the decision; `AGENTS.md` step 1 and step 2 conditions that were "review" and are now checked by the app are marked so
+- [ ] 8.9 Rows: C2 and D11 closed; R12 and R65 re-read; G51 keeps what is left of it (Pandera, exchange_calendars, the `data_checks` table)
+
+Done when: a file with a broken bar is refused with the reason, the same file goes in with a recorded override, and the scan of stored data is in the record.
+
+*Job 9 steps: the requirements doc re-verified (Q1, Q2), M.*
+
+`backTesting-05-Requirements-Consolidated.md` holds 89 requirement lines (R1 to R76 and R77 to R88, with retired numbers listed). Its statuses were copied from this tracker and never checked.
+
+- [ ] 9.1 Read-only pass, one section of the doc at a time (A to J): for each requirement, the status the code supports today, with the file, test or stored row that shows it. No doc is edited in this step
+- [ ] 9.2 The differences as one table: requirement, status in the doc, status found, evidence. **STOP**: the author reads it before anything is rewritten
+- [ ] 9.3 The author's 14 answers of 2026-11-19 written into the requirement text they change, and "Decisions needed" emptied into a "Decided" table with the dates. Where an answer departs from the design set (C3, C4, C5, C1's timing) the requirement says "departure, by the author's decision"; the design set itself is the author's to change and is not touched
+- [ ] 9.4 This tracker brought into line: D2, D3, D11, D13 and D14 closed with their answers; the "Status per requirement" table replaced by the verified one; any gap found done or newly found gets its row
+- [ ] 9.5 `AGENTS.md`: a condition marked "not built" that is now built is ticked or re-worded, with the evidence
+- [ ] 9.6 The draft mark removed, the status note rewritten to "verified against the code at commit X on date Y", and the count section recounted
+- [ ] 9.7 README roadmap: Next is what the verified list says is next
+
+Done when: every status in the doc has evidence behind it dated after jobs 5 to 8, and the author has approved the doc (Q1).
+
+Order between the five: 5, 6, 7, 8, then 9 last, because 9 records the state the other four leave. 7 is independent and can move earlier if a short job is wanted between two long ones.
+
 **Job 1 record: the held feeds, 2026-11-19 12:55.** Six series were held, not one: QQQ, SPY and PSQ on `yahoo` and `yahoo-adj`, each for two settled volumes (2026-11-13, 11-16) and, on QQQ and PSQ, a cent on an 11-16 price.
 
 - **What went wrong.** All six were applied on the claim that only those two days would move and no stored run could, the days being past every window. That was not checked and was wrong: Apply re-downloads the whole history, and Yahoo's adjusted prices came back different in the seventh digit on most of it (QQQ 5,723 days, SPY 7,084, PSQ 3,893, largest 1.5e-5 relative; the unadjusted series moved on the fixed days only). 11 of 13 runs stopped recalculating exactly and Training read stale. The candles had been backed up first (`feeds-apply/candles-before.csv.gz` in the session scratchpad).
@@ -1872,6 +1953,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-5 | 2026-11-21 18:12 | Claude Code (Claude Fable 5.2) | Steps for jobs 5 to 9, written out before any of them starts |
 | 2026-11-21-4 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | The implementation plan reviewed against the docs and the code: what is left, in order, with what the review found |
 | 2026-11-21-3 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `DESIGN-GAPS.md`; the other doc files renamed the same way, references follow |
 | 2026-11-21-2 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | Job 4 done: G54, a save is checked by the runner |
