@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-21-3** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-4** · 2026-11-21 18:10 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -979,6 +979,42 @@ The readonly design set is the author's to update where an answer departs from i
 - [ ] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
 - [ ] 10. Then the earlier list: G57, G50, G40 and G41, and the small ones
 
+**Implementation plan, reviewed 2026-11-21 18:10.** The author asked for a review of the docs and the code and for this plan to be brought up to date. It keeps the work order above and adds what the review found. Items marked *checked* were looked at in the code or the database today. Everything else is carried from this tracker's rows as they stand, and job 9 is where each is re-verified.
+
+*Where things are.* Phase one is answered (no, run 881). The intraday path runs end to end on synthetic H1 and M30. Jobs 1 to 4 of the work order are done. Stored today: 21 strategy versions, 13 walk-forward runs, 19 backtest results, 9 feature sets (7 daily, H1 set 54, M30 set 56).
+
+*A. The author's answers of 2026-11-19, still to build (jobs 5 to 9).*
+
+- [ ] 5. Selectable inputs (C7, F1, F2), M. Found in the review (*checked*):
+  - `vix_term_structure` and `qqq_spy_relative` are already in `features.toml`, switched off with status `undecided`. They are not columns to write, only to switch on and make selectable.
+  - `vix_term_structure` divides VIX3M by VIX, and **no VIX3M bar is stored**. It needs a daily feed first (Yahoo, from 2006-07-17), and the column is then partial on a 2003 train start.
+  - The `data-only` columns are `rsi_14`, `macd` and `realized_vol`. All three become selectable, off by default.
+  - `credit_spread_hy` (F3) leaves the config.
+  - One rebuild of the daily, H1 and M30 sets together. **Stop before the rebuild**: it is stored data.
+- [ ] 6. A sliding window beside the expanding one (C6), M. The runner has the expanding window only (*checked*: `walkforward.make_folds`). Length and step are saved on the strategy; existing strategies do not change. The save-time check from job 4 (`strategy_spec`) is where the new rules go.
+- [ ] 7. The five rule strategies as benchmarks only (C8), S. **C8 has no row in this tracker yet** (*checked*), which the author asked for (Q3); it gets one with this job.
+- [ ] 8. Data checks with a severity, and errors that stop the chain (C2, D11), M.
+- [ ] 9. The requirements doc: every status re-verified against the code, the answers written in, the draft mark removed, M. With it, this tracker's decision rows are brought up to date: D2, D3, D11, D13 and D14 still read `decision` or `open` though all were answered on 2026-11-19, and `backTesting-05` still shows R22 as partial.
+
+*B. What phase two needs from phase one's leftovers.*
+
+- [ ] G57, M: walk-forward runs on Results, with side-by-side comparison. The intraday runs 1015 and 1016 can be seen only on the Training tab and in the database.
+- [ ] G50, M: a fold keeps its model and scaler. A live signal from a walk-forward model needs it.
+- [ ] G40, M, then G41, S: a stored result keeps its run settings; the staleness check reads through the feature table. Result 817 stays flagged stale until G40.
+- [ ] G42, S: the span backfill checks for a fix between the run and the backfill.
+
+*C. When the FirstRate files arrive (each needs the data).*
+
+- [ ] A calendar file for the real series, and which adjustment to train on.
+- [ ] The hourly roll-up from the 30-minute file, starting at 09:30 and not on the clock hour.
+- [ ] A feature set, then the first walk-forward run on real intraday bars (G17). Since job 4 a strategy cannot be saved on the series before its set is built.
+
+*D. Small and independent, any time.* G64 (Requirements on the Docs tab; *checked*, not in the registry), G63 (catalogue entries for the benchmarks), G62 (models recorded with a file hash), G70 (an engine's own feature subset), G66 (reload a series from its archive in one action), G67 (the archive keeps every version), G55 (coverage grid per window), G59 (tooltips), G14 (*checked*: `ResultDetailPage` and `TradeChart` still use Recharts), G9b (waits for a Twelve Data key).
+
+*E. After phase two works on real data (the author's answer to C1).* G16, the Spring Boot move, and the large pieces that depend on it or on which requirements the author keeps: G51 (data verification as designed), G52 (a raw series table at native cadence), G53 (separate cost items, superficial loss, dividends, currency), G56 (instrument-agnostic), G58 (one Train & Run tab), G60 (the testing layers; *checked*: no React Testing Library, no Newman in CI), G61 (lineage hops), G10 (the Verify tab), G13 (the shared table).
+
+*Gated by the design.* G65 (signal voting) and G18 (live sentiment).
+
 **Job 1 record: the held feeds, 2026-11-19 12:55.** Six series were held, not one: QQQ, SPY and PSQ on `yahoo` and `yahoo-adj`, each for two settled volumes (2026-11-13, 11-16) and, on QQQ and PSQ, a cent on an 11-16 price.
 
 - **What went wrong.** All six were applied on the claim that only those two days would move and no stored run could, the days being past every window. That was not checked and was wrong: Apply re-downloads the whole history, and Yahoo's adjusted prices came back different in the seventh digit on most of it (QQQ 5,723 days, SPY 7,084, PSQ 3,893, largest 1.5e-5 relative; the unadjusted series moved on the fixed days only). 11 of 13 runs stopped recalculating exactly and Training read stale. The candles had been backed up first (`feeds-apply/candles-before.csv.gz` in the session scratchpad).
@@ -1836,6 +1872,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-4 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | The implementation plan reviewed against the docs and the code: what is left, in order, with what the review found |
 | 2026-11-21-3 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `DESIGN-GAPS.md`; the other doc files renamed the same way, references follow |
 | 2026-11-21-2 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | Job 4 done: G54, a save is checked by the runner |
 | 2026-11-21-1 | 2026-11-21 17:25 | Claude Code (Claude Fable 5.2) | Job 4 plan (G54) |
