@@ -57,6 +57,13 @@ class FeatureMatrix:
 DATE_KEYED = ("D1", "W1", "MN1")
 
 
+#: The calendars the feature table cannot hold, so no strategy can run on
+#: them: a weekly or monthly calendar is keyed by date like D1 but has never
+#: been built or scored (G22). Read by the build (`feature_build.refusal`) and
+#: by the strategy check (`strategy_spec.fold_plan`), so the two cannot differ.
+UNBUILDABLE_TIMEFRAMES = ("W1", "MN1")
+
+
 def is_intraday(timeframe: str) -> bool:
     return timeframe not in DATE_KEYED
 

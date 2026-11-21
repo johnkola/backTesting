@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   api, isAbortError,
   type EngineEntry, type FeatureCoverage, type Instrument, type ParamSpec, type SavedStrategy,
-  type SavedStrategiesResponse,
+  type SaveStrategyRequest, type SavedStrategiesResponse,
 } from '../lib/api'
 import CoverageWarning, { FeatureListNotUsedNote } from '../components/CoverageWarning'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
@@ -18,7 +18,7 @@ import {
   WINDOW_KEYS,
   classifyCoverage, designDefaultWindows, fitWindowsToSeries, horizonSpan, isRealDate,
   marginProblems, resolveFeatures,
-  objectiveFromForm, objectiveToForm, windowDays, windowErrors,
+  objectiveFromForm, objectiveToForm, runnableTimeframes, windowDays, windowErrors,
   type ObjectiveForm, type WindowKey, type Windows,
 } from '../lib/strategyForm'
 import {
@@ -123,10 +123,15 @@ export default function StrategyPage() {
   const source = pickedSource && sourcesFor.includes(pickedSource)
     ? pickedSource
     : sourcesFor[0] ?? ''
-  const timeframesFor = useMemo(
-    () => (instrument?.sources.filter((s) => s.sourceName === source) ?? [])
-      .map((s) => s.timeframe),
-    [instrument, source],
+  // G54: the stored timeframes, less those the runner cannot run. The list of
+  // those is the runner's (`saved.unrunnableTimeframes`), never kept here.
+  const unrunnable = saved?.unrunnableTimeframes
+  const { offered: timeframesFor, leftOut: timeframesLeftOut } = useMemo(
+    () => runnableTimeframes(
+      (instrument?.sources.filter((s) => s.sourceName === source) ?? []).map((s) => s.timeframe),
+      unrunnable,
+    ),
+    [instrument, source, unrunnable],
   )
   const timeframe = pickedTimeframe && timeframesFor.includes(pickedTimeframe)
     ? pickedTimeframe
@@ -289,10 +294,43 @@ export default function StrategyPage() {
   const engineIssues = registry && engineForm && objectiveForm
     ? engineProblems(engineForm, registry, objectiveForm.loss)
     : []
-  const ready = !!(name.trim() && slice && selected.length > 0
+  const formReady = !!(name.trim() && slice && selected.length > 0
     && windowProblems.length === 0 && marginIssues.length === 0 && engineIssues.length === 0
     && labelIssues.length === 0 && targetIssues.length === 0
-    && objectiveSpec && objectiveForm && !busy)
+    && objectiveSpec && objectiveForm)
+  /** The strategy exactly as Save sends it; the check below sends the same. */
+  const payload = (): SaveStrategyRequest => ({
+    name: name.trim(),
+    instrument: symbol,
+    source,
+    timeframe,
+    modelType,
+    validationScheme: scheme,
+    features: selected,
+    windows,
+    label: labelPayload(labelForm, labelKinds),
+    hyperparams: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '')),
+    objective: objectiveFromForm(objectiveForm!, objectiveSpec!),
+    // B9. Left out when the registry did not answer: the network alone.
+    ...(registry && engineForm ? { engines: enginesPayload(engineForm, registry) } : {}),
+    notes: notes.trim() || null,
+  })
+  /**
+   * G54: would this save, as it stands? The API answers with its own checks
+   * and then the runner's (`nn/strategy_spec.py`: the scheme, the calendar,
+   * windows on year boundaries with no gap, a built feature set), without
+   * storing anything. Asked once the form's own checks pass, so the reasons a
+   * run would be refused for are read here, not after Train is pressed. The
+   * name is left out of the question: it cannot change the answer, and typing
+   * one should not ask again on every key.
+   */
+  const checkBody = formReady ? { ...payload(), name: 'check', notes: null } : null
+  const { data: runnerCheck, error: runnerCheckError } = useApiData(
+    () => (checkBody ? api.checkStrategy(checkBody) : Promise.resolve(null)),
+    [checkBody],
+  )
+  const refusals = runnerCheck && !runnerCheck.ok ? runnerCheck.errors : []
+  const ready = formReady && refusals.length === 0 && !busy
   const { shared: sharedParams, network: networkParams } = splitParamSpec(paramSpec)
   const networkOff = !!engineForm && engineForm[NETWORK]?.enabled === false
 
@@ -308,24 +346,7 @@ export default function StrategyPage() {
     if (!ready || !slice || !objectiveSpec || !objectiveForm) return
     setBusy(true); setSubmitError(null); setResult(null)
     try {
-      const hyperparams: Record<string, string> = {}
-      for (const [k, v] of Object.entries(params)) if (v !== '') hyperparams[k] = v
-      const stored = await api.saveStrategy({
-        name: name.trim(),
-        instrument: symbol,
-        source,
-        timeframe,
-        modelType,
-        validationScheme: scheme,
-        features: selected,
-        windows,
-        label: labelPayload(labelForm, labelKinds),
-        hyperparams,
-        objective: objectiveFromForm(objectiveForm, objectiveSpec),
-        // B9. Left out when the registry did not answer: the network alone.
-        ...(registry && engineForm ? { engines: enginesPayload(engineForm, registry) } : {}),
-        notes: notes.trim() || null,
-      })
+      const stored = await api.saveStrategy(payload())
       setResult(stored)
       setListVersion((n) => n + 1)
     } catch (err) {
@@ -473,6 +494,13 @@ export default function StrategyPage() {
                 </select>
               </label>
             </div>
+            {timeframesLeftOut.length > 0 && (
+              <p className="text-xs text-base-content/60 mt-3">
+                Also stored for {symbol}/{source} and not offered:{' '}
+                <span className="font-mono">{timeframesLeftOut.join(', ')}</span>. A weekly or
+                monthly calendar is never built into a feature table, so no run can use it.
+              </p>
+            )}
             {slice && (
               <p className="text-sm text-base-content/60 mt-3">
                 Stored: <span className="font-mono">{slice.candleCount.toLocaleString()}</span> bars,{' '}
@@ -949,6 +977,32 @@ export default function StrategyPage() {
             </span>
           </div>
 
+          {refusals.length > 0 && (
+            <div className="alert alert-error">
+              <div className="text-sm">
+                <p className="font-medium">This strategy cannot be saved as it stands.</p>
+                <ul className="list-disc list-inside mt-1 space-y-1">
+                  {refusals.map((r) => <li key={r}>{r}</li>)}
+                </ul>
+              </div>
+            </div>
+          )}
+          {formReady && runnerCheckError && (
+            <div className="alert alert-warning">
+              <span className="text-sm">
+                Could not check this strategy before saving: {runnerCheckError}. Save asks
+                again, and refuses it if it cannot be checked.
+              </span>
+            </div>
+          )}
+          {saved?.runnerError && (
+            <div className="alert alert-warning">
+              <span className="text-sm">
+                The runner did not answer ({saved.runnerError}), so the scheme, model and
+                timeframe lists are not its own and a save will be refused until it does.
+              </span>
+            </div>
+          )}
           {submitError && (
             <div className="alert alert-error">
               <span className="whitespace-pre-wrap">{submitError}</span>

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-19-7** · 2026-11-19 19:00 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-2** · 2026-11-21 18:10 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `docs/readonly-doc/` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `DOC-REVIEW.md` and `UI-REVIEW.md`.
@@ -81,7 +81,7 @@ stored run.
 | G51 | Data verification as the design has it: Pandera and exchange_calendars as fixed steps, a `data_checks` table, raw and adjusted candle tables with split detection against imported split history, ydata-profiling and Evidently, one verification column per tool per row, and the OK/warning/error rule (see D11). Today: a hand-written cohesion check, a rule-based NYSE calendar, findings in the response only, one cross-check (the yield curve) | R12, R55, R63, R64, R65, R49 | `loader/cohesion.py`, `loader/market_calendar.py`, `nn/data_checks.py`; no such tables; none of the tools in `pyproject.toml` | none until built | XL | open |
 | G52 | Non-price series are stored as degenerate candles, at the calendar's cadence. There is no raw series table at native cadence; quarterly SEC net income is carried daily; feature values are stored aligned and normalized per set instead of once at native cadence | R15, R17, R49 | `feeds/fred.py` ("each observation becomes a degenerate bar"); all 17 fred, boc and computed series are in `candles` | all non-price series | L | open |
 | G53 | Strategy settings the design adds: commission, slippage and other expenses as separate items with on/off flags (today one `costBps`), a capital-gains inclusion rate, the superficial-loss rule, a minimum trades per year with a "near buy-and-hold" flag, dividends (ex-date payments, reinvest flag, own tax rate, 15% US withholding), account currency (CAD default, Bank of Canada USD/CAD, results in both, conversion fee), a capital setting, and the panel of settings that also drive the benchmarks | R28, R29, R30, R31, R56, R57, R58 | `strategies.js` objective fields; `StrategyPage.tsx` section 7; no USD/CAD series; scoring uses `yahoo-adj` total-return prices, so dividends are reinvested gross and never taxed | none until built | L | open |
-| G54 | The builder saves strategies the runner refuses: the `single` and `kfold_time` schemes, non-D1 timeframes, instruments with no feature set, and windows off year boundaries. `trainSplitRatio` is offered and never used. The model list is Node's own constant, not read from the runner | R22 | `strategies.js` `MODEL_TYPES` and scheme list against `strategy_spec.fold_plan` | none | S | open |
+| G54 | The builder saves strategies the runner refuses: the `single` and `kfold_time` schemes, non-D1 timeframes, instruments with no feature set, and windows off year boundaries. `trainSplitRatio` is offered and never used. The model list is Node's own constant, not read from the runner | R22 | `strategies.js` `MODEL_TYPES` and scheme list against `strategy_spec.fold_plan` | none | S | done 2026-11-21: a save is checked by the runner; see the job 4 record (it also corrects this row: `trainSplitRatio` is used, by the Train and Run pages) |
 | G55 | The coverage grid covers the train window only, as marks and a warning rather than a feature-by-window grid; a strategy can be cloned only from its newest version, never from an older one or from a run | R26, R27 | `StrategyPage.tsx` (coverage over train only, `latest: true`); `CoverageWarning.tsx` | none | S | open |
 | G56 | Not instrument-agnostic in practice. `scope` is a label: the instrument-scoped series are hard-coded to QQQ, only QQQ has a feature set, there is no app-wide instrument selector, and Strategy 2 refuses anything but QQQ | R18, R42 | `features.toml` `[alignment]` and instrument series; `Layout.tsx` (timeframe picker only) | none | L | open |
 | G57 | Results: walk-forward runs never reach Results; there is no side-by-side comparison by feature list, windows and metric; no trades per year or average holding time; buy-and-hold has a return but no Sharpe or drawdown | R38, R39, R40 | `ResultsPage.tsx`, `ResultDetailPage.tsx`; `benchmarks` columns | none | M | open |
@@ -971,7 +971,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 1. Apply the held QQQ series; rebuild the daily set; rerun or recalculate what reads stale (S). *Done 2026-11-19; see the record below*
 - [x] 2. I7: New York time on import, per the plan above (M). *Done 2026-11-19; see the I7 record*
 - [x] 3. FirstRate import readiness: its file layout and names through the drop folder (S, after 2). *Done 2026-11-19; see the job 3 record*
-- [ ] 4. G54: the Strategy tab and the runner agree on what can run (S)
+- [x] 4. G54: the Strategy tab and the runner agree on what can run (S). *Done 2026-11-21; see the job 4 record*
 - [ ] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
 - [ ] 6. C6: the sliding window option (M)
 - [ ] 7. C8: the rule strategies as benchmarks only (S)
@@ -1007,9 +1007,34 @@ The readonly design set is the author's to update where an answer departs from i
 
 *Left for when the files arrive* (each needs the data): a calendar file for the real series (`QQQ-firstrate-M30.toml`, the synthetic one with the source changed); which adjustment to train on (the split-and-dividend one matches `yahoo-adj`, and is rewritten in full at each dividend, which is a fix import by design); the hourly roll-up, which today buckets on the clock hour and would give a half bar at 09:30 followed by six whole ones, where the synthetic H1 starts at 09:30.
 
+**Job 4 plan: G54, the Strategy tab and the runner agree on what can run, 2026-11-21 17:25.**
+
+*What is true today.* The runner's rules live in `nn/strategy_spec.py` (`fold_plan`, `runner_args`) and are applied when a run is started. The save path does not ask them: Node keeps its own model-type and scheme lists (`strategies.js`), and the tab offers every stored timeframe. So a strategy can be saved that can never run: scheme `single` or `kfold_time`, a W1 or MN1 calendar, windows off year boundaries or with a gap between them, a `forwardBars` that disagrees with the label horizon, a series with no feature set. All 21 saved strategies are D1, `walkforward`, on year boundaries, so none is affected and **no stored data moves**.
+
+*One correction to the G54 row.* `trainSplitRatio` is not "never used": the Train and Run pages forward a saved strategy's hyperparameters to the single-split trainer, which cuts by it (`NeuralNetworkStrategy`, `nn/train.py`). Only walk-forward ignores it, on purpose (`strategy_spec`). It stays on the form, and its label says where it applies.
+
+*The shape.* One check, the runner's, asked at save. Nothing about what can run is listed in Node or in the client.
+
+- [x] Loader: `strategy_spec.candidate` (a strategy as the API is about to save it), `refusals` (every reason from `fold_plan` and `runner_args`, at once) and `options` (model types, schemes, the timeframes that cannot run). `GET /api/nn/strategies/options` and `POST /api/nn/strategies/check`, which adds one reason the pure check cannot see: no feature set is built for the series. Tests
+- [x] API: `MODEL_TYPES` and `VALIDATION_SCHEMES` leave `strategies.js`; the lists come from the loader. A save is checked by the runner and refused with its reasons (422); 503 when the loader does not answer, as the engines already are. `POST /api/strategies/saved?check=1` answers the same without saving. Tests
+- [x] Client: the scheme and model lists are the runner's; a timeframe that cannot run is not offered, and the tab says which were left out; the runner's reasons show beside Save before it is pressed; `trainSplitRatio` says it is the Train page's. Tests
+- [x] Postman collection and README (the route, the check on save)
+- [x] CI jobs; rebuild loader, api and client; live: a W1 strategy, an off-year window and a series with no set are each refused on save with the runner's words, and `phase1-full` v5's settings still save
+- [x] The G54 row, R22 and the roadmap say done
+
+*Done, 2026-11-21 18:10.*
+- **Loader:** `strategy_spec.options`, `candidate`, `refusals`, `has_feature_set`; `VALIDATION_SCHEMES` beside `MODEL_TYPES`; the unbuildable calendars are one constant (`feature_store.UNBUILDABLE_TIMEFRAMES`) that the build and the strategy check both read. `GET /api/nn/strategies/options`, `POST /api/nn/strategies/check`.
+- **API:** `strategies.js` holds no scheme or model list. A save asks the runner and is refused with its words (422, each reason prefixed "the runner refuses it"); 503 when the loader does not answer. `?check=1` answers the same and stores nothing.
+- **Client:** the timeframe list leaves out what cannot run and says which; the form asks the check once its own checks pass, lists the reasons above Save and keeps Save off while there are any.
+- **Live, on the rebuilt stack, nothing stored (21 strategies before and after):** `phase1-full` v5's settings pass; so does the same strategy on synthetic M30. W1: "timeframe 'W1' cannot run yet". Train from 2003-06-01: "train window must start on 1 January". QQQ `yahoo` (no set): "no feature set is built for QQQ (yahoo, D1)". Scheme `single`: "has no runner; only walkforward runs". A real save of the June window: 422.
+- **Tests:** Python 945 (20 new: `TestAskedAtSave`, `TestStrategyCheck`); API 127 (2 new); client 226 (3 new). Both lints clean. Postman: 5 new requests, and the list request asserts the runner's lists; the collection was not run.
+- **Not checked:** the tab itself in a browser. The page type-checks and its logic is tested, but nobody has looked at the refusal list on screen.
+- **A stricter save, on purpose:** a strategy whose `forwardBars` differs from its label horizon, or whose series has no feature set yet, used to save and fail at run time. It is refused at save now, so a set has to be built before a strategy is saved on a new series.
+
+
 ### Status per requirement
 
-Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47, R59.
+Done: R7, R8, R9, R10, R13, R14, R16, R19, R22 (G54, 2026-11-21), R24, R32 (B10, 2026-11-15), R35, R47, R59.
 
 | R | Status | Tracked as |
 |---|---|---|
@@ -1026,7 +1051,6 @@ Done: R7, R8, R9, R10, R13, R14, R16, R19, R24, R32 (B10, 2026-11-15), R35, R47,
 | R18 | partial | G56 |
 | R20 | partial | D12, G45 |
 | R21 | partial | G70 |
-| R22 | partial | G54 |
 | R23 | done | B9, 2026-11-16 |
 | R25 | partial | G49, G50, D3 |
 | R26 | partial | G55 |
@@ -1812,6 +1836,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-2 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | Job 4 done: G54, a save is checked by the runner |
+| 2026-11-21-1 | 2026-11-21 17:25 | Claude Code (Claude Fable 5.2) | Job 4 plan (G54) |
 | 2026-11-19-7 | 2026-11-19 19:00 | Claude Code (Claude Fable 5.2) | Job 3 done: the import is ready for FirstRate Data files, checked on its sample |
 | 2026-11-19-6 | 2026-11-19 17:42 | Claude Code (Claude Fable 5.2) | I7 done: New York time on import; synthetic data re-read; runs 1015 and 1016. G22 done |
 | 2026-11-19-5 | 2026-11-19 12:55 | Claude Code (Claude Fable 5.2) | Job 1: the held feeds applied, the noise it wrote put back, Apply fixed |

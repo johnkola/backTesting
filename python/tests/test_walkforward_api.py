@@ -145,3 +145,63 @@ class _NoDb:
 
     def cursor(self):
         return object()
+
+
+class TestStrategyCheck:
+    """G54: the API asks the runner before it saves a strategy."""
+
+    BODY = {
+        "name": "s", "instrument": "QQQ", "source": "yahoo-adj", "timeframe": "D1",
+        "modelType": "mlp", "validationScheme": "walkforward", "features": ["vix"],
+        "windows": {
+            "train": {"from": "2003-01-01", "to": "2015-12-31"},
+            "validation": {"from": "2016-01-01", "to": "2021-12-31"},
+            "test": {"from": "2022-01-01", "to": "2026-06-30"},
+        },
+        "label": {"kind": "forward_return_3class", "horizonBars": 5},
+        "hyperparams": {}, "objective": dict(strategy_spec.OBJECTIVE_DEFAULTS),
+    }
+
+    @pytest.fixture(autouse=True)
+    def a_built_set(self, monkeypatch):
+        self.has_set = True
+        monkeypatch.setattr(strategy_spec, "has_feature_set", lambda cur, s: self.has_set)
+
+    def test_the_options_are_served_as_the_runner_holds_them(self):
+        r = client.get("/api/nn/strategies/options")
+        assert r.status_code == 200
+        assert r.json() == strategy_spec.options()
+
+    def test_a_strategy_that_can_run_is_ok(self):
+        r = client.post("/api/nn/strategies/check", json=self.BODY)
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "reasons": []}
+
+    def test_a_refusal_is_an_answer_not_an_error(self):
+        r = client.post("/api/nn/strategies/check",
+                        json={**self.BODY, "validationScheme": "single"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False
+        assert len(body["reasons"]) == 1 and "single" in body["reasons"][0]
+
+    def test_a_series_with_no_feature_set_is_refused(self):
+        self.has_set = False
+        body = client.post("/api/nn/strategies/check",
+                           json={**self.BODY, "source": "yahoo"}).json()
+        assert body["ok"] is False
+        assert body["reasons"] == [r for r in body["reasons"] if "QQQ (yahoo, D1)" in r]
+        assert len(body["reasons"]) == 1
+
+    def test_an_unbuildable_calendar_is_not_also_told_it_has_no_set(self):
+        self.has_set = False
+        body = client.post("/api/nn/strategies/check",
+                           json={**self.BODY, "timeframe": "W1"}).json()
+        assert len(body["reasons"]) == 1 and "W1" in body["reasons"][0]
+
+    def test_a_body_that_is_not_a_strategy_is_a_400(self):
+        r = client.post("/api/nn/strategies/check", json={"name": "s"})
+        assert r.status_code == 400
+        bad_dates = {**self.BODY, "windows": {**self.BODY["windows"],
+                                              "train": {"from": "soon", "to": "later"}}}
+        assert client.post("/api/nn/strategies/check", json=bad_dates).status_code == 400

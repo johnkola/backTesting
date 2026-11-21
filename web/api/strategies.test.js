@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  MODEL_TYPES, OBJECTIVE_DEFAULTS, PARAM_SPEC, VALIDATION_SCHEMES, toItem, validateStrategy,
+  OBJECTIVE_DEFAULTS, PARAM_SPEC, toItem, validateStrategy,
 } = require('./strategies');
 
 /**
@@ -31,6 +31,11 @@ function body(over = {}) {
     ...over,
   };
 }
+
+// G54: the lists are the runner's, handed in by the route; this file has none.
+const RUNNER = {
+  modelTypes: ['mlp'], validationSchemes: ['walkforward'], unrunnableTimeframes: ['W1', 'MN1'],
+};
 
 function errorsFor(b) {
   const r = validateStrategy(b);
@@ -66,13 +71,32 @@ describe('validateStrategy — accepts a well-formed strategy', () => {
     assert.equal(validateStrategy(body({ actor: 'cli' })).value.actor, 'cli');
   });
 
-  it('accepts every registered model type and validation scheme', () => {
-    for (const m of MODEL_TYPES) {
-      assert.equal(validateStrategy(body({ modelType: m })).ok, true, m);
+  it('accepts every model type and validation scheme the runner offers', () => {
+    for (const m of RUNNER.modelTypes) {
+      assert.equal(validateStrategy(body({ modelType: m }), null, RUNNER).ok, true, m);
     }
-    for (const s of VALIDATION_SCHEMES) {
-      assert.equal(validateStrategy(body({ validationScheme: s })).ok, true, s);
+    for (const s of RUNNER.validationSchemes) {
+      assert.equal(validateStrategy(body({ validationScheme: s }), null, RUNNER).ok, true, s);
     }
+  });
+
+  it('refuses a scheme or model type the runner does not offer', () => {
+    for (const s of ['single', 'kfold_time']) {
+      const r = validateStrategy(body({ validationScheme: s }), null, RUNNER);
+      assert.equal(r.ok, false, s);
+      assert.match(r.errors.join(' | '), new RegExp(`validationScheme ${s} has no runner; only walkforward runs`));
+    }
+    const r = validateStrategy(body({ modelType: 'lstm' }), null, RUNNER);
+    assert.match(r.errors.join(' | '), /unknown modelType: lstm \(the runner has mlp\)/);
+  });
+
+  it('holds no list of its own: the module exports neither', () => {
+    const exported = require('./strategies');
+    assert.equal(exported.MODEL_TYPES, undefined);
+    assert.equal(exported.VALIDATION_SCHEMES, undefined);
+    // Without the runner's options the two fields are required, not judged.
+    assert.equal(validateStrategy(body({ validationScheme: 'single' })).ok, true);
+    assert.match(errorsFor(body({ validationScheme: '' })), /validationScheme is required/);
   });
 });
 
@@ -159,8 +183,9 @@ describe('validateStrategy — the rest of the form', () => {
   });
 
   it('rejects an unregistered model type or validation scheme', () => {
-    assert.match(errorsFor(body({ modelType: 'transformer' })), /unknown modelType: transformer/);
-    assert.match(errorsFor(body({ validationScheme: 'random' })), /unknown validationScheme/);
+    const refused = (b) => validateStrategy(b, null, RUNNER).errors.join(' | ');
+    assert.match(refused(body({ modelType: 'transformer' })), /unknown modelType: transformer/);
+    assert.match(refused(body({ validationScheme: 'random' })), /validationScheme random has no runner/);
   });
 
   it('requires a label definition with a horizon', () => {

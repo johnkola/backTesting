@@ -281,15 +281,15 @@ function validateExecution(o, threshold, errors) {
   return out;
 }
 
-/** §8.2a: single split, k-fold by time, or walk-forward. */
-const VALIDATION_SCHEMES = new Set(['single', 'kfold_time', 'walkforward']);
-
-/**
- * §8.2a: "the list populated from what the model layer registers so new
- * architectures appear without a UI change". Only MLP is registered today;
- * `GET /api/nn/features/schema` is the loader's half of that contract.
+/*
+ * No list of validation schemes or model types lives here (G54, R22). §8.2a
+ * wants them "populated from what the model layer registers", and the copies
+ * this file used to keep offered `single` and `kfold_time`, which have no
+ * runner. They come from the loader now (`GET /api/nn/strategies/options`,
+ * `nn/strategy_spec.py`), as the engines do, and the route hands them to
+ * `validateStrategy`. Whether a strategy can run at all is the runner's answer
+ * too: the save route asks it (`POST /api/nn/strategies/check`).
  */
-const MODEL_TYPES = new Set(['mlp']);
 
 /**
  * The four windows, in the order the design requires them to fall.
@@ -414,7 +414,13 @@ function validateEngines(raw, registry, loss, errors) {
   return out;
 }
 
-function validateStrategy(body, registry = null) {
+/**
+ * `registry` is the runner's engines and `options` its model types and
+ * validation schemes, both read from the loader by the route. Without
+ * `options` those two fields are only required to be present: this function
+ * has no list of its own to hold them to.
+ */
+function validateStrategy(body, registry = null, options = null) {
   const errors = [];
   const b = isPlainObject(body) ? body : {};
 
@@ -435,14 +441,15 @@ function validateStrategy(body, registry = null) {
 
   const modelType = typeof b.modelType === 'string' ? b.modelType.trim() : '';
   if (!modelType) errors.push('modelType is required');
-  else if (!MODEL_TYPES.has(modelType)) {
-    errors.push(`unknown modelType: ${modelType}`);
+  else if (options && !options.modelTypes.includes(modelType)) {
+    errors.push(`unknown modelType: ${modelType} (the runner has ${options.modelTypes.join(', ')})`);
   }
 
   const scheme = typeof b.validationScheme === 'string' ? b.validationScheme.trim() : '';
   if (!scheme) errors.push('validationScheme is required');
-  else if (!VALIDATION_SCHEMES.has(scheme)) {
-    errors.push(`unknown validationScheme: ${scheme}`);
+  else if (options && !options.validationSchemes.includes(scheme)) {
+    errors.push(`validationScheme ${scheme} has no runner; only `
+      + `${options.validationSchemes.join(', ')} runs`);
   }
 
   // §8.2a: a feature subset, picked from the catalogue. An empty list is
@@ -905,8 +912,6 @@ module.exports = {
   PARAM_SPEC,
   OBJECTIVE_DEFAULTS,
   OBJECTIVE_SPEC,
-  VALIDATION_SCHEMES,
-  MODEL_TYPES,
   WINDOWS,
   REQUIRED_WINDOWS,
   MAX_NAME_LEN,

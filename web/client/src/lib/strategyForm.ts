@@ -393,3 +393,20 @@ export function marginProblems(f: ObjectiveForm, spec: ObjectiveSpec, instrument
   }
   return out
 }
+
+/**
+ * The timeframes the form may offer for a series: the stored ones, less those
+ * no run can use (G54). `unrunnable` is the runner's list, read from the API;
+ * null (the loader did not answer) offers every stored timeframe, and the save
+ * is then refused by the API rather than guessed at here. `leftOut` is said on
+ * the tab, so a stored W1 series that is missing from the list is explained.
+ */
+export function runnableTimeframes(
+  stored: readonly string[], unrunnable: readonly string[] | null | undefined,
+): { offered: string[], leftOut: string[] } {
+  const no = new Set(unrunnable ?? [])
+  return {
+    offered: stored.filter((t) => !no.has(t)),
+    leftOut: stored.filter((t) => no.has(t)),
+  }
+}

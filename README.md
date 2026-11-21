@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-19-4** · 2026-11-19 19:00 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-1** · 2026-11-21 17:50 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -443,6 +443,9 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/nn/predict` | `cache_key`, `version_id`, feature rows | Single-shot scoring against a stored model, for callers that already have features |
 | `GET /api/nn/models` | `strategy` | Cached models from the loader's own registry |
 | `GET /api/nn/engines` | — | The engines the runner registers (B9): `items`, each `{name, title, kind, library, version, description, checkedBy, scaled, losses, settings}`, `settings` being `{key, kind, default, min, max, label}`. The one list: the API checks a saved strategy's engines against it and the Strategy tab draws its engine sections from it |
+| `GET /api/nn/strategies/options` | — | What a strategy may choose and still run (G54): `{modelTypes, validationSchemes, unrunnableTimeframes}`, from the runner's own rules. The one list: the API checks a saved strategy against it and the Strategy tab offers from it, so a scheme or calendar with no runner is never offered |
+| `POST /api/nn/strategies/check` | a strategy, as `POST /api/strategies/saved` is about to store it | `{ok, reasons}`: whether the runner would take it, with every reason at once, from the functions a run calls, plus "no feature set is built for the series". A refusal is `200` with `ok: false`; `400` only when the body is not a strategy. The API calls this on every save |
+| `POST /api/strategies/saved` | a strategy; `check=1` to ask without saving | Saves a new version (`201`). Checked first by the API (shape, bounds, engines) and then by the runner (the row above): `422` with `errors` when either refuses it, `503` when the loader does not answer, since a strategy that cannot be checked is not saved. Refused by the runner: a scheme other than `walkforward`, a `W1` or `MN1` calendar, a train or validation window off 1 January and 31 December, a gap between the windows, a `forwardBars` that differs from the label horizon, a series with no feature set. With `check=1` nothing is stored and the answer is `200` `{ok, errors}` |
 | `GET /api/nn/features/preview` | `column`, `set` (default: the newest), `days` (default 730) or `from`/`to` | One feature column before and after its normalization method, per date: `points` of `{date, before, after}`, where `before` is the series the method was given as the set recorded it, and `after` the stored value (null on a warm-up day). `configMatches` is false when the set was built from another `features.toml`. The Normalization tab's preview. `404` for a column the set does not hold, `400` for a bad window |
 | `POST /api/nn/walkforward` | `strategyId`, `label` | Starts `python -m nn.walkforward --strategy-id N [--label=…]` in the loader and returns `202` with the job. The strategy is checked first: `400` with `reasons` if it cannot run as saved, `404` if it does not exist, `409` while another run is going (one at a time). Validation folds only; the holdout (`--test`) is terminal-only. The run itself lands in `GET /api/walkforward/runs` as the runner records it |
 | `GET /api/nn/walkforward/split` | `strategyId` | A saved strategy's split as a walk-forward run of it makes it (G37), from the runner's own code: its windows (`blocks`, each with the rows of its feature set inside, after its columns' gaps drop bars) and each fold's training and scored spans and rows (`folds`; with early stopping, `earlyStopping` gives the network's fitted span and the year it stops on). `purgeBars` and `windowEnd` say where training is purged and where scoring stops. The Split tab draws it. `400` with `reasons` when the strategy cannot run as saved, `404` when it does not exist |
@@ -757,20 +760,27 @@ Phase two groundwork, on synthetic intraday data. Phase one is answered (see Don
 the design's next phase rebuilds the model on intraday bars (Design Notes, "Two Phases").
 The NN path now builds and runs walk-forward by bar on H1 and M30
 ([Intraday calendars](#feature-table-and-training-window), [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md) G22,
-I1 to I4), checked end to end on `tools/datagen` bars. What is left before real intraday
-data is the author's: which data to buy, and the timezone its files are read in (I7).
+I1 to I4), checked end to end on `tools/datagen` bars. Imported intraday
+files are read as New York time (I7), the import takes FirstRate Data's files as they
+come, and the Strategy tab saves only what the runner can run (G54). What is left before
+real intraday data is the data itself.
 
 ### Next
 
 *Ordered by what blocks phase two. Full list: [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md).*
 
-1. The author's decisions: buying FirstRate Data, the timezone of imported intraday files
-   (I7), and whether the Spring Boot move comes first (C1 in
-   [`docs/QUESTIONS-FOR-JOHN.md`](docs/QUESTIONS-FOR-JOHN.md)).
-2. The Strategy tab and the runner agree on what can run (G54): the tab still saves W1,
-   MN1 and schemes the runner refuses.
+1. The Strategy tab's remaining choices, in the order of the work list in
+   [`docs/DESIGN-GAPS.md`](docs/DESIGN-GAPS.md) ("Decisions and work order, 2026-11-19"):
+   selectable inputs with the two new columns (C7, F1, F2), a sliding window beside the
+   expanding one (C6), the rule strategies as benchmarks only (C8), and data checks with a
+   severity that can stop the chain (C2).
+2. The requirements doc: statuses re-verified against the code, then no longer a draft.
 3. Phase one's leftovers that phase two will want too: walk-forward runs on Results (G57),
    results that keep their run settings (G40), folds that keep their models (G50).
+
+The author's decisions of 2026-11-19 are recorded in
+[`docs/QUESTIONS-FOR-JOHN.md`](docs/QUESTIONS-FOR-JOHN.md): FirstRate Data is the intraday
+source, and the Spring Boot move waits until phase two works on real data.
 
 ### Done
 
@@ -1265,6 +1275,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-1 | 2026-11-21 17:50 | Claude Code (Claude Fable 5.2) | G54: a save is checked by the runner; `GET /api/nn/strategies/options`, `POST /api/nn/strategies/check`, `check=1` on a save; roadmap Next follows the work order |
 | 2026-11-19-4 | 2026-11-19 19:00 | Claude Code (Claude Fable 5.2) | The drop folder reads FirstRate Data file names; an intraday stock import keeps the regular session only |
 | 2026-11-19-3 | 2026-11-19 17:27 | Claude Code (Claude Fable 5.2) | Imported intraday times are New York time (G22 I7) |
 | 2026-11-19-2 | 2026-11-19 12:55 | Claude Code (Claude Fable 5.2) | Apply rewrites only the days that differ beyond rounding |

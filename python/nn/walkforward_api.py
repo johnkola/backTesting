@@ -5,6 +5,8 @@
   GET  /api/nn/walkforward/split?strategyId=N  a strategy's split, as a run makes it
   POST /api/nn/walkforward/runs/{id}/recalculate  {strategyId?, dryRun?}
                                  -> 200 figures | 400 | 404 | 409 (`nn/recalculate.py`)
+  GET  /api/nn/strategies/options  what a strategy may choose and still run
+  POST /api/nn/strategies/check    a strategy about to be saved -> {ok, reasons}
 
 This is the Train tab's "Runs a saved strategy and records the run. No choices
 are made here" (Architecture §8.1a). It adds no second way to run one: the job
@@ -228,6 +230,37 @@ def split(strategyId: int):  # noqa: N803 - the query name the client sends
             "error": f"strategy {strategyId} cannot run as saved", "reasons": exc.reasons})
     except LookupError as exc:
         return JSONResponse(status_code=404, content={"error": str(exc)})
+
+
+@router.get("/api/nn/strategies/options")
+def strategy_options() -> dict[str, list[str]]:
+    """The model types, schemes and unrunnable timeframes, from the runner's own
+    rules (G54, R22): the API validates against this and the tab offers from it."""
+    return strategy_spec.options()
+
+
+@router.post("/api/nn/strategies/check")
+def strategy_check(body: dict[str, Any]):
+    """Would the runner take this strategy? The body is the strategy as the API
+    is about to save it. `{ok, reasons}`, every reason at once, from the same
+    functions a run calls (`fold_plan`, `runner_args`), plus the one a run finds
+    in the database: no feature set built for the series. 400 when the body is
+    not a strategy at all; the API validates the shape before it asks."""
+    try:
+        s = strategy_spec.candidate(body)
+        reasons = strategy_spec.refusals(s)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        return JSONResponse(status_code=400, content={
+            "error": f"not a strategy the runner can read: {exc!r}"})
+    # A calendar that cannot be built has no set by definition; one reason is enough.
+    if s.timeframe not in strategy_spec.UNBUILDABLE_TIMEFRAMES:
+        with pool().connection() as conn:
+            if not strategy_spec.has_feature_set(conn.cursor(), s):
+                reasons.append(
+                    f"no feature set is built for {s.instrument} ({s.source}, {s.timeframe}), "
+                    f"so a run has no table to read: build one first "
+                    f"(`python -m nn.feature_build`, with a config for that calendar)")
+    return {"ok": not reasons, "reasons": reasons}
 
 
 @router.get("/api/nn/walkforward/jobs")

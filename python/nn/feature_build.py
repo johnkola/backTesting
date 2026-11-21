@@ -38,7 +38,9 @@ from typing import Any
 import psycopg
 
 from nn import data_checks, feature_config, lineage
-from nn.feature_store import DATE_KEYED, is_intraday, session_of  # noqa: F401 - re-exported
+from nn.feature_store import (  # noqa: F401 - re-exported
+    DATE_KEYED, UNBUILDABLE_TIMEFRAMES, is_intraday, session_of,
+)
 from nn.feature_store import key_sql as _key_sql
 from nn import normalize as nz
 from nn.feature_config import Feature, FeatureConfig
@@ -585,9 +587,8 @@ def connect():
 
 
 #: The calendars the feature table can hold: D1, as always, and since G22 I1
-#: to I4 any intraday one, keyed by bar. A weekly or monthly calendar is keyed
-#: by date like D1 but has never been built or scored, so it is refused.
-UNBUILDABLE_TIMEFRAMES = ("W1", "MN1")
+#: to I4 any intraday one, keyed by bar. The ones it cannot are
+#: `feature_store.UNBUILDABLE_TIMEFRAMES`.
 
 
 def refusal(cfg: FeatureConfig, cfg_path: Path) -> str | None:

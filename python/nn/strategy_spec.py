@@ -24,6 +24,12 @@ Three shapes are refused because of how the folds work:
   strategies with no runner behind them yet, and running them as walk-forward
   would record a scheme that did not happen.
 
+ASKED AT SAVE, TOO (G54). The API posts a strategy here before it stores it
+(`candidate`, `refusals`, served by `nn/walkforward_api.py`), and the Strategy
+tab offers its lists from `options`. Until then the tab saved strategies this
+module refused at run time. The rules stay in this file only: nothing about
+what can run is listed in Node or in the client.
+
 COLUMNS ARE RESOLVED, NOT ASSUMED. §8.1a: a feature with no values in the train
 window is flagged and dropped; a partial one is flagged but kept. §6.2: the run
 records what it actually covered. `resolve_columns` therefore returns what was
@@ -70,7 +76,7 @@ from typing import Any
 
 from nn import engines as engine_registry
 from nn import label_kinds
-from nn.feature_store import session_of
+from nn.feature_store import UNBUILDABLE_TIMEFRAMES, session_of
 from nn.profit import D9_REASON
 
 #: Saved hyperparameter -> walk-forward argument. Mirrors PARAM_SPEC in
@@ -137,12 +143,16 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
 MARGIN_CEILING_PCT = 50.0
 
 #: What the runner can execute. MODEL_TYPES is the network's architecture,
-#: mirrored in web/api/strategies.js; the engines themselves are
+#: which the API reads from here (`options`); the engines themselves are
 #: `nn/engines.py`'s, which the API reads from the loader. The label kinds are
 #: the registry's (`nn/label_kinds.py`), where a kind cannot exist without its
 #: naive baseline (R72, B8).
 MODEL_TYPES = ("mlp",)
 LABEL_KINDS = tuple(label_kinds.LABEL_KINDS)
+#: The schemes with a runner behind them. `single` and `kfold_time` are named
+#: by the design (§8.2a) and have none yet; adding one here is what offers it
+#: on the Strategy tab (`options`, G54).
+VALIDATION_SCHEMES = ("walkforward",)
 
 #: Flags a strategy run may still pass, because none changes what is trained or
 #: how it is scored. `set_id` is allowed but checked: it must be a set of the
@@ -276,6 +286,64 @@ def load(cur, strategy_id: int) -> Strategy:
     return dataclasses.replace(s, engines=engines_from_rows(cur.fetchall()))
 
 
+def options() -> dict[str, list[str]]:
+    """What a strategy may choose and still run: the one list the API and the
+    Strategy tab offer from (G54, R22). Neither keeps a copy."""
+    return {
+        "modelTypes": list(MODEL_TYPES),
+        "validationSchemes": list(VALIDATION_SCHEMES),
+        "unrunnableTimeframes": list(UNBUILDABLE_TIMEFRAMES),
+    }
+
+
+def candidate(body: Mapping[str, Any]) -> Strategy:
+    """A strategy as the API is about to save it (the body `validateStrategy`
+    produced), in the shape a saved row loads to, so the check a save gets is
+    the check a run gets (G54). It has no id or version yet. Pure.
+
+    `engines` is the API's list of `{engine, enabled, settings}`; absent means
+    the network alone, as a version with no engine rows does."""
+    objective = body.get("objective")
+    rows = [(e["engine"], e.get("enabled", False), json.dumps(e.get("settings") or {}))
+            for e in body.get("engines") or []]
+    return Strategy(
+        id=0, name=str(body.get("name", "")), version=0,
+        instrument=body["instrument"], source=body["source"], timeframe=body["timeframe"],
+        model_type=body["modelType"], validation_scheme=body["validationScheme"],
+        features=tuple(body.get("features") or ()), windows=body.get("windows") or {},
+        label=body.get("label") or {}, hyperparams=body.get("hyperparams") or {},
+        objective={**OBJECTIVE_DEFAULTS, **(objective or {})},
+        objective_defaulted=objective is None,
+        engines=engines_from_rows(rows),
+    )
+
+
+def refusals(s: Strategy) -> list[str]:
+    """Every reason the runner would refuse `s`, or []. `fold_plan` and
+    `runner_args` each stop at their own reasons; a save wants all of them at
+    once, so a strategy is fixed in one pass, not one refusal at a time."""
+    reasons: list[str] = []
+    for check in (fold_plan, runner_args):
+        try:
+            check(s)
+        except StrategyRefused as exc:
+            reasons.extend(r for r in exc.reasons if r not in reasons)
+    return reasons
+
+
+def has_feature_set(cur, s: Strategy) -> bool:
+    """Is any feature set built for the strategy's instrument, source and
+    timeframe? Without one a run has no table to read."""
+    cur.execute(
+        "SELECT 1 FROM feature_sets fs "
+        "JOIN instruments i ON i.id = fs.instrument_id "
+        "JOIN data_sources ds ON ds.id = fs.source_id "
+        "WHERE i.symbol = %s AND ds.name = %s AND fs.timeframe = %s LIMIT 1",
+        (s.instrument, s.source, s.timeframe),
+    )
+    return cur.fetchone() is not None
+
+
 def _starts_a_year(d: date) -> bool:
     return (d.month, d.day) == (1, 1)
 
@@ -287,7 +355,7 @@ def _ends_a_year(d: date) -> bool:
 def fold_plan(s: Strategy) -> FoldPlan:
     """The strategy's windows as year folds, or `StrategyRefused`."""
     errors: list[str] = []
-    if s.timeframe in ("W1", "MN1"):
+    if s.timeframe in UNBUILDABLE_TIMEFRAMES:
         # G22: the feature table and the scoring run on D1 and on intraday
         # calendars (rows keyed by bar, bars a year measured, I1 to I4). A
         # weekly or monthly calendar has neither a build nor a test yet.
@@ -295,10 +363,10 @@ def fold_plan(s: Strategy) -> FoldPlan:
             f"timeframe {s.timeframe!r} cannot run yet: walk-forward runs on D1 or an "
             f"intraday calendar; use D1"
         )
-    if s.validation_scheme != "walkforward":
+    if s.validation_scheme not in VALIDATION_SCHEMES:
         errors.append(
             f"validation scheme {s.validation_scheme!r} has no runner yet; "
-            f"only 'walkforward' runs"
+            f"only {', '.join(repr(v) for v in VALIDATION_SCHEMES)} runs"
         )
 
     w = {k: {e: date.fromisoformat(v[e]) for e in ("from", "to")}

@@ -140,7 +140,8 @@ export const fieldHints: Record<string, string> = {
     'Share of the training window used to fit, with the rest held back to watch '
     + 'for overfitting while training runs. This is inside the training window '
     + 'only — it is not the walk-forward validation folds, which are separate '
-    + 'bars the weights never see.',
+    + 'bars the weights never see. Used by the Train and Run pages, whose trainer '
+    + 'makes one split. A walk-forward run ignores it: its folds split on dates.',
   'param.seed':
     'Seeds the initial weights, the dropout mask and the shuffling. Fix it and '
     + 'the same configuration retrains to the same model, which is what makes '
@@ -163,8 +164,9 @@ export const fieldHints: Record<string, string> = {
     + 'different histories — yahoo and yahoo-adj differ by every dividend — and '
     + 'a model is tied to the one it trained on.',
   'strategy.timeframe':
-    'Bar size. Daily now; hourly once intraday data is bought, through the same '
-    + 'form and the same pipeline.',
+    'Bar size, from the timeframes stored for this source. Daily and intraday '
+    + 'calendars run; weekly and monthly ones are never built into a feature '
+    + 'table, so the runner refuses them and they are not offered.',
   'strategy.modelType':
     'Populated from what the model layer registers, so a new architecture '
     + 'appears here without a UI change and the form can never offer something '
@@ -172,7 +174,8 @@ export const fieldHints: Record<string, string> = {
   'strategy.validationScheme':
     'Walk-forward trains on one window and tests on the next, then slides '
     + 'forward. The design\'s choice: judging a model on a single year is luck, '
-    + 'and holding up across calm, choppy and falling years is not.',
+    + 'and holding up across calm, choppy and falling years is not. The list is '
+    + 'the runner\'s: a scheme appears here when something can run it.',
   'strategy.labelHorizon':
     'Bars ahead the label looks: the return over them for the 3-class and return '
     + 'targets, whether the close is higher for direction. The same horizon as '

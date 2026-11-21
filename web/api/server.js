@@ -775,11 +775,28 @@ async function engineRegistry() {
   }
 }
 
+/**
+ * What a strategy may choose and still run (G54, R22), from the loader: model
+ * types, validation schemes, and the timeframes no run can use. Null when the
+ * loader does not answer, with the reason. Never listed here.
+ */
+async function runnerOptions() {
+  try {
+    const body = await getUpstreamJson(`${LOADER_URL}/api/nn/strategies/options`, 5000);
+    const ok = ['modelTypes', 'validationSchemes', 'unrunnableTimeframes']
+      .every((k) => Array.isArray(body[k]));
+    return ok ? { options: body, error: null }
+      : { options: null, error: 'the loader answered without the runner\'s options' };
+  } catch (err) {
+    return { options: null, error: err.message };
+  }
+}
+
 app.get('/api/strategies/saved', async (req, res) => {
   try {
     const name = typeof req.query.name === 'string' && req.query.name ? req.query.name : null;
     const latestOnly = /^(1|true|yes)$/i.test(String(req.query.latest || ''));
-    const registry = await engineRegistry();
+    const [registry, runner] = await Promise.all([engineRegistry(), runnerOptions()]);
     res.json({
       items: await strategies.list({ name, latestOnly }),
       // Read from the runner, never listed here (R22).
@@ -791,8 +808,12 @@ app.get('/api/strategies/saved', async (req, res) => {
       // The registered targets with their thresholds and naive baselines (G49).
       labelKinds: strategies.LABEL_KINDS,
       naiveBaselines: strategies.NAIVE_BASELINES,
-      modelTypes: [...strategies.MODEL_TYPES],
-      validationSchemes: [...strategies.VALIDATION_SCHEMES],
+      // The runner's own lists (G54); null with `runnerError` when the loader
+      // did not answer, and a save is then refused rather than guessed at.
+      modelTypes: runner.options?.modelTypes ?? null,
+      validationSchemes: runner.options?.validationSchemes ?? null,
+      unrunnableTimeframes: runner.options?.unrunnableTimeframes ?? null,
+      runnerError: runner.error,
       windows: strategies.WINDOWS,
       requiredWindows: strategies.REQUIRED_WINDOWS,
     });
@@ -819,25 +840,51 @@ app.get('/api/strategies/saved/:id', async (req, res) => {
 // parser would consume that stream before the proxy could forward it -- the
 // upstream would then see an empty body and answer 422.
 app.post('/api/strategies/saved', express.json({ limit: '256kb' }), async (req, res) => {
-  const registry = await engineRegistry();
+  // `?check=1` answers what a save would, and stores nothing: the Strategy tab
+  // asks it while the form is filled, so a refusal is read before Save is
+  // pressed. A refusal is then the answer (200, `{ok: false, errors}`).
+  const checkOnly = /^(1|true|yes)$/i.test(String(req.query.check || ''));
+  const refuse = (errors) => (checkOnly
+    ? res.json({ ok: false, errors })
+    // 422, not 400: the body parsed fine, the values are what is wrong.
+    : res.status(422).json({ error: errors.join('; '), errors }));
+  const [registry, runner] = await Promise.all([engineRegistry(), runnerOptions()]);
   if (!registry.items) {
     return res.status(503).json({
       error: `the engine registry is unavailable, so the engines cannot be checked: ${registry.error}`,
     });
   }
-  const checked = strategies.validateStrategy(req.body, registry.items);
-  if (!checked.ok) {
-    // 422, not 400: the body parsed fine, the values are what is wrong.
-    return res.status(422).json({ error: checked.errors.join('; '), errors: checked.errors });
+  if (!runner.options) {
+    return res.status(503).json({
+      error: `the runner is unavailable, so the strategy cannot be checked: ${runner.error}`,
+    });
   }
+  const checked = strategies.validateStrategy(req.body, registry.items, runner.options);
+  if (!checked.ok) return refuse(checked.errors);
   try {
     const dataOnly = await strategies.dataOnlyFeatures(checked.value.features);
     if (dataOnly.length) {
-      const errors = dataOnly.map(
+      return refuse(dataOnly.map(
         (n) => `${n} is data only: stored for charts and rules, kept out of the network`,
-      );
-      return res.status(422).json({ error: errors.join('; '), errors });
+      ));
     }
+    // The runner's own answer, from the functions a run calls (G54): a strategy
+    // it would refuse is not saved. The shape checks above are this file's;
+    // what can run is not.
+    let verdict;
+    try {
+      verdict = await postUpstreamJson(
+        `${LOADER_URL}/api/nn/strategies/check`, checked.value, 10000,
+      );
+    } catch (err) {
+      return res.status(503).json({
+        error: `the runner did not answer, so the strategy cannot be checked: ${err.message}`,
+      });
+    }
+    if (!verdict.ok) {
+      return refuse((verdict.reasons || []).map((r) => `the runner refuses it: ${r}`));
+    }
+    if (checkOnly) return res.json({ ok: true, errors: [] });
     res.status(201).json(await strategies.save(checked.value));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1265,6 +1312,38 @@ function getUpstreamJson(url, timeoutMs) {
     });
     r.on('timeout', () => r.destroy(new Error(`no reply within ${timeoutMs}ms`)));
     r.on('error', reject);
+  });
+}
+
+/** POSTs JSON to an upstream service and returns its JSON body. A non-2xx
+ *  rejects with the upstream's own `error` when it sent one. */
+function postUpstreamJson(url, payload, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const data = Buffer.from(JSON.stringify(payload));
+    const r = http.request(url, {
+      method: 'POST',
+      timeout: timeoutMs,
+      headers: { 'content-type': 'application/json', 'content-length': data.length },
+    }, (resp) => {
+      let body = '';
+      resp.setEncoding('utf8');
+      resp.on('data', (chunk) => { body += chunk; });
+      resp.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch { /* reported below */ }
+        const code = resp.statusCode || 0;
+        if (code < 200 || code >= 300) {
+          reject(new Error(parsed && parsed.error ? parsed.error : `HTTP ${code}`));
+        } else if (parsed === null) {
+          reject(new Error(`bad JSON from ${url}`));
+        } else {
+          resolve(parsed);
+        }
+      });
+    });
+    r.on('timeout', () => r.destroy(new Error(`no reply within ${timeoutMs}ms`)));
+    r.on('error', reject);
+    r.end(data);
   });
 }
 

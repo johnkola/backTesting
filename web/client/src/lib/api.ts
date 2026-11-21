@@ -1209,15 +1209,23 @@ export type SavedStrategiesResponse = {
   labelKinds?: Record<string, LabelKindSpec>
   /** Each target's naive baseline in words (R72), e.g. `direction: 'always up'`. */
   naiveBaselines?: Partial<Record<LabelTarget, string>>
-  /** §8.2a: populated from what the model layer registers, not hard-coded. */
-  modelTypes: string[]
+  /**
+   * §8.2a: populated from what the model layer registers, not hard-coded. With
+   * `validationSchemes` and `unrunnableTimeframes` it is the runner's own list
+   * (G54), read from the loader; null when the loader did not answer, with the
+   * reason in `runnerError`. A save is refused then, so the form guesses nothing.
+   */
+  modelTypes: string[] | null
+  /** Timeframes no run can use (weekly and monthly calendars are never built). */
+  unrunnableTimeframes?: string[] | null
+  runnerError?: string | null
   /**
    * The engines the runner registers, in its order (B9, R22); null when the
    * loader did not answer, with the reason in `enginesError`.
    */
   engines?: EngineEntry[] | null
   enginesError?: string | null
-  validationSchemes: string[]
+  validationSchemes: string[] | null
   windows: string[]
   requiredWindows: string[]
 }
@@ -1978,6 +1986,13 @@ export const api = {
    */
   saveStrategy: (s: SaveStrategyRequest) =>
     sendJson<SavedStrategy>('/api/strategies/saved', 'POST', s),
+  /**
+   * What a save of `s` would answer, storing nothing (G54): the API's own
+   * checks, then the runner's (`nn/strategy_spec.py`), every reason at once.
+   * Asked while the form is filled, so a refusal is read before Save is pressed.
+   */
+  checkStrategy: (s: SaveStrategyRequest) =>
+    sendJson<{ ok: boolean, errors: string[] }>('/api/strategies/saved?check=1', 'POST', s),
   /**
    * Removes a saved strategy. `all` removes every version of its name.
    *

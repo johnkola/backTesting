@@ -435,3 +435,75 @@ class TestMarginTrainRefused:
         with pytest.raises(ss.StrategyRefused, match="D9"):
             ss.runner_args(a_strategy(objective=self.obj(
                 loss="return", positionThreshold=0.5, longThreshold=0.75, marginTrain=True)))
+
+def a_body(**over) -> dict:
+    """A strategy as the API posts it to be checked before it is saved (G54)."""
+    return {
+        "name": "baseline", "instrument": "QQQ", "source": "yahoo-adj", "timeframe": "D1",
+        "modelType": "mlp", "validationScheme": "walkforward",
+        "features": ["price_close", "vix"], "windows": WINDOWS,
+        "label": {"kind": "forward_return_3class", "horizonBars": 5}, "hyperparams": {},
+        "objective": dict(ss.OBJECTIVE_DEFAULTS),
+        "engines": [{"engine": "mlp", "enabled": True, "settings": {}}],
+        **over,
+    }
+
+
+class TestAskedAtSave:
+    """G54: a save is checked by the rules a run is checked by."""
+
+    def test_the_options_are_the_runners_own_lists(self):
+        from nn import feature_build
+        assert ss.options() == {
+            "modelTypes": list(ss.MODEL_TYPES),
+            "validationSchemes": list(ss.VALIDATION_SCHEMES),
+            "unrunnableTimeframes": list(feature_build.UNBUILDABLE_TIMEFRAMES),
+        }
+
+    def test_every_offered_choice_runs(self):
+        for scheme in ss.options()["validationSchemes"]:
+            for model in ss.options()["modelTypes"]:
+                assert ss.refusals(ss.candidate(a_body(
+                    validationScheme=scheme, modelType=model))) == []
+
+    def test_a_candidate_is_the_strategy_its_saved_row_loads_to(self):
+        s = ss.candidate(a_body(hyperparams={"seed": 1}))
+        assert (s.instrument, s.source, s.timeframe) == ("QQQ", "yahoo-adj", "D1")
+        assert s.features == ("price_close", "vix")
+        assert s.hyperparams == {"seed": 1}
+        assert s.engines == {"mlp": {}}
+        assert not s.objective_defaulted
+
+    def test_a_candidate_with_no_engines_is_the_network_alone(self):
+        body = a_body()
+        del body["engines"]
+        assert ss.candidate(body).engines == dict(ss.engine_registry.DEFAULT_ENGINES)
+
+    def test_an_engine_switched_off_is_not_run(self):
+        body = a_body(engines=[{"engine": "mlp", "enabled": False, "settings": {}}])
+        assert "no engine is switched on" in ss.refusals(ss.candidate(body))
+
+    @pytest.mark.parametrize("timeframe", ["W1", "MN1"])
+    def test_an_unrunnable_timeframe_is_refused(self, timeframe):
+        reasons = ss.refusals(ss.candidate(a_body(timeframe=timeframe)))
+        assert len(reasons) == 1 and timeframe in reasons[0]
+
+    @pytest.mark.parametrize("timeframe", ["D1", "H1", "M30"])
+    def test_daily_and_intraday_run(self, timeframe):
+        assert ss.refusals(ss.candidate(a_body(timeframe=timeframe))) == []
+
+    @pytest.mark.parametrize("scheme", ["single", "kfold_time"])
+    def test_a_scheme_with_no_runner_is_refused(self, scheme):
+        reasons = ss.refusals(ss.candidate(a_body(validationScheme=scheme)))
+        assert len(reasons) == 1 and scheme in reasons[0]
+
+    def test_every_reason_comes_back_at_once(self):
+        # A window off a year boundary (fold_plan) and a horizon that disagrees
+        # with forwardBars (runner_args): each check alone would hide the other.
+        body = a_body(
+            windows={**WINDOWS, "train": {"from": "2003-06-01", "to": WINDOWS["train"]["to"]}},
+            hyperparams={"forwardBars": 3},
+        )
+        reasons = ss.refusals(ss.candidate(body))
+        assert any("1 January" in r for r in reasons)
+        assert any("forwardBars" in r for r in reasons)

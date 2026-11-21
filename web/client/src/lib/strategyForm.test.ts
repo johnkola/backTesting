@@ -10,6 +10,7 @@ import {
   marginProblems,
   objectiveFromForm,
   objectiveToForm,
+  runnableTimeframes,
   resolveFeatures,
   windowDays,
   windowErrors,
@@ -426,5 +427,22 @@ describe('Strategy 2 in the objective (G5)', () => {
     expect(marginProblems({ ...margin, leveragePct: '50' }, SPEC, 'QQQ')).toEqual([])
     expect(marginProblems(margin, SPEC, 'AAPL')[0]).toMatch(/QQQ only/)
     expect(marginProblems({ ...form, hedgePct: '90' }, SPEC, 'AAPL')).toEqual([])
+  })
+})
+
+describe('runnableTimeframes (G54)', () => {
+  it('leaves out what the runner cannot run, and says which', () => {
+    expect(runnableTimeframes(['D1', 'W1', 'MN1', 'M30'], ['W1', 'MN1']))
+      .toEqual({ offered: ['D1', 'M30'], leftOut: ['W1', 'MN1'] })
+  })
+
+  it('keeps the stored order and invents nothing', () => {
+    expect(runnableTimeframes(['H1', 'D1'], ['W1', 'MN1']))
+      .toEqual({ offered: ['H1', 'D1'], leftOut: [] })
+  })
+
+  it('offers everything stored when the runner did not answer', () => {
+    expect(runnableTimeframes(['D1', 'W1'], null)).toEqual({ offered: ['D1', 'W1'], leftOut: [] })
+    expect(runnableTimeframes(['D1', 'W1'], undefined).offered).toEqual(['D1', 'W1'])
   })
 })
