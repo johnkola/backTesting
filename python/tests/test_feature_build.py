@@ -190,3 +190,21 @@ def test_every_enabled_computed_series_has_an_implementation():
     for f in feature_config.load().enabled:
         if "computed" in f.series:
             assert f.series["computed"] in fb.COMPUTED, f.name
+
+
+# --------------------------------------------------------------------------
+# feature_spec.role (Design-Gaps C7: selectable columns)
+# --------------------------------------------------------------------------
+
+
+def test_the_role_follows_the_status():
+    """`input` is a default input, `select` is read only when a strategy names
+    the column, `data` never. `feature_store.read_matrix` decides on this."""
+    def built(enabled: bool, status: str | None) -> fb.BuiltColumn:
+        feat = Feature(name="x", series={"computed": "x"}, method="passthrough",
+                       enabled=enabled, status=status)
+        return fb.BuiltColumn(name="x", feature=feat, values=[])
+
+    assert built(True, None).role == "input"
+    assert built(False, "selectable").role == "select"
+    assert built(False, "data-only").role == "data"

@@ -153,6 +153,15 @@ export default function StrategyPage() {
     () => (features?.config?.columns ?? []).filter((c) => c.enabled),
     [features],
   )
+  // Built and stored, offered unticked (the author's decision 2026-11-19:
+  // RSI, MACD, realized volatility and two ratios are a strategy's choice, not
+  // the default). `status` comes from features.toml.
+  const selectableColumns = useMemo(
+    () => (features?.config?.columns ?? []).filter(
+      (c) => !c.enabled && c.status === 'selectable',
+    ),
+    [features],
+  )
 
   // Bars per window. §8.2a asks for the bar count beside each window, and
   // calendar days are the wrong number — a year-long window holds ~252 trading
@@ -511,10 +520,11 @@ export default function StrategyPage() {
 
           <Section
             title="3 · Features"
-            note="Pick the subset the network sees. The list is the feature table's enabled columns; a run records exactly what went in, so two runs with different features are two different experiments."
+            note="Pick the subset the network sees. The first list is the feature table's enabled columns; the second is the columns that are built but left out unless you tick them. A run records exactly what went in, so two runs with different features are two different experiments."
           >
             <FeaturePicker
               columns={enabledColumns}
+              extra={selectableColumns}
               selected={selected}
               onChange={setSelected}
               coverage={coverageByName}
@@ -1238,10 +1248,14 @@ const COVERAGE_MARK: Record<string, { glyph: string, cls: string, why: string }>
   },
 }
 
+type PickerColumn = { name: string, method: string, note: string | null, width: number }
+
 /** Checkbox list of the feature catalogue, with select-all, a count and coverage. */
 function FeaturePicker(
-  { columns, selected, onChange, coverage }: {
-    columns: { name: string, method: string, note: string | null, width: number }[]
+  { columns, extra, selected, onChange, coverage }: {
+    columns: PickerColumn[]
+    /** Built and offered, never ticked for you: "Select all" leaves them alone. */
+    extra: PickerColumn[]
     selected: string[]
     onChange: (next: string[]) => void
     coverage: Record<string, FeatureCoverage>
@@ -1249,53 +1263,73 @@ function FeaturePicker(
 ) {
   const all = columns.map((c) => c.name)
   const allSelected = all.length > 0 && all.every((n) => selected.includes(n))
+  // "Select all" and "Clear all" act on the default list only, so a ticked
+  // selectable column survives both.
+  const extras = selected.filter((n) => !all.includes(n))
+  const box = (c: PickerColumn) => {
+    const cov = coverage[c.name]
+    const state = cov ? classifyCoverage(cov) : 'unknown'
+    const mark = COVERAGE_MARK[state]
+    const pct = cov && cov.share !== null
+      ? ` ${(cov.share * 100).toFixed(0)}% of the train window.`
+      : ''
+    return (
+      <label
+        key={c.name}
+        className={`${tipClass} flex items-start gap-2 text-sm py-1 cursor-pointer`}
+        data-tip={`${mark.why}${pct} ${c.note ?? `Normalized with ${c.method}.`}`}
+      >
+        <input
+          type="checkbox"
+          className="checkbox checkbox-sm mt-0.5"
+          checked={selected.includes(c.name)}
+          onChange={(e) => onChange(
+            e.target.checked
+              ? [...selected, c.name]
+              : selected.filter((n) => n !== c.name),
+          )}
+        />
+        <span className={`${mark.cls} leading-5`} aria-hidden>{mark.glyph}</span>
+        <span className="font-mono text-xs leading-5">
+          {c.name}
+          {c.width > 1 && <span className="opacity-50"> ×{c.width}</span>}
+        </span>
+      </label>
+    )
+  }
 
   return (
     <div>
       <div className="flex items-center gap-3 mb-2">
         <button
           type="button" className="btn btn-xs"
-          onClick={() => onChange(allSelected ? [] : all)}
+          onClick={() => onChange(allSelected ? extras : [...all, ...extras])}
         >
           {allSelected ? 'Clear all' : 'Select all'}
         </button>
         <span className="text-xs text-base-content/60">
-          {selected.length} of {all.length}
+          {selected.length} of {all.length + extra.length}
         </span>
       </div>
       <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3 max-h-80 overflow-y-auto pr-1">
-        {columns.map((c) => {
-          const cov = coverage[c.name]
-          const state = cov ? classifyCoverage(cov) : 'unknown'
-          const mark = COVERAGE_MARK[state]
-          const pct = cov && cov.share !== null
-            ? ` ${(cov.share * 100).toFixed(0)}% of the train window.`
-            : ''
-          return (
-            <label
-              key={c.name}
-              className={`${tipClass} flex items-start gap-2 text-sm py-1 cursor-pointer`}
-              data-tip={`${mark.why}${pct} ${c.note ?? `Normalized with ${c.method}.`}`}
-            >
-              <input
-                type="checkbox"
-                className="checkbox checkbox-sm mt-0.5"
-                checked={selected.includes(c.name)}
-                onChange={(e) => onChange(
-                  e.target.checked
-                    ? [...selected, c.name]
-                    : selected.filter((n) => n !== c.name),
-                )}
-              />
-              <span className={`${mark.cls} leading-5`} aria-hidden>{mark.glyph}</span>
-              <span className="font-mono text-xs leading-5">
-                {c.name}
-                {c.width > 1 && <span className="opacity-50"> ×{c.width}</span>}
-              </span>
-            </label>
-          )
-        })}
+        {columns.map(box)}
       </div>
+      {extra.length > 0 && (
+        <div className="mt-3" data-testid="selectable-features">
+          <p className="text-xs text-base-content/60 mb-1">
+            Selectable: built and stored, left out unless ticked.
+            vix_term_structure has no values before autumn 2006 (VIX3M starts
+            2006-07-17), so on an earlier train start it is partial and the
+            coverage marks say so. On an intraday series rsi_14, macd and
+            realized_vol count bars, not days (a 14-bar RSI); qqq_spy_relative
+            divides each bar by SPY&apos;s close of the session before; and
+            vix_term_structure is the daily value of the session before.
+          </p>
+          <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+            {extra.map(box)}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

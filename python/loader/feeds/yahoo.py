@@ -23,7 +23,7 @@ CHART_URL = (
 )
 
 # Bare volatility/index tickers need a caret on Yahoo (^VIX, ^VXN, ^GSPC …).
-KNOWN_INDICES = {"VIX", "VXN", "VVIX", "GSPC", "IXIC", "DJI", "RUT", "NDX"}
+KNOWN_INDICES = {"VIX", "VXN", "VIX3M", "VVIX", "GSPC", "IXIC", "DJI", "RUT", "NDX"}
 
 
 def yahoo_symbol(symbol: str) -> str:

@@ -3,7 +3,7 @@
 # are generated from QQQ's daily history.
 #
 # Everything but the calendar comes from features.toml (G22 I3, the author's
-# choice 2026-11-18): the same 38 features and checks. QQQ's own series move to
+# choice 2026-11-18): the same 37 features and checks. QQQ's own series move to
 # the synthetic bars; every other series stays daily and reaches the 30-minute bars
 # from the session after it was known (nn/feature_build.py, `cadence`).
 # Windows in [defaults] count rows of their cadence: bars for QQQ's own columns,

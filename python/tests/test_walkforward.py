@@ -375,6 +375,26 @@ def test_strategy_setup_drops_a_data_only_column_and_says_why():
     assert st.columns.dropped == (("rsi_14", "data only, kept out of the network"),)
 
 
+def test_strategy_setup_keeps_a_selected_selectable_column():
+    """Job 5 (C7): a strategy that ticks rsi_14 trains on it. The set holds it
+    with role `select`, so it is among the columns a strategy may select; a
+    late one (VIX3M starts in 2006) is kept and reported as partial."""
+    args = wf.build_parser().parse_args(["--strategy-id", "7"])
+    cur = _QueueCursor(
+        [_strategy_row(("price_close", "rsi_14", "vix_term_structure"))],
+        [(False,)],
+        [(11,)],
+        [("price_close", 3270), ("rsi_14", 3270), ("vix_term_structure", 2300)],
+        [(3270,)],
+        [("price_close",), ("rsi_14",), ("vix_term_structure",)],  # inputs + selectable
+        [],                                                        # data_columns
+    )
+    st = wf.strategy_setup(cur, args, {"strategy_id"})
+    assert st.columns.kept == ("price_close", "rsi_14", "vix_term_structure")
+    assert st.columns.dropped == ()
+    assert st.columns.partial == (("vix_term_structure", 2300, 3270),)
+
+
 def test_strategy_setup_refuses_a_set_of_another_series():
     args = wf.build_parser().parse_args(["--strategy-id", "7", "--set-id", "99"])
     cur = _QueueCursor([_strategy_row()], [(False,)], [])  # load, then set_matches: no row

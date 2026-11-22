@@ -107,6 +107,19 @@ _UNITS = {"percent", "level", "count", "ratio"}
 #: stored columns that did not exist (G9).
 DATA_ONLY = "data-only"
 
+#: Built and stored, and a strategy may select it; the default selection leaves
+#: it out (Design-Gaps C7, the author's decision 2026-11-19). The build gives it
+#: role `select` in `feature_spec`, so a default read of the inputs never holds
+#: one and `feature_store.read_matrix` reads it only when it is named.
+SELECTABLE = "selectable"
+
+#: Every status the file may carry on a disabled column. Closed, so a typo fails
+#: here rather than quietly meaning "not built".
+_STATUSES = {
+    DATA_ONLY, SELECTABLE, "blocked", "undecided", "later-paid", "short-history",
+    "not-imported",
+}
+
 
 @dataclass(frozen=True)
 class Feature:
@@ -155,6 +168,12 @@ class Feature:
         return not self.enabled and self.status == DATA_ONLY
 
     @property
+    def selectable(self) -> bool:
+        """Built and stored, trained on only when a strategy names it. See
+        SELECTABLE."""
+        return not self.enabled and self.status == SELECTABLE
+
+    @property
     def is_derived(self) -> bool:
         """True when the series is computed rather than read straight from a
         stored column — a binary op on two series, or a named computation."""
@@ -201,12 +220,17 @@ class FeatureConfig:
         return tuple(f for f in self.features if f.data_only)
 
     @property
+    def selectable(self) -> tuple[Feature, ...]:
+        """Stored beside the inputs, trained on when a strategy selects them."""
+        return tuple(f for f in self.features if f.selectable)
+
+    @property
     def built(self) -> tuple[Feature, ...]:
         """Everything the build computes and stores: the inputs first, in file
-        order, then the data-only columns. Inputs first so their positions in
-        `feature_spec` are the same with or without data-only columns beside
-        them."""
-        return self.enabled + self.data_only
+        order, then the selectable columns, then the data-only ones. Inputs
+        first so their positions in `feature_spec` are the same with or without
+        the others beside them."""
+        return self.enabled + self.selectable + self.data_only
 
     @property
     def input_width(self) -> int:
@@ -319,11 +343,22 @@ def _build_feature(raw: dict[str, Any], defaults: dict[str, Any]) -> Feature:
 
     enabled = bool(raw.get("enabled", True))
     status = raw.get("status")
+    if status is not None and status not in _STATUSES:
+        raise FeatureConfigError(
+            f"{name}: unknown status {status!r}; expected one of {sorted(_STATUSES)}"
+        )
     if status == DATA_ONLY and enabled:
         # Contradictory, and either reading is a silent mistake: training on a
         # column the file says is kept out, or keeping out one it says is in.
         raise FeatureConfigError(
             f"{name}: status {DATA_ONLY!r} means kept out of the network, "
+            f"so it needs `enabled = false`"
+        )
+    if status == SELECTABLE and enabled:
+        # `enabled = true` is the default selection; a column cannot be both in
+        # it and offered as an extra.
+        raise FeatureConfigError(
+            f"{name}: status {SELECTABLE!r} means not selected by default, "
             f"so it needs `enabled = false`"
         )
 
@@ -463,7 +498,8 @@ def describe(cfg: FeatureConfig) -> str:
         f"fill            {cfg.alignment.fill}, max {cfg.alignment.max_fill_days} days",
         "",
         f"{len(cfg.features)} columns defined, {len(cfg.enabled)} enabled, "
-        f"{len(cfg.data_only)} data only, {cfg.input_width} values per bar",
+        f"{len(cfg.selectable)} selectable, {len(cfg.data_only)} data only, "
+        f"{cfg.input_width} values per bar",
         f"× lookback {cfg.defaults.get('lookback_window', '?')} "
         f"= {cfg.input_width * int(cfg.defaults.get('lookback_window', 0))} network inputs",
         "",

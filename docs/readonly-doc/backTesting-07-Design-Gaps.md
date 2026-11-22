@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-21-5** · 2026-11-21 18:12 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-8** · 2026-11-21 22:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -957,11 +957,11 @@ Effort: M.
 | C4, DL4J and ONNX (D13) | Drop it, PyTorch only | no change; D13 closes as a departure from R62 |
 | C5, TA-Lib (D14) | Keep the hand-written indicators | no change; D14 closes as a departure from R66 |
 | C6, window (D3) | Offer both, expanding the default | new work: a sliding window (length and step) on the strategy; existing strategies unchanged |
-| C7, RSI, MACD, realized volatility | Selectable per strategy, off by default | new work: `data only` becomes selectable; stored runs unchanged |
+| C7, RSI, MACD, realized volatility | Selectable per strategy, off by default | new work: `data only` becomes selectable; stored runs unchanged; done 2026-11-21 (job 5): status `selectable`, role `select`; run 1077 |
 | C8, the five rule strategies | Benchmarks only | new work: kept runnable for comparison, not offered as strategies |
-| F1, VIX term structure | Selectable input, off by default | new feature column |
-| F2, QQQ/SPY relative strength | Selectable input, off by default | new feature column |
-| F3, high-yield credit spread | Drop it | closes |
+| F1, VIX term structure | Selectable input, off by default | new feature column; done 2026-11-21 (job 5): VIX3M feed, `vix_term_structure` selectable, values from autumn 2006 |
+| F2, QQQ/SPY relative strength | Selectable input, off by default | new feature column; done 2026-11-21 (job 5): `qqq_spy_relative` selectable |
+| F3, high-yield credit spread | Drop it | closes; done 2026-11-21 (job 5): `credit_spread_hy` removed from `features.toml` |
 | Requirements doc | Approve after re-checking the statuses | re-verify each status against the code, then it stops being a draft |
 
 The readonly design set is the author's to update where an answer departs from it (C3, C4, C5, C1's timing).
@@ -972,7 +972,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 2. I7: New York time on import, per the plan above (M). *Done 2026-11-19; see the I7 record*
 - [x] 3. FirstRate import readiness: its file layout and names through the drop folder (S, after 2). *Done 2026-11-19; see the job 3 record*
 - [x] 4. G54: the Strategy tab and the runner agree on what can run (S). *Done 2026-11-21; see the job 4 record*
-- [ ] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
+- [x] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
 - [ ] 6. C6: the sliding window option (M)
 - [ ] 7. C8: the rule strategies as benchmarks only (S)
 - [ ] 8. C2: severities and the hard stop (M)
@@ -985,7 +985,7 @@ The readonly design set is the author's to update where an answer departs from i
 
 *A. The author's answers of 2026-11-19, still to build (jobs 5 to 9).*
 
-- [ ] 5. Selectable inputs (C7, F1, F2), M. Found in the review (*checked*):
+- [x] 5. Selectable inputs (C7, F1, F2), M. Found in the review (*checked*):
   - `vix_term_structure` and `qqq_spy_relative` are already in `features.toml`, switched off with status `undecided`. They are not columns to write, only to switch on and make selectable.
   - `vix_term_structure` divides VIX3M by VIX, and **no VIX3M bar is stored**. It needs a daily feed first (Yahoo, from 2006-07-17), and the column is then partial on a 2003 train start.
   - The `data-only` columns are `rsi_14`, `macd` and `realized_vol`. All three become selectable, off by default.
@@ -1021,17 +1021,17 @@ The readonly design set is the author's to update where an answer departs from i
 
 What "selectable, off by default" means in the code: the column is built and stored in every set, a strategy may select it, and no existing strategy or default selection includes it. Today a `data-only` column is stored but refused on save (`strategies.dataOnlyFeatures`) and dropped by the runner (`strategy_spec.resolve_columns`), and a disabled `undecided` column is not built at all.
 
-- [ ] 5.1 A VIX3M feed: `Feed("VIX3M", "yahoo", "INDEX", "yahoo", "^VIX3M", "prices")` in `feeds/registry.py`, and `VIX3M` among `yahoo.KNOWN_INDICES`. Dry run first, to see the first date and the row count Yahoo returns. Tests
-- [ ] 5.2 **STOP**: show the dry run, then Apply the feed. It adds a series; it changes no stored one
-- [ ] 5.3 `features.toml`: a new status, `selectable`, for a column that is built and offered but not selected by default. `rsi_14`, `macd` and `realized_vol` move from `data-only` to it; `vix_term_structure` and `qqq_spy_relative` move from `undecided` to it; `credit_spread_hy` is removed (F3). The section comment that says these stay out of the network is rewritten to the author's decision. `feature_config` validates the status. Tests
-- [ ] 5.4 The build stores a `selectable` column with the network's role, so `read_matrix` can read it; `data-only` stays in the code for a column that is truly for charts only, with no column using it today. Tests
-- [ ] 5.5 The runner and the API stop refusing them: `resolve_columns` keeps a selected `selectable` column, and the save route's data-only refusal no longer fires for one. The catalogue (`feature_catalog`, `featureCatalogue.js`) carries the status. Tests
-- [ ] 5.6 The Strategy tab lists them in their own group, unticked, with a note on each (`vix_term_structure` has no values before 2006-07-17, so on a 2003 train start it is partial and the coverage grid says so). The Features page and stage show the status. Tests
-- [ ] 5.7 The intraday calendar files inherit the change; check that `macd` and `rsi_14` on an intraday calendar are the daily values as of the session before, as every daily column is, and say so on the tab
-- [ ] 5.8 **STOP** before stored data moves: the config hash changes, so every set reads stale. Show what a rebuild touches, then rebuild the daily, H1 and M30 sets once, together. Old sets are kept (D12 rebuilds on demand; nothing is deleted)
-- [ ] 5.9 Check: the 29 columns `phase1-full` v5 trains on are value for value what they were, so all 13 stored runs still recalculate exactly; if one does not, stop and report before going on
-- [ ] 5.10 One new strategy version with the five columns selected, validation folds only, as the live proof that a selected column is trained on. The test block is not touched
-- [ ] 5.11 Rows: C7, F1, F2, F3 and D4 closed here; `backTesting-06` needs no change
+- [x] 5.1 A VIX3M feed: `Feed("VIX3M", "yahoo", "INDEX", "yahoo", "^VIX3M", "prices")` in `feeds/registry.py`, and `VIX3M` among `yahoo.KNOWN_INDICES`. Dry run first, to see the first date and the row count Yahoo returns. Tests. *Done 2026-11-21 18:13. Dry run, nothing written: 5,121 bars, 2006-07-17 to 2026-11-20, every year a new slice; VIX holds 5,123 over the same span, so two sessions will have no ratio. The early bars carry the close in all four prices and no volume, as an index does*
+- [x] 5.2 **STOP**: show the dry run, then Apply the feed. It adds a series; it changes no stored one. *Done 2026-11-21 21:54, on the author's go. Loader rebuilt, `refresh --feed VIX3M/yahoo --no-rebuild`: +5,121 bars, 2006-07-17 to 2026-11-20, feed run 27. No stored series changed*
+- [x] 5.3 `features.toml`: a new status, `selectable`, for a column that is built and offered but not selected by default. `rsi_14`, `macd` and `realized_vol` move from `data-only` to it; `vix_term_structure` and `qqq_spy_relative` move from `undecided` to it; `credit_spread_hy` is removed (F3). The section comment that says these stay out of the network is rewritten to the author's decision. `feature_config` validates the status. Tests. *Done 2026-11-21 21:54. Five columns are `selectable`, `credit_spread_hy` is gone (37 features). An unknown status, or `selectable` with `enabled = true`, is refused on load*
+- [x] 5.4 The build stores a `selectable` column with the network's role, so `read_matrix` can read it; `data-only` stays in the code for a column that is truly for charts only, with no column using it today. Tests. *Done 2026-11-21 21:54, with one change from the wording: the role is its own, `select`, not the network's `input`. Five readers load "all inputs" with no column list (`nn_api`, `train_features`, `walkforward` twice, `staleness`); with role `input` they would have taken five more columns and lost every row before late 2006. So a read with no columns named is the inputs alone, as before, and `read_matrix` reads a `select` column only when it is named. The role check in `schema.sql` takes the third value. Selectable columns sit after the inputs and do not move the first complete date*
+- [x] 5.5 The runner and the API stop refusing them: `resolve_columns` keeps a selected `selectable` column, and the save route's data-only refusal no longer fires for one. The catalogue (`feature_catalog`, `featureCatalogue.js`) carries the status. Tests. *Done 2026-11-21 21:54. The runner offers inputs and selectable columns to `resolve_columns` (`column_names(selectable=True)`); the save route's data-only refusal reads `status = 'data-only'`, which no column has now. The catalogue carries `selectable`*
+- [x] 5.6 The Strategy tab lists them in their own group, unticked, with a note on each (`vix_term_structure` has no values before 2006-07-17, so on a 2003 train start it is partial and the coverage grid says so). The Features page and stage show the status. Tests. *Done 2026-11-21 21:54. The Strategy tab has a second group, unticked; "Select all" and "Clear all" leave it alone. The Features page and stage show the status. Not looked at in a browser*
+- [x] 5.7 The intraday calendar files inherit the change; check that `macd` and `rsi_14` on an intraday calendar are the daily values as of the session before, as every daily column is, and say so on the tab. *Done 2026-11-21 21:54, and the step's assumption was wrong. On an intraday calendar `rsi_14`, `macd` and `realized_vol` read the calendar's own bars, so they count bars, not days (`feature_build.cadence`); `qqq_spy_relative` divides each bar by SPY's close of the session before (`join_daily`, no look-ahead); only `vix_term_structure` is the daily value of the session before. The tab says so. Whether the bar-counted three should be daily instead is the author's call*
+- [x] 5.8 **STOP** before stored data moves: the config hash changes, so every set reads stale. Show what a rebuild touches, then rebuild the daily, H1 and M30 sets once, together. Old sets are kept (D12 rebuilds on demand; nothing is deleted). *Done 2026-11-21 22:54, on the author's go. New sets 63 (D1), 64 (H1), 65 (M30): 40 columns each, 35 `input` and 5 `select`, same rows and first complete date as sets 28, 54 and 56, which are kept*
+- [x] 5.9 Check: the 29 columns `phase1-full` v5 trains on are value for value what they were, so all 13 stored runs still recalculate exactly; if one does not, stop and report before going on. *Done 2026-11-21 22:54. Every input value of sets 28, 54 and 56 equals the new set's (243,950, 1,697,850 and 3,153,150 values, 0 differ, 0 missing, positions unchanged). All 13 runs (779 to 786, 855, 856, 881, 1015, 1016) dry-run recalculate to the stored figures in every fold field, and their Faber and dual momentum rows equal the stored ones*
+- [x] 5.10 One new strategy version with the five columns selected, validation folds only, as the live proof that a selected column is trained on. The test block is not touched. *Done 2026-11-21 22:54. Strategy 85, `phase1-selectable` v1 (phase1-full v5 plus the five columns; a new name, so phase1-full's versions stay the phase-one record). Run 1077 on set 63, 6 validation folds, records 34 columns with the five among them. `vix_term_structure` is partial (2,324 of 3,273 train bars), so training starts 2006-10-09: ticking it costs the first three and a half years of rows. Mean excess −5.30 pp a fold, below the naive baseline; one run is not a verdict on the columns. The test block was not touched*
+- [x] 5.11 Rows: C7, F1, F2, F3 and D4 closed here; `backTesting-06` needs no change. *Done 2026-11-21 22:54. D4's fourth status stays in the code with no column on it; `selectable` is a fifth*
 
 Done when: a strategy can select any of the five and its run's column list shows them; no existing strategy's columns or figures changed.
 
@@ -1953,6 +1953,9 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-8 | 2026-11-21 22:54 | Claude Code (Claude Fable 5.2) | Job 5 done: sets 63 to 65 built, the 13 runs recalculate exactly, run 1077 trains on the five selectable columns |
+| 2026-11-21-7 | 2026-11-21 21:54 | Claude Code (Claude Fable 5.2) | Job 5, steps 5.2 to 5.7: VIX3M loaded; five selectable columns in the config, the build, the runner and the tabs |
+| 2026-11-21-6 | 2026-11-21 18:13 | Claude Code (Claude Fable 5.2) | Job 5, step 5.1: the VIX3M feed and its dry run |
 | 2026-11-21-5 | 2026-11-21 18:12 | Claude Code (Claude Fable 5.2) | Steps for jobs 5 to 9, written out before any of them starts |
 | 2026-11-21-4 | 2026-11-21 18:10 | Claude Code (Claude Fable 5.2) | The implementation plan reviewed against the docs and the code: what is left, in order, with what the review found |
 | 2026-11-21-3 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `DESIGN-GAPS.md`; the other doc files renamed the same way, references follow |

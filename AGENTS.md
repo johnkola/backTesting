@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-21-2** · 2026-11-21 18:00 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-3** · 2026-11-21 21:32 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -165,7 +165,7 @@ Tab: **Pipeline → Features**.
   written explanation. The checks are printed by `python -m nn.feature_build`
   under `DATA CHECKS` and recorded in each feeds run's `rebuild`.
 - [ ] **review**: every enabled column is in the newest set. Every disabled
-  column shows its reason, and the `data-only` ones say why they are out.
+  column shows its reason, and the `selectable` ones are in the set after the inputs.
 - [ ] **review**: the first fully-populated date the build prints is the one
   expected. A later date means a column started late and moved the floor.
 - [ ] **review**: no input is ahead of its publication. Each delay in
@@ -610,6 +610,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-3 | 2026-11-21 21:32 | Claude Code (Claude Fable 5.2) | Step 2's review line follows the `selectable` status (job 5) |
 | 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | The never-edited rule now names the four design files (`backTesting-01` to `-04`); the trackers the author moved into `docs/readonly-doc/` stay editable |
 | 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Doc files renamed with the app name and a reading-order number (`backTesting-NN-…`); paths and links follow, at the author's request |
 | 2026-11-17-1 | 2026-11-17 10:50 | Claude Code (Claude Opus 5.5) | Step 8 done: phase1-full v5's held-out test (run 881) does not beat buy-and-hold |

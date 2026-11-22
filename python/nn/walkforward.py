@@ -1233,7 +1233,7 @@ def strategy_setup(cur, args: argparse.Namespace, explicit: set[str]) -> Strateg
     counts = feature_store.column_counts(cur, set_id, since.isoformat(), until.isoformat())
     bars = feature_store.window_bars(cur, set_id, since.isoformat(), until.isoformat())
     columns = strategy_spec.resolve_columns(
-        s.features, feature_store.column_names(cur, set_id), counts, bars,
+        s.features, feature_store.column_names(cur, set_id, selectable=True), counts, bars,
         feature_store.data_columns(cur, set_id),
     )
     return StrategySetup(s, plan, settings, set_id, columns, since, until, bars)

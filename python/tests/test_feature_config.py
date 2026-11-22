@@ -85,9 +85,12 @@ def test_required_series_walks_into_binary_ops():
 
 def test_disabled_features_do_not_demand_data():
     cfg = fc.load()
-    blocked = cfg.by_name("credit_spread_hy")
-    assert not blocked.enabled
-    assert ("BAMLH0A0HYM2", "fred") not in cfg.required_series()
+    paid = cfg.by_name("put_call_ndx")
+    assert not paid.enabled and paid not in cfg.built
+    before = cfg.required_series()
+    assert all(s in before for s in [("QQQ", "yahoo-adj")])
+    # A selectable column is disabled and still built, so its series IS demanded.
+    assert ("VIX3M", "yahoo") in before
 
 
 def test_every_committed_design_column_is_defined():
@@ -150,7 +153,7 @@ def test_no_column_that_crosses_zero_uses_daily_return():
     """daily_return is undefined across zero. The yield curve inverts, oil
     printed -36.98, and a credit spread is already a difference."""
     cfg = fc.load()
-    for name in ("yield_curve_10y2y", "oil_wti", "credit_spread_ig", "credit_spread_hy"):
+    for name in ("yield_curve_10y2y", "oil_wti", "credit_spread_ig"):
         assert cfg.by_name(name).method != "daily_return", name
 
 
@@ -167,8 +170,14 @@ def test_blocked_and_paid_columns_demand_no_data():
     fails up front on an import nobody intends to make."""
     cfg = fc.load()
     pairs = cfg.required_series()
-    for symbol in ("BAMLH0A0HYM2", "VIX3M"):
-        assert not any(s == symbol for s, _ in pairs), symbol
+    for f in cfg.features:
+        if f in cfg.built or "symbol" not in f.series:
+            continue
+        built_symbols = {s for s, _ in pairs}
+        assert f.series["symbol"] not in built_symbols, f.name
+    # The high-yield series went with its column (F3); VIX3M is demanded now,
+    # because vix_term_structure is selectable and so built (F1).
+    assert not any(s == "BAMLH0A0HYM2" for s, _ in pairs)
 
 
 # --------------------------------------------------------------------------
@@ -533,9 +542,47 @@ def test_any_other_disabled_column_is_still_not_built(tmp_path):
     assert cfg.by_name("rsi_14") not in cfg.built
 
 
-def test_the_shipped_config_stores_rsi_macd_and_realized_vol_as_data_only():
+# --------------------------------------------------------------------------
+# selectable columns (Design-Gaps C7, F1, F2): built, offered, not a default input
+# --------------------------------------------------------------------------
+
+SELECTABLE_RSI = DATA_ONLY_RSI.replace('"data-only"', '"selectable"')
+
+
+def test_a_selectable_column_is_built_after_the_inputs_and_is_not_a_default_input(tmp_path):
+    cfg = fc.load(write(tmp_path, MINIMAL + SELECTABLE_RSI))
+    rsi = cfg.by_name("rsi_14")
+    assert rsi.selectable and not rsi.data_only
+    assert rsi not in cfg.enabled
+    assert cfg.selectable == (rsi,)
+    assert cfg.built == cfg.enabled + (rsi,), "inputs first, so their positions do not move"
+    assert cfg.input_width == sum(f.width for f in cfg.enabled)
+
+
+def test_selectable_and_enabled_together_is_refused(tmp_path):
+    p = write(tmp_path, MINIMAL + SELECTABLE_RSI.replace("enabled = false", "enabled = true"))
+    with pytest.raises(fc.FeatureConfigError, match="not selected by default"):
+        fc.load(p)
+
+
+def test_an_unknown_status_is_refused(tmp_path):
+    p = write(tmp_path, MINIMAL + DATA_ONLY_RSI.replace('"data-only"', '"selectible"'))
+    with pytest.raises(fc.FeatureConfigError, match="unknown status 'selectible'"):
+        fc.load(p)
+
+
+def test_the_shipped_config_offers_five_selectable_columns_and_no_data_only_one():
     cfg = fc.load()
-    assert {f.name for f in cfg.data_only} == {"rsi_14", "macd", "realized_vol"}
+    assert {f.name for f in cfg.selectable} == {
+        "rsi_14", "macd", "realized_vol", "vix_term_structure", "qqq_spy_relative"}
+    assert cfg.data_only == ()
+    assert [f.name for f in cfg.built[-5:]] == [f.name for f in cfg.selectable]
+
+
+def test_the_high_yield_spread_is_gone():
+    """F3: three years of history cannot cover a train window from 2003."""
+    with pytest.raises(KeyError):
+        fc.load().by_name("credit_spread_hy")
 
 
 def test_publication_delays_are_read_per_source_and_per_series():

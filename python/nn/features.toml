@@ -4,11 +4,12 @@
 # most likely came here to turn is `method`: it selects how that column is made
 # scale-free and stationary. Change it, bump `schema_version` below, retrain.
 #
-# `enabled = false` keeps a column defined and documented without feeding it to
-# the network. That is how the price-derived indicators (RSI, MACD, realized
-# volatility) stay available to the Ta4j strategies and the charts while staying
-# out of the model, and how a blocked or undecided column keeps its place in the
-# table rather than vanishing from the design.
+# `enabled = false` keeps a column defined and documented without putting it in
+# the default selection. With `status = "selectable"` it is still built and
+# stored in every feature set, and a strategy may tick it (the price-derived
+# indicators and two ratios, below). With any other status it is not built: that
+# is how a paid or short-history column keeps its place in the table rather than
+# vanishing from the design.
 #
 # METHODS
 #   ratio_to_prev_close   (x / previous close) - 1.      Params: none.
@@ -258,20 +259,23 @@ blind to whether the whole market is calm or terrified, which this restores."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Price-derived indicators — DATA ONLY.
+# Price-derived indicators — SELECTABLE.
 #
-# These stay out of the network on purpose. The model already sees the full raw
-# bar, so it can learn whatever a windowed transform of that bar encodes;
-# feeding it in again adds dimensions and overfitting room without adding
-# information. The dividing line is the lookback window: a raw bar is an
-# observation and goes in, anything averaged over trailing days is a derivation
-# and stays out. To test that belief, set `enabled = true` and remove the status.
+# The author's decision, 2026-11-19 (Design-Gaps C7): the model does not train
+# on these by default, and a strategy may select them. Features.md B's reason
+# for leaving them out still describes the default: the model already sees the
+# full raw bar, so a windowed transform of that bar adds dimensions and room to
+# overfit. Selecting one is how that belief is tested, one strategy at a time,
+# without editing this file.
 #
-# `status = "data-only"` is what keeps them built: Features.md B has them
-# "computed and stored for charts and rule-based strategies, but kept out of the
-# network". So the build stores them in every feature set, with role `data` in
-# `feature_spec`, and nothing that feeds the network reads that role. Any other
-# disabled column is not built at all.
+# `status = "selectable"` with `enabled = false` means: built, normalized and
+# stored in every feature set with role `select` in `feature_spec`. A read of
+# the default inputs never includes one; a strategy that names one trains on it
+# (`feature_store.read_matrix`). They sit after the inputs in `feature_spec`,
+# so the inputs' positions are the same with or without them.
+#
+# `status = "data-only"` still exists in the code (role `data`: stored for
+# charts and rules, refused as a network input). No column uses it today.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[feature]]
@@ -285,11 +289,10 @@ method = "rescale"
 min = 0.0
 max = 100.0
 enabled = false
-status = "data-only"
-note = """Data only: stored for charts and rule-based strategies, kept out of the network. A
-14-day RSI is a windowed transform of the QQQ bar the network already sees, so it
-would add dimensions and room to overfit without adding information (Features.md B).
-To test that, set enabled = true and remove the status."""
+status = "selectable"
+note = """Selectable: built and stored, not in the default selection. A 14-day RSI is a
+windowed transform of the QQQ bar the network already sees (Features.md B), so
+the default leaves it out; tick it on a strategy to test whether it helps."""
 
 [[feature]]
 name = "macd"
@@ -301,11 +304,11 @@ series = { computed = "macd", symbol = "QQQ", source = "yahoo-adj", short = 12, 
 method = "rolling_zscore"
 window = 60
 enabled = false
-status = "data-only"
-note = """Data only: stored for charts and rule-based strategies, kept out of the network.
-MACD is a difference of two moving averages of the QQQ close the network already
-sees, so it would add dimensions and room to overfit without adding information
-(Features.md B). To test that, set enabled = true and remove the status."""
+status = "selectable"
+note = """Selectable: built and stored, not in the default selection. MACD is a
+difference of two moving averages of the QQQ close the network already sees
+(Features.md B), so the default leaves it out; tick it on a strategy to test
+whether it helps."""
 
 [[feature]]
 name = "realized_vol"
@@ -317,11 +320,11 @@ series = { computed = "realized_vol", symbol = "QQQ", source = "yahoo-adj", peri
 method = "rolling_zscore"
 window = 60
 enabled = false
-status = "data-only"
-note = """Data only: stored for charts and rule-based strategies, kept out of the network.
-20-day realized volatility is a windowed transform of the QQQ bar the network
-already sees, so it would add dimensions and room to overfit without adding
-information (Features.md B). To test that, set enabled = true and remove the status."""
+status = "selectable"
+note = """Selectable: built and stored, not in the default selection. 20-day realized
+volatility is a windowed transform of the QQQ bar the network already sees
+(Features.md B), so the default leaves it out; tick it on a strategy to test
+whether it helps."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -746,8 +749,9 @@ only), so it waits for a paid one (Zacks, FactSet, I/B/E/S)."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Credit. The calmer cousin of the high-yield spread, which is blocked below:
-# it moves less, but FRED serves its full history instead of three years.
+# Credit. The calmer cousin of the high-yield spread, which was removed from
+# this table (Design-Gaps F3: FRED serves three years of the ICE BofA series).
+# It moves less, but FRED serves its full history.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[feature]]
@@ -812,22 +816,12 @@ series = { op = "divide", a = { symbol = "VIX3M", source = "yahoo", field = "clo
 method = "rolling_zscore"
 window = 60
 enabled = false
-status = "undecided"
-note = "Yahoo VIX3M starts 2006-07-17, blanking the first three training years."
-
-[[feature]]
-name = "credit_spread_hy"
-scope = "market"
-cadence = "daily"
-cost = "paid"
-units = "percent"
-series = { symbol = "BAMLH0A0HYM2", source = "fred", field = "close" }
-method = "rolling_zscore"
-window = 60
-enabled = false
-status = "blocked"
-note = """FRED's free graph endpoint truncates the ICE BofA series to 2023-09
-onward. Needs an API key or another source."""
+status = "selectable"
+note = """Selectable: built and stored, not in the default selection (Design-Gaps F1).
+3-month VIX over VIX: above 1 is the usual calm shape, below 1 means near-term
+fear is priced above the next quarter's. Yahoo's VIX3M starts 2006-07-17, so
+with the 60-session window the column has no values before autumn 2006: on a
+2003 train start it is partial, and the run says so."""
 
 [[feature]]
 name = "qqq_spy_relative"
@@ -839,8 +833,9 @@ series = { op = "divide", a = { symbol = "QQQ", source = "yahoo-adj", field = "c
 method = "rolling_zscore"
 window = 60
 enabled = false
-status = "undecided"
-note = "Tech leadership versus the broad market. Price-derived, but from a second index."
+status = "selectable"
+note = """Selectable: built and stored, not in the default selection (Design-Gaps F2).
+Tech leadership versus the broad market. Price-derived, but from a second index."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

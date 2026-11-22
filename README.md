@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-21-2** · 2026-11-21 17:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-3** · 2026-11-21 22:58 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (five Ta4j indicator strategies plus a PyTorch neural network) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -771,9 +771,11 @@ real intraday data is the data itself.
 
 1. The Strategy tab's remaining choices, in the order of the work list in
    [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md) ("Decisions and work order, 2026-11-19"):
-   selectable inputs with the two new columns (C7, F1, F2), a sliding window beside the
-   expanding one (C6), the rule strategies as benchmarks only (C8), and data checks with a
-   severity that can stop the chain (C2).
+   a sliding window beside the expanding one (C6), the rule strategies as benchmarks
+   only (C8), and data checks with a severity that can stop the chain (C2). Selectable
+   inputs with the two new columns (C7, F1, F2) are done: RSI, MACD, realized volatility,
+   the VIX term structure and QQQ against SPY are built in every set and offered unticked
+   on the Strategy tab.
 2. The requirements doc: statuses re-verified against the code, then no longer a draft.
 3. Phase one's leftovers that phase two will want too: walk-forward runs on Results (G57),
    results that keep their run settings (G40), folds that keep their models (G50).
@@ -1275,6 +1277,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-3 | 2026-11-21 22:58 | Claude Code (Claude Fable 5.2) | Roadmap: selectable inputs (C7, F1, F2) done |
 | 2026-11-21-2 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Doc files renamed with the app name and a reading-order number (`backTesting-NN-…`); paths and links follow |
 | 2026-11-21-1 | 2026-11-21 17:50 | Claude Code (Claude Fable 5.2) | G54: a save is checked by the runner; `GET /api/nn/strategies/options`, `POST /api/nn/strategies/check`, `check=1` on a save; roadmap Next follows the work order |
 | 2026-11-19-4 | 2026-11-19 19:00 | Claude Code (Claude Fable 5.2) | The drop folder reads FirstRate Data file names; an intraday stock import keeps the regular session only |

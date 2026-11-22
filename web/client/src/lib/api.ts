@@ -1265,9 +1265,10 @@ export type CatalogueFeature = {
   rangeEnd: string | null
   /** `instrument` columns follow the chosen instrument; `market` ones are shared. */
   scope: 'instrument' | 'market'
-  /** Only `active` columns are offered in the strategy builder. `data-only`
-   *  columns are stored for charts and rules, never a network input. */
-  status: 'active' | 'data-only' | 'undecided' | 'blocked'
+  /** `active` columns are offered ticked in the strategy builder, `selectable`
+   *  ones unticked. `data-only` columns are stored for charts and rules, never
+   *  a network input (none today). */
+  status: 'active' | 'selectable' | 'data-only' | 'undecided' | 'blocked'
   cost: 'free' | 'paid'
   /** Of the RAW series. Drives normalization and the chart axis. */
   units: 'percent' | 'level' | 'count' | 'ratio'

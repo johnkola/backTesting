@@ -72,6 +72,9 @@ FEEDS: tuple[Feed, ...] = (
     Feed("ETHX-B", "yahoo", "STOCK", "yahoo", "ETHX-B.TO", "prices"),
     Feed("VIX", "yahoo", "INDEX", "yahoo", "^VIX", "prices"),
     Feed("VXN", "yahoo", "INDEX", "yahoo", "^VXN", "prices"),
+    # The 3-month VIX: `vix_term_structure` divides it by VIX (Features.md,
+    # F1; selectable since job 5, 2026-11-21). Yahoo's history starts in 2006.
+    Feed("VIX3M", "yahoo", "INDEX", "yahoo", "^VIX3M", "prices"),
     Feed("DXY", "yahoo", "INDEX", "yahoo", "DX-Y.NYB", "prices", overnight=True),
     Feed("COPPER", "yahoo", "COMMODITY", "yahoo", "HG=F", "prices", overnight=True),
     Feed("GOLD", "yahoo", "COMMODITY", "yahoo", "GC=F", "prices", overnight=True),

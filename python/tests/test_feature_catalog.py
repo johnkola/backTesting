@@ -101,16 +101,17 @@ class TestStatusMapping:
         assert len(active) == len(cfg.enabled)
 
     def test_blocked_stays_blocked(self, cfg):
-        blocked = [f.name for f in cfg.features
-                   if feature_catalog.status_of(f) == "blocked"]
         # No free source at full history: the design treats this as a hard stop.
-        assert "credit_spread_hy" in blocked
+        # No shipped column is blocked since credit_spread_hy was removed (F3).
+        import dataclasses
+        f = dataclasses.replace(cfg.by_name("put_call_ndx"), status="blocked")
+        assert feature_catalog.status_of(f) == "blocked"
 
     def test_deferred_reasons_become_undecided_not_blocked(self, cfg):
         by_name = {f.name: f for f in cfg.features}
         # Nothing about these is impossible; the decision is just deferred, and
         # calling them blocked would overstate the problem.
-        for name in ("put_call_ndx", "breakeven_inflation", "vix_term_structure"):
+        for name in ("put_call_ndx", "breakeven_inflation"):
             assert feature_catalog.status_of(by_name[name]) == "undecided", name
 
     def test_a_disabled_feature_is_never_offered_as_active(self, cfg):
@@ -123,9 +124,16 @@ class TestStatusMapping:
     def test_data_only_is_its_own_status(self, cfg):
         # Not undecided (it is decided), not blocked (it has values), not active
         # (the builder must not offer it): Design Notes' "No - data only".
+        import dataclasses
+        f = dataclasses.replace(cfg.by_name("rsi_14"), status="data-only")
+        assert feature_catalog.status_of(f) == "data-only"
+
+    def test_selectable_is_its_own_status(self, cfg):
+        # Offered in the builder, unticked: not active, which the builder ticks.
         by_name = {f.name: f for f in cfg.features}
-        for name in ("rsi_14", "macd", "realized_vol"):
-            assert feature_catalog.status_of(by_name[name]) == "data-only", name
+        for name in ("rsi_14", "macd", "realized_vol", "vix_term_structure",
+                     "qqq_spy_relative"):
+            assert feature_catalog.status_of(by_name[name]) == "selectable", name
 
     def test_an_unrecognised_status_is_reported_not_guessed(self, cfg):
         import dataclasses

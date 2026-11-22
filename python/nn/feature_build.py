@@ -371,15 +371,18 @@ class BuiltColumn:
 
     @property
     def role(self) -> str:
-        """`feature_spec.role`: `input` feeds the network, `data` never does."""
-        return "data" if self.feature.data_only else "input"
+        """`feature_spec.role`: `input` is a default input, `select` feeds the
+        network only when a strategy names it, `data` never does."""
+        if self.feature.data_only:
+            return "data"
+        return "select" if self.feature.selectable else "input"
 
 
 def build_columns(
     cur, cfg: FeatureConfig, calendar: list[date], prev_close: list[float | None]
 ) -> list[BuiltColumn]:
     """Resolve, align and normalize every built column: inputs first, then the
-    data-only ones (`FeatureConfig.built`).
+    selectable ones, then the data-only ones (`FeatureConfig.built`).
 
     On an intraday calendar each feature is normalized at its own cadence
     (`cadence`). One that reads the calendar's bars is normalized per bar. A
@@ -525,8 +528,9 @@ def store(
 
     # The first day every INPUT column can speak to. Rows before it hold NULLs
     # and are useless for training, so recording it saves the reader working it
-    # out. Data-only columns are left out: the network never reads them, so a
-    # late one must not move the date training can start from.
+    # out. Selectable and data-only columns are left out: no default read holds
+    # them, so a late one (VIX3M starts in 2006) must not move the date training
+    # can start from.
     inputs_only = [c for c in columns if c.role == "input"]
     first_complete = None
     for i in range(len(calendar)):
@@ -622,7 +626,7 @@ def main() -> int:
         return 2
     print(f"config    schema_version={cfg.schema_version}  "
           f"{len(cfg.enabled)} columns -> {cfg.input_width} values/bar, "
-          f"plus {len(cfg.data_only)} data only")
+          f"plus {len(cfg.selectable)} selectable, {len(cfg.data_only)} data only")
 
     conn = connect()
     cur = conn.cursor()
@@ -656,7 +660,7 @@ def main() -> int:
     print(f"\n{'COLUMN':<24} {'METHOD':<22} {'NON-NULL':>9}  {'MIN':>8} {'MAX':>8} {'MEAN':>8}")
     for col in columns:
         vals = [v for v in col.values if v is not None]
-        tag = "  (data only)" if col.role == "data" else ""
+        tag = {"data": "  (data only)", "select": "  (selectable)"}.get(col.role, "")
         if vals:
             print(f"{col.name:<24} {col.feature.method:<22} {col.non_null:>9}  "
                   f"{min(vals):>8.2f} {max(vals):>8.2f} {sum(vals)/len(vals):>8.2f}{tag}")

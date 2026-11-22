@@ -310,10 +310,13 @@ CREATE TABLE IF NOT EXISTS feature_spec (
 -- (`feature_store.read_matrix`, `column_names`). The default makes every set
 -- built before data-only columns existed read exactly as it did.
 ALTER TABLE feature_spec ADD COLUMN IF NOT EXISTS role VARCHAR(8) NOT NULL DEFAULT 'input';
-DO $feature_spec_role$ BEGIN
-    ALTER TABLE feature_spec ADD CONSTRAINT feature_spec_role_ck CHECK (role IN ('input', 'data'));
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $feature_spec_role$;
+-- `select` (2026-11-21, Design-Gaps C7) is stored like `data` and read like
+-- `input`, but only when a strategy names the column: a read of the default
+-- inputs never holds one. Dropped and re-added so a database that has the
+-- two-value check gets the third value.
+ALTER TABLE feature_spec DROP CONSTRAINT IF EXISTS feature_spec_role_ck;
+ALTER TABLE feature_spec ADD CONSTRAINT feature_spec_role_ck
+    CHECK (role IN ('input', 'select', 'data'));
 
 -- Long format, not one column per feature: adding a feature is an INSERT rather
 -- than a migration, which is the whole point of the config-driven table. A
@@ -776,8 +779,8 @@ CREATE TABLE IF NOT EXISTS feature_definitions (
     -- instrument | market. Instrument-scoped columns follow the chosen
     -- instrument; market-scoped ones are shared and stay selected.
     scope VARCHAR(16) NOT NULL,
-    -- active | undecided | blocked. Only active ones are offered in the
-    -- strategy builder. A disabled column is a recorded decision, not an
+    -- active | selectable | data-only | undecided | blocked. Active ones are
+    -- offered ticked in the strategy builder, selectable ones unticked. A disabled column is a recorded decision, not an
     -- absence, which is why the status travels with it.
     status VARCHAR(16) NOT NULL,
     cost VARCHAR(8) NOT NULL,

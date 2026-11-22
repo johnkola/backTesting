@@ -9,11 +9,13 @@ Column order comes from `feature_spec.column_index`, not from whatever order
 the rows happen to come back in. A model's weights are positional, so a set
 read back with its columns permuted would score nonsense while looking fine.
 
-Only `role = 'input'` columns are ever read into a matrix. A set also stores
-data-only columns (RSI, MACD, realized volatility: backTesting-02-Features.md B keeps them
-"computed and stored ... but kept out of the network"), and this module is the
-boundary that keeps them out. They are read by name from `feature_values` by
-whatever wants them for a chart or a rule; never through here.
+A set stores three roles. `input` columns are the default inputs: what a read
+with no columns named returns, so every set reads as it did before the other
+roles existed. `select` columns (RSI, MACD, realized volatility and two ratios;
+Design-Gaps C7, the author's decision 2026-11-19) are read only when a strategy
+names them. `data` columns are stored for charts and rules and never read into
+a matrix; this module is the boundary that keeps them out. No column has that
+role today.
 """
 
 from __future__ import annotations
@@ -115,8 +117,10 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     order someone ticked boxes. A name the set does not hold is an error here;
     deciding what to drop, and saying so, is `strategy_spec.resolve_columns`.
 
-    Input columns only, with or without `columns`: asking for a data-only column
-    is an error, not a quiet inclusion.
+    Without `columns` the read is the default inputs (role `input`) and nothing
+    else, so a set reads as it did before selectable columns existed. With
+    `columns`, a selectable column (role `select`) may be named and is read like
+    any input. Asking for a data-only column is an error, not a quiet inclusion.
     """
     cur.execute(
         "SELECT feature_name, role FROM feature_spec WHERE feature_set_id = %s "
@@ -129,6 +133,7 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     if not names:
         raise LookupError(f"feature set {set_id} has no feature_spec rows with role 'input'")
     if columns is not None:
+        names = [n for n, role in spec if role in ("input", "select")]
         data = sorted(set(columns) & data_only)
         if data:
             raise LookupError(
@@ -182,13 +187,15 @@ def read_matrix(cur, set_id: int, *, since: str | None = None,
     return FeatureMatrix(set_id=set_id, dates=dates, names=names, values=matrix)
 
 
-def column_names(cur, set_id: int) -> list[str]:
-    """The set's input columns in `feature_spec` order: what a strategy may
-    select, and what `read_matrix` reads."""
+def column_names(cur, set_id: int, *, selectable: bool = False) -> list[str]:
+    """The set's columns in `feature_spec` order. By default the inputs, which
+    is what `read_matrix` reads when no columns are named; with `selectable`,
+    the selectable columns too, which is everything a strategy may select."""
+    roles = ["input", "select"] if selectable else ["input"]
     cur.execute(
         "SELECT feature_name FROM feature_spec WHERE feature_set_id = %s "
-        "AND role = 'input' ORDER BY column_index",
-        (set_id,),
+        "AND role = ANY(%s) ORDER BY column_index",
+        (set_id, roles),
     )
     return [r[0] for r in cur.fetchall()]
 

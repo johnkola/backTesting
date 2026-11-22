@@ -81,6 +81,7 @@ def test_yahoo_errors_are_provider_errors_not_exits():
 def test_index_tickers_get_their_caret():
     assert yahoo.yahoo_symbol("vix") == "^VIX"
     assert yahoo.yahoo_symbol("^VXN") == "^VXN"
+    assert yahoo.yahoo_symbol("VIX3M") == "^VIX3M"
     assert yahoo.yahoo_symbol("DX-Y.NYB") == "DX-Y.NYB"
 
 

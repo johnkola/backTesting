@@ -9,17 +9,17 @@ import StageShell, { type StageState } from './StageShell'
 /** A disabled column is a recorded decision, not an absence — the badge says
  *  which decision, straight from features.toml.
  *
- *  "data only" is `status = "data-only"`, written out: the design keeps RSI,
- *  MACD and realized volatility computed and stored but out of the network,
- *  because the model already sees the bar they are derived from. It used to be
- *  read from a MISSING status, and that was wrong twice: `short-history` spent a
- *  release falling through to "data only", and the three real ones were never
- *  built at all while this badge said they were stored (G9). A disabled column
- *  with no status now says just that, "off". */
+ *  "selectable" is `status = "selectable"`: built and stored, trained on only
+ *  when a strategy ticks it (RSI, MACD, realized volatility and two ratios; the
+ *  author's decision 2026-11-19). "data only" is `status = "data-only"`: stored
+ *  for charts and rules, never an input; no column has it today. Both are
+ *  written out, never read from a MISSING status, which was wrong twice (G9).
+ *  A disabled column with no status says just that, "off". */
 function stateBadge(col: FeatureColumn) {
   if (col.enabled) return { label: 'in the model', cls: 'badge-success' }
   if (!col.status) return { label: 'off', cls: 'badge-ghost' }
   switch (col.status) {
+    case 'selectable': return { label: 'selectable', cls: 'badge-info' }
     case 'data-only': return { label: 'data only', cls: 'badge-info' }
     case 'blocked': return { label: 'blocked', cls: 'badge-error' }
     case 'not-imported': return { label: 'not imported', cls: 'badge-warning' }
@@ -67,6 +67,7 @@ export default function FeaturesStage() {
   const enabled = config.columns.filter((c) => c.enabled)
   const off = config.columns.filter((c) => !c.enabled)
   const dataOnly = off.filter((c) => c.status === 'data-only')
+  const selectable = off.filter((c) => c.status === 'selectable')
   const newest = data.sets[0] ?? null
   const stale = newest ? newest.schemaVersion !== config.schemaVersion : false
 
@@ -91,6 +92,7 @@ export default function FeaturesStage() {
           : stale
             ? `Newest set is schema v${newest.schemaVersion}, config declares v${config.schemaVersion}`
             : `${enabled.length} input columns built, ${config.inputWidth} values per bar`
+              + (selectable.length ? `, plus ${selectable.length} selectable` : '')
               + (dataOnly.length ? `, plus ${dataOnly.length} data only` : '')
       }
       detail={
@@ -104,8 +106,10 @@ export default function FeaturesStage() {
                 ({config.alignment.calendarSource}, {config.alignment.calendarTimeframe}), fill{' '}
                 <span className="font-mono">{config.alignment.fill}</span> to a maximum of{' '}
                 {config.alignment.maxFillDays} days. {off.length} further columns are defined
-                but out of the model{dataOnly.length
-                  ? `; ${dataOnly.length} of them are stored as data only`
+                but not default inputs{selectable.length
+                  ? `; ${selectable.length} of them are built and a strategy may select them`
+                  : ''}{dataOnly.length
+                  ? `; ${dataOnly.length} are stored as data only`
                   : ''}.
               </>
             )

@@ -46,10 +46,11 @@ class FakeCursor:
 D1, D2, D3 = date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)
 
 
-def spec_rows(*names, data=()):
+def spec_rows(*names, select=(), data=()):
     """`feature_spec` rows as read_matrix reads them: (name, role), the input
-    columns in order, then any data-only ones."""
-    return [(n, "input") for n in names] + [(n, "data") for n in data]
+    columns in order, then any selectable ones, then any data-only ones."""
+    return ([(n, "input") for n in names] + [(n, "select") for n in select]
+            + [(n, "data") for n in data])
 
 
 # --------------------------------------------------------------------------
@@ -186,12 +187,33 @@ def test_a_set_of_data_only_columns_has_nothing_to_train_on():
         fs.read_matrix(cur, 1)
 
 
+def test_a_selectable_column_is_read_only_when_it_is_named():
+    """The default read is the inputs alone, so a set reads as it did before
+    selectable columns existed, and a late selectable column's NULLs cost no
+    row. Named, the column is read in feature_spec order, and then its NULL
+    rows do drop."""
+    spec = spec_rows("alpha", "beta", select=("vix_term_structure",))
+    values = [(D1, "alpha", 1.0), (D1, "beta", 2.0), (D1, "vix_term_structure", None),
+              (D2, "alpha", 3.0), (D2, "beta", 4.0), (D2, "vix_term_structure", 0.7)]
+    fm = fs.read_matrix(FakeCursor(spec, values), 1)
+    assert fm.names == ["alpha", "beta"] and fm.dates == [D1, D2]
+    fm = fs.read_matrix(FakeCursor(spec, values), 1,
+                        columns=["vix_term_structure", "alpha"])
+    assert fm.names == ["alpha", "vix_term_structure"]
+    assert fm.dates == [D2]
+    assert fm.values.tolist() == [[3.0, pytest.approx(0.7)]]
+
+
 def test_column_names_and_data_columns_split_on_role():
-    """What a strategy may select is the inputs; the data-only names are read
-    separately so a run can say why it dropped one."""
+    """The default is the inputs; with `selectable`, everything a strategy may
+    select. The data-only names are read separately so a run can say why it
+    dropped one."""
     cur = FakeCursor([("alpha",)])
     assert fs.column_names(cur, 1) == ["alpha"]
-    assert "role = 'input'" in cur.last_sql
+    assert cur.last_params[1] == ["input"]
+    cur = FakeCursor([("alpha",), ("rsi_14",)])
+    assert fs.column_names(cur, 1, selectable=True) == ["alpha", "rsi_14"]
+    assert cur.last_params[1] == ["input", "select"]
     cur = FakeCursor([("rsi_14",)])
     assert fs.data_columns(cur, 1) == ["rsi_14"]
     assert "role = 'data'" in cur.last_sql

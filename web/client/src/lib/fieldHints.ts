@@ -212,11 +212,11 @@ export const fieldHints: Record<string, string> = {
     + 'disabled column is a recorded decision, not an absence, so it keeps its '
     + 'place in the table with the reason attached.',
   'features.active':
-    'Usable now, and the only ones the strategy builder offers.',
-  'features.dataOnly':
-    'Computed and stored in every feature set for charts and rule-based strategies, '
-    + 'but never fed to the network (RSI, MACD, realized volatility). The model already '
-    + 'sees the bar they are derived from.',
+    'Usable now, and ticked by default in the strategy builder.',
+  'features.selectable':
+    'Computed and stored in every feature set, and offered unticked in the strategy '
+    + 'builder: RSI, MACD, realized volatility, the VIX term structure and QQQ against '
+    + 'SPY. The model trains on one only when a strategy selects it.',
   'features.undecided':
     'Defined but not fed to the model — a history too short to be worth it, or a '
     + 'decision deferred until the free columns are proven. Nothing about them is '
@@ -264,9 +264,9 @@ export const fieldHints: Record<string, string> = {
     + 'coarser feature forward from its publication timestamp, so no bar ever '
     + 'sees a value before it was knowable.',
   'features.col.status':
-    'active | data-only | undecided | blocked. Only active columns are offered when '
-    + 'building a strategy. Data-only columns are stored for charts and rules but '
-    + 'never fed to the network.',
+    'active | selectable | undecided | blocked. Active columns are ticked by default '
+    + 'when building a strategy; selectable ones are built and offered unticked. The '
+    + 'others are not built.',
   'features.col.range':
     'The range this feature has on its OWN, read back from the stored values — not '
     + 'the overlap of the table. Features do not share one range, and the table is '
