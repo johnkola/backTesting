@@ -449,6 +449,12 @@ function RunSummary({ result, benchmark }: { result: RunResult, benchmark: boole
           </span>
         )}
         {benchmark && <span className="badge badge-neutral">rule benchmark</span>}
+        {/* R82: a return is never shown without its in-sample mark. */}
+        {result.inSample === true && (
+          <span className={tipClass} data-tip={result.inSampleNote ?? 'The model trained on these bars.'}>
+            <span className="badge badge-error cursor-help">in-sample</span>
+          </span>
+        )}
         <Verdict metrics={m} benchmark={benchmark} />
         <span className="ml-auto text-sm text-base-content/50">
           {result.startDate.slice(0, 10)} → {result.endDate.slice(0, 10)}

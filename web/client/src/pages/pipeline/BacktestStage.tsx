@@ -10,6 +10,7 @@ import DeleteResultRowButton from '../../components/DeleteResultRowButton'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
 import { mergeState } from '../../lib/stageStatus'
 import StageShell, { NotWired, type StageState } from './StageShell'
+import { sampleNote, sampleOf } from '../../lib/inSample'
 
 const LIMIT = 25
 
@@ -166,7 +167,18 @@ export default function BacktestStage() {
                   <td className="text-xs">{r.strategyName}</td>
                   <td className="font-mono text-xs">{r.instrumentSymbol}</td>
                   <td className="font-mono text-xs">{r.dataSource}</td>
-                  <td className="text-right">{pct(r.totalReturnPct)}</td>
+                  <td className="text-right">
+                    {pct(r.totalReturnPct)}
+                    {/* R82: a return is never shown without its in-sample mark. */}
+                    {sampleOf(r) === 'in' && (
+                      <span
+                        className="badge badge-xs badge-error ml-1 cursor-help"
+                        title={sampleNote(r) ?? ''}
+                      >
+                        in-sample
+                      </span>
+                    )}
+                  </td>
                   <td className="text-right text-base-content/70">{pct(r.buyAndHoldReturnPct)}</td>
                   <td className={`text-right font-medium ${
                     excess === null ? '' : excess > 0 ? 'text-success' : 'text-error'

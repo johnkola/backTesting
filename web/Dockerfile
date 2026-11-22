@@ -24,7 +24,7 @@ COPY docs/readonly-doc/backTesting-10-Getting-Started.md /app/docs/docs/readonly
 #
 # Not docs/reference/qqq-backtesting-model/: that is an earlier revision of these
 # same three documents and the registry deliberately no longer serves it.
-COPY ["docs/readonly-doc/backTesting-04-Architecture.md", "docs/readonly-doc/backTesting-03-Design-Notes.md", "docs/readonly-doc/backTesting-02-Features.md", "/app/docs/docs/readonly-doc/"]
+COPY ["docs/readonly-doc/backTesting-01-Requirements.md", "docs/readonly-doc/backTesting-04-Architecture.md", "docs/readonly-doc/backTesting-03-Design-Notes.md", "docs/readonly-doc/backTesting-02-Features.md", "/app/docs/docs/readonly-doc/"]
 
 ENV NODE_ENV=production
 ENV DOCS_DIR=/app/docs

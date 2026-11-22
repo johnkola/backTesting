@@ -235,7 +235,28 @@ public class EngineApi {
         new BacktestResultRepository(databaseManager).save(result);
         logger.info("Ran {} on {} ({}) via API", strategyName, symbol, timeframe);
 
-        return result;
+        return withSampleMark(result);
+    }
+
+    /**
+     * The run's result as JSON, plus whether it is in-sample (R82, G71).
+     *
+     * <p>The model's training window is not part of the stored result's JSON,
+     * so the Run tab showed a fresh return with no mark while Results marked
+     * the same row. {@code inSample} is true, false, or null when the window
+     * is unknown; it is absent for a strategy with no trained model.
+     * {@code inSampleNote} is the sentence the CLI prints.
+     */
+    static JsonObject withSampleMark(com.bazarbozorg.backtest.engine.BacktestResult result) {
+        JsonObject body = HttpSupport.GSON.toJsonTree(result).getAsJsonObject();
+        com.bazarbozorg.backtest.engine.ModelWindow window = result.getModelWindow();
+        if (window != null) {
+            java.time.LocalDate start = result.getStartDate().toLocalDate();
+            java.time.LocalDate end = result.getEndDate().toLocalDate();
+            body.addProperty("inSample", window.overlaps(start, end));
+            body.addProperty("inSampleNote", window.describe(start, end));
+        }
+        return body;
     }
 
     // ---- DELETE /api/results/{id} -------------------------------------------

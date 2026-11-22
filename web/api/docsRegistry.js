@@ -9,11 +9,12 @@
 //
 // The first two are the project's own docs (docs/readonly-doc/backTesting-10-Getting-Started.md and the
 // repo-root README.md): how to operate it,
-// and what to type. The last three are the QQQ model's design set, which
+// and what to type. The last four are the QQQ model's design set, which
 // describes the model rather than this codebase (backTesting-04-Architecture.md §8.1a asks for
-// them on the Docs tab).
+// them on the Docs tab; R59: "the whole design set, Requirements included",
+// which is `backTesting-01-Requirements.md`, added 2026-11-22, G64).
 //
-// Those three come from `docs/readonly-doc/`. The author maintains the design
+// Those four come from `docs/readonly-doc/`. The author maintains the design
 // set there (backTesting-01 to -04) by hand and nothing in this repo may write
 // to it; the trackers and Getting Started (-05 to -10) share the folder and are
 // edited as usual. The design set supersedes
@@ -38,6 +39,11 @@
 const DOCS = {
   GETTING_STARTED: { file: 'docs/readonly-doc/backTesting-10-Getting-Started.md', label: 'Getting Started', slug: 'getting-started' },
   README: { file: 'README.md', label: 'README', slug: 'readme' },
+  QQQ_REQUIREMENTS: {
+    file: 'docs/readonly-doc/backTesting-01-Requirements.md',
+    label: 'QQQ Requirements',
+    slug: 'qqq-requirements',
+  },
   QQQ_DESIGN: {
     file: 'docs/readonly-doc/backTesting-03-Design-Notes.md',
     label: 'QQQ Design Notes',

@@ -3538,7 +3538,7 @@
                   "    // 301 to qqq-architecture for back-compat.",
                   "    const slugs = pm.response.json().items.map(d => d.slug);",
                   "    pm.expect(slugs).to.include.members(",
-                  "        ['getting-started', 'readme', 'qqq-design', 'qqq-architecture', 'qqq-features']);",
+                  "        ['getting-started', 'readme', 'qqq-requirements', 'qqq-design', 'qqq-architecture', 'qqq-features']);",
                   "    pm.expect(slugs).to.not.include('architecture');",
                   "});"
                 ]

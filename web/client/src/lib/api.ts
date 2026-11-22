@@ -666,6 +666,12 @@ export type RunResult = {
   modelCacheKey: string | null
   modelCacheHit: boolean | null
   modelVersionId: string | null
+  /** On a fresh run of a model strategy (R82): true when the tested window
+   *  overlaps the model's training window, null when that window is unknown.
+   *  Absent on a stored result's `result`, whose row carries `inSample`. */
+  inSample?: boolean | null
+  /** The sentence naming both windows, as the CLI prints it. */
+  inSampleNote?: string
 }
 
 export type AuditRequest = {

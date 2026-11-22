@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-1** · 2026-11-22 11:45 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-2** · 2026-11-22 11:53 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -123,7 +123,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 - **R76** A signal from a bar's close trades at the next bar's open, for every engine and benchmark. · *done (B1, B6)*
 - **R80** Default windows: train from 2003, walk-forward validation 2016 to 2021 with one fold per year, test 2022 onward. No label may read prices across a window boundary: training is purged before validation, and validation before test. [DN, B5, G38] · *done (B5, G37, G38)*
 - **R81** Three objectives run as separate experiments: total return, risk-adjusted return, drawdown avoidance. The winner is chosen on the validation folds; the test block is touched once, to confirm, never to choose. [DN] · *partial (the three objectives exist; no stored run uses Sharpe or drawdown, nothing picks the winner, and "touched once" is warned, not enforced)*
-- **R82** A backtest of a model over bars inside its own training window is marked in-sample wherever the result is shown. [B4] · *partial (marked on Results, the result page and the CLI; not on the Run tab's summary or the Pipeline Backtest table)*
+- **R82** A backtest of a model over bars inside its own training window is marked in-sample wherever the result is shown. [B4] · *done (B4, G71)*
 - **R83** Profit-step accounting: slippage moves the price, commission is charged on the slipped price; an entry is sized so price plus commission fits the cash; every run closes its position at the last bar; a zero-P&L trade is neither win nor loss; a metric with no value shows a dash, never 0; Sortino uses downside deviation. [B2, B3] · *partial (the dash holds for Sortino and profit factor; Sharpe, win rate and Calmar still show 0)*
 
 ## F. Results
@@ -139,7 +139,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 - **R41** Tabs: Pipeline, Sources, Instruments, Imports, Features, Strategy, Train & Run, Results, Models, Verify, Docs. · *partial (no Verify tab, G10; Train and Run are two tabs, G58)*
 - **R42** Instrument-agnostic: instrument selector everywhere, no screen assumes QQQ. · *partial (G56)*
 - **R46** Verify tab: follow any number back to the raw provider row, six hops: result → run → training run → feature value → feature run → raw row and its archived CSV line. Every table cell and chart point opens it. · *missing (G10)*
-- **R59** Carried over: service health gate with maintenance page, live docs with revision history. The Docs tab shows the whole design set, Requirements included. · *partial (G64: the Requirements doc is not on Docs)*
+- **R59** Carried over: service health gate with maintenance page, live docs with revision history. The Docs tab shows the whole design set, Requirements included. · *done (G64)*
 - **R84** The Pipeline tab shows six stages in order: Data, Features, Normalization, Split, Training, Backtest. Each has a validation gate and does not hand off until it passes; each shows status (idle, running, passed, failed, stale), its validation result and its output. A parameter change marks its stage and everything downstream stale; unchanged stages reuse their output. [DN] · *partial (a stage's state does not stop the next stage, except a check error, R12)*
 - **R85** Training is visible while it runs: current fold and epoch, loss curve, elapsed and estimated time, fold results against buy-and-hold as they land. A run with NaN or non-decreasing loss fails its gate. [DN] · *partial (a loss that does not fall is shown and does not fail the run)*
 
@@ -178,12 +178,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-88 numbers: 2 retired, 86 live. By the first status on each line, verified 2026-11-22: done 19 · partial 47 · missing 9 · deferred 6 · departure 3 · gated 2.
+88 numbers: 2 retired, 86 live. By the first status on each line, verified 2026-11-22: done 21 · partial 45 · missing 9 · deferred 6 · departure 3 · gated 2.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-2 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | R59 and R82 done (G64, G71); the count follows |
 | 2026-11-22-1 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Every status verified against the code at `db6d42f`: 29 changed. The author's answers of 2026-11-19 written into R12, R19, R21, R25, R65 and R78; "Decisions needed" replaced by "Decided"; two statuses added, departure and deferred; the count redone; no longer a draft |
 | 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | Header path follows the move into `docs/readonly-doc/`; requirement text unchanged |
 | 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Renamed from `REQUIREMENTS-CONSOLIDATED.md`; references to the other renamed docs follow; requirement text unchanged |

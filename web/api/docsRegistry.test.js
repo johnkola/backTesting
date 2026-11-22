@@ -115,7 +115,7 @@ describe('docs registry', () => {
     // training window only, per fold. Serving the old copy would publish a
     // description of a data leak, so pointing back at it is a failure, not
     // just a stale path.
-    for (const key of ['QQQ_DESIGN', 'QQQ_ARCHITECTURE', 'QQQ_FEATURES']) {
+    for (const key of ['QQQ_REQUIREMENTS', 'QQQ_DESIGN', 'QQQ_ARCHITECTURE', 'QQQ_FEATURES']) {
       assert.ok(DOCS[key], `${key} is not registered`);
       assert.ok(
         DOCS[key].file.startsWith(DESIGN_DOC_DIR),
