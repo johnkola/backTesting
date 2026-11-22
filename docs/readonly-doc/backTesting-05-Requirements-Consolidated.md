@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-2** · 2026-11-22 11:53 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-3** · 2026-11-22 11:57 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -128,9 +128,9 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## F. Results
 
-- **R38** Results show metrics, equity curve, trades and predictions per bar, plus the costs used. · *partial (G50, G57)*
+- **R38** Results show metrics, equity curve, trades and predictions per bar, plus the costs used. · *partial (predictions per bar are stored and not shown, G50; a result does not keep its cost settings, G40)*
 - **R39** Total trades, trades per year, average holding time, max drawdown and Sharpe for the strategy and all three benchmarks. · *done*
-- **R40** Side-by-side comparison of runs by feature list, windows and metric. · *partial (G57: no compare view)*
+- **R40** Side-by-side comparison of runs by feature list, windows and metric. · *done (G57: walk-forward runs, up to four side by side)*
 - **R72** Each run is scored against a naive predictor on the same test window (always up; historical mean return) and flagged if it does not beat it. · *partial (B8 done; a Run-tab result is not scored against it)*
 - **R74** Every engine and benchmark has a catalogue entry (name, kind, library and version, description, what checks it), shown on Strategy, Results, Docs and in tooltips. · *partial (G63: the three engines have entries, on the Strategy tab; the benchmarks have none)*
 
@@ -178,12 +178,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-88 numbers: 2 retired, 86 live. By the first status on each line, verified 2026-11-22: done 21 · partial 45 · missing 9 · deferred 6 · departure 3 · gated 2.
+88 numbers: 2 retired, 86 live. By the first status on each line, verified 2026-11-22: done 22 · partial 44 · missing 9 · deferred 6 · departure 3 · gated 2.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-3 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | R40 done (G57); R38's reason follows; the count follows |
 | 2026-11-22-2 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | R59 and R82 done (G64, G71); the count follows |
 | 2026-11-22-1 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Every status verified against the code at `db6d42f`: 29 changed. The author's answers of 2026-11-19 written into R12, R19, R21, R25, R65 and R78; "Decisions needed" replaced by "Decided"; two statuses added, departure and deferred; the count redone; no longer a draft |
 | 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | Header path follows the move into `docs/readonly-doc/`; requirement text unchanged |

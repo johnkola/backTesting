@@ -18,6 +18,7 @@ import FeaturesPage from './pages/FeaturesPage'
 import StrategyPage from './pages/StrategyPage'
 import TrainPage from './pages/TrainPage'
 import ResultDetailPage from './pages/ResultDetailPage'
+import CompareRunsPage from './pages/CompareRunsPage'
 import ModelsPage from './pages/ModelsPage'
 import DocsPage from './pages/DocsPage'
 import DocHistoryPage from './pages/DocHistoryPage'
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="/strategy" element={<StrategyPage />} />
             <Route path="/train" element={<TrainPage />} />
             <Route path="/results" element={<ResultsPage />} />
+            <Route path="/results/compare" element={<CompareRunsPage />} />
             <Route path="/results/:id" element={<ResultDetailPage />} />
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/docs" element={<Navigate to="/docs/getting-started" replace />} />

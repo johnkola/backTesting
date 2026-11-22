@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-4** · 2026-11-22 11:53 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-5** · 2026-11-22 11:57 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -796,8 +796,10 @@ import or a build (C2), and the requirements doc verified against the code
    summary and the Pipeline Backtest table (R82) and the Requirements doc on the Docs
    tab (R59) are done; a dash instead of 0 for Sharpe, win rate and Calmar with no value
    (R83, G72) is left, and it changes stored figures, so it has its own plan.
-3. Phase one's leftovers that phase two will want too: walk-forward runs on Results (G57),
-   results that keep their run settings (G40), folds that keep their models (G50).
+3. Phase one's leftovers that phase two will want too: results that keep their run
+   settings (G40) and folds that keep their models (G50). Walk-forward runs are on
+   **Results** now, under the backtests, and up to four can be ticked and compared side
+   by side by features, windows and metric (G57).
 
 The author's decisions of 2026-11-19 are recorded in
 [`docs/readonly-doc/backTesting-06-Questions-for-John.md`](docs/readonly-doc/backTesting-06-Questions-for-John.md): FirstRate Data is the intraday
@@ -1302,6 +1304,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-5 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | Roadmap: walk-forward runs on Results and the compare page are done (G57) |
 | 2026-11-22-4 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | `POST /api/run` answers `inSample`; roadmap: G64 and G71 done |
 | 2026-11-22-3 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Roadmap: the 2026-11-19 work list is done; Next follows the verified requirements |
 | 2026-11-22-2 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Data checks have a severity and an error is a hard stop (C2, D11): refusal, override and where each is typed |

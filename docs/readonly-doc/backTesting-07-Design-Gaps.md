@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-22-6** · 2026-11-22 11:53 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-7** · 2026-11-22 11:57 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -84,7 +84,7 @@ stored run.
 | G54 | The builder saves strategies the runner refuses: the `single` and `kfold_time` schemes, non-D1 timeframes, instruments with no feature set, and windows off year boundaries. `trainSplitRatio` is offered and never used. The model list is Node's own constant, not read from the runner | R22 | `strategies.js` `MODEL_TYPES` and scheme list against `strategy_spec.fold_plan` | none | S | done 2026-11-21: a save is checked by the runner; see the job 4 record (it also corrects this row: `trainSplitRatio` is used, by the Train and Run pages) |
 | G55 | The coverage grid covers the train window only, as marks and a warning rather than a feature-by-window grid; a strategy can be cloned only from its newest version, never from an older one or from a run | R26, R27 | `StrategyPage.tsx` (coverage over train only, `latest: true`); `CoverageWarning.tsx` | none | S | open |
 | G56 | Not instrument-agnostic in practice. `scope` is a label: the instrument-scoped series are hard-coded to QQQ, only QQQ has a feature set, there is no app-wide instrument selector, and Strategy 2 refuses anything but QQQ | R18, R42 | `features.toml` `[alignment]` and instrument series; `Layout.tsx` (timeframe picker only) | none | L | open |
-| G57 | Results: walk-forward runs never reach Results; there is no side-by-side comparison by feature list, windows and metric; no trades per year or average holding time; buy-and-hold has a return but no Sharpe or drawdown | R38, R39, R40 | `ResultsPage.tsx`, `ResultDetailPage.tsx`; `benchmarks` columns | none | M | open |
+| G57 | Results: walk-forward runs never reach Results; there is no side-by-side comparison by feature list, windows and metric; no trades per year or average holding time; buy-and-hold has a return but no Sharpe or drawdown | R38, R39, R40 | `ResultsPage.tsx`, `ResultDetailPage.tsx`; `benchmarks` columns | none | M | done 2026-11-22. Of the four parts, two were already built (trades a year and average hold; buy-and-hold's Sharpe and drawdown: `BenchmarkTable.tsx`, B6). Built now: (1) Results lists the walk-forward runs under the backtests (`WalkforwardResults.tsx`), with the Training tab's figures and its verdict and below-naive badges; (2) up to four can be ticked and opened side by side at `/results/compare?runs=...` (`CompareRunsPage.tsx`, `lib/compareRuns.ts`): how each was set up, with the rows that differ marked, the metrics, excess fold by fold, and the features shared and only in one. Client only: the list route already carried every field. Live data checked for runs 785, 1101 and 1077 (1077's five extra columns are the selectable ones). Not looked at in a browser. Validation runs only, as on the Training tab |
 | G58 | Train and Run are still two tabs, each with its own ad hoc form; the design has one Train & Run tab that runs a saved strategy with no choices | R33, R41 | `Layout.tsx`, `TrainPage.tsx` ("the ad-hoc path"), `RunPage.tsx` | none | M | open |
 | G59 | Tooltips come from three dictionaries plus about 29 hard-coded `data-tip` strings, and the nav tabs and the Pipeline sub-tabs have none | R43 | `fieldHints.ts`, `metricHints.ts`, `cohesionHints.ts` | none | S | open |
 | G60 | Testing layers the design asks for: React Testing Library component tests, Postman run in CI by Newman and mirroring JUnit endpoint tests, one scripted end-to-end path, Python job-layer tests, a reproducibility test (same seed and snapshot give the same model and predictions), and indicators checked against published values. G15 was closed with these left out | R50, R51, R52, R61 | `ci.yml` (no Newman step); `package.json` (no RTL); `../../tools/datagen/pipeline.py` is manual | none | L | open |
@@ -1002,7 +1002,7 @@ The readonly design set is the author's to update where an answer departs from i
 
 *B. What phase two needs from phase one's leftovers.*
 
-- [ ] G57, M: walk-forward runs on Results, with side-by-side comparison. The intraday runs 1015 and 1016 can be seen only on the Training tab and in the database.
+- [x] G57, M: walk-forward runs on Results, with side-by-side comparison. The intraday runs 1015 and 1016 can be seen only on the Training tab and in the database.
 - [ ] G50, M: a fold keeps its model and scaler. A live signal from a walk-forward model needs it.
 - [ ] G40, M, then G41, S: a stored result keeps its run settings; the staleness check reads through the feature table. Result 817 stays flagged stale until G40.
 - [ ] G42, S: the span backfill checks for a fix between the run and the backfill.
@@ -1221,8 +1221,8 @@ Verified 2026-11-22 against the code, the tests and the database at commit `db6d
 
 | Status | Count | Requirements |
 |---|---|---|
-| done | 21 | R7, R8, R9, R10, R11, R13, R14, R16, R19, R23, R24, R35, R37, R39, R47, R59, R71, R76, R80, R82, R86 |
-| partial | 45 | R1, R2, R4, R5, R12, R15, R17, R18, R20, R21, R22, R25, R26, R27, R28, R29, R32, R34, R36, R38, R40, R41, R42, R43, R45, R49, R50, R51, R52, R55, R61, R65, R68, R69, R72, R74, R75, R77, R78, R79, R81, R83, R84, R85, R88 |
+| done | 22 | R7, R8, R9, R10, R11, R13, R14, R16, R19, R23, R24, R35, R37, R39, R40, R47, R59, R71, R76, R80, R82, R86 |
+| partial | 44 | R1, R2, R4, R5, R12, R15, R17, R18, R20, R21, R22, R25, R26, R27, R28, R29, R32, R34, R36, R38, R41, R42, R43, R45, R49, R50, R51, R52, R55, R61, R65, R68, R69, R72, R74, R75, R77, R78, R79, R81, R83, R84, R85, R88 |
 | missing | 9 | R30, R31, R44, R46, R56, R57, R58, R63, R64 |
 | deferred to the stack move (C1) | 6 | R6, R33, R48, R60, R67, R70 |
 | departure, by the author's decision | 3 | R3, R62, R66 |
@@ -1960,6 +1960,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-7 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | G57 done: walk-forward runs on Results, and the compare page |
 | 2026-11-22-6 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | G64 and G71 done; G72 re-sized to M with why |
 | 2026-11-22-5 | 2026-11-22 11:47 | Claude Code (Claude Fable 5.2) | Job 9 done: the requirements doc rewritten to the verified statuses; D2, D11, D13, D14 closed; G71 to G74 added |
 | 2026-11-22-4 | 2026-11-22 11:42 | Claude Code (Claude Fable 5.2) | Job 9, steps 9.1 and 9.2: every requirement's status checked against the code, and the table of differences |

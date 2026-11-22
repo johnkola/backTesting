@@ -8,6 +8,7 @@ import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import DeleteResultRowButton from '../components/DeleteResultRowButton'
 import Pagination from '../components/Pagination'
+import WalkforwardResults from '../components/WalkforwardResults'
 import { tipClass } from '../components/FieldLabel'
 import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 import { useTimeframe } from '../lib/useTimeframe'
@@ -226,6 +227,8 @@ export default function ResultsPage() {
           <Pagination total={data.total} limit={data.limit} offset={data.offset} onChange={setOffset} />
         </>
       )}
+
+      <WalkforwardResults timeframe={tf} />
     </section>
   )
 }
