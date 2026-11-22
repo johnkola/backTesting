@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-22-3** · 2026-11-22 11:33 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-5** · 2026-11-22 11:47 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -47,12 +47,12 @@ chain). The pass waits for the author's go.
 | # | Conflict | One side | The other side | Stored data it touches |
 |---|---|---|---|---|
 | D9 | Do engines learn costs, tax and margin? **Decided 2026-11-15 by the author: R75**, engines blind, profit recalculated on demand. **Built 2026-11-15 (B10)**: see the B10 record | R75 and Architecture §5: engines "know nothing about costs, tax or margin"; changing a setting recalculates profit without retraining. R32 says the same for margin | `backTesting-03-Design-Notes.md` "Tax and Trading Costs": "the tax must be inside the signal the model learns from, not applied afterward"; "Strategy 2": margin costs "belong inside the scoring … so the model only values a margin trade that clears its full real cost". The code follows Design Notes: every money loss trains on commission (`money_loss.py`), and `--tax-train` and `--margin-train` change the signals | runs 374, 375, 376, 377, 378 (money losses; 375 and 378 trained with tax, 377 with margin); strategy versions 31 to 34, 36, 37. phase1-full v4, the strategy being judged, trains with tax |
-| D2 (updated) | Null padding | R3: "no trimming to overlap, no null padding" | `schema.sql`: "value is NULLABLE on purpose". The database confirms what D2 called unconfirmed: set 27 holds 9,565 NULL rows of 264,670, every column spans the whole calendar from 1999-03-10, and the NULLs include padding before each series starts (`ndx_net_income_qoq` 3,013, `earnings_season_*` 1,166, `vxn_*` 532), not only warm-up. Waived for step 2 on 2026-11-14 | every feature set |
+| D2 (updated) | Null padding. **Decided 2026-11-19 by the author: keep NULLs, dropped at read; a departure from R3** | R3: "no trimming to overlap, no null padding" | `schema.sql`: "value is NULLABLE on purpose". The database confirms what D2 called unconfirmed: set 27 holds 9,565 NULL rows of 264,670, every column spans the whole calendar from 1999-03-10, and the NULLs include padding before each series starts (`ndx_net_income_qoq` 3,013, `earnings_season_*` 1,166, `vxn_*` 532), not only warm-up. Waived for step 2 on 2026-11-14 | every feature set |
 | D10 | Is raw data immutable? **Decided 2026-11-15 by the author: every archived CSV version is kept**, so any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider (G66, G67) | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `../../data/csv-archive` |
-| D11 | Do checks stop the chain? | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
+| D11 | Do checks stop the chain? **Decided 2026-11-19 by the author: errors stop, warnings continue. Built 2026-11-22 (job 8), with the narrow rule: a contradicting bar, a duplicate, an out-of-order timestamp** | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
 | D12 | Keep old feature values? **Decided 2026-11-15 by the author: no.** Feature values are rebuilt on demand from the stored inputs, which D10 keeps reloadable, so a rebuild replacing a set's values stays. Architecture §4 and R20 ("earlier values stay") remain a departure until the author updates them | Architecture §4 and R20: "earlier values stay, each tied to its run"; every value row points at its run | G3 progress: "Not done, by decision: keeping old values"; a rebuild replaces a set's values (`feature_build.py`), and `feature_values` has no build id | every feature set |
-| D13 | Deeplearning4j and ONNX check (R62) | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `../../build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
-| D14 | Indicators from TA-Lib (R66) | R66: TA-Lib through one shared module, for features and benchmarks | `nn/indicators.py` is hand-written "TA4J-compatible … line up bit-for-bit with the Java side" | every set's RSI, MACD and moving-average columns |
+| D13 | Deeplearning4j and ONNX check (R62). **Decided 2026-11-19 by the author: drop it, PyTorch only; a departure from R62** | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `../../build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
+| D14 | Indicators from TA-Lib (R66). **Decided 2026-11-19 by the author: keep the hand-written indicators; a departure from R66** | R66: TA-Lib through one shared module, for features and benchmarks | `nn/indicators.py` is hand-written "TA4J-compatible … line up bit-for-bit with the Java side" | every set's RSI, MACD and moving-average columns |
 
 **The author's principle, 2026-11-15.** "Anything that can recalculate should be recalculated by demand or code change", and "any data can be repopulated: if you have the original CSV, or if pulling from an API, it can be done on demand". So a derived figure is never baked in where only a retrain could redo it, and raw data can always be rebuilt from its source. D9 follows from it. It also bears on two open rows:
 - **D12 (keep old feature values):** values that can be rebuilt on demand need not be kept, provided their inputs can be.
@@ -98,6 +98,10 @@ stored run.
 | G68 | The parked return is a bar early. While a fold is out of the market its money earns the parked rate, but `park_series` gives bar i the move from the date before i to i, while the equity return it replaces runs from i to the next date. With bonds that credits a day out with a move from the day before, when the money may still have been in equities | none: parking is the code's own setting (`--park`, the strategy's `park`), not in `` | `walkforward.park_series` (`out[i]` from `carried[i - 1]` to `carried[i]`); `simulate` adds `park[i]` beside `returns[i]`, which is `close[i + 1] / close[i] - 1` | none: all 9 runs park in cash, whose return is 0 either way | S | done 2026-11-15 in B10: `profit.park_returns` spans each bar's two dates; `test_profit.TestParkedReturn` |
 | G69 | The docs link to a page that no longer exists. README (three places) and GETTING-STARTED point at `/docs/architecture`, for "How to read a result" and "Known limitations". The project's ARCHITECTURE.md was deleted when `` became the design set, so the slug is not in the `DOCS` registry and the links are 404s. The limitations they promise are listed nowhere now | none (project docs) | `../../README.md` lines 166, 509, 1015; `backTesting-10-Getting-Started.md` §5; `web/api/docsRegistry.js` has no `architecture` slug | none | S | done 2026-11-17: see the G69 record in Pass 4 |
 | G70 | An engine cannot train on a subset of the strategy's features. R21 lets an engine override the strategy's feature list with its own subset, recorded on its engine row and its run result; every engine reads the strategy's list | R21 | `nn/engines.py`, `strategy_engines` (no feature column) | none | S | open: found during B9 |
+| G71 | A result's return is shown without its in-sample mark in two places: the Run tab's summary right after a run, and the Pipeline Backtest table | R82 | `RunPage.tsx` `RunSummary`, `BacktestStage.tsx`; found by the verification of 2026-11-22 | none | S | open |
+| G72 | A metric with no value shows 0, not a dash: Sharpe with under two returns or no variance, win rate with no decided trade, Calmar with no drawdown. Sortino and profit factor already show a dash | R83 | `MetricsCalculator.calculateSharpeRatio`, `profit.sharpe`; found by the verification of 2026-11-22 | stored results keep their 0 until rescored | S | open |
+| G73 | The Nasdaq-100 member series are not fed: 101 symbols stored under `yahoo` end 2026-11-06 (WBD 2026-10-05). The breadth feed refreshes its own cache, so the features are current; the stored member candles are not | R86 | `feeds/registry.py`; `candles`; found by the verification of 2026-11-22 | the member candles | S | open: feed them, or say on Instruments that they are a one-time import |
+| G74 | The three objectives are not all run, and the test block is not guarded: all 15 stored runs use `return`; nothing picks a winner on the folds; a second holdout run is warned, not refused; Run-tab backtests have read saved test windows 83 times | R81, R69 | `walkforward_runs.objective`; `test_window_looks`; found by the verification of 2026-11-22 | none | M | open; the author says whether "touched once" is to be enforced |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
 
@@ -976,7 +980,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 6. C6: the sliding window option (M)
 - [x] 7. C8: the rule strategies as benchmarks only (S)
 - [x] 8. C2: severities and the hard stop (M)
-- [ ] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
+- [x] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
 - [ ] 10. Then the earlier list: G57, G50, G40 and G41, and the small ones
 
 **Implementation plan, reviewed 2026-11-21 18:10.** The author asked for a review of the docs and the code and for this plan to be brought up to date. It keeps the work order above and adds what the review found. Items marked *checked* were looked at in the code or the database today. Everything else is carried from this tracker's rows as they stand, and job 9 is where each is re-verified.
@@ -994,7 +998,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 6. A sliding window beside the expanding one (C6), M. The runner has the expanding window only (*checked*: `walkforward.make_folds`). Length and step are saved on the strategy; existing strategies do not change. The save-time check from job 4 (`strategy_spec`) is where the new rules go.
 - [x] 7. The five rule strategies as benchmarks only (C8), S. **C8 has no row in this tracker yet** (*checked*), which the author asked for (Q3); it gets one with this job.
 - [x] 8. Data checks with a severity, and errors that stop the chain (C2, D11), M.
-- [ ] 9. The requirements doc: every status re-verified against the code, the answers written in, the draft mark removed, M. With it, this tracker's decision rows are brought up to date: D2, D3, D11, D13 and D14 still read `decision` or `open` though all were answered on 2026-11-19, and `backTesting-05` still shows R22 as partial.
+- [x] 9. The requirements doc: every status re-verified against the code, the answers written in, the draft mark removed, M. With it, this tracker's decision rows are brought up to date: D2, D3, D11, D13 and D14 still read `decision` or `open` though all were answered on 2026-11-19, and `backTesting-05` still shows R22 as partial.
 
 *B. What phase two needs from phase one's leftovers.*
 
@@ -1090,13 +1094,69 @@ Done when: a file with a broken bar is refused with the reason, the same file go
 
 `backTesting-05-Requirements-Consolidated.md` holds 89 requirement lines (R1 to R76 and R77 to R88, with retired numbers listed). Its statuses were copied from this tracker and never checked.
 
-- [ ] 9.1 Read-only pass, one section of the doc at a time (A to J): for each requirement, the status the code supports today, with the file, test or stored row that shows it. No doc is edited in this step
-- [ ] 9.2 The differences as one table: requirement, status in the doc, status found, evidence. **STOP**: the author reads it before anything is rewritten
-- [ ] 9.3 The author's 14 answers of 2026-11-19 written into the requirement text they change, and "Decisions needed" emptied into a "Decided" table with the dates. Where an answer departs from the design set (C3, C4, C5, C1's timing) the requirement says "departure, by the author's decision"; the design set itself is the author's to change and is not touched
-- [ ] 9.4 This tracker brought into line: D2, D3, D11, D13 and D14 closed with their answers; the "Status per requirement" table replaced by the verified one; any gap found done or newly found gets its row
-- [ ] 9.5 `AGENTS.md`: a condition marked "not built" that is now built is ticked or re-worded, with the evidence
-- [ ] 9.6 The draft mark removed, the status note rewritten to "verified against the code at commit X on date Y", and the count section recounted
-- [ ] 9.7 README roadmap: Next is what the verified list says is next
+- [x] 9.1 Read-only pass, one section of the doc at a time (A to J): for each requirement, the status the code supports today, with the file, test or stored row that shows it. No doc is edited in this step. *Done 2026-11-22 11:42, at commit `db6d42f`. Four read-only passes, one per group of sections (A to B2, C and D, E and F, G to J), each against the code, the tests and the database; five of the findings were then checked again by hand (R82, R83, the stale Backtest note, the stale tax hint, the unfed member series) and held. No doc was edited*
+- [x] 9.2 The differences as one table: requirement, status in the doc, status found, evidence. **STOP**: the author reads it before anything is rewritten. *The table is below (2026-11-22 11:42). The author read it and said "go on" (2026-11-22)*
+
+  *Verified status of the 86 live requirements: done 19 · partial 47 · missing 9 · deferred by the author's C1 answer 6 · departure by the author's decision 3 · gated 2. The doc says done 19 · partial 38 · missing 18 · conflict 8 · gated 3. The 19 done are not the same 19.*
+
+  *Status changes (29 requirements; the other 57 keep their status, some with a new reason, listed after):*
+
+  | R | In the doc | Found | Evidence, and what is left |
+  |---|---|---|---|
+  | R2 | conflict (G66, G67) | partial | D10 decided for the requirement; it is unbuilt, not contested. A fix overwrites the older slice's archive file (`csv_import.write_archive_files`), and nothing reloads a version in one action |
+  | R3 | conflict (C3) | departure, decided | The author's C3 answer keeps NULLs, dropped at read. 479,071 of 12.8 million stored feature values are NULL |
+  | R6 | conflict (C1) | deferred, decided | The UI never touches the database (it calls the Node API only). The designed split waits for the stack move, after phase two |
+  | R11 | partial (G46) | done | G46 closed 2026-11-15: `imports_api.delete_import`, `test_undo_integration.py` |
+  | R12 | partial; conflict (C2) | partial | The stop is built (job 8). Left: Pandera, exchange_calendars, a `data_checks` table (none exists; findings live in the response and the feed run), and row rules re-run after features |
+  | R15 | conflict (G52) | partial | Same archive and audit shape, one parser per provider. Left: a raw series table (all 17 FRED, BoC and computed series are degenerate D1 candles); dividends and USD/CAD are not ingested at all |
+  | R65 | missing; conflict (C2) | partial | Error stops, warning continues, override recorded with who, why and how many. Left: per-row columns per tool. "Two or more flags = error" is not used, by the author's choice of 2026-11-22 |
+  | R66 | conflict (C5) | departure, decided | Hand-written `nn/indicators.py`, shared by features and benchmarks; no TA-Lib |
+  | R79 | done | partial | Nothing enters raw. But each feature names its method by hand in `features.toml`; nothing picks a method from a type tag |
+  | R21 | missing (B9) | partial | B9 built 2026-11-16: three engines, a child row and a switch each, one result per engine and benchmark. Left: per-engine feature override (G70); the network's settings sit on the strategy row, not its child row |
+  | R23 | missing (B9) | done | One `Engine(...)` entry in `nn/engines.py`; the form and the card are generated from it. A new engine still needs its trainer branch |
+  | R32 | done (B10) | partial | All built but one clause: interest "at the rate for the account currency" is always Fed funds, since there is no account currency (R57) |
+  | R33 | conflict (G58) | deferred, decided | Pipeline > Training starts a saved strategy with no choices; the Train and Run tabs keep their ad hoc forms until after phase two (C1) |
+  | R37 | partial | done | `walkforward_folds.levered_return`, the `TIMING` line, the "leverage, not timing" badge (G25) |
+  | R69 | missing (G48) | partial | G48 closed 2026-11-16: `test_window_looks`, the "test window reused" badge on Results. Left: a walk-forward holdout rerun is said in the terminal only; the UI shows "holdout". Reuse is flagged, never refused |
+  | R70 | missing (C1) | deferred, decided | Nothing built; waits for the jobs table |
+  | R71 | missing (G49) | done for walk-forward | Three targets in `nn/label_kinds.py`, recorded on the run (runs 855, 856). The single-split Train tab is 3-class only |
+  | R80 | partial (G37, G38) | done | Both closed 2026-11-16: `nn/split.py`, `trim_to_window`. The default test block ends 2026-06-30, not "onward" |
+  | R81 | done | partial | The three objectives exist, but all 15 stored runs use `return`; nothing picks a winner on the folds; "touched once" is warned, not enforced, and Run-tab backtests have read the test window 83 times |
+  | R82 | done | partial | Marked on Results, the result page and the CLI. Not marked on the Run tab's summary right after a run, nor on the Pipeline Backtest table |
+  | R83 | done | partial | "A dash, never 0" holds for Sortino and profit factor only; Sharpe with no variance (`profit.sharpe`), win rate with no decided trade and Calmar with no drawdown return 0 |
+  | R39 | partial (G57) | done | `BenchmarkTable.tsx`: the six figures for the strategy and the three benchmarks, on the result page and the Training tab |
+  | R74 | missing (G63) | partial | The three engines have entries, shown on the Strategy tab. Left: buy-and-hold, Faber and dual momentum; Results, Docs and tooltips |
+  | R59 | done | partial | Health gate and live docs are built. The Requirements doc is not on the Docs tab (G64, open) |
+  | R62 | conflict (C4) | departure, decided | PyTorch only; the author dropped the Deeplearning4j and ONNX check (D13) |
+  | R48 | conflict (C1) | deferred, decided | Node, React and Vite, the Java engine and the Python loader over HTTP; the move waits |
+  | R60 | missing (C1) | deferred, decided | One schema, one user |
+  | R67 | missing (C1) | deferred, decided | No jobs table; a saved strategy is never overwritten (every save is a new version), and nothing rejects a stale save |
+  | R88 | gated (G17) | partial | Built and run end to end on synthetic H1 and M30 bars (runs 1015, 1016); FirstRate import ready. Left: real data, and the hourly roll-up from 30-minute files |
+
+  *Same status, a different reason than the doc gives (the cited gap is closed):*
+
+  - *R22 (partial): G54 is closed. Left: label kinds and losses are copies in `strategies.js`, held to Python by a test; two runner refusals are not asked at save (Strategy 2 on an intraday timeframe or before PSQ's first bar; no selected feature with values).*
+  - *R25 (partial): C6 is built. Left: single split and k-fold have no runner; the prediction window is saved and never predicted over.*
+  - *R19 (done): the text "only active" is now "active, and selectable unticked". No column is data-only.*
+  - *R78 (partial): C7 is built. Left: design rows 18 to 20 (the three options series) have no entry; breakeven inflation is off as short-history.*
+  - *R29 (partial): the only unbuilt clause is the capital-gains inclusion rate; one effective rate is entered.*
+  - *R72 (partial): the targets exist. Left: Run-tab results are not scored against a naive predictor.*
+  - *R84 (partial): G12, G37 and G39 are closed. Left: a stage's state does not stop the next stage, except the check errors of job 8.*
+  - *R85 (partial): G11 is closed. Left: a loss that does not fall is shown and does not fail the run.*
+  - *R86 (done, for the 37 registered feeds): 101 Nasdaq-100 member series stored under `yahoo` are not fed and end 2026-11-06; the breadth feed refreshes its own cache.*
+
+  *Found on the way, outside the statuses:*
+
+  - *The Backtest tab still shows a "not wired" note saying tax and the margin strategy are not built (`BacktestStage.tsx`). Both are.*
+  - *The tax hint on the Strategy tab says buy-and-hold "never sells, pays nothing" (`fieldHints.ts`). Since D8 it is sold and taxed at the window end.*
+  - *The doc's Overview still names Deeplearning4j and TA-Lib; its "Decisions needed" table lists eight questions that are all answered.*
+  - *R55's default thresholds (0.5%, 10%, 1%, 5%) are in no code; `feature_config` requires a tolerance and says "No default".*
+  - *This tracker's own "Status per requirement" table is stale for R75 and R76.*
+- [x] 9.3 The author's 14 answers of 2026-11-19 written into the requirement text they change, and "Decisions needed" emptied into a "Decided" table with the dates. Where an answer departs from the design set (C3, C4, C5, C1's timing) the requirement says "departure, by the author's decision"; the design set itself is the author's to change and is not touched. *Done 2026-11-22 11:47, on the author's "go on". The answers are in R12, R19, R21, R25, R65 and R78; "Decisions needed" is now "Decided", eight rows with the answer and its state. Two statuses were added: **departure** (R3, R62, R66) and **deferred** (the six that wait for C1). The design set was not touched. The copy of this doc on Drive was not updated*
+- [x] 9.4 This tracker brought into line: D2, D3, D11, D13 and D14 closed with their answers; the "Status per requirement" table replaced by the verified one; any gap found done or newly found gets its row. *Done 2026-11-22 11:47. D2, D11, D13 and D14 carry their answers (D3 was closed with job 6); "Status per requirement" is the verified one; four gaps the verification found have rows, G71 to G74*
+- [x] 9.5 `AGENTS.md`: a condition marked "not built" that is now built is ticked or re-worded, with the evidence. *Done 2026-11-22 11:47. One condition was marked not built: step 2's null rule, which is decided (D2), not unbuilt*
+- [x] 9.6 The draft mark removed, the status note rewritten to "verified against the code at commit X on date Y", and the count section recounted. *Done 2026-11-22 11:47. The header reads "statuses verified against the code at `db6d42f` on 2026-11-22"; the count is done 19, partial 47, missing 9, deferred 6, departure 3, gated 2*
+- [x] 9.7 README roadmap: Next is what the verified list says is next. *Done 2026-11-22 11:47. Next is real intraday data, then what the verification found in requirements that were marked done (G71, G72, G64), then G57, G40 and G50. Two stale texts found on the tabs were corrected with it: the Backtest tab's "not wired" note and the tax hint*
 
 Done when: every status in the doc has evidence behind it dated after jobs 5 to 8, and the author has approved the doc (Q1).
 
@@ -1157,75 +1217,16 @@ Order between the five: 5, 6, 7, 8, then 9 last, because 9 records the state the
 
 ### Status per requirement
 
-Done: R7, R8, R9, R10, R13, R14, R16, R19, R22 (G54, 2026-11-21), R24, R32 (B10, 2026-11-15), R35, R47, R59.
+Verified 2026-11-22 against the code, the tests and the database at commit `db6d42f` (job 9). The status of each requirement, with what is left of it, is on its line in [`backTesting-05-Requirements-Consolidated.md`](backTesting-05-Requirements-Consolidated.md); the evidence and the 29 that changed are under job 9, step 9.2. The table that stood here was copied forward from Pass 4 and had gone stale (R75 and R76 among others).
 
-| R | Status | Tracked as |
+| Status | Count | Requirements |
 |---|---|---|
-| R1 | partial | G10, G40, G45, G61 |
-| R2 | conflicts | D10 |
-| R3 | conflicts | D2 |
-| R4 | partial | G61 |
-| R5 | partial | G45, G61, D12 |
-| R6 | conflicts | G16 |
-| R11 | partial | G46 |
-| R12 | partial | G51, D11 |
-| R15 | conflicts | G52 |
-| R17 | partial | G47, G52 |
-| R18 | partial | G56 |
-| R20 | partial | D12, G45 |
-| R21 | partial | G70 |
-| R23 | done | B9, 2026-11-16 |
-| R25 | partial | G49, G50, D3 |
-| R26 | partial | G55 |
-| R27 | partial | G55 |
-| R28 | partial | G53, G40 |
-| R29 | partial | G53, G32 (B6), D8 |
-| R30 | missing | G53 |
-| R31 | missing | G53 |
-| R32 | done 2026-11-15 (B10) | D9 |
-| R33 | conflicts | G58 |
-| R34 | partial | G50, G45 |
-| R36 | partial: the three benchmarks (buy-and-hold B6, Faber and dual momentum B7) are computed for every run, under its cost and tax settings, and stored with it. Dividends and currency (G53) and the superficial-loss rule are not built | G53 |
-| R37 | partial | G32 (B6) |
-| R38 | partial | G50, G57 |
-| R39 | partial: the strategy and all three benchmarks show return, trades, trades a year, average holding time, drawdown and Sharpe side by side, on the Training tab and the result page (B7). Walk-forward runs still never reach Results (G57) | G57 |
-| R40 | partial | G57 |
-| R41 | partial | G58, G10 |
-| R42 | partial | G56 |
-| R43 | partial | G59 |
-| R44 | missing | G13 |
-| R45 | partial | G14 |
-| R46 | missing | G10 |
-| R48 | conflicts | G16 |
-| R49 | partial | G51, G52, G62 |
-| R50 | partial | G60 |
-| R51 | partial | G60 |
-| R52 | partial | G60 |
-| R53 | conflicts | G16 |
-| R54 | partial | G10, G61 |
-| R55 | partial | G51, G9 |
-| R56 | missing | G53 |
-| R57 | missing | G53 |
-| R58 | missing | G53 |
-| R60 | missing | G16 |
-| R61 | partial | G60 |
-| R62 | conflicts | D13 |
-| R63 | missing | G51 |
-| R64 | missing | G51 |
-| R65 | missing | G51, D11 |
-| R66 | missing | D14 |
-| R67 | missing | G16 |
-| R68 | partial | G50 |
-| R69 | partial | G57 (walk-forward runs, logged and printed, do not reach Results) |
-| R70 | missing | G16 |
-| R71 | partial: the three targets with their thresholds and horizon, recorded on each run (G49); runs with different targets are not compared on Results, which shows no walk-forward run (G57) | G57 |
-| R72 | partial: every run is scored against its target's naive predictor (majority class, always up, the training mean return), and one that does not beat it is flagged (B8, G49). Results do not show walk-forward runs (G57) | G57 |
-| R73 | missing | G65 |
-| R74 | partial | G63 |
-| R75 | partial: engines blind and profit recalculated on demand (B10). Slippage, superficial loss, dividends and currency are not in the profit step yet, and the benchmarks do not go through it (B6, B7, G53) | D9 |
-| R76 | partial: the engine and the walk-forward scorer trade at the next open (B1); buy-and-hold still buys at the first close (B6) | G27, G32 |
-
----
+| done | 19 | R7, R8, R9, R10, R11, R13, R14, R16, R19, R23, R24, R35, R37, R39, R47, R71, R76, R80, R86 |
+| partial | 47 | R1, R2, R4, R5, R12, R15, R17, R18, R20, R21, R22, R25, R26, R27, R28, R29, R32, R34, R36, R38, R40, R41, R42, R43, R45, R49, R50, R51, R52, R55, R59, R61, R65, R68, R69, R72, R74, R75, R77, R78, R79, R81, R82, R83, R84, R85, R88 |
+| missing | 9 | R30, R31, R44, R46, R56, R57, R58, R63, R64 |
+| deferred to the stack move (C1) | 6 | R6, R33, R48, R60, R67, R70 |
+| departure, by the author's decision | 3 | R3, R62, R66 |
+| gated | 2 | R73, R87 |
 
 ## Pass 3 — 2026-11-14 (HEAD `0ad6053`)
 
@@ -1942,7 +1943,7 @@ a stored result now, since every result left is newer than every such fix.
 | # | What differs | Why it was done | Status |
 |---|---|---|---|
 | D1 | `breakeven_inflation` (24) is disabled, so training can start before the design's 2003 | `c8ec0fe`: one column was setting the start date for the whole table | decision |
-| D2 | `feature_values.value` is nullable, while the design says no nulls and no row outside a feature's range (now R3, "no null padding"). Confirmed 2026-11-15: such rows are written, including padding before each series starts, see Pass 4 | Warm-up days are `None` in `normalize.py` | open |
+| D2 | `feature_values.value` is nullable, while the design says no nulls and no row outside a feature's range (now R3, "no null padding"). Confirmed 2026-11-15: such rows are written, including padding before each series starts, see Pass 4 | Warm-up days are `None` in `normalize.py` | closed 2026-11-19: the author keeps NULLs, dropped at read; a departure from R3 |
 
 ### Already built
 
@@ -1959,6 +1960,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-5 | 2026-11-22 11:47 | Claude Code (Claude Fable 5.2) | Job 9 done: the requirements doc rewritten to the verified statuses; D2, D11, D13, D14 closed; G71 to G74 added |
+| 2026-11-22-4 | 2026-11-22 11:42 | Claude Code (Claude Fable 5.2) | Job 9, steps 9.1 and 9.2: every requirement's status checked against the code, and the table of differences |
 | 2026-11-22-3 | 2026-11-22 11:33 | Claude Code (Claude Fable 5.2) | Job 8 done: an error stops an import or a build unless overridden with a recorded reason (C2, D11), under the narrow rule |
 | 2026-11-22-2 | 2026-11-22 05:22 | Claude Code (Claude Fable 5.2) | Job 8: findings carry a severity (8.2); the scan of stored data under the default rule, and the question it raises (8.7) |
 | 2026-11-22-1 | 2026-11-22 05:15 | Claude Code (Claude Fable 5.2) | Job 7 done: the five indicator rules are rule benchmarks (C8) |

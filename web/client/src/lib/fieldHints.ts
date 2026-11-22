@@ -44,8 +44,9 @@ export const fieldHints: Record<string, string> = {
     + 'bills earns the 3-month T-bill rate, bonds a 10-year total return.',
   'objective.taxScore':
     'Score the run as a taxable account would see it: each realized gain is taxed when '
-    + 'the position is sold, losses offset later gains in the same year, and buy-and-hold, '
-    + 'which never sells, pays nothing. Scoring only: the model and its signals are the '
+    + 'the position is sold, losses offset later gains in the same year, and a position still '
+    + 'open at the end of the window is sold and taxed, buy-and-hold and the rule benchmarks '
+    + 'included. Scoring only: the model and its signals are the '
     + 'same either way, so leave it off for a strategy published as a signal.',
   'objective.execution':
     'How the signals are acted on. Strategy 1 (signals): long unless the model says sell, '

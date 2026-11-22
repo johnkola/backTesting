@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-2** · 2026-11-22 11:22 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-3** · 2026-11-22 11:46 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -784,14 +784,17 @@ real intraday data is the data itself.
 
 *Ordered by what blocks phase two. Full list: [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md).*
 
-1. The Strategy tab's remaining choices, in the order of the work list in
-   [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md) ("Decisions and work order, 2026-11-19"):
-   a sliding window beside the expanding one (C6), the rule strategies as benchmarks
-   only (C8), and data checks with a severity that can stop the chain (C2). Selectable
-   inputs with the two new columns (C7, F1, F2) are done: RSI, MACD, realized volatility,
-   the VIX term structure and QQQ against SPY are built in every set and offered unticked
-   on the Strategy tab.
-2. The requirements doc: statuses re-verified against the code, then no longer a draft.
+The work list of 2026-11-19 is done: selectable inputs (C7, F1, F2), a sliding training
+window (C6), the rule strategies as benchmarks only (C8), check errors that stop an
+import or a build (C2), and the requirements doc verified against the code
+([`docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`](docs/readonly-doc/backTesting-05-Requirements-Consolidated.md):
+19 done, 47 partial, 9 missing, 6 deferred to the stack move, 3 departures, 2 gated).
+
+1. Real intraday data: a calendar file for the bought series, the hourly roll-up from
+   30-minute files, a feature set and the first walk-forward run on real bars (G17).
+2. What the verification found in requirements marked done: the in-sample mark on the Run
+   summary and the Pipeline Backtest table (R82), a dash instead of 0 for Sharpe, win
+   rate and Calmar with no value (R83), and the Requirements doc on the Docs tab (R59, G64).
 3. Phase one's leftovers that phase two will want too: walk-forward runs on Results (G57),
    results that keep their run settings (G40), folds that keep their models (G50).
 
@@ -1298,6 +1301,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-3 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Roadmap: the 2026-11-19 work list is done; Next follows the verified requirements |
 | 2026-11-22-2 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Data checks have a severity and an error is a hard stop (C2, D11): refusal, override and where each is typed |
 | 2026-11-22-1 | 2026-11-22 05:14 | Claude Code (Claude Fable 5.2) | The five indicator rules are rule benchmarks (C8): `kind` on a strategy, `strategyKind` on a result |
 | 2026-11-21-4 | 2026-11-21 23:06 | Claude Code (Claude Fable 5.2) | The sliding training window (C6): `windows.window` on a saved strategy, `window` on the split and on a run |

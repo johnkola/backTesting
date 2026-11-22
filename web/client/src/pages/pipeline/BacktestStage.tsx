@@ -112,10 +112,11 @@ export default function BacktestStage() {
       }
     >
       <NotWired
-        what="The tax and strategy toggles"
-        how={'Tax belongs inside the objective the model optimizes against, not in reporting, '
-          + 'so the switch needs the scoring layer to charge it first. The margin-and-inverse '
-          + 'strategy is not built either.'}
+        what="Margin on a Run-tab backtest"
+        how={'Tax is a scoring setting and is here: run after tax from the Run tab, and the '
+          + 'result and its benchmarks pay the same. The margin-and-inverse overlay is built '
+          + 'for walk-forward runs only (Pipeline, Training); the engine behind this tab '
+          + 'has no margin.'}
       />
 
       <div className="overflow-x-auto bg-base-200 rounded-box mt-6">

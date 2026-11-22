@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-22-1** · 2026-11-22 11:22 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-2** · 2026-11-22 11:46 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -179,8 +179,9 @@ Tab: **Pipeline → Features**.
   receive that series: compare each feed run's newest day for each fred and boc
   series with the run's own date (`import_files`, file names starting `feed`).
   A delay too short puts a later-published number in an earlier row (R17, G47).
-- [ ] **not built (D2)**: no nulls. The design says none, but warm-up days are
-  stored as null until the author decides D2.
+- [x] **decided (D2)**: nulls stay. The design says none; the author's answer of
+  2026-11-19 keeps warm-up and pre-start days stored as NULL and dropped at
+  read, a recorded departure from R3. Nothing to build.
 
 ## 3. Normalization
 
@@ -616,6 +617,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-2 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Step 2: the null condition is decided, not unbuilt (D2, the author 2026-11-19) |
 | 2026-11-22-1 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Steps 1 and 2: check errors are now stopped by the app (job 8); the warnings stay a review |
 | 2026-11-21-3 | 2026-11-21 21:32 | Claude Code (Claude Fable 5.2) | Step 2's review line follows the `selectable` status (job 5) |
 | 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | The never-edited rule now names the four design files (`backTesting-01` to `-04`); the trackers the author moved into `docs/readonly-doc/` stay editable |
