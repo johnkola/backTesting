@@ -66,7 +66,7 @@ import datetime as dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Iterable
+from typing import IO, TYPE_CHECKING, Any, Iterable
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
@@ -748,15 +748,19 @@ def commit_file(
     symbol: str,
     type_: str,
     timeframe: str,
+    override: Any = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     """`commit_slices`, plus the file's version row in the same transaction.
 
     Returns the slice results and the version record. Every written slice's
-    `data_imports.import_file_id` points at that version.
+    `data_imports.import_file_id` points at that version. `override` is a
+    `cohesion.Override`: the file's check errors were accepted on purpose, and
+    every audit row written says by whom, why and how many.
     """
     results, file_rec = _commit(conn, slices, source_name=source_name, symbol=symbol,
                                 type_=type_, timeframe=timeframe,
-                                file_name=source_file.name, source_file=source_file)
+                                file_name=source_file.name, source_file=source_file,
+                                override=override)
     assert file_rec is not None
     return results, file_rec
 
@@ -771,8 +775,11 @@ def _commit(
     timeframe: str,
     file_name: str,
     source_file: SourceFile | None,
+    override: Any = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     archive_root = resolve_archive_root()
+    reason = override.reason if override is not None else None
+    overridden = override.errors if override is not None else None
     results: list[dict[str, object]] = []
 
     with conn.transaction():
@@ -809,8 +816,10 @@ def _commit(
                     """
                     INSERT INTO data_imports
                       (source_id, instrument_id, timeframe, file_path, file_name,
-                       row_count, file_hash, archive_path, import_file_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       row_count, file_hash, archive_path, import_file_id,
+                       check_override_reason, check_override_errors, check_override_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            CASE WHEN %s::text IS NULL THEN NULL ELSE audit_actor() END)
                     RETURNING id, imported_at
                     """,
                     (
@@ -823,6 +832,9 @@ def _commit(
                         slice_.hash,
                         slice_.archive_path,
                         file_id,
+                        reason,
+                        overridden,
+                        reason,
                     ),
                 )
                 ins = cur.fetchone()
@@ -846,6 +858,8 @@ def _commit(
                         "importedAt": ins[1].isoformat() if ins[1] is not None else "",
                         "fileHash": slice_.hash,
                         "archivePath": slice_.archive_path,
+                        "checkOverride": ({"reason": reason, "errors": overridden}
+                                          if reason is not None else None),
                     },
                 }
             )

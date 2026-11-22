@@ -2,8 +2,10 @@
 
 Read-only: it queries `candles`, runs the `cohesion` checks per
 (symbol, source, timeframe) series, and prints a report. It never writes
-or deletes anything. The import-time advisory (see `cohesion.check_import`)
-covers freshly-uploaded blobs; this covers what's already stored.
+or deletes anything. The import-time check (see `cohesion.gate`) refuses a
+freshly-uploaded file with an error; this reports what is already stored, and
+marks a series `ERR` when it holds bars an import would refuse today. Stored
+history is never rejected after the fact.
 
     python -m loader.audit                       # audit every series
     python -m loader.audit -i AAPL -t D1         # one instrument/timeframe
@@ -93,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from loader.db import close_pool, pool
 
-    total_issues = 0
+    total_issues = total_errors = 0
     try:
         with pool().connection() as conn:
             series = _series(conn, args.symbol, args.source, args.timeframe)
@@ -105,15 +107,18 @@ def main(argv: list[str] | None = None) -> int:
                 candles = _fetch_candles(conn, inst_id, src_id, tf)
                 report = check_candles(candles, tf, checks=checks)
                 total_issues += report.total_issues
-                flag = "OK  " if report.ok else "WARN"
+                total_errors += report.errors
+                # ERR: an import of this data today would be refused (C2, D11).
+                # Stored history is only reported, never rejected after the fact.
+                flag = "ERR " if report.blocked else ("OK  " if report.ok else "WARN")
                 print(f"  {flag} {sym}/{src} {tf} ({n} bars): {report.summary()}")
                 if args.verbose and not report.ok:
                     for f in report.examples:
-                        print(f"          {f.category} {f.timestamp}: {f.detail}")
+                        print(f"          {f.severity:<7} {f.category} {f.timestamp}: {f.detail}")
     finally:
         close_pool()
 
-    print(f"\nTotal issues across all series: {total_issues}")
+    print(f"\nTotal issues across all series: {total_issues} ({total_errors} error(s))")
     return 1 if total_issues else 0
 
 

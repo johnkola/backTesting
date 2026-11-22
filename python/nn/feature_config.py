@@ -189,8 +189,9 @@ class Check:
     different windows and would disagree by construction, which would make the
     check noise rather than a reading.
 
-    Never blocks a build. It is a data-quality reading like the cohesion report
-    on an import, and the useful response to a flagged day is to look at it.
+    A flagged day never stops a build: it is a warning, and the useful response
+    is to look at it. A check that could not run or compared nothing does stop
+    it (`data_checks`, "A DISAGREEMENT WARNS, A CHECK THAT DID NOT HAPPEN STOPS").
     """
 
     name: str

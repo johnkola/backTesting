@@ -42,11 +42,15 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
   const [timeframe, setTimeframe] = useState<typeof TIMEFRAMES[number]>('D1')
   const [source, setSource] = useState('default')
   const [force, setForce] = useState(false)
+  // R12, R65: why a file with check errors is stored anyway. Empty unless the
+  // loader refused the file and the user types a reason.
+  const [overrideReason, setOverrideReason] = useState('')
   const [state, setState] = useState<UploadState>({ kind: 'idle' })
 
   function resetAfterSuccess() {
     setFile(null)
     setForce(false)
+    setOverrideReason('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -55,7 +59,9 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
     if (!file || !symbol) return
     setState({ kind: 'submitting' })
     try {
-      const result = await api.uploadImport({ file, symbol, type, timeframe, source, force })
+      const result = await api.uploadImport({
+        file, symbol, type, timeframe, source, force, overrideReason,
+      })
       setState({ kind: 'success', result })
       if (result.status === 'completed') {
         const anyWrite = result.imports.some(
@@ -183,6 +189,30 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
         </form>
 
         <UploadFeedback state={state} />
+        {state.kind === 'success' && state.result.status === 'check_failed' && (
+          <form onSubmit={submit} className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="form-control grow">
+              <FieldLabel
+                text="Store it anyway, because"
+                className="text-xs"
+                hint="An override is recorded on the import with this reason, the number of errors accepted and who did it. Leave it empty and fix the file instead."
+              />
+              <input
+                type="text"
+                className="input input-sm input-bordered"
+                placeholder="e.g. vendor's open is a tick outside the range; closes are right"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+              />
+            </label>
+            <button
+              type="submit" className="btn btn-sm btn-warning"
+              disabled={!file || overrideReason.trim().length === 0}
+            >
+              Store with override
+            </button>
+          </form>
+        )}
       </div>
     </div>
   )
@@ -200,6 +230,24 @@ function UploadFeedback({ state }: { state: UploadState }) {
         <div>
           <strong>Postgres rejected the upsert.</strong> {result.error}
           <div className="mt-1 opacity-80">{result.hint}</div>
+        </div>
+      </div>
+    )
+  }
+  if (result.status === 'check_failed') {
+    return (
+      <div className="alert alert-error mt-3 text-sm" data-testid="check-failed">
+        <div className="w-full">
+          <div className="font-medium">
+            Not stored: {result.errors.length === 1 ? 'the file has an error'
+              : `the file has ${result.cohesion.errors ?? result.errors.length} errors`}.
+          </div>
+          <ul className="mt-1 list-disc pl-5 font-mono text-xs">
+            {result.errors.map((e) => <li key={e}>{e}</li>)}
+          </ul>
+          <div className="mt-1 text-xs opacity-80">
+            Fix the file and upload it again, or give a reason below to store it as it is.
+          </div>
         </div>
       </div>
     )
@@ -240,6 +288,15 @@ function UploadFeedback({ state }: { state: UploadState }) {
             <div className="text-xs opacity-70">
               Left out {result.skipped.outsideSession.toLocaleString()} bars outside the regular
               session (09:30 to 16:00 New York time).
+            </div>
+          )}
+          {result.checkOverride && (
+            <div className="mt-2 rounded-box border border-error bg-base-100 p-2 text-xs text-base-content">
+              <span className="font-medium text-error">
+                Stored on an override: {result.checkOverride.errors} check error
+                {result.checkOverride.errors === 1 ? '' : 's'} accepted.
+              </span>{' '}
+              Reason recorded: {result.checkOverride.reason}
             </div>
           )}
           {result.cohesion && <CohesionPanel report={result.cohesion} />}
@@ -294,8 +351,8 @@ const COHESION_LABEL: Record<CohesionCategory, string> = {
 }
 const COHESION_ORDER: CohesionCategory[] = ['ohlc', 'duplicate', 'order', 'gap', 'outlier']
 
-/** Read-only cohesiveness advisory for a just-completed import. The data was
- *  imported regardless; this only surfaces what looks off. */
+/** The check report of a completed import: errors (stored only on an override)
+ *  and warnings, shown apart. */
 function CohesionPanel({ report }: { report: CohesionReport }) {
   if (report.ok) {
     return (
@@ -308,8 +365,13 @@ function CohesionPanel({ report }: { report: CohesionReport }) {
     <div className="mt-3 rounded-box border border-warning bg-base-100 p-2 text-base-content">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="font-medium text-warning">
-          ⚠ Data cohesion: {report.totalIssues.toLocaleString()}{' '}
-          {report.totalIssues === 1 ? 'issue' : 'issues'} over {report.totalBars.toLocaleString()} bars
+          ⚠ Data checks over {report.totalBars.toLocaleString()} bars:
+        </span>
+        <span className={`badge badge-sm ${(report.errors ?? 0) > 0 ? 'badge-error' : 'badge-ghost'}`}>
+          errors: {(report.errors ?? 0).toLocaleString()}
+        </span>
+        <span className="badge badge-warning badge-sm">
+          warnings: {(report.warnings ?? report.totalIssues).toLocaleString()}
         </span>
         {COHESION_ORDER.filter((c) => report.counts[c] > 0).map((c) => (
           <span key={c} className="badge badge-warning badge-sm">
@@ -324,11 +386,16 @@ function CohesionPanel({ report }: { report: CohesionReport }) {
           </summary>
           <table className="table table-xs mt-1">
             <thead>
-              <tr><th>Check</th><th>Timestamp</th><th>Detail</th></tr>
+              <tr><th>Severity</th><th>Check</th><th>Timestamp</th><th>Detail</th></tr>
             </thead>
             <tbody>
               {report.examples.map((f, i) => (
                 <tr key={`${f.category}-${f.timestamp}-${i}`}>
+                  <td>
+                    <span className={`badge badge-xs ${f.severity === 'error' ? 'badge-error' : 'badge-warning'}`}>
+                      {f.severity ?? 'warning'}
+                    </span>
+                  </td>
                   <td><span className="badge badge-ghost badge-xs">{COHESION_LABEL[f.category]}</span></td>
                   <td className="font-mono text-xs whitespace-nowrap">{f.timestamp}</td>
                   <td className="text-xs">{f.detail}</td>
@@ -339,7 +406,8 @@ function CohesionPanel({ report }: { report: CohesionReport }) {
         </details>
       )}
       <div className="mt-1 text-xs opacity-60">
-        Advisory only — the data was imported. Re-check stored data anytime with{' '}
+        Warnings do not stop an import; an error does, unless it is overridden with a
+        reason. Re-check stored data anytime with{' '}
         <span className="font-mono">backtest-audit</span>.
       </div>
     </div>

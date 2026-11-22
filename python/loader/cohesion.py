@@ -1,7 +1,29 @@
-"""Data-cohesiveness checks for OHLCV candle data — a *read-only* advisory
-layer. Nothing here blocks an import or mutates data; callers run a check
-and surface the findings (in an import response, a CLI summary, or a
-standalone audit) and decide what to do.
+"""Data-cohesiveness checks for OHLCV candle data.
+
+This module only reads: it never mutates data. Every finding carries a
+severity, `error` or `warning`, set here where the finding is made (the
+author's decision of 2026-11-19, Design-Gaps C2 and D11; R12 and R65: an error
+"is a hard stop: the chain does not continue over that data"). The import
+paths refuse a file whose report has an error unless someone overrides it on
+purpose, with a reason that is recorded; a warning is reported and the data
+goes in. The audit over stored bars reports both and changes nothing.
+
+WHICH FINDINGS ARE ERRORS (`severity_of`). The author's choice of 2026-11-22,
+made on a scan of all 252 stored series:
+
+  * error    a bar whose prices contradict each other (high below low, high
+             below the open or close, low above them) or whose volume is
+             negative; a duplicate timestamp; a timestamp out of order
+  * warning  a gap; an outlier; a non-positive price on its own
+
+An error is something that cannot be true. Each warning is often true, and so
+are two on one bar: the design's "two or more flags on a row = error" would
+refuse AAPL's 2000-09-29 (a 52% fall on record volume), the reopening after
+9/11 (a gap and a volume spike) and oil at -36.98 (non-positive, and a move
+past any threshold). The scan found 3,903 such "errors" in true history and 743
+contradicting bars, so the rule is the contradictions. A non-positive price is
+a warning for the same reason: this table also holds series that are not
+prices, and the yield curve is negative on 2,079 days.
 
 Five finding categories, from four independent check functions
 (`duplicate` and `order` both come out of check_timestamps):
@@ -65,11 +87,24 @@ _EPS = 1e-9
 Candle = tuple[object, float, float, float, float, float]
 
 
+ERROR, WARNING = "error", "warning"
+
+#: Categories that are an error on their own: the bar or the file contradicts
+#: itself. The other two (gap, outlier) describe something unusual that is often
+#: true, so they warn.
+ERROR_CATEGORIES = frozenset({"ohlc", "duplicate", "order"})
+
+#: The one `ohlc` reason that is not a contradiction (see the module comment).
+NON_POSITIVE = "non-positive price"
+
+
 @dataclass
 class Finding:
     category: str
     timestamp: str
     detail: str
+    #: `error` or `warning`, set by `check_candles` from `severity_of`.
+    severity: str = WARNING
 
     def to_dict(self) -> dict[str, object]:
         """One finding in the shape every caller puts on the wire.
@@ -85,7 +120,15 @@ class Finding:
             "category": self.category,
             "timestamp": self.timestamp or None,
             "detail": self.detail,
+            "severity": self.severity,
         }
+
+
+def severity_of(finding: Finding) -> str:
+    """`error` or `warning` for one finding. See the module comment for the rule."""
+    if finding.category == "ohlc":
+        return WARNING if finding.detail == NON_POSITIVE else ERROR
+    return ERROR if finding.category in ERROR_CATEGORIES else WARNING
 
 
 @dataclass
@@ -93,6 +136,11 @@ class CohesionReport:
     total_bars: int
     counts: dict[str, int] = field(default_factory=dict)
     examples: list[Finding] = field(default_factory=list)
+    #: Exact counts by severity; `examples` is capped, these are not.
+    errors: int = 0
+    warnings: int = 0
+    #: Errors per category, exact.
+    error_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def total_issues(self) -> int:
@@ -102,20 +150,77 @@ class CohesionReport:
     def ok(self) -> bool:
         return self.total_issues == 0
 
+    @property
+    def blocked(self) -> bool:
+        """True when the data must not go in without an override (R12, R65)."""
+        return self.errors > 0
+
+    def error_lines(self) -> list[str]:
+        """The errors as sentences, for a refusal: the examples kept, then how
+        many more there are."""
+        shown = [f for f in self.examples if f.severity == ERROR]
+        lines = [f"{f.category} at {f.timestamp}: {f.detail}" for f in shown]
+        if self.errors > len(shown):
+            lines.append(f"and {self.errors - len(shown)} more error(s)")
+        return lines
+
     def summary(self) -> str:
         if self.ok:
             return f"cohesion OK ({self.total_bars} bars, no issues)"
         parts = [f"{cat}={n}" for cat in CATEGORIES if (n := self.counts.get(cat))]
-        return f"cohesion: {self.total_issues} issue(s) over {self.total_bars} bars [{', '.join(parts)}]"
+        return (f"cohesion: {self.errors} error(s), {self.warnings} warning(s) over "
+                f"{self.total_bars} bars [{', '.join(parts)}]")
 
     def to_dict(self) -> dict[str, object]:
         return {
             "totalBars": self.total_bars,
             "ok": self.ok,
             "totalIssues": self.total_issues,
+            "errors": self.errors,
+            "warnings": self.warnings,
+            "blocked": self.blocked,
             "counts": {cat: self.counts.get(cat, 0) for cat in CATEGORIES},
+            "errorCounts": {cat: n for cat in CATEGORIES if (n := self.error_counts.get(cat))},
             "examples": [f.to_dict() for f in self.examples],
         }
+
+
+class ChecksFailed(Exception):
+    """The data has errors and nobody overrode them, so it is not stored."""
+
+    def __init__(self, report: CohesionReport):
+        self.report = report
+        lines = report.error_lines()
+        super().__init__(
+            f"{report.errors} error(s) in the data, so it was not stored: "
+            + "; ".join(lines[:3]) + ("; ..." if len(lines) > 3 else ""))
+
+
+@dataclass(frozen=True)
+class Override:
+    """Errors someone chose to store anyway. Written on the import's audit
+    rows (`data_imports.check_override_*`), with who from `audit_actor()`."""
+
+    reason: str
+    errors: int
+
+
+def gate(report: CohesionReport, override_reason: str | None = None) -> Override | None:
+    """The hard stop (R12, R65; Design-Gaps C2, D11), the one place every
+    import path asks.
+
+    A report with no error passes: `None`, and an override given anyway is not
+    recorded, since nothing was overridden. A report with errors raises
+    `ChecksFailed` unless `override_reason` says why it goes in regardless; the
+    reason is required, because an override is a deliberate act and never the
+    default.
+    """
+    if not report.blocked:
+        return None
+    reason = (override_reason or "").strip()
+    if not reason:
+        raise ChecksFailed(report)
+    return Override(reason=reason, errors=report.errors)
 
 
 def _coerce_ts(value: object) -> _dt.datetime:
@@ -152,7 +257,7 @@ def check_ohlc(candles: Sequence[Candle]) -> list[Finding]:
         if lo > o + _EPS or lo > c + _EPS:
             reasons.append(f"low {lo} above open/close ({o}/{c})")
         if min(o, h, lo, c) <= 0:
-            reasons.append("non-positive price")
+            reasons.append(NON_POSITIVE)
         if v < 0:
             reasons.append(f"negative volume {v}")
         if reasons:
@@ -315,11 +420,21 @@ def check_candles(
             candles, return_threshold=return_threshold, volume_factor=volume_factor
         )
 
-    per_cat_examples: Counter[str] = Counter()
     for f in found:
+        f.severity = severity_of(f)
+
+    # Examples are capped per category and severity, errors first, so a file
+    # with thousands of gaps still shows its one broken bar.
+    kept: Counter[tuple[str, str]] = Counter()
+    for f in sorted(found, key=lambda f: f.severity != ERROR):
         report.counts[f.category] = report.counts.get(f.category, 0) + 1
-        if per_cat_examples[f.category] < EXAMPLE_CAP:
-            per_cat_examples[f.category] += 1
+        if f.severity == ERROR:
+            report.errors += 1
+            report.error_counts[f.category] = report.error_counts.get(f.category, 0) + 1
+        else:
+            report.warnings += 1
+        if kept[(f.category, f.severity)] < EXAMPLE_CAP:
+            kept[(f.category, f.severity)] += 1
             report.examples.append(f)
     return report
 

@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-1** · 2026-11-22 05:14 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-2** · 2026-11-22 11:22 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -406,7 +406,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/health` | — | `{status, ok, maintenance, db, services[]}` — a probe of the database, the loader and the engine, not just this process. Always HTTP 200 while the API is alive; the verdict is in the body. The client gates its first paint on it (see [Maintenance mode](#maintenance-mode)) |
 | `GET /api/sources` | — | `{items: [...]}` — data sources |
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
-| `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable |
+| `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable. Each row carries `checkOverride` (`{reason, errors, by}`) when its check errors were stored on an override, else `null` |
 | `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries. Each carries `taxRate`, the percent it was scored after on realized gains (`null` before tax, G20), and `testWindows`, the saved test windows it scores as `{from, to, looksBefore, firstLookAt}` (empty when none), and `testWindowReused`, true when one was looked at before it (G48, R69); the result page has the same. Each carries `strategyKind`, the engine's kind for the strategy it ran (`model` or `benchmark`; `null` when the engine does not answer or no longer registers the name) |
 | `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}`. It carries `strategyKind` as the list does |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
@@ -428,7 +428,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 
 | Endpoint | Body / params | Does |
 |---|---|---|
-| `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. **Times:** a date alone, or any time on a D1, W1 or MN1 file, is that date in UTC. On an intraday file a bare time (`2024-01-02 09:30:00`) is New York time and is stored as its UTC instant (14:30 in winter, 13:30 in summer); a time that states its offset (`14:30:00Z`, `09:30:00-05:00`) is taken as written. A bare time New York skipped or repeated at a clock change is skipped with its reason. Intraday roll-ups (H4 from M30) are bucketed on the New York clock, and the client shows intraday bars in New York time. Returns per-slice status (`created`/`extended`/`skipped`/`overwritten`/`conflict`, each changed year with a `diff` of added/changed/removed bars), a `file` object for the version it recorded (`changeKind`: `new`, `update`, `fix`, `update+fix` or `same`; `alreadyLoaded` when these exact bytes are what the database holds), a `cohesion` report, and `skipped` (`{count, examples: [{line, reason, text}]}`): rows that produced no candle, such as a footer line or a price that is not a number. Those rows are left out and the rest import; the Imports page lists them, and the drop-folder ingest prints them as `WARN`. A year that only gains later days is `extended` without `force`; a changed or dropped past bar is a `conflict` until `force`. `400` when the header is not `Date,Open,High,Low,Close,Volume` in that order (the drop-folder ingest moves such a file to `failed/`). `409` on conflict or a compressed chunk |
+| `POST /api/imports` | multipart: `file`, `symbol`, `type`, `timeframe`, `source`, `force`, `aggregate_to`, `override_reason` | Imports a CSV: year-sliced, hash-deduped, archived, upserted. **Times:** a date alone, or any time on a D1, W1 or MN1 file, is that date in UTC. On an intraday file a bare time (`2024-01-02 09:30:00`) is New York time and is stored as its UTC instant (14:30 in winter, 13:30 in summer); a time that states its offset (`14:30:00Z`, `09:30:00-05:00`) is taken as written. A bare time New York skipped or repeated at a clock change is skipped with its reason. Intraday roll-ups (H4 from M30) are bucketed on the New York clock, and the client shows intraday bars in New York time. Returns per-slice status (`created`/`extended`/`skipped`/`overwritten`/`conflict`, each changed year with a `diff` of added/changed/removed bars), a `file` object for the version it recorded (`changeKind`: `new`, `update`, `fix`, `update+fix` or `same`; `alreadyLoaded` when these exact bytes are what the database holds), a `cohesion` report, and `skipped` (`{count, examples: [{line, reason, text}]}`): rows that produced no candle, such as a footer line or a price that is not a number. Those rows are left out and the rest import; the Imports page lists them, and the drop-folder ingest prints them as `WARN`. A year that only gains later days is `extended` without `force`; a changed or dropped past bar is a `conflict` until `force`. `400` when the header is not `Date,Open,High,Low,Close,Volume` in that order (the drop-folder ingest moves such a file to `failed/`). `409` on conflict or a compressed chunk. A file whose checks find an error is not stored: `422` `check_failed` with `errors` and `cohesion` (see [Data cohesiveness checks](#data-cohesiveness-checks)); `override_reason` stores it anyway and is recorded, and the answer then carries `checkOverride` |
 | `GET /api/feeds` | — | Every series the feeds refresh, with its source, its last stored day and its latest result (`extended`, `fixed`, `up-to-date`, `held` with what differs, `error`), the ten most recent runs, whether one is going, and the schedule with its next run. See [Data feeds](#data-feeds) |
 | `POST /api/feeds/refresh` | JSON `{feeds?: ["SYMBOL/source"], rebuild?: true}` | Starts a refresh in the background (every series when `feeds` is omitted) and returns `202 {runId}`; the feature table is rebuilt afterwards when an input changed, unless `rebuild` is false. `400` for an unknown series, `409` while a run is going |
 | `POST /api/feeds/apply` | JSON `{feed: "SYMBOL/source"}` | Accepts a held series: re-downloads its full history and imports it with `force`, rewriting only the days that differ beyond rounding, recorded as a `fix` version. `202 {runId}`; `404` for an unknown series, `409` while a run is going |
@@ -513,7 +513,7 @@ Walk-forward runs record the dates they read and a snapshot over just those. Run
 
 ## Data cohesiveness checks
 
-A **read-only advisory layer** (`python/loader/cohesion.py`) validates OHLCV candle data. It never blocks an import or modifies data — it only reports findings, so you decide what to act on. Five finding categories, produced by four independent check functions (`duplicate` and `order` both come out of `check_timestamps`):
+The checks in `python/loader/cohesion.py` read OHLCV candle data and never modify it. Every finding has a severity. An **error** is something that cannot be true, and it is a hard stop: the file is not stored. A **warning** is reported and the data goes in. Five finding categories, produced by four independent check functions (`duplicate` and `order` both come out of `check_timestamps`):
 
 | Check | What it flags |
 |-------|---------------|
@@ -523,10 +523,25 @@ A **read-only advisory layer** (`python/loader/cohesion.py`) validates OHLCV can
 | `gap` | Missing bars for the timeframe — trading-day-aware for `D1` (neither weekends nor NYSE holidays count, via `loader.market_calendar`), same-day-only for intraday (overnight/weekend boundaries aren't gaps), whole-weeks for `W1`, month-based for `MN1` |
 | `outlier` | Bar-to-bar close moves beyond ±50%, or volume beyond 20× the median of the **whole series** — the shape of a bad data blob, not of an unusual trading day |
 
-It runs at three call sites, all report-only:
+| Severity | Findings |
+|---|---|
+| error | an `ohlc` contradiction (high below low, high below the open or close, low above them, negative volume), a `duplicate`, an `order` |
+| warning | a `gap`, an `outlier`, a non-positive price on its own (the table also holds yields and spreads, which go negative) |
 
-- **`POST /api/imports`** — the response gains a `cohesion` object (`{ok, totalIssues, counts, examples}`), which the imports page renders as `CohesionPanel`.
-- **The drop-folder ingest** — the same check, printed as a one-line summary plus the first few findings per file. Neither path changes whether the data imports.
+Two warnings on one bar are still warnings: a crash day on record volume is true data.
+
+**Storing a file with errors anyway** is one deliberate act with a reason, recorded on the import's audit rows with the number of errors accepted and who did it; the Imports page marks such a row `override`:
+
+- upload: `override_reason` on `POST /api/imports`, or the "Store with override" field the upload card shows after a refusal;
+- drop folder: `python -m loader.ingest --override-checks "<reason>"` (it applies to every file in the run). Without it a refused file moves to `failed/` with its report beside it as `<name>.checks.json`;
+- feeds: `python -m loader.feeds refresh --feed SYMBOL/SOURCE --override-checks "<reason>"`. Without it the series fails with its errors, nothing of it is stored, and the Data stage reads failed.
+
+The feature build has the same stop for its own checks: one that could not run, or compared nothing, is an error (`[STOP]` under `DATA CHECKS`) and no set is written, the dry run included; a disagreement is a warning (`[LOOK]`). `python -m nn.feature_build --override-checks "<reason>"` builds anyway and records the reason on the set. While Data or Features has an error nobody overrode, every later pipeline stage reads failed.
+
+It runs at three call sites:
+
+- **`POST /api/imports`** — the response carries a `cohesion` object (`{ok, totalIssues, errors, warnings, blocked, counts, errorCounts, examples}`, each example with its `severity`), which the upload card renders. A file with an error answers `422` with `status: "check_failed"`, `errors` (every error as a sentence) and the same `cohesion` object.
+- **The drop-folder ingest** — the same check, printed as a one-line summary plus the first few findings per file.
 - **As a standalone audit** over candles already in the DB:
 
   ```bash
@@ -535,7 +550,7 @@ It runs at three call sites, all report-only:
   python -m loader.audit --checks ohlc,gap -v          # subset of checks + example findings
   ```
 
-  `audit` is read-only: exit `0` when clean, `1` when any series has findings (handy for CI), and it never writes or deletes. Outlier thresholds are overridable in the API (`return_threshold`, `volume_factor`); the remaining gap-heuristic caveats are documented in `check_gaps`. See [Reading a gap or outlier finding](#reading-a-gap-or-outlier-finding) below before acting on either.
+  `audit` is read-only: exit `0` when clean, `1` when any series has findings (handy for CI), and it never writes or deletes. A series marked `ERR` holds bars an import would refuse today; stored history is reported, never rejected after the fact. Outlier thresholds are overridable in the API (`return_threshold`, `volume_factor`); the remaining gap-heuristic caveats are documented in `check_gaps`. See [Reading a gap or outlier finding](#reading-a-gap-or-outlier-finding) below before acting on either.
 
 ### Reading a gap or outlier finding
 
@@ -1283,6 +1298,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-2 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Data checks have a severity and an error is a hard stop (C2, D11): refusal, override and where each is typed |
 | 2026-11-22-1 | 2026-11-22 05:14 | Claude Code (Claude Fable 5.2) | The five indicator rules are rule benchmarks (C8): `kind` on a strategy, `strategyKind` on a result |
 | 2026-11-21-4 | 2026-11-21 23:06 | Claude Code (Claude Fable 5.2) | The sliding training window (C6): `windows.window` on a saved strategy, `window` on the split and on a run |
 | 2026-11-21-3 | 2026-11-21 22:58 | Claude Code (Claude Fable 5.2) | Roadmap: selectable inputs (C7, F1, F2) done |

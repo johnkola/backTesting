@@ -416,3 +416,31 @@ class TestConfigEndpointChecks:
         # building the `live` flag from a set of Check objects raised TypeError.
         # The endpoint must answer 200, not 500.
         assert self._client().get("/api/nn/features/config").status_code == 200
+
+
+class TestSeverity:
+    """C2, D11 (R12, R65): a disagreement warns, a check that did not happen
+    stops the build."""
+
+    def test_an_agreeing_check_has_no_severity(self):
+        r = dc.compare(a_check(), days(2), [1.0, 1.0], [1.0, 1.0])
+        assert r.severity is None and dc.errors([r]) == []
+
+    def test_a_disagreement_is_a_warning_and_the_build_goes_on(self):
+        r = dc.compare(a_check(), days(3), [5.0] * 3, [1.0] * 3)
+        assert r.severity == "warning" and dc.errors([r]) == []
+        assert "[LOOK]" in dc.report([r])
+
+    def test_a_coverage_gap_is_a_warning(self):
+        r = dc.compare(a_check(), days(3), [1.0, 1.0, 1.0], [1.0, None, 1.0])
+        assert r.has_coverage_gap and r.severity == "warning"
+
+    def test_a_check_that_compared_nothing_is_an_error(self):
+        r = dc.compare(a_check(), days(3), [1.0] * 3, [None] * 3)
+        assert r.compared_nothing and r.severity == "error"
+        assert dc.errors([r]) == [r]
+        assert "[STOP]" in dc.report([r])
+
+    def test_a_check_that_could_not_run_is_an_error(self):
+        r = dc.CheckResult(name="x", feature="f", tolerance=0.1, error="series missing")
+        assert r.severity == "error" and "[STOP]" in dc.report([r])

@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-21-3** · 2026-11-21 21:32 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-1** · 2026-11-22 11:22 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -136,9 +136,12 @@ Tab: **Pipeline → Data**.
   last and next run.
 - [ ] **review**: any held series has had its diff shown to the author and been
   applied or left held on purpose. A held series stops at its last stored day.
-- [ ] **review**: the cohesion findings on the inputs are read, and each one is
-  either expected or acted on. The categories are `ohlc`, `duplicate`, `order`,
-  `gap` and `outlier`. Findings are advisory and never block an import. See
+- [ ] **app**: no input has a check error that was not fixed or overridden. An
+  error (a bar whose prices contradict each other, a duplicate, an out-of-order
+  timestamp) stops the import, and the Data tab reads failed until it is dealt
+  with; an override is shown there with its reason.
+- [ ] **review**: the cohesion warnings on the inputs (`gap`, `outlier`, a value
+  at or below zero) are read, and each one is either expected or acted on. See
   [Data cohesiveness checks](README.md#data-cohesiveness-checks), the Imports page,
   or `backtest-audit`.
 - [ ] **review**: each input's date range covers the windows the strategies use.
@@ -161,9 +164,12 @@ Tab: **Pipeline → Features**.
 
 - [ ] **app**: the newest build matches `features.toml` byte for byte, and read
   the newest stored version of every input. The Features tab shows passed.
-- [ ] **app**: the build's data checks are each marked `ok`, or each `LOOK` has a
-  written explanation. The checks are printed by `python -m nn.feature_build`
-  under `DATA CHECKS` and recorded in each feeds run's `rebuild`.
+- [ ] **app**: no data check is marked `STOP` (it could not run, or compared
+  nothing). The build writes no set over one unless it is overridden with a
+  reason, which the Features tab shows.
+- [ ] **review**: each check marked `LOOK` (a disagreement) has a written
+  explanation. The checks are printed by `python -m nn.feature_build` under
+  `DATA CHECKS` and recorded in each feeds run's `rebuild`.
 - [ ] **review**: every enabled column is in the newest set. Every disabled
   column shows its reason, and the `selectable` ones are in the set after the inputs.
 - [ ] **review**: the first fully-populated date the build prints is the one
@@ -610,6 +616,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-1 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Steps 1 and 2: check errors are now stopped by the app (job 8); the warnings stay a review |
 | 2026-11-21-3 | 2026-11-21 21:32 | Claude Code (Claude Fable 5.2) | Step 2's review line follows the `selectable` status (job 5) |
 | 2026-11-21-2 | 2026-11-21 18:00 | Claude Code (Claude Fable 5.2) | The never-edited rule now names the four design files (`backTesting-01` to `-04`); the trackers the author moved into `docs/readonly-doc/` stay editable |
 | 2026-11-21-1 | 2026-11-21 17:54 | Claude Code (Claude Fable 5.2) | Doc files renamed with the app name and a reading-order number (`backTesting-NN-…`); paths and links follow, at the author's request |

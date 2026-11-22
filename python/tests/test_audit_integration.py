@@ -53,7 +53,8 @@ def test_audit_reports_findings_and_exits_nonzero(seeded, capsys):
     rc = main(["-i", SYMBOL, "--source", SOURCE, "-t", TF, "-v"])
     out = capsys.readouterr().out
     assert rc == 1  # findings present
-    assert "WARN" in out and SYMBOL in out
+    # ERR: a bar an import would refuse today; stored history is only reported.
+    assert "ERR " in out and SYMBOL in out and "error(s)" in out
     assert "ohlc" in out  # the seeded high < low violation
 
 

@@ -262,3 +262,44 @@ def test_span_columns_carry_a_combined_snapshot():
     assert cols["span_from"] == dt.date(2003, 1, 1)
     assert json.loads(cols["span_parts_json"]) == {"closes": "b", "matrix": "a", "park": "c"}
     assert cols["span_snapshot"] and cols["span_backfilled"] is False
+
+
+# --------------------------------------------------------------------------
+# The hard stop in the stage chain (C2, D11; R12, R65)
+# --------------------------------------------------------------------------
+
+
+def _stage(state, *reasons):
+    return {"state": state, "reasons": list(reasons)}
+
+
+CHECK_ERROR = staleness.reason("check", "QQQ/yahoo: 1 check error(s)", severity="error")
+
+
+def test_a_check_error_upstream_is_named_by_the_stage_it_is_in():
+    assert staleness._upstream_error(_stage("passed"), _stage("passed")) is None
+    assert staleness._upstream_error(_stage("failed", CHECK_ERROR), _stage("passed")).startswith("Data has")
+    assert staleness._upstream_error(_stage("passed"), _stage("failed", CHECK_ERROR)).startswith(
+        "Features has")
+
+
+def test_a_stale_or_behind_series_is_not_a_check_error():
+    """Only an error nobody overrode stops the chain; being behind does not."""
+    behind = staleness.reason("behind", "QQQ ends 2026-11-19")
+    held = staleness.reason("held", "QQQ is held by the feeds")
+    assert staleness._upstream_error(_stage("stale", behind, held), _stage("stale")) is None
+
+
+def test_a_later_stage_is_not_done_while_an_earlier_one_has_an_error():
+    blocked = staleness._upstream_error(_stage("failed", CHECK_ERROR), _stage("passed"))
+    out = staleness._held_back(_stage("passed", staleness.reason("note", "own reason")), blocked)
+    assert out["state"] == "failed"
+    assert [r["kind"] for r in out["reasons"]] == ["upstream", "note"]
+    assert out["reasons"][0]["severity"] == "error"
+
+
+def test_an_empty_or_running_stage_is_left_as_it_is():
+    blocked = "Data has a check error"
+    assert staleness._held_back(_stage("empty"), blocked)["state"] == "empty"
+    assert staleness._held_back(_stage("running"), blocked)["state"] == "running"
+    assert staleness._held_back(_stage("passed"), None)["state"] == "passed"

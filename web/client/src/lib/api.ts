@@ -133,6 +133,8 @@ export type ImportRecord = {
   /** Relative path the file is archived under, e.g. "yahoo/QQQ/2008/H1.csv".
    *  Null for legacy pre-archive rows. */
   archivePath: string | null
+  /** Set when the import's check errors were stored on an override (R12, R65). */
+  checkOverride?: (CheckOverride & { by?: string | null }) | null
   /** The newest audit row of the same year slice: the version the candles
    *  hold. Equal to `id` when this row is current; only then can it be undone. */
   currentId?: string | null
@@ -213,20 +215,31 @@ export type SlicePreview = {
   diff?: SliceDiff | null
 }
 
-/** The read-only data-cohesiveness advisory the loader attaches to a
- *  completed import. Never blocks the import — purely informational. */
+/** The loader's check report on an import. A finding is an `error` or a
+ *  `warning`: a file with an error is not stored unless it is overridden with
+ *  a reason (R12, R65); a warning is reported and the data goes in. */
 export type CohesionCategory = 'ohlc' | 'duplicate' | 'order' | 'gap' | 'outlier'
 
 export type CohesionFinding = {
   category: CohesionCategory
   timestamp: string
   detail: string
+  /** Absent on a report from a loader older than severities: a warning. */
+  severity?: 'error' | 'warning'
 }
+
+/** Check errors someone chose to store anyway, as recorded on the import. */
+export type CheckOverride = { reason: string, errors: number }
 
 export type CohesionReport = {
   totalBars: number
   ok: boolean
   totalIssues: number
+  /** Exact counts by severity; `examples` is capped. */
+  errors?: number
+  warnings?: number
+  /** True when the data is not stored without an override. */
+  blocked?: boolean
   counts: Record<CohesionCategory, number>
   /** Sample findings (capped server-side); counts stay exact. */
   examples: CohesionFinding[]
@@ -244,7 +257,9 @@ export type SkippedRows = {
 
 /** Discriminated union of POST /api/imports response shapes. */
 export type UploadImportResponse =
-  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; skipped?: SkippedRows; file?: UploadedFile }
+  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; skipped?: SkippedRows; file?: UploadedFile; checkOverride?: CheckOverride }
+  /** 422: the file has check errors and was not stored. */
+  | { status: 'check_failed'; error: string; errors: string[]; hint: string; cohesion: CohesionReport }
   | { status: 'conflict'; message: string; imports: SlicePreview[]; file?: { hash: string, name: string } }
   | { status: 'compressed_chunk'; error: string; hint: string; detail: string }
 
@@ -255,6 +270,8 @@ export type UploadImportRequest = {
   timeframe: string
   source: string
   force: boolean
+  /** Store a file whose checks found errors anyway; recorded with the import. */
+  overrideReason?: string
 }
 
 /** What one import's undo would touch — shared by the preview and the result. */
@@ -1808,6 +1825,8 @@ export type FeedsReport = {
 export type StageReason = {
   kind: string
   text: string
+  /** `error` on a check error nobody overrode: it fails the stage (R12, R65). */
+  severity?: 'error' | 'warning'
   series?: string
   part?: string
   days?: number
@@ -1817,6 +1836,8 @@ export type StageReason = {
 export type StageStatus = {
   state: 'passed' | 'failed' | 'stale' | 'empty' | 'unknown' | 'running'
   reasons: StageReason[]
+  /** Overrides in use on this stage: said, never a reason to fail. */
+  notes?: string[]
 }
 
 /** Whether a stored walk-forward run would read the same inputs if rerun now. */
@@ -2090,12 +2111,18 @@ export const api = {
     fd.append('timeframe', req.timeframe)
     fd.append('source', req.source)
     fd.append('force', String(req.force))
+    if (req.overrideReason?.trim()) fd.append('override_reason', req.overrideReason.trim())
     const res = await fetch(apiUrl('/api/imports'), { method: 'POST', body: fd })
     // 200 and 409 both carry a structured body (created/skipped/overwritten/conflict).
     // 4xx other than 409 surface as plain { error } — convert to a throw.
     let body: unknown
     try { body = await res.json() } catch { body = null }
     if (res.status === 200 || res.status === 409) {
+      return body as UploadImportResponse
+    }
+    // 422 check_failed: the file was not stored, and the body lists every error.
+    if (res.status === 422 && body && typeof body === 'object'
+      && (body as { status?: string }).status === 'check_failed') {
       return body as UploadImportResponse
     }
     const msg = (body && typeof body === 'object' && 'error' in body)

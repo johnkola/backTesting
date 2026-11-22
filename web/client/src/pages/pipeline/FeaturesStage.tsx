@@ -86,6 +86,7 @@ export default function FeaturesStage() {
       state={merged.state}
       alsoStale={merged.alsoStale}
       reasons={status?.features.reasons}
+      notes={status?.features.notes}
       summary={
         newest === null
           ? `No set built for ${tf}`

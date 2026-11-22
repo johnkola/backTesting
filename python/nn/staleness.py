@@ -370,6 +370,8 @@ def data_stage(ctx: Context) -> dict[str, Any]:
     feeds, running = _latest_feed_results(ctx.cur)
     cutoff = feeds_core.session_cutoff(ctx.now)
     reasons: list[dict] = []
+    refused: list[str] = []      # series whose newest bars the hard stop refused
+    notes: list[str] = []        # overrides in use: said, never a reason to fail
     missing = [(f"{s}/{src}", tf) for s, src in required
                for tf in sorted(read_at.get((s, src), {ctx.timeframe}))
                if (s, src) not in last_by_tf.get(tf, {})]
@@ -384,9 +386,24 @@ def data_stage(ctx: Context) -> dict[str, Any]:
             reasons.append(reason("held", f"{key} is held by the feeds: {h.get('days')} stored "
                                   f"day(s) differ ({h.get('from')}..{h.get('to')}); Apply it on "
                                   "the Data stage", series=key))
+        elif r and r.get("status") == "error" and r.get("checkErrors"):
+            # The hard stop (R12, R65): the new bars had errors and were not
+            # stored. The stage fails until they are fixed or overridden.
+            errs = r["checkErrors"]
+            refused.append(key)
+            reasons.append(reason(
+                "check", f"{key}: {len(errs)} check error(s) in its newest bars, so they "
+                f"were not stored: {'; '.join(errs[:3])}"
+                + ("; ..." if len(errs) > 3 else "")
+                + ". Fix the source, or refresh that series with --override-checks and a reason",
+                series=key, severity="error", errors=errs))
         elif r and r.get("status") == "error":
             reasons.append(reason("error", f"{key} failed its last refresh: {r.get('error')}",
                                   series=key))
+        elif r and r.get("checkOverride"):
+            o = r["checkOverride"]
+            notes.append(f"{key}: {o.get('errors')} check error(s) stored on an override: "
+                         f"{o.get('reason')}")
         if "D1" in read_at.get((sym, src), ()) and (sym, src) in last:
             feed = feeds_registry.BY_KEY.get(key)
             provider = feed.provider if feed else "manual"
@@ -395,7 +412,7 @@ def data_stage(ctx: Context) -> dict[str, Any]:
             if behind > allowed:
                 reasons.append(reason("behind", f"{key} ends {last[(sym, src)]}, {behind} sessions "
                                       f"before {cutoff} (allowed {allowed})", series=key))
-    if missing:
+    if missing or refused:
         state = "failed"
     elif running:
         state = "running"
@@ -404,7 +421,27 @@ def data_stage(ctx: Context) -> dict[str, Any]:
     else:
         state = "passed"
     return {"state": state, "reasons": reasons, "cutoff": cutoff.isoformat(),
-            "required": len(required)}
+            "required": len(required), "notes": notes}
+
+
+def _build_refusal(cur) -> str | None:
+    """Why the newest feeds run's feature build was refused, or None. Only the
+    newest run that rebuilt counts: a later build that went through clears it."""
+    try:
+        cur.execute("SELECT result_json FROM feed_runs WHERE result_json IS NOT NULL "
+                    "ORDER BY id DESC LIMIT 20")
+        rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — no feed_runs table yet
+        if getattr(exc, "sqlstate", None) != "42P01":
+            raise
+        cur.connection.rollback()
+        return None
+    for (result_json,) in rows:
+        result = json.loads(result_json)
+        rebuilt = result.get("rebuild") if isinstance(result, dict) else None
+        if isinstance(rebuilt, dict) and not result.get("dryRun"):
+            return rebuilt.get("refused")
+    return None
 
 
 def features_stage(ctx: Context) -> dict[str, Any]:
@@ -421,6 +458,13 @@ def features_stage(ctx: Context) -> dict[str, Any]:
     newest = ctx.cur.fetchone()
     if newest is None:
         return {"state": "empty", "reasons": []}
+    refusal = _build_refusal(ctx.cur) if ctx.timeframe == "D1" else None
+    if refusal:
+        # The hard stop (R12, R65): the newest build stopped on a data check
+        # that did not happen and wrote no set, so the set on file is older
+        # than the data.
+        return {"state": "failed", "setId": int(newest[0]), "reasons": [reason(
+            "check", f"the newest build was refused: {refusal}", severity="error")]}
     cs = ctx.current_set(inst, src, ctx.timeframe)
     if cs is None:
         return {"state": "stale", "setId": int(newest[0]), "reasons": [reason(
@@ -441,8 +485,13 @@ def features_stage(ctx: Context) -> dict[str, Any]:
                 reasons.append(reason(
                     "input", f"{key} has a newer stored version (#{now}) than build "
                     f"{build_id} read (#{then})", series=key))
+    ctx.cur.execute("SELECT check_override_reason, check_override_errors, check_override_by "
+                    "FROM feature_sets WHERE id = %s", (set_id,))
+    o = ctx.cur.fetchone()
+    notes = ([f"set {set_id} was built over {o[1]} data check error(s) on an override by "
+              f"{o[2]}: {o[0]}"] if o and o[0] else [])
     return {"state": "stale" if reasons else "passed", "setId": set_id, "buildId": build_id,
-            "reasons": reasons}
+            "reasons": reasons, "notes": notes}
 
 
 _RUN_SQL = """
@@ -627,9 +676,15 @@ def status(cur, timeframe: str = "D1", now: dt.datetime | None = None) -> dict[s
     ctx = Context.open(cur, timeframe, now)
     data = data_stage(ctx)
     features = features_stage(ctx)
-    inherited = {"state": features["state"],
-                 "reasons": ([reason("upstream", "built from the same feature build as Features, "
-                                     "which is stale")] if features["state"] == "stale" else [])}
+    # A later stage is not done while an earlier one has an error nobody
+    # overrode (`AGENTS.md`, now enforced here): Data failing fails Features'
+    # dependants, and so on down.
+    blocked = _upstream_error(data, features)
+    inherited = {"state": "failed" if blocked else features["state"],
+                 "reasons": ([reason("upstream", blocked, severity="error")] if blocked
+                             else [reason("upstream", "built from the same feature build as "
+                                          "Features, which is stale")]
+                             if features["state"] == "stale" else [])}
     return {
         "timeframe": timeframe,
         "checkedAt": ctx.now.isoformat(),
@@ -637,9 +692,29 @@ def status(cur, timeframe: str = "D1", now: dt.datetime | None = None) -> dict[s
         "features": features,
         "normalization": inherited,
         "split": inherited,
-        "training": training_stage(ctx, features),
-        "backtest": backtest_stage(ctx),
+        "training": _held_back(training_stage(ctx, features), blocked),
+        "backtest": _held_back(backtest_stage(ctx), blocked),
     }
+
+
+def _upstream_error(data: dict[str, Any], features: dict[str, Any]) -> str | None:
+    """The sentence a later stage shows when an earlier one has a check error
+    that was not overridden, or None."""
+    for name, stage in (("Data", data), ("Features", features)):
+        if any(r.get("kind") == "check" and r.get("severity") == "error"
+               for r in stage.get("reasons", [])):
+            return (f"{name} has a check error that was not fixed or overridden, so "
+                    "nothing after it is done (R12, R65)")
+    return None
+
+
+def _held_back(stage: dict[str, Any], blocked: str | None) -> dict[str, Any]:
+    """`stage`, failed with the upstream reason first when `blocked`. A stage
+    with nothing in it stays empty, and a running one stays running."""
+    if not blocked or stage.get("state") in ("empty", "running"):
+        return stage
+    return {**stage, "state": "failed",
+            "reasons": [reason("upstream", blocked, severity="error"), *stage.get("reasons", [])]}
 
 
 # --------------------------------------------------------------------------

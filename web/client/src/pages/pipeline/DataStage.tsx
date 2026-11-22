@@ -66,6 +66,7 @@ export default function DataStage() {
       state={merged.state}
       alsoStale={merged.alsoStale}
       reasons={reasons}
+      notes={status?.data.notes}
       summary={
         required.length === 0
           ? 'No required series declared'

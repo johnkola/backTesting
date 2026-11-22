@@ -143,3 +143,15 @@ def test_the_markets_that_trade_into_the_evening_are_marked():
     ctx = runner.RunContext.at(dt.datetime(2026, 11, 12, 23, 30, tzinfo=dt.UTC))  # 18:30 NY
     assert ctx.cutoff_for(registry.BY_KEY["GOLD/yahoo"]) == dt.date(2026, 11, 11)
     assert ctx.cutoff_for(registry.BY_KEY["QQQ/yahoo"]) == dt.date(2026, 11, 12)
+
+
+def test_a_build_stopped_by_a_data_check_says_so():
+    """R12, R65: the build wrote no set; the run record carries the reason."""
+    out = ("DATA CHECKS\n  [STOP] yield_curve_vs_published: COMPARED NOTHING\n\n"
+           "refused: 1 data check(s) did not happen, so no set was written: "
+           "yield_curve_vs_published. Import the published series\n")
+    info = runner.parse_build_output(out, 3)
+    assert info["ok"] is False and "setId" not in info
+    assert info["refused"].startswith("1 data check(s) did not happen")
+    assert info["error"] == info["refused"]
+    assert info["checks"] == ["[STOP] yield_curve_vs_published: COMPARED NOTHING"]

@@ -9,17 +9,22 @@ three series that have to agree. backTesting-02-Features.md 23 asks for exactly 
 backTesting-02-Features.md 7-8 asks for the same shape on MACD and RSI against a published
 indicator API.
 
-Two rules the rest of the module follows from.
+Three rules the rest of the module follows from.
 
-FLAG, NEVER BLOCK. A disagreement is a reading about data quality, like the
-cohesion report on an import. The useful response to "17 days disagree" is to go
-and look at those 17 days; losing the feature table is not an improvement. So
-nothing here raises on a finding — `main()` prints the result and carries on.
+A DISAGREEMENT WARNS, A CHECK THAT DID NOT HAPPEN STOPS. Every result has a
+severity (`CheckResult.severity`; the author's decision of 2026-11-19,
+Design-Gaps C2 and D11; R12, R65). A disagreement, or a day only one side has,
+is a `warning`: a reading about data quality, and the useful response to "17
+days disagree" is to go and look at those 17 days, so the build goes on. A
+check that could not run, or that compared nothing, is an `error`: the column
+it guards is unverified, and `feature_build` stops before it writes a set
+unless the build is told to go on with a reason, which is recorded on the set.
+Nothing here raises; the build decides.
 
 A CHECK THAT COMPARED NOTHING IS NOT A CHECK THAT PASSED. The most dangerous
 outcome is zero flagged days because the published series was never imported, or
 because the two sides overlap nowhere. `CheckResult.ok` is false when nothing
-was compared, and `summary()` says so in as many words.
+was compared, `summary()` says so in as many words, and its severity is `error`.
 
 COVERAGE IS REPORTED SEPARATELY FROM VALUES. A day where our side has a value
 and the vendor's does not is a gap in one series, not a wrong number in either —
@@ -93,6 +98,15 @@ class CheckResult:
         called out on its own — the usual cause is a series that was never
         imported."""
         return self.error is None and self.compared == 0
+
+    @property
+    def severity(self) -> str | None:
+        """`error`, `warning`, or None for a check that is ok. See the module
+        comment: a check that did not happen is an error, a disagreement or a
+        coverage gap a warning."""
+        if self.error is not None or self.compared_nothing:
+            return "error"
+        return None if self.ok else "warning"
 
     @property
     def ok(self) -> bool:
@@ -262,7 +276,7 @@ def report(results: Sequence[CheckResult]) -> str:
         return ""
     lines = ["", "DATA CHECKS"]
     for r in results:
-        mark = "ok  " if r.ok else "LOOK"
+        mark = {None: "ok  ", "warning": "LOOK", "error": "STOP"}[r.severity]
         lines.append(f"  [{mark}] {r.summary()}")
         for s in r.samples:
             lines.append(
@@ -272,6 +286,11 @@ def report(results: Sequence[CheckResult]) -> str:
         if r.flagged > len(r.samples):
             lines.append(f"           ... and {r.flagged - len(r.samples)} more")
     return "\n".join(lines)
+
+
+def errors(results: Sequence[CheckResult]) -> list[CheckResult]:
+    """The results that stop a build: those with severity `error`."""
+    return [r for r in results if r.severity == "error"]
 
 
 def rule_checks(dec, closes: dict[date, float]) -> list[CheckResult]:

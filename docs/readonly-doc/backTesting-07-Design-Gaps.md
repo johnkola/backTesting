@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-22-1** · 2026-11-22 05:15 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-3** · 2026-11-22 11:33 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -952,7 +952,7 @@ Effort: M.
 | Held QQQ `yahoo-adj` | Apply, then rebuild | back up, apply, rebuild the daily set, rerun or recalculate what reads stale |
 | Intraday data | The author buys FirstRate Data | the import is made ready for its files (New York time) |
 | C1, the stack (G16) | After phase two works on real data | no Spring Boot move now; G51, G52, G53, G56, G58, G60 are built on the current stack when their turn comes |
-| C2, checks (D11) | Errors stop, warnings continue | new work: a finding has a severity, and an error blocks the import or build until fixed or overridden (R12, R65) |
+| C2, checks (D11) | Errors stop, warnings continue | new work: a finding has a severity, and an error blocks the import or build until fixed or overridden (R12, R65); done 2026-11-22 (job 8), with the narrow rule the author chose on the scan |
 | C3, nulls (D2) | Keep NULLs, dropped at read | no change; D2 closes as a departure from R3 |
 | C4, DL4J and ONNX (D13) | Drop it, PyTorch only | no change; D13 closes as a departure from R62 |
 | C5, TA-Lib (D14) | Keep the hand-written indicators | no change; D14 closes as a departure from R66 |
@@ -975,7 +975,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
 - [x] 6. C6: the sliding window option (M)
 - [x] 7. C8: the rule strategies as benchmarks only (S)
-- [ ] 8. C2: severities and the hard stop (M)
+- [x] 8. C2: severities and the hard stop (M)
 - [ ] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
 - [ ] 10. Then the earlier list: G57, G50, G40 and G41, and the small ones
 
@@ -993,7 +993,7 @@ The readonly design set is the author's to update where an answer departs from i
   - One rebuild of the daily, H1 and M30 sets together. **Stop before the rebuild**: it is stored data.
 - [x] 6. A sliding window beside the expanding one (C6), M. The runner has the expanding window only (*checked*: `walkforward.make_folds`). Length and step are saved on the strategy; existing strategies do not change. The save-time check from job 4 (`strategy_spec`) is where the new rules go.
 - [x] 7. The five rule strategies as benchmarks only (C8), S. **C8 has no row in this tracker yet** (*checked*), which the author asked for (Q3); it gets one with this job.
-- [ ] 8. Data checks with a severity, and errors that stop the chain (C2, D11), M.
+- [x] 8. Data checks with a severity, and errors that stop the chain (C2, D11), M.
 - [ ] 9. The requirements doc: every status re-verified against the code, the answers written in, the draft mark removed, M. With it, this tracker's decision rows are brought up to date: D2, D3, D11, D13 and D14 still read `decision` or `open` though all were answered on 2026-11-19, and `backTesting-05` still shows R22 as partial.
 
 *B. What phase two needs from phase one's leftovers.*
@@ -1068,15 +1068,21 @@ Done when: nowhere in the app or the README is one of the five offered as a stra
 
 Today every check reports and nothing blocks: the import's cohesion report (`loader/cohesion.py`), the feeds' hold, and the build's computed-against-published checks (`nn/data_checks.py`, whose module comment states "flag, never block").
 
-- [ ] 8.1 **ASK**: which findings are errors. Default, from the design's own words ("two or more flags on a row = error"): on import, a bar that fails the OHLC structure check, a duplicate or out-of-order timestamp, and any bar carrying two or more flags are errors; a gap or a single outlier is a warning. On a build, a check that compared nothing is an error (it already counts as not ok); a disagreement within its tolerance count is a warning. The list goes in the record for the author to change
-- [ ] 8.2 One severity on a finding, `error` or `warning`, set where the finding is made. Tests
-- [ ] 8.3 Import (upload, drop folder, feeds): a file with an error is not stored; the answer names every error. An override is one deliberate act, recorded with who and why on the import's audit row, and never the default. The drop folder moves the file to `failed/` with the report beside it. Tests
-- [ ] 8.4 Build: an error stops the build before it writes a set, the dry run included; the override is a flag, recorded on the set. Tests
-- [ ] 8.5 Stages: Data and Features read `failed` with the errors, and a later stage is not done while an earlier one has an unoverridden error (the `AGENTS.md` rule, now enforced by the status call)
-- [ ] 8.6 UI: errors and warnings shown apart on the import card, the Imports page and the Features stage; the override shown wherever it was used
-- [ ] 8.7 **STOP**: run the new rule over everything stored, changing nothing, and show what would now be an error. Stored history is not rejected after the fact: each such finding is listed, and the author says fix, override or leave
-- [ ] 8.8 The two module comments that say nothing blocks are rewritten to the decision; `AGENTS.md` step 1 and step 2 conditions that were "review" and are now checked by the app are marked so
-- [ ] 8.9 Rows: C2 and D11 closed; R12 and R65 re-read; G51 keeps what is left of it (Pandera, exchange_calendars, the `data_checks` table)
+- [x] 8.1 **ASK**: which findings are errors. Default, from the design's own words ("two or more flags on a row = error"): on import, a bar that fails the OHLC structure check, a duplicate or out-of-order timestamp, and any bar carrying two or more flags are errors; a gap or a single outlier is a warning. On a build, a check that compared nothing is an error (it already counts as not ok); a disagreement within its tolerance count is a warning. The list goes in the record for the author to change. *Answered by the author 2026-11-22, on the scan under 8.7: **the narrow rule**. An error is a bar whose prices contradict each other or whose volume is negative, a duplicate timestamp, or an out-of-order timestamp. A gap, an outlier and a value at or below zero are warnings, and two on one bar are still warnings. The design's "two or more flags on a row = error" is not used: it refused true history. On a build, as the default: a check that could not run or compared nothing is an error, a disagreement or a coverage gap a warning*
+- [x] 8.2 One severity on a finding, `error` or `warning`, set where the finding is made. Tests. *Done 2026-11-22 05:22 for the import checks: `cohesion.Finding.severity`, set in `check_candles` by `severity_of`; the report carries `errors`, `warnings`, `blocked` and the errors first among its examples. Nothing is refused yet. The build's checks get theirs with 8.4*
+- [x] 8.3 Import (upload, drop folder, feeds): a file with an error is not stored; the answer names every error. An override is one deliberate act, recorded with who and why on the import's audit row, and never the default. The drop folder moves the file to `failed/` with the report beside it. Tests. *Done 2026-11-22 11:33. One gate for all three paths (`cohesion.gate`). Upload: `422 check_failed` with every error; `override_reason` stores it. Drop folder: `failed/` with `<name>.checks.json` beside the file; `--override-checks`. Feeds: the series fails with its errors and is not stored; `--override-checks` on `refresh` and `apply`. The override goes on every audit row the file writes (`data_imports.check_override_reason`, `_errors`, `_by`). Live: a file with one broken bar is refused by the upload route and stores nothing; the drop-folder test against the database refuses it, then stores it with a reason and reads the reason back from the audit row. The feeds path has no test of its own. A consequence to know: a file sorted newest first is out of order on every row, so it is refused until it is sorted or overridden*
+- [x] 8.4 Build: an error stops the build before it writes a set, the dry run included; the override is a flag, recorded on the set. Tests. *Done 2026-11-22 11:33. `CheckResult.severity`; `[STOP]` beside `[ok]` and `[LOOK]`; exit 3 and no set, the dry run included; `--override-checks`, recorded on `feature_sets.check_override_*` and cleared by a later clean build. The feeds' rebuild records a refusal as `rebuild.refused`. Live: the daily dry run passes its one check; the refusal itself is covered by tests, not run live, since no stored series makes a check compare nothing*
+- [x] 8.5 Stages: Data and Features read `failed` with the errors, and a later stage is not done while an earlier one has an unoverridden error (the `AGENTS.md` rule, now enforced by the status call). *Done 2026-11-22 11:33. Data fails on a series the hard stop refused; Features fails when the newest feeds rebuild was refused; Normalization, Split, Training and Backtest read failed with the upstream reason while either has an error nobody overrode. An override in use is a note on its stage, never a failure. Live: all six stages read passed, with no notes*
+- [x] 8.6 UI: errors and warnings shown apart on the import card, the Imports page and the Features stage; the override shown wherever it was used. *Done 2026-11-22 11:33. Upload card: a refusal lists the errors and offers "Store with override" with a required reason; a completed import shows errors and warnings apart and any override used. Imports page: an `override` badge with the reason. Stage cards: an error reason is marked, overrides are listed. Not looked at in a browser*
+- [x] 8.7 **STOP**: run the new rule over everything stored, changing nothing, and show what would now be an error. Stored history is not rejected after the fact: each such finding is listed, and the author says fix, override or leave
+  - *Scan run 2026-11-22 05:22, ahead of 8.3, so the rule is seen on real data before anything is refused. `python -m loader.audit` over all 252 stored series, nothing changed. Under the default rule of 8.1, 32 series hold 3,903 errors, and most of them are true data:*
+    - *Two flags on one bar, both true: AAPL 2000-09-29 (close −51.9% and a volume spike, the profit warning), VXN 2001-09-17 (the gap of 9/11 and the volume of the reopening), oil 2020-04-20 (−36.98, so non-positive and a −302% move). The same pair on ALNY, IDXX, REGN, TTWO, VRTX, PSQ.*
+    - *Series that are not prices (T10Y2Y, DTB3, the computed NDX breadth, new-highs, earnings series): a value at or below zero beside a "close move" over 50%, which a ratio of a number near zero always is. 3,000 or so of the errors.*
+    - *Bars whose prices contradict each other, the one kind that is a real fault: 743 bars in 4 series. GOLD/yahoo 441 (2001 to 2011) and COPPER/yahoo 300 (2003 to 2019), where Yahoo's open sits a tick outside its own high or low, none since 2020; and WBD, one bar on 2026-10-05 with an open of 0.0, in both its series.*
+    - *No stored series holds a duplicate or an out-of-order timestamp (the table's key prevents both).*
+  - *The author chose the narrow rule (2026-11-22). Under it the stored errors are the 743 bars above and nothing else. **Still the author's to say: fix, override or leave them.** They stay stored and readable as they are; a re-import of those GOLD and COPPER years would now be refused without an override. WBD's open of 0.0 on 2026-10-05 is one bar in a series Yahoo no longer serves*
+- [x] 8.8 The two module comments that say nothing blocks are rewritten to the decision; `AGENTS.md` step 1 and step 2 conditions that were "review" and are now checked by the app are marked so. *Done 2026-11-22 11:33. `cohesion.py`, `data_checks.py`, `audit.py` and the `Check` comment in `feature_config.py`; `AGENTS.md` steps 1 and 2 each gain an app condition for errors and keep a review one for warnings; README "Data cohesiveness checks"*
+- [x] 8.9 Rows: C2 and D11 closed; R12 and R65 re-read; G51 keeps what is left of it (Pandera, exchange_calendars, the `data_checks` table). *Done 2026-11-22 11:33. R12 and R65 ("an error is a hard stop"): met for imports and builds, with the narrow definition of an error above. G51 keeps Pandera, exchange_calendars and a `data_checks` table*
 
 Done when: a file with a broken bar is refused with the reason, the same file goes in with a recorded override, and the scan of stored data is in the record.
 
@@ -1953,6 +1959,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-3 | 2026-11-22 11:33 | Claude Code (Claude Fable 5.2) | Job 8 done: an error stops an import or a build unless overridden with a recorded reason (C2, D11), under the narrow rule |
+| 2026-11-22-2 | 2026-11-22 05:22 | Claude Code (Claude Fable 5.2) | Job 8: findings carry a severity (8.2); the scan of stored data under the default rule, and the question it raises (8.7) |
 | 2026-11-22-1 | 2026-11-22 05:15 | Claude Code (Claude Fable 5.2) | Job 7 done: the five indicator rules are rule benchmarks (C8) |
 | 2026-11-21-9 | 2026-11-21 23:15 | Claude Code (Claude Fable 5.2) | Job 6 done: the sliding training window (C6, D3); strategy 87, run 1101 |
 | 2026-11-21-8 | 2026-11-21 22:54 | Claude Code (Claude Fable 5.2) | Job 5 done: sets 63 to 65 built, the 13 runs recalculate exactly, run 1077 trains on the five selectable columns |

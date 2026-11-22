@@ -390,6 +390,8 @@ app.get('/api/imports', async (req, res) => {
              di.file_path, di.file_name,
              di.row_count, di.imported_at,
              di.file_hash, di.archive_path,
+             -- The hard stop's override, when this import used one (R12, R65).
+             di.check_override_reason, di.check_override_errors, di.check_override_by,
              -- The newest audit row of the same slice is the version the
              -- candles hold; only that one can be undone (G46).
              (SELECT max(d2.id) FROM data_imports d2
@@ -421,6 +423,12 @@ app.get('/api/imports', async (req, res) => {
         importedAt: r.imported_at,
         fileHash: r.file_hash,
         archivePath: r.archive_path,
+        // Check errors stored on purpose: why, how many, and who. Null on an
+        // import that had none to override.
+        checkOverride: r.check_override_reason
+          ? { reason: r.check_override_reason, errors: r.check_override_errors,
+              by: r.check_override_by }
+          : null,
         currentId: r.current_id,
       })),
       total: Number(countRows[0].total),

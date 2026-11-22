@@ -35,6 +35,7 @@ export default function StageShell({
   summary,
   detail,
   reasons,
+  notes,
   alsoStale,
   children,
 }: {
@@ -44,6 +45,8 @@ export default function StageShell({
   detail?: ReactNode
   /** Why the stage is stale (or running, or failed), one line each. */
   reasons?: StageReason[]
+  /** Check overrides in use on this stage (R12, R65): shown, never hidden. */
+  notes?: string[]
   /** Stale as well as what the main badge says (e.g. failed and stale). */
   alsoStale?: boolean
   children?: ReactNode
@@ -65,7 +68,19 @@ export default function StageShell({
           {reasons && reasons.length > 0 && (
             <ul className="text-sm mt-2 list-disc list-inside text-warning-content/90">
               {reasons.map((r, i) => (
-                <li key={`${r.kind}-${i}`}>{r.text}</li>
+                <li key={`${r.kind}-${i}`} className={r.severity === 'error' ? 'text-error' : undefined}>
+                  {r.severity === 'error' && <span className="badge badge-error badge-xs mr-1">error</span>}
+                  {r.text}
+                </li>
+              ))}
+            </ul>
+          )}
+          {notes && notes.length > 0 && (
+            <ul className="text-sm mt-2 list-disc list-inside" data-testid="check-overrides">
+              {notes.map((n) => (
+                <li key={n}>
+                  <span className="badge badge-warning badge-xs mr-1">override</span>{n}
+                </li>
               ))}
             </ul>
           )}

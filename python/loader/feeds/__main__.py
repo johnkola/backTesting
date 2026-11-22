@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--json", action="store_true", help="print the full result as JSON")
     a = sub.add_parser("apply", help="accept a held series' changes (full re-download, force)")
     a.add_argument("feed", metavar="SYMBOL/SOURCE")
+    for cmd in (r, a):
+        cmd.add_argument("--override-checks", metavar="REASON", default=None,
+                         help="store bars whose checks found errors anyway (a series with an "
+                              "error is otherwise not stored); the reason is recorded on the "
+                              "import's audit row. Use it with one --feed")
     args = p.parse_args(argv)
 
     if args.cmd == "list":
@@ -60,7 +65,8 @@ def main(argv: list[str] | None = None) -> int:
             run_id = runner.record_start(conn, "cli", keys, apply_key)
     try:
         result = runner.run("cli", keys, apply_key=apply_key, dry_run=dry,
-                            rebuild=not (args.cmd == "refresh" and args.no_rebuild))
+                            rebuild=not (args.cmd == "refresh" and args.no_rebuild),
+                            override_reason=args.override_checks)
     except Exception as exc:
         if run_id is not None:
             with pool().connection() as conn:

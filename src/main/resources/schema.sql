@@ -153,6 +153,15 @@ ALTER TABLE data_imports ADD COLUMN IF NOT EXISTS archive_path TEXT;
 CREATE INDEX IF NOT EXISTS idx_data_imports_archive_path
     ON data_imports(archive_path) WHERE archive_path IS NOT NULL;
 
+-- The hard stop's override (R12, R65; Design-Gaps C2, D11). A file whose check
+-- report has an error is not stored. When someone stores it anyway, on purpose,
+-- every audit row it writes says why, how many errors were accepted, and who.
+-- All NULL on an import that had no error to override, which is every import
+-- before 2026-11-22 (nothing was refused then, so nothing was overridden).
+ALTER TABLE data_imports ADD COLUMN IF NOT EXISTS check_override_reason TEXT;
+ALTER TABLE data_imports ADD COLUMN IF NOT EXISTS check_override_errors INT;
+ALTER TABLE data_imports ADD COLUMN IF NOT EXISTS check_override_by VARCHAR(64);
+
 -- One row per distinct file loaded for a series: the version history of that
 -- series' CSV. data_imports is per year slice and says what is stored now;
 -- this says which file each version was and how it differed from the one
@@ -562,6 +571,14 @@ CREATE TABLE IF NOT EXISTS feed_runs (
     finished_at TIMESTAMPTZ
 );
 ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS current_run_id BIGINT;
+
+-- The build's hard stop (R12, R65; Design-Gaps C2, D11). A data check that
+-- could not run, or compared nothing, stops the build before a set is written.
+-- A set built anyway says why, how many such checks, and who. All NULL on a
+-- set whose checks all happened.
+ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS check_override_reason TEXT;
+ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS check_override_errors INT;
+ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS check_override_by VARCHAR(64);
 
 -- On each walk-forward run: the build it read (feature_run_id), and a hash of
 -- exactly what it trained and scored on (input_snapshot), with the parts that

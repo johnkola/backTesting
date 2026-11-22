@@ -14,7 +14,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from loader.aggregate import aggregate, is_valid_pair
-from loader.cohesion import check_import
+from loader.cohesion import ChecksFailed, check_import, gate
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
@@ -50,12 +50,18 @@ async def post_imports(
     source: str = Form("default"),
     force: str = Form("false"),
     aggregate_to: str = Form(""),
+    override_reason: str = Form(""),
 ) -> JSONResponse:
     """`aggregate_to` is a comma-separated list of higher timeframes
     (e.g. "D1,W1,MN1"). When set, the just-imported candles are rolled
     up into each target after the upload commits. Default is off, so
     operators who manage W1/M1 with their own CSV imports aren't
-    surprised by overwrites."""
+    surprised by overwrites.
+
+    A file whose check report has an error is not stored (R12, R65): the answer
+    is 422 `check_failed` with every error. `override_reason` stores it anyway,
+    as one deliberate act: the reason, the error count and the actor go on the
+    import's audit rows. Without a reason there is no override."""
 
     if not symbol:
         return _bad("symbol is required")
@@ -106,6 +112,21 @@ async def post_imports(
         if not header or not rows_by_year:
             return _bad("CSV contains no parseable data rows")
 
+        # The hard stop, before anything is planned or written.
+        report = check_import(header, rows_by_year, timeframe)
+        try:
+            override = gate(report, override_reason)
+        except ChecksFailed as exc:
+            return JSONResponse(status_code=422, content={
+                "status": "check_failed",
+                "error": str(exc),
+                "errors": report.error_lines(),
+                "hint": ("Fix the file and upload it again, or store it as it is by "
+                         "giving a reason (override_reason), which is recorded."),
+                "cohesion": report.to_dict(),
+                "file": {"hash": file_hash, "name": source_file.name},
+            })
+
         with pool().connection() as conn:
             slices = plan_slices(
                 conn,
@@ -142,6 +163,7 @@ async def post_imports(
                     symbol=symbol,
                     type_=type,
                     timeframe=timeframe,
+                    override=override,
                 )
             except Exception as exc:  # noqa: BLE001 — narrow check below
                 if is_compressed_chunk_error(exc):
@@ -203,9 +225,10 @@ async def post_imports(
                                       "file": file_rec}
         if aggregate_results:
             payload["aggregated"] = aggregate_results
-        # Read-only cohesiveness advisory over the uploaded bars. Never blocks
-        # the import; the client surfaces it if it cares.
-        payload["cohesion"] = check_import(header, rows_by_year, timeframe).to_dict()
+        # The check report: warnings, and any errors that were overridden.
+        payload["cohesion"] = report.to_dict()
+        if override is not None:
+            payload["checkOverride"] = {"reason": override.reason, "errors": override.errors}
         # R6: rows that produced no candle, said rather than silently dropped.
         payload["skipped"] = skipped.to_dict()
         return JSONResponse(status_code=200, content=payload)

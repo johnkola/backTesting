@@ -40,11 +40,17 @@ CSV_2YEARS = (
 # Same date range, different closes -> same archive_path, different hash.
 CSV_2YEARS_CHANGED = (
     "Date,Open,High,Low,Close,Volume\n"
-    "2022-12-29,100.0,101.0,99.0,200.5,1000\n"
-    "2022-12-30,100.5,102.0,100.0,201.5,1100\n"
-    "2023-01-03,101.5,103.0,101.0,202.5,1200\n"
-    "2023-01-04,102.5,104.0,102.0,203.5,1300\n"
-    "2023-01-05,103.5,105.0,103.0,204.5,1400\n"
+    "2022-12-29,100.0,201.0,99.0,200.5,1000\n"
+    "2022-12-30,100.5,202.0,100.0,201.5,1100\n"
+    "2023-01-03,101.5,203.0,101.0,202.5,1200\n"
+    "2023-01-04,102.5,204.0,102.0,203.5,1300\n"
+    "2023-01-05,103.5,205.0,103.0,204.5,1400\n"
+)
+# The first bar's high is below its low: it cannot be true (R12, R65).
+CSV_BROKEN = (
+    "Date,Open,High,Low,Close,Volume\n"
+    "2023-01-03,101.5,100.0,101.0,101.5,1200\n"
+    "2023-01-04,102.5,104.0,102.0,103.5,1300\n"
 )
 
 
@@ -154,3 +160,30 @@ def test_ingest_conflict_then_force(inbox):
     count, lo, hi = _candle_summary()
     assert count == 5
     assert float(hi) == 204.5  # overwritten closes
+
+
+def test_a_broken_file_is_refused_then_stored_with_a_recorded_override(inbox):
+    """The hard stop end to end (C2, D11): nothing is stored and the report
+    sits beside the file under failed/; with a reason the same file goes in
+    and its audit row says why, how many errors, and who."""
+    import json
+
+    from loader.db import pool
+    from loader.ingest import main
+
+    (inbox / FILENAME).write_text(CSV_BROKEN, encoding="utf-8")
+    assert main(["--inbox", str(inbox)]) == 1
+    assert _candle_summary()[0] == 0, "a refused file stores nothing"
+    report = json.loads((inbox / "failed" / (FILENAME + ".checks.json")).read_text())
+    assert report["refused"] is True and report["cohesion"]["errors"] == 1
+
+    (inbox / FILENAME).write_text(CSV_BROKEN, encoding="utf-8")
+    assert main(["--inbox", str(inbox), "--override-checks", "test: vendor tick"]) == 0
+    assert _candle_summary()[0] == 2
+    with pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT di.check_override_reason, di.check_override_errors, di.check_override_by "
+            "FROM data_imports di JOIN instruments i ON i.id = di.instrument_id "
+            "WHERE i.symbol = %s", (SYMBOL,))
+        rows = cur.fetchall()
+    assert rows and all(r[0] == "test: vendor tick" and r[1] == 1 and r[2] for r in rows)

@@ -49,12 +49,13 @@ to `<inbox>/failed/`. `--dry-run` moves nothing.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
 from pathlib import Path
 
-from loader.cohesion import check_import
+from loader.cohesion import ChecksFailed, check_import, gate
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
@@ -186,6 +187,20 @@ def parse_filename(name: str) -> tuple[str, str, str, str]:
     return source, symbol, type_, timeframe
 
 
+#: A refused file's report, kept until `main` has moved the file, so the
+#: report can be written beside it under `failed/`.
+_LAST_REPORT: dict[str, object] = {}
+
+
+def _write_report(dest: Path, report) -> Path:
+    """The check report of a refused file, beside it: `<name>.checks.json`."""
+    out = dest.with_name(dest.name + ".checks.json")
+    out.write_text(json.dumps(
+        {"file": dest.name, "refused": True, "errors": report.error_lines(),
+         "cohesion": report.to_dict()}, indent=2))
+    return out
+
+
 def _move_aside(path: Path, dest_dir: Path) -> Path:
     """Move `path` into `dest_dir`, disambiguating name collisions with a
     numeric suffix so a re-run never clobbers a previous file."""
@@ -199,9 +214,14 @@ def _move_aside(path: Path, dest_dir: Path) -> Path:
     return dest
 
 
-def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
+def _process_one(path: Path, *, force: bool, dry_run: bool,
+                 override_reason: str | None = None) -> str:
     """Import a single file. Returns a status word for the summary tally:
-    'imported' | 'parse-error' | 'empty' | 'conflict' | 'error'."""
+    'imported' | 'parse-error' | 'empty' | 'conflict' | 'check-failed' | 'error'.
+
+    'check-failed' is the hard stop (R12, R65): the file's check report has an
+    error and `override_reason` was not given, so nothing is stored and the
+    caller files it under `failed/` with the report beside it."""
 
     try:
         source, symbol, type_, timeframe = parse_filename(path.name)
@@ -245,12 +265,21 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
         for ex in skipped.examples:
             print(f"          line {ex['line']}: {ex['reason']}: {ex['text']}")
 
-    # Read-only cohesiveness advisory — never changes whether the file imports.
     report = check_import(header, rows_by_year, timeframe)
     print(f"  {report.summary()}")
     if not report.ok:
         for f in report.examples[:5]:
-            print(f"          {f.category} {f.timestamp}: {f.detail}")
+            print(f"          {f.severity:<7} {f.category} {f.timestamp}: {f.detail}")
+    try:
+        override = gate(report, override_reason)
+    except ChecksFailed:
+        print(f"  FAIL  {path.name}: {report.errors} error(s), not stored. Fix the file, "
+              "or re-run with --override-checks \"<reason>\" to store it as it is")
+        if not dry_run:
+            _LAST_REPORT[path.name] = report
+        return "check-failed"
+    if override is not None:
+        print(f"  NOTE  {path.name}: {override.errors} error(s) overridden: {override.reason}")
 
     from loader.db import pool
 
@@ -291,6 +320,7 @@ def _process_one(path: Path, *, force: bool, dry_run: bool) -> str:
                 symbol=symbol,
                 type_=type_,
                 timeframe=timeframe,
+                override=override,
             )
         except Exception as exc:  # noqa: BLE001 — narrow check, then re-raise
             if is_compressed_chunk_error(exc):
@@ -339,6 +369,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--inbox", default=None, help="inbox dir (default: $CSV_INBOX_DIR or data/csv-inbox)")
     parser.add_argument("--force", action="store_true", help="overwrite conflicting year slices")
     parser.add_argument("--dry-run", action="store_true", help="show the per-file plan; touch nothing")
+    parser.add_argument("--override-checks", metavar="REASON", default=None,
+                        help="store files whose checks found errors anyway; the reason is "
+                             "recorded on each import's audit row. Applies to every file in "
+                             "this run, so run it on an inbox holding only the files you mean")
     args = parser.parse_args(argv)
 
     inbox = resolve_inbox_dir(args.inbox)
@@ -359,11 +393,15 @@ def main(argv: list[str] | None = None) -> int:
     tally: dict[str, int] = {}
     try:
         for path in files:
-            status = _process_one(path, force=args.force, dry_run=args.dry_run)
+            status = _process_one(path, force=args.force, dry_run=args.dry_run,
+                                  override_reason=args.override_checks)
             tally[status] = tally.get(status, 0) + 1
             if not args.dry_run:
                 dest = _move_aside(path, inbox / ("processed" if status == "imported" else "failed"))
                 print(f"          -> {dest.relative_to(inbox)}")
+                report = _LAST_REPORT.pop(path.name, None)
+                if report is not None:
+                    print(f"          -> {_write_report(dest, report).relative_to(inbox)}")
     finally:
         close_pool()
 

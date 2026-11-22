@@ -616,6 +616,10 @@ def main() -> int:
     p.add_argument("--since", help="First calendar date to build (e.g. 2003-01-01)")
     p.add_argument("--dry-run", action="store_true",
                    help="Resolve and normalize, report, write nothing")
+    p.add_argument("--override-checks", metavar="REASON", default=None,
+                   help="Build although a data check could not run or compared nothing "
+                        "(the build otherwise stops, R12 and R65). The reason is recorded "
+                        "on the set")
     args = p.parse_args()
 
     cfg_path = Path(args.config)
@@ -675,12 +679,35 @@ def main() -> int:
         print(f"\nERROR: {len(empty)} column(s) produced no values: {', '.join(empty)}")
         return 1
 
+    # The hard stop (R12, R65; Design-Gaps C2, D11), the dry run included: a
+    # check that did not happen leaves its column unverified, so no set is
+    # written over it unless someone says why, and that is recorded on the set.
+    stopped = data_checks.errors(checks)
+    reason = (args.override_checks or "").strip() or None
+    if stopped and reason is None:
+        print(f"\nrefused: {len(stopped)} data check(s) did not happen, so no set was "
+              f"written: {', '.join(c.name for c in stopped)}. Import the published "
+              "series, or pass --override-checks \"<reason>\" to build without it")
+        return 3
+    if stopped:
+        print(f"\noverride  {len(stopped)} data check error(s) accepted: {reason}")
+
     if args.dry_run:
         print("\n--dry-run: nothing written")
         return 0
 
     set_id, build_id = store(conn, cur, cfg, cfg_path, inst_id, src_id, calendar, columns,
                              build_inputs)
+    # Who built over a failed check and why, or NULL: a rebuild of the same set
+    # with its checks passing clears an earlier override.
+    cur.execute(
+        "UPDATE feature_sets SET check_override_reason = %s, check_override_errors = %s, "
+        "check_override_by = CASE WHEN %s::text IS NULL THEN NULL ELSE audit_actor() END "
+        "WHERE id = %s",
+        (reason if stopped else None, len(stopped) if stopped else None,
+         reason if stopped else None, set_id),
+    )
+    conn.commit()
     cur.execute(
         "SELECT row_count, first_complete_date::date FROM feature_sets WHERE id=%s", (set_id,)
     )

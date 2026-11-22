@@ -42,6 +42,15 @@ VOLUME_WINDOW = 1
 WROTE = {"extended", "fixed", "extended+fixed", "loaded", "applied"}
 
 
+class ChecksRefused(RuntimeError):
+    """A series whose fetched bars failed the hard stop (R12, R65): not stored.
+    Carries the errors so the run record and the Data stage can list them."""
+
+    def __init__(self, message: str, errors: list[str]):
+        super().__init__(message)
+        self.errors = errors
+
+
 class FeedError(RuntimeError):
     """A series cannot be refreshed as things stand; the message says why."""
 
@@ -56,6 +65,9 @@ class RunContext:
     cutoff: dt.date
     stamp: str
     dry_run: bool = False
+    #: Why check errors in fetched bars are stored anyway (R12, R65). None, the
+    #: default, refuses such a series: it fails with its errors and is not stored.
+    override_reason: str | None = None
     #: Breadth members' closes, refreshed once per run when a breadth series is fed.
     closes: dict[str, dict[str, float]] | None = None
     member_results: list[members.MemberResult] = field(default_factory=list)
@@ -70,9 +82,11 @@ class RunContext:
         return core.feed_cutoff(self.now, feed.overnight)
 
     @classmethod
-    def at(cls, now: dt.datetime, dry_run: bool = False) -> RunContext:
+    def at(cls, now: dt.datetime, dry_run: bool = False,
+           override_reason: str | None = None) -> RunContext:
         return cls(now=now, cutoff=core.session_cutoff(now),
-                   stamp=now.strftime("%Y-%m-%dT%H:%MZ"), dry_run=dry_run)
+                   stamp=now.strftime("%Y-%m-%dT%H:%MZ"), dry_run=dry_run,
+                   override_reason=override_reason)
 
 
 # --------------------------------------------------------------------------
@@ -245,7 +259,7 @@ def _guard(slices, fix_days: list[str]) -> None:
 
 def _import(conn, feed: Feed, ctx: RunContext, rows_by_year: dict[int, list[str]], *,
             force: bool, fix_days: list[str], guarded: bool, out: dict) -> dict:
-    from loader.cohesion import check_import
+    from loader.cohesion import ChecksFailed, check_import, gate
     from loader.csv_import import commit_file, plan_slices, write_archive_files
 
     slices = plan_slices(conn, core.HEADER, rows_by_year, source_name=feed.source,
@@ -255,20 +269,31 @@ def _import(conn, feed: Feed, ctx: RunContext, rows_by_year: dict[int, list[str]
     out["years"] = [{"year": s.year, "plan": s.plan,
                      "diff": s.diff.to_dict() if s.diff is not None else None}
                     for s in slices if s.plan != "skip"]
+    # The hard stop (R12, R65), on the rows about to be written. The dry run
+    # reports it too, so a refusal is seen before anything is tried.
+    report = check_import(core.HEADER, rows_by_year, TIMEFRAME)
+    if report.blocked:
+        out["checkErrors"] = report.error_lines()
     if ctx.dry_run:
         return out
     if not any(s.plan != "skip" for s in slices):
         out["status"] = "up-to-date"
         conn.commit()
         return out
+    try:
+        override = gate(report, ctx.override_reason)
+    except ChecksFailed as exc:
+        raise ChecksRefused(f"{exc}. Pass --override-checks \"<reason>\" to store it "
+                            "as it is", report.error_lines()) from exc
+    if override is not None:
+        out["checkOverride"] = {"reason": override.reason, "errors": override.errors}
     _, file_rec = commit_file(conn, slices, _source_file(feed, rows_by_year, ctx),
                               source_name=feed.source, symbol=feed.symbol,
-                              type_=feed.type, timeframe=TIMEFRAME)
+                              type_=feed.type, timeframe=TIMEFRAME, override=override)
     conn.commit()
     write_archive_files(slices)
     out["version"] = {"id": file_rec["id"], "changeKind": file_rec["changeKind"]}
-    # Advisory, as on upload: never changes whether the data went in.
-    counts = check_import(core.HEADER, rows_by_year, TIMEFRAME).to_dict().get("counts") or {}
+    counts = report.to_dict().get("counts") or {}
     out["cohesion"] = {k: v for k, v in counts.items() if v}
     return out
 
@@ -384,8 +409,12 @@ def parse_build_output(stdout: str, code: int, stderr: str = "") -> dict:
         info["buildId"] = int(m.group(1))
     checks = stdout.split("DATA CHECKS", 1)[1] if "DATA CHECKS" in stdout else ""
     info["checks"] = [ln.strip() for ln in checks.splitlines() if ln.strip().startswith("[")]
+    # The build's hard stop (R12, R65): a data check did not happen, so no set
+    # was written. Said on its own, not buried in the tail of the output.
+    if m := re.search(r"^refused: (.+)$", stdout, re.M):
+        info["refused"] = m.group(1)
     if code != 0:
-        info["error"] = (stderr or stdout)[-2000:]
+        info["error"] = info.get("refused") or (stderr or stdout)[-2000:]
     return info
 
 
@@ -411,7 +440,7 @@ def _line(res: dict) -> str:
 
 def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = None,
         rebuild: bool = True, dry_run: bool = False, conn_factory=None,
-        log: Callable[[str], None] = print) -> dict:
+        log: Callable[[str], None] = print, override_reason: str | None = None) -> dict:
     """Refresh `keys` (all feeds when None), or Apply one held series. Returns
     the run's result. Raises Busy when another run holds the lock."""
     if conn_factory is None:
@@ -419,7 +448,8 @@ def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = 
 
         conn_factory = pool().connection
     feeds = [registry.BY_KEY[apply_key]] if apply_key else registry.select(keys)
-    ctx = RunContext.at(dt.datetime.now(dt.UTC), dry_run=dry_run)
+    ctx = RunContext.at(dt.datetime.now(dt.UTC), dry_run=dry_run,
+                        override_reason=override_reason)
 
     with conn_factory() as conn:
         with conn.cursor() as cur:
@@ -455,6 +485,8 @@ def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = 
                     conn.rollback()
                     res = {"feed": feed.key, "status": "error",
                            "error": f"{type(exc).__name__}: {exc}"[:500]}
+                    if isinstance(exc, ChecksRefused):
+                        res["checkErrors"] = exc.errors
                 results.append(res)
                 log(_line(res))
 

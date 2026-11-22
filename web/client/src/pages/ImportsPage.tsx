@@ -189,7 +189,19 @@ export default function ImportsPage() {
                           <span className="badge badge-warning badge-xs ml-2">superseded</span>
                         )}
                       </td>
-                      <td title={r.filePath}>{r.fileName}</td>
+                      <td title={r.filePath}>
+                        {r.fileName}
+                        {r.checkOverride && (
+                          <span
+                            className="badge badge-warning badge-xs ml-2 cursor-help"
+                            title={`${r.checkOverride.errors} check error(s) stored on an override`
+                              + `${r.checkOverride.by ? ` by ${r.checkOverride.by}` : ''}: `
+                              + r.checkOverride.reason}
+                          >
+                            override
+                          </span>
+                        )}
+                      </td>
                       <td className="font-mono text-xs">
                         {r.fileHash ? r.fileHash.slice(0, 8) : (
                           <span className="text-base-content/40">—</span>
