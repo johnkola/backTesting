@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-5** · 2026-11-22 11:57 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-6** · 2026-11-22 12:04 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -408,7 +408,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
 | `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable. Each row carries `checkOverride` (`{reason, errors, by}`) when its check errors were stored on an override, else `null` |
 | `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries. Each carries `taxRate`, the percent it was scored after on realized gains (`null` before tax, G20), and `testWindows`, the saved test windows it scores as `{from, to, looksBefore, firstLookAt}` (empty when none), and `testWindowReused`, true when one was looked at before it (G48, R69); the result page has the same. Each carries `strategyKind`, the engine's kind for the strategy it ran (`model` or `benchmark`; `null` when the engine does not answer or no longer registers the name) |
-| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}`. It carries `strategyKind` as the list does |
+| `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}`. It carries `strategyKind` as the list does. `settings` is what the run was asked to do (G40): `requestedFrom` and `requestedTo` (the dates asked for; `startDate` is the first bar after the warm-up), `parameters` as passed and `effectiveParameters` with the defaults filled in, `initialCapital`, `commission` and `slippage` (`{type, value, description}`, the value exact), `taxRatePct` and `pinnedModelVersion`; `null` on a result stored before 2026-11-22 |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
 | `GET /api/docs/:slug` | `rev` | One doc as rendered HTML, headings anchored. Every fetch snapshots the file if its hash changed; `rev=N` returns a captured revision instead |
@@ -796,8 +796,8 @@ import or a build (C2), and the requirements doc verified against the code
    summary and the Pipeline Backtest table (R82) and the Requirements doc on the Docs
    tab (R59) are done; a dash instead of 0 for Sharpe, win rate and Calmar with no value
    (R83, G72) is left, and it changes stored figures, so it has its own plan.
-3. Phase one's leftovers that phase two will want too: results that keep their run
-   settings (G40) and folds that keep their models (G50). Walk-forward runs are on
+3. Phase one's leftovers that phase two will want too: folds that keep their models
+   (G50). A backtest result keeps its run settings now (G40), shown on its page. Walk-forward runs are on
    **Results** now, under the backtests, and up to four can be ticked and compared side
    by side by features, windows and metric (G57).
 
@@ -1304,6 +1304,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-6 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | `GET /api/results/:id` carries `settings` (G40); roadmap follows |
 | 2026-11-22-5 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | Roadmap: walk-forward runs on Results and the compare page are done (G57) |
 | 2026-11-22-4 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | `POST /api/run` answers `inSample`; roadmap: G64 and G71 done |
 | 2026-11-22-3 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Roadmap: the 2026-11-19 work list is done; Next follows the verified requirements |

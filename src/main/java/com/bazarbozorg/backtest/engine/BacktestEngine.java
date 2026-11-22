@@ -292,7 +292,12 @@ public class BacktestEngine {
                 buyAndHold,
                 benchmarks,
                 modelVersionId == null ? null : modelWindow(strategy.getName(), modelVersionId),
-                taxRatePct);
+                taxRatePct)
+                // What the run was asked to do (G40): kept with the result so it
+                // can be rerun as it was, costs included.
+                .withSettings(RunSettings.of(from, to, params, strategy.getDefaultParameters(),
+                        initialCapital, commissionModel, slippageModel, taxRatePct,
+                        pinnedVersionId));
     }
 
     /**

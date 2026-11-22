@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { benchmarkReading, isBenchmark } from '../lib/ruleBenchmarks'
 import { sampleNote, sampleOf } from '../lib/inSample'
+import { settingsLines } from '../lib/runSettings'
 import { taxNote } from '../lib/tax'
 import { testWindowMark, testWindowNote } from '../lib/testWindow'
 import FieldLabel, { tipClass } from '../components/FieldLabel'
@@ -237,6 +238,27 @@ export default function ResultDetailPage() {
             </div>
           )
         })}
+      </div>
+
+      {/* G40, R38: what the run was asked to do, costs included. */}
+      <div className="bg-base-200 rounded-box p-4" data-testid="run-settings">
+        <h2 className="font-semibold mb-1">Run settings</h2>
+        {detail.settings ? (
+          <dl className="grid grid-cols-1 sm:grid-cols-[12rem_1fr] gap-x-4 gap-y-1 text-sm">
+            {settingsLines(detail.settings).map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-base-content/60">{label}</dt>
+                <dd className="font-mono text-xs break-words">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-sm text-base-content/70">
+            Not recorded: this result was stored before a run kept its settings (2026-11-22).
+            Its window above is the first and last bar it traded; the parameters, costs and
+            capital it was asked for cannot be recovered.
+          </p>
+        )}
       </div>
 
       <div className="bg-base-200 rounded-box p-4">

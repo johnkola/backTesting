@@ -484,6 +484,28 @@ export type FoldBenchmark = {
   gainsTax: number | null
 }
 
+/** One cost model of a run: a rate as a decimal (0.001 is 0.1%) or a fixed amount. */
+export type RunCost = { type: 'percentage' | 'fixed' | 'other' | string, value: number | null, description: string | null }
+
+/**
+ * What a backtest was asked to do (G40), from `backtest_results.settings_json`.
+ * The result's own `startDate` is the first bar after the warm-up; these are
+ * the dates asked for.
+ */
+export type RunSettings = {
+  requestedFrom: string | null
+  requestedTo: string | null
+  /** The strategy parameters as passed. */
+  parameters: Record<string, string>
+  /** The defaults with `parameters` laid over them: what the strategy ran with. */
+  effectiveParameters: Record<string, string>
+  initialCapital: number
+  commission: RunCost
+  slippage: RunCost
+  taxRatePct: number | null
+  pinnedModelVersion: string | null
+}
+
 /** Faber or dual momentum beside a backtest result (B7), traded with the run's costs. */
 export type RuleBenchmark = {
   name: 'faber' | 'dual_momentum' | string
@@ -512,6 +534,8 @@ export type ResultDetail = ResultSummary & {
    */
   holdEquity?: number[] | null
   holdEquityNote?: string | null
+  /** What the run was asked to do (G40); null on a result stored before 2026-11-22. */
+  settings?: RunSettings | null
   result: {
     strategyName: string
     instrumentSymbol: string

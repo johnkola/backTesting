@@ -1007,6 +1007,14 @@ $audit_triggers$;
 -- tax, as every result before G20 was.
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS tax_rate DOUBLE PRECISION;
 
+-- What the run was asked to do (G40, R34): the requested window (start_date is
+-- the first bar after the warm-up, which is later), the strategy parameters as
+-- given and as they took effect, the capital, the commission and slippage
+-- models with their exact values, the tax rate and any pinned model version.
+-- JSON of `engine.RunSettings`. NULL on a result stored before 2026-11-22: its
+-- request cannot be recovered, and it is not guessed from today's configuration.
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS settings_json TEXT;
+
 -- G48, R69: every run that reports on a saved strategy's test window, kept so
 -- tuning on the test block is visible. The test block is the design's final
 -- exam, scored once; a look at it is a fact that outlives the run that made it,

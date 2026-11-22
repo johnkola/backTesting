@@ -75,8 +75,8 @@ public class BacktestResultRepository {
                 "initial_capital, final_equity, total_return_pct, sharpe_ratio, " +
                 "max_drawdown_pct, total_trades, win_rate, model_cache_key, model_cache_hit, " +
                 "model_version_id, result_json, model_train_from, model_train_to, " +
-                "model_train_symbol, model_window, tax_rate) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
+                "model_train_symbol, model_window, tax_rate, settings_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -138,6 +138,10 @@ public class BacktestResultRepository {
             } else {
                 ps.setNull(22, Types.DOUBLE);
             }
+            // What the run was asked to do (G40): window, parameters, capital,
+            // costs, tax, pinned model. NULL when the result carries none.
+            ps.setString(23, result.getSettings() == null ? null
+                    : gson.toJson(result.getSettings()));
 
             long id;
             try (ResultSet rs = ps.executeQuery()) {

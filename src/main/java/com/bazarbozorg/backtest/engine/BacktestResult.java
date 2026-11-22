@@ -56,6 +56,12 @@ public class BacktestResult {
      */
     private final transient ModelWindow modelWindow;
     /**
+     * What the run was asked to do (G40). Transient like the model window: its
+     * home is the row's own column, {@code settings_json}, not the result JSON.
+     * Null on a result built without an engine run (a test, a stored row).
+     */
+    private transient RunSettings settings;
+    /**
      * Percent charged on each realized gain, or null for a result scored before
      * tax (G20). The strategy, its buy-and-hold and its rule benchmarks all paid
      * it. Kept in the stored JSON as well as its column, as the run's setting.
@@ -189,6 +195,16 @@ public class BacktestResult {
     }
 
     /** The model's training window (B4), or null for a strategy with no model. */
+    public RunSettings getSettings() {
+        return settings;
+    }
+
+    /** Attaches the run's settings; called once, by the engine. */
+    public BacktestResult withSettings(RunSettings runSettings) {
+        this.settings = runSettings;
+        return this;
+    }
+
     public ModelWindow getModelWindow() {
         return modelWindow;
     }

@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-3** · 2026-11-22 11:57 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-4** · 2026-11-22 12:04 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -50,13 +50,13 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## A. Principles
 
-- **R1** Every number is verifiable: any value traces to its source, code version, time, author or job, and upstream values. · *partial (`candles` has no audit columns or link to its import, G61; a backtest result has no code version or input snapshot, G40; no Verify tab, G10)*
+- **R1** Every number is verifiable: any value traces to its source, code version, time, author or job, and upstream values. · *partial (`candles` has no audit columns or link to its import, G61; a backtest result has no code version or input snapshot, G61; no Verify tab, G10)*
 - **R2** Raw provider data is never lost: every archived CSV version is kept and any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider. [D10, amends "corrections are new rows"] · *partial (G66, G67: a fix overwrites the older slice's archive file, and nothing reloads a version in one action)*
 - **R3** Each feature exists only over its own available range; no trimming to overlap, no null padding. · *departure, by the author's decision 2026-11-19 (C3): NULLs are stored for warm-up and pre-start days and dropped at read; no trimming to overlap is done*
 - **R4** Audit columns (created/updated at/by) on every table holding computed or ingested values. · *partial (G61: not on `candles`, nor on the benchmark, signal and epoch tables)*
-- **R5** Reproducibility: a feature or model run is identified by code version plus input snapshot; the same seed and snapshot give the same result. · *partial (a backtest result has no code version or snapshot, G40, G61)*
+- **R5** Reproducibility: a feature or model run is identified by code version plus input snapshot; the same seed and snapshot give the same result. · *partial (a backtest result has no code version or snapshot, G61)*
 - **R6** Separation: Python computes, Java serves, Next.js shows; the UI never touches the database. · *deferred, by the author's decision 2026-11-19 (C1): the UI calls the API only, today; the designed split waits for the stack move*
-- **R77** Anything derivable is recalculated on demand and after a code change; nothing derived is baked in where only a retrain could redo it; what a recalculation needs (e.g. per-bar signals) is stored. [AG working rule, author 2026-11-15] · *partial (profit step done, B10; a Run-tab result cannot be recalculated, G40)*
+- **R77** Anything derivable is recalculated on demand and after a code change; nothing derived is baked in where only a retrain could redo it; what a recalculation needs (e.g. per-bar signals) is stored. [AG working rule, author 2026-11-15] · *partial (profit step done, B10; a Run-tab result keeps its settings, G40, but stores no signals, so it is rerun, not recalculated)*
 
 ## B. Data ingestion
 
@@ -110,7 +110,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 ## E. Training, runs and benchmarks
 
 - **R33** Train & Run runs a saved strategy only; no choices on that tab. · *deferred, by the author's decision 2026-11-19 (C1; G58): Pipeline > Training starts a saved strategy with no choices; the Train and Run tabs keep their forms*
-- **R34** Every run records strategy name and version, instrument, exact feature list with code versions, all four windows, hyperparameters, seed, library versions, input snapshot, outputs, audit. · *partial (the prediction window and the fold models are not recorded, G50; a Run-tab result records no settings, G40)*
+- **R34** Every run records strategy name and version, instrument, exact feature list with code versions, all four windows, hyperparameters, seed, library versions, input snapshot, outputs, audit. · *partial (the prediction window and the fold models are not recorded, G50; a Run-tab result records its settings, G40, but no code version or input snapshot, G61)*
 - **R35** Re-running creates a new run record. Walk-forward is one run with one record per fold. · *done*
 - **R36** Three benchmarks (buy-and-hold, Faber 10-month MA, dual momentum) recalculated on every run, never cached, before training, under the strategy's costs, tax, superficial loss, dividends and currency, and stored with the run. Same window and settings must give the same figure; a difference is a defect. Dual momentum: at each month's last bar take the better 12-month return of the instrument and SPY; hold it next month if it beats T-bills over the same 12 months, else cash at the T-bill rate (D7). · *partial (B6, B7 done; dividends, currency, superficial loss not built)*
 - **R37** Margin overlay is compared against plain buy-and-hold of the same core, and against always-long at the same leverage with no model; a win that only beats the first is labelled leverage, not timing. [+ G25] · *done (G25)*
@@ -128,7 +128,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## F. Results
 
-- **R38** Results show metrics, equity curve, trades and predictions per bar, plus the costs used. · *partial (predictions per bar are stored and not shown, G50; a result does not keep its cost settings, G40)*
+- **R38** Results show metrics, equity curve, trades and predictions per bar, plus the costs used. · *partial (predictions per bar are stored and not shown, G50)*
 - **R39** Total trades, trades per year, average holding time, max drawdown and Sharpe for the strategy and all three benchmarks. · *done*
 - **R40** Side-by-side comparison of runs by feature list, windows and metric. · *done (G57: walk-forward runs, up to four side by side)*
 - **R72** Each run is scored against a naive predictor on the same test window (always up; historical mean return) and flagged if it does not beat it. · *partial (B8 done; a Run-tab result is not scored against it)*
@@ -184,6 +184,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-4 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | G40 done: the reasons on R1, R5, R34, R38 and R77 follow; no status changes |
 | 2026-11-22-3 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | R40 done (G57); R38's reason follows; the count follows |
 | 2026-11-22-2 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | R59 and R82 done (G64, G71); the count follows |
 | 2026-11-22-1 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Every status verified against the code at `db6d42f`: 29 changed. The author's answers of 2026-11-19 written into R12, R19, R21, R25, R65 and R78; "Decisions needed" replaced by "Decided"; two statuses added, departure and deferred; the count redone; no longer a draft |

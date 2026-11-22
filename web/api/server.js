@@ -662,7 +662,7 @@ app.get('/api/results/:id', async (req, res) => {
              total_trades, win_rate, model_cache_key, model_cache_hit,
              model_version_id, result_json, created_at,
              model_train_from, model_train_to, model_train_symbol, model_window, in_sample,
-             tax_rate
+             tax_rate, settings_json
         FROM backtest_results
        WHERE id = $1`;
     const { rows } = await pool.query(sql, [id]);
@@ -688,6 +688,13 @@ app.get('/api/results/:id', async (req, res) => {
     // per point of the run's equity history, in the same order. A result
     // stored before B6 has none.
     const curve = holdCurve(result?.buyAndHold, result?.equityHistory?.length ?? 0);
+
+    // What the run was asked to do (G40): the requested window, parameters,
+    // capital, costs and tax. Null on a result stored before it was kept.
+    let settings = null;
+    if (r.settings_json) {
+      try { settings = JSON.parse(r.settings_json); } catch { settings = null; }
+    }
 
     res.json({
       id: r.id,
@@ -715,6 +722,7 @@ app.get('/api/results/:id', async (req, res) => {
       // holdEquityNote saying why.
       holdEquity: curve.values,
       holdEquityNote: curve.reason,
+      settings,
       result,
     });
   } catch (err) {
