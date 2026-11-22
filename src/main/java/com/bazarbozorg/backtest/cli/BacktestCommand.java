@@ -33,11 +33,13 @@ import java.util.Map;
  * timeframe, and optional parameters. Initializes the database, loads the
  * strategy, runs the backtest engine, and prints the results to the console.
  */
-@Command(name = "run", description = "Run a backtest with a given strategy")
+@Command(name = "run",
+        description = "Run a backtest of a model strategy, or of a rule benchmark "
+                + "(sma-crossover, rsi, macd, bollinger, ema-triple: kept for comparison only)")
 public class BacktestCommand implements Runnable {
 
     @Option(names = {"-s", "--strategy"}, required = true,
-            description = "Strategy name (e.g. sma-crossover)")
+            description = "Model strategy or rule benchmark name (see list-strategies)")
     private String strategyName;
 
     @Option(names = {"-i", "--instrument"}, required = true,

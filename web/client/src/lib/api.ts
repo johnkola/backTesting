@@ -322,6 +322,9 @@ export type ResultSummary = {
   id: string
   instrumentSymbol: string
   strategyName: string
+  /** `benchmark` for one of the five rule benchmarks (C8), else `model`; null
+   *  when the engine did not say (down, or the name is no longer registered). */
+  strategyKind?: 'model' | 'benchmark' | null
   timeframe: string
   dataSource: string
   startDate: string | null
@@ -539,6 +542,9 @@ export type Strategy = {
   defaultParameters: Record<string, string>
   /** True for strategies that need a cached trained model before they can run. */
   requiresTrainedModel: boolean
+  /** `benchmark` for an indicator rule kept for comparison only (C8). Absent
+   *  from an engine older than the kinds, which is read as `model`. */
+  kind?: 'model' | 'benchmark'
 }
 
 /**

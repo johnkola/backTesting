@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { benchmarkReading, isBenchmark } from '../lib/ruleBenchmarks'
 import { sampleNote, sampleOf } from '../lib/inSample'
 import { taxBadge } from '../lib/tax'
 import { testWindowMark, testWindowNote } from '../lib/testWindow'
@@ -136,7 +137,19 @@ export default function ResultsPage() {
                   return (
                     <tr key={r.id} className="hover:bg-base-300">
                       <td className="whitespace-nowrap">{new Date(r.createdAt).toLocaleString()}</td>
-                      <td className="font-mono">{r.strategyName}</td>
+                      <td className="font-mono">
+                        {r.strategyName}
+                        {isBenchmark(r.strategyKind) && (
+                          <span
+                            className={`${tipClass} ml-2`}
+                            data-tip="A fixed indicator rule kept for comparison, not a strategy under test."
+                          >
+                            <span className="badge badge-neutral badge-sm font-sans cursor-help">
+                              benchmark
+                            </span>
+                          </span>
+                        )}
+                      </td>
                       <td className="font-mono">{r.instrumentSymbol}</td>
                       <td>{r.timeframe}</td>
                       <td className="font-mono">{r.dataSource}</td>
@@ -231,6 +244,16 @@ function VsHold({ result }: { result: ResultSummary }) {
   const diff = vsBuyAndHold(result)
   if (beat === null || diff === null) {
     return <span className="text-base-content/40">—</span>
+  }
+  // C8: a rule benchmark's gap is a reference number, shown without a verdict colour.
+  if (isBenchmark(result.strategyKind)) {
+    return (
+      <span className={tipClass} data-tip={benchmarkReading(diff)}>
+        <span className="badge badge-sm badge-ghost cursor-help">
+          {diff >= 0 ? '+' : ''}{diff.toFixed(1)}
+        </span>
+      </span>
+    )
   }
   return (
     <span

@@ -9,7 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-@Command(name = "list-strategies", description = "List all available trading strategies")
+@Command(name = "list-strategies",
+        description = "List the model strategies and the rule benchmarks the engine can run")
 public class ListStrategiesCommand implements Runnable {
 
     @Override
@@ -25,14 +26,17 @@ public class ListStrategiesCommand implements Runnable {
         System.out.println("=== Available Trading Strategies ===");
         System.out.println();
 
-        List<String> headers = List.of("Name", "Description", "Parameters");
+        // C8: the indicator rules are benchmarks, kept for comparison only.
+        List<String> headers = List.of("Name", "Kind", "Description", "Parameters");
         List<List<String>> rows = new ArrayList<>();
 
         for (String name : strategyNames) {
             registry.getStrategy(name).ifPresent(strategy -> {
                 String description = strategy.getDescription();
                 String params = formatParameters(strategy.getDefaultParameters());
-                rows.add(List.of(name, description, params));
+                String kind = registry.kindOf(name)
+                        .orElse(StrategyRegistry.Kind.MODEL).label();
+                rows.add(List.of(name, kind, description, params));
             });
         }
 
@@ -40,7 +44,9 @@ public class ListStrategiesCommand implements Runnable {
         System.out.println(table);
 
         System.out.println();
-        System.out.printf("Total strategies: %d%n", strategyNames.size());
+        System.out.printf("Model strategies: %d. Rule benchmarks (for comparison only): %d%n",
+                registry.namesOf(StrategyRegistry.Kind.MODEL).size(),
+                registry.namesOf(StrategyRegistry.Kind.BENCHMARK).size());
     }
 
     /**

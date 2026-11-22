@@ -129,6 +129,10 @@ public class EngineApi {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("name", strategy.get().getName());
             item.put("description", strategy.get().getDescription());
+            // `model` or `benchmark` (C8): the five indicator rules are kept
+            // runnable for comparison and are not offered as strategies.
+            item.put("kind", registry.kindOf(name)
+                    .orElse(StrategyRegistry.Kind.MODEL).label());
             item.put("defaultParameters", strategy.get().getDefaultParameters());
             // Tells the client whether to offer the model-version picker and
             // whether a run can fail for want of a cached model.

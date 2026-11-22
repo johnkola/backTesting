@@ -1,6 +1,6 @@
 # Getting Started
 
-> **Revision 2026-11-17-1** · 2026-11-17 12:03 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-22-1** · 2026-11-22 05:14 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A start-to-finish path through this app for someone who has just cloned it: from an
 empty database to a backtest you can read, then the loop you actually work in day to
@@ -185,9 +185,11 @@ The CLI equivalent:
 ./gradlew run --args="run -s sma-crossover -i AAPL -t D1 --source yahoo"
 ```
 
-Six strategies are registered: `sma-crossover`, `rsi`, `macd`, `bollinger`,
-`ema-triple`, and `nn-feedforward` (the PyTorch one — step 6). Each takes its own
-parameters, exposed in the Run form and as CLI options.
+The Run list has two groups. `sma-crossover`, `rsi`, `macd`, `bollinger` and
+`ema-triple` are rule benchmarks: fixed indicator rules kept for comparison, which is
+why one makes a good first run. The model strategies (`nn-feedforward` and the others,
+step 6) need a trained model. Each takes its own parameters, exposed in the Run form
+and as CLI options.
 
 **Weekly and monthly** candles are derived from daily on demand rather than stored, so
 you can pick `W1` on an instrument that only has `D1` — the run builds the rollup first.
@@ -315,5 +317,6 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-1 | 2026-11-22 05:14 | Claude Code (Claude Fable 5.2) | The Run list's two groups: rule benchmarks and model strategies (C8) |
 | 2026-11-17-1 | 2026-11-17 12:03 | Claude Code (Claude Opus 5.5) | G69: result reading and limitations link to the README; the deleted Architecture guide gives way to the design set |
 | 2026-11-16-1 | 2026-11-16 00:01 | Claude Code (Claude Opus 5.5) | Revision stamp added; fills are at the next bar's open (B1) |

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { benchmarkReading, groupByKind, isBenchmark } from '../lib/ruleBenchmarks'
 import {
   api, beatBuyAndHold, isAbortError, isTradeable, strategyDocHref, vsBuyAndHold,
   type Instrument, type RunResult, type SavedStrategy, type Strategy,
@@ -253,8 +254,12 @@ export default function RunPage() {
                   if (s) selectStrategy(s)
                 }}
               >
-                {strategies.map((s) => (
-                  <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
+                {groupByKind(strategies).map((g) => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.items.map((s) => (
+                      <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
               <div className="label">
@@ -406,7 +411,12 @@ export default function RunPage() {
         </div>
       )}
 
-      {result && <RunSummary result={result} />}
+      {result && (
+        <RunSummary
+          result={result}
+          benchmark={isBenchmark(strategies?.find((s) => s.name === result.strategyName)?.kind)}
+        />
+      )}
     </section>
   )
 }
@@ -422,7 +432,7 @@ function num(value: number | null | undefined, digits = 2, suffix = ''): string 
     : '—'
 }
 
-function RunSummary({ result }: { result: RunResult }) {
+function RunSummary({ result, benchmark }: { result: RunResult, benchmark: boolean }) {
   const m = result.metrics
   const positive = (m.totalReturnPct ?? 0) >= 0
 
@@ -438,7 +448,8 @@ function RunSummary({ result }: { result: RunResult }) {
             {result.modelCacheHit ? 'cache hit' : 'fresh'}
           </span>
         )}
-        <Verdict metrics={m} />
+        {benchmark && <span className="badge badge-neutral">rule benchmark</span>}
+        <Verdict metrics={m} benchmark={benchmark} />
         <span className="ml-auto text-sm text-base-content/50">
           {result.startDate.slice(0, 10)} → {result.endDate.slice(0, 10)}
         </span>
@@ -634,11 +645,23 @@ function DateRange(
  * return and still be the worse choice — that is the normal case, not the
  * exception, for an indicator strategy in a rising market.
  */
-function Verdict({ metrics }: { metrics: RunResult['metrics'] }) {
+function Verdict(
+  { metrics, benchmark }: { metrics: RunResult['metrics'], benchmark: boolean },
+) {
   const r = { totalReturnPct: metrics.totalReturnPct, buyAndHoldReturnPct: metrics.buyAndHoldReturnPct }
   const beat = beatBuyAndHold(r)
   const diff = vsBuyAndHold(r)
   if (beat === null || diff === null) return null
+  // C8: a rule benchmark is a reference number, not a strategy that won or lost.
+  if (benchmark) {
+    return (
+      <span className={tipClass} data-tip={benchmarkReading(diff)}>
+        <span className="badge badge-ghost cursor-help">
+          {diff >= 0 ? '+' : ''}{diff.toFixed(1)} pts vs buy &amp; hold
+        </span>
+      </span>
+    )
+  }
   return (
     <span
       className={tipClass}

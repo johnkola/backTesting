@@ -10,6 +10,7 @@ const testWindows = require('./testWindows');
 const featureCatalogue = require('./featureCatalogue');
 const docs = require('./docs');
 const strategies = require('./strategies');
+const strategyKinds = require('./strategyKinds');
 const importFiles = require('./importFiles');
 const { rangeEnd } = require('./dateRange');
 const { slugify } = require('./docAnchors');
@@ -501,6 +502,11 @@ app.delete('/api/results/:id', proxyTo(ENGINE_URL, 'engine'));
 // strip.
 app.use('/api/walkforward', proxyTo(ENGINE_URL, 'engine'));
 
+/** Each registered strategy's kind, from the engine (C8). See strategyKinds.js. */
+const registeredKinds = strategyKinds.cachedKinds(
+  async () => (await getUpstreamJson(`${ENGINE_URL}/api/strategies`, 3000)).items,
+);
+
 app.get('/api/results', async (req, res) => {
   try {
     const { limit, offset } = parsePagination(req.query);
@@ -579,11 +585,14 @@ app.get('/api/results', async (req, res) => {
 
     // G48, R69: which saved test windows each result scores, first look or reuse.
     const looks = await testWindows.testWindowsOf(pool, items.map((r) => r.id));
+    const kinds = await registeredKinds();
     res.json({
       items: items.map((r) => ({
         id: r.id,
         instrumentSymbol: r.instrument_symbol,
         strategyName: r.strategy_name,
+        // `model`, or `benchmark` for a rule benchmark (C8); null when unknown.
+        strategyKind: strategyKinds.kindOf(kinds, r.strategy_name),
         timeframe: r.timeframe,
         dataSource: r.data_source,
         startDate: r.start_date,
@@ -676,6 +685,7 @@ app.get('/api/results/:id', async (req, res) => {
       id: r.id,
       instrumentSymbol: r.instrument_symbol,
       strategyName: r.strategy_name,
+      strategyKind: strategyKinds.kindOf(await registeredKinds(), r.strategy_name),
       timeframe: r.timeframe,
       dataSource: r.data_source,
       startDate: r.start_date,

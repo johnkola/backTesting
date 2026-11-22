@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-21-9** · 2026-11-21 23:15 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-1** · 2026-11-22 05:15 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -958,7 +958,7 @@ Effort: M.
 | C5, TA-Lib (D14) | Keep the hand-written indicators | no change; D14 closes as a departure from R66 |
 | C6, window (D3) | Offer both, expanding the default | new work: a sliding window (length and step) on the strategy; existing strategies unchanged; done 2026-11-21 (job 6): `windows.window`, run 1101 |
 | C7, RSI, MACD, realized volatility | Selectable per strategy, off by default | new work: `data only` becomes selectable; stored runs unchanged; done 2026-11-21 (job 5): status `selectable`, role `select`; run 1077 |
-| C8, the five rule strategies | Benchmarks only | new work: kept runnable for comparison, not offered as strategies |
+| C8, the five rule strategies | Benchmarks only | new work: kept runnable for comparison, not offered as strategies; done 2026-11-22 (job 7): the engine's registry gives each a kind, the Run tab lists them as rule benchmarks, and a result of one is labelled a benchmark. They are not added to every run's benchmark set, which stays buy-and-hold, Faber and dual momentum |
 | F1, VIX term structure | Selectable input, off by default | new feature column; done 2026-11-21 (job 5): VIX3M feed, `vix_term_structure` selectable, values from autumn 2006 |
 | F2, QQQ/SPY relative strength | Selectable input, off by default | new feature column; done 2026-11-21 (job 5): `qqq_spy_relative` selectable |
 | F3, high-yield credit spread | Drop it | closes; done 2026-11-21 (job 5): `credit_spread_hy` removed from `features.toml` |
@@ -974,7 +974,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 4. G54: the Strategy tab and the runner agree on what can run (S). *Done 2026-11-21; see the job 4 record*
 - [x] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
 - [x] 6. C6: the sliding window option (M)
-- [ ] 7. C8: the rule strategies as benchmarks only (S)
+- [x] 7. C8: the rule strategies as benchmarks only (S)
 - [ ] 8. C2: severities and the hard stop (M)
 - [ ] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
 - [ ] 10. Then the earlier list: G57, G50, G40 and G41, and the small ones
@@ -992,7 +992,7 @@ The readonly design set is the author's to update where an answer departs from i
   - `credit_spread_hy` (F3) leaves the config.
   - One rebuild of the daily, H1 and M30 sets together. **Stop before the rebuild**: it is stored data.
 - [x] 6. A sliding window beside the expanding one (C6), M. The runner has the expanding window only (*checked*: `walkforward.make_folds`). Length and step are saved on the strategy; existing strategies do not change. The save-time check from job 4 (`strategy_spec`) is where the new rules go.
-- [ ] 7. The five rule strategies as benchmarks only (C8), S. **C8 has no row in this tracker yet** (*checked*), which the author asked for (Q3); it gets one with this job.
+- [x] 7. The five rule strategies as benchmarks only (C8), S. **C8 has no row in this tracker yet** (*checked*), which the author asked for (Q3); it gets one with this job.
 - [ ] 8. Data checks with a severity, and errors that stop the chain (C2, D11), M.
 - [ ] 9. The requirements doc: every status re-verified against the code, the answers written in, the draft mark removed, M. With it, this tracker's decision rows are brought up to date: D2, D3, D11, D13 and D14 still read `decision` or `open` though all were answered on 2026-11-19, and `backTesting-05` still shows R22 as partial.
 
@@ -1053,14 +1053,14 @@ Done when: the same strategy saved both ways gives two runs whose fold spans dif
 
 Today `sma-crossover`, `ema-triple`, `macd`, `rsi` and `bollinger` are registered in the engine's `StrategyRegistry` beside the model strategies and offered on the Run tab's list and by the `run` command.
 
-- [ ] 7.1 The C8 row in this tracker (the author's Q3), with the answer
-- [ ] 7.2 **ASK**: what "kept as benchmarks" shows. Default: the five stay runnable from the Run tab and the CLI, under a separate heading "Rule benchmarks", and are not added to every run's benchmark set (that set stays buy-and-hold, Faber and dual momentum, R36). The other reading, all five computed beside every run, is an L job, not this one
-- [ ] 7.3 The registry gives each strategy a kind, `model` or `benchmark`; `GET /api/strategies` serves it. Tests (Java)
-- [ ] 7.4 Run tab: two groups in the list. A result of a rule benchmark is labelled a benchmark on Results and on its page, and the verdict banner does not call it a strategy that beat or lost to holding. CLI `run --help` and `list` say the same. Tests
-- [ ] 7.5 The Strategy tab already cannot build one (it saves model strategies only): confirm, and say so in the record
-- [ ] 7.6 README: the opening paragraph and the strategy table call them rule benchmarks. `tools/datagen` uses `sma-crossover` as its smoke run and keeps doing so
-- [ ] 7.7 Stored results of the five keep their figures; only the label changes. Count them in the record
-- [ ] 7.8 Rows: C8 closed, R21 and R22 re-read
+- [x] 7.1 The C8 row in this tracker (the author's Q3), with the answer. *Done 2026-11-22 05:15: the C8 row in "Decisions and work order" carries the answer and what was built*
+- [x] 7.2 **ASK**: what "kept as benchmarks" shows. Default: the five stay runnable from the Run tab and the CLI, under a separate heading "Rule benchmarks", and are not added to every run's benchmark set (that set stays buy-and-hold, Faber and dual momentum, R36). The other reading, all five computed beside every run, is an L job, not this one. *2026-11-22 05:15: the author said "start job 7" with this default standing, so it is what was built*
+- [x] 7.3 The registry gives each strategy a kind, `model` or `benchmark`; `GET /api/strategies` serves it. Tests (Java). *Done 2026-11-22 05:15. `StrategyRegistry.Kind` (`MODEL`, `BENCHMARK`), `kindOf`, `namesOf`; `GET /api/strategies` serves `kind`. Java: `StrategyRegistryTest`, whole suite 177 pass*
+- [x] 7.4 Run tab: two groups in the list. A result of a rule benchmark is labelled a benchmark on Results and on its page, and the verdict banner does not call it a strategy that beat or lost to holding. CLI `run --help` and `list` say the same. Tests. *Done 2026-11-22 05:15. Run tab: two option groups. The API labels each result with `strategyKind`, read from the engine (`web/api/strategyKinds.js`), so Results, a result's page and the Run summary show a "benchmark" badge and read the gap to buy-and-hold in a neutral colour, with no "beat" or "lost". `list-strategies` prints the kind and `run --help` names the five. Not looked at in a browser*
+- [x] 7.5 The Strategy tab already cannot build one (it saves model strategies only): confirm, and say so in the record. *Confirmed 2026-11-22 05:15: the runner's model types are `mlp` only, the save route refuses any other, and all saved versions are `mlp`. A rule benchmark is a registry entry in the engine, not a saved strategy*
+- [x] 7.6 README: the opening paragraph and the strategy table call them rule benchmarks. `tools/datagen` uses `sma-crossover` as its smoke run and keeps doing so. *Done 2026-11-22 05:15. README opening, the strategy section and three route rows; Getting Started's run step. `tools/datagen` is unchanged*
+- [x] 7.7 Stored results of the five keep their figures; only the label changes. Count them in the record. *Done 2026-11-22 05:15. 19 stored results: 9 are rule benchmarks (sma-crossover 5, macd 2, rsi 1, bollinger 1) and 10 are model strategies. Nothing was written to them; the label is read from the engine when a result is served*
+- [x] 7.8 Rows: C8 closed, R21 and R22 re-read. *Done 2026-11-22 05:15. R21 ("no rule-based strategy types"): holds for strategies, since none can be saved; the five remain in the engine as benchmarks, which is the author's answer. R22: the kind comes from the engine's registry, never a list in the UI. `backTesting-05` still shows R22 as partial; job 9 corrects the statuses*
 
 Done when: nowhere in the app or the README is one of the five offered as a strategy, and each still runs.
 
@@ -1953,6 +1953,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-1 | 2026-11-22 05:15 | Claude Code (Claude Fable 5.2) | Job 7 done: the five indicator rules are rule benchmarks (C8) |
 | 2026-11-21-9 | 2026-11-21 23:15 | Claude Code (Claude Fable 5.2) | Job 6 done: the sliding training window (C6, D3); strategy 87, run 1101 |
 | 2026-11-21-8 | 2026-11-21 22:54 | Claude Code (Claude Fable 5.2) | Job 5 done: sets 63 to 65 built, the 13 runs recalculate exactly, run 1077 trains on the five selectable columns |
 | 2026-11-21-7 | 2026-11-21 21:54 | Claude Code (Claude Fable 5.2) | Job 5, steps 5.2 to 5.7: VIX3M loaded; five selectable columns in the config, the build, the runner and the tabs |

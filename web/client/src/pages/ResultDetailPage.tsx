@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { benchmarkReading, isBenchmark } from '../lib/ruleBenchmarks'
 import { sampleNote, sampleOf } from '../lib/inSample'
 import { taxNote } from '../lib/tax'
 import { testWindowMark, testWindowNote } from '../lib/testWindow'
@@ -151,7 +152,11 @@ export default function ResultDetailPage() {
       <div className="flex flex-wrap items-baseline gap-3">
         <Link to="/results" className="btn btn-sm btn-ghost">← back</Link>
         <h1 className="text-2xl font-semibold">
-          <span className="font-mono">{detail.strategyName}</span> on{' '}
+          <span className="font-mono">{detail.strategyName}</span>{' '}
+          {isBenchmark(detail.strategyKind) && (
+            <span className="badge badge-neutral align-middle">rule benchmark</span>
+          )}{' '}
+          on{' '}
           <span className="font-mono">{detail.instrumentSymbol}</span>
         </h1>
         <span className="badge">{detail.timeframe}</span>
@@ -212,6 +217,7 @@ export default function ResultDetailPage() {
       )}
 
       <VerdictBanner
+        benchmark={isBenchmark(detail.strategyKind)}
         totalReturnPct={detail.totalReturnPct}
         buyAndHoldReturnPct={r?.metrics?.buyAndHoldReturnPct ?? null}
       />
@@ -383,13 +389,24 @@ export default function ResultDetailPage() {
  * benchmark was recorded should say nothing rather than imply a tie.
  */
 function VerdictBanner(
-  { totalReturnPct, buyAndHoldReturnPct }:
-  { totalReturnPct: number | null; buyAndHoldReturnPct: number | null },
+  { totalReturnPct, buyAndHoldReturnPct, benchmark }:
+  { totalReturnPct: number | null; buyAndHoldReturnPct: number | null; benchmark: boolean },
 ) {
   const r = { totalReturnPct, buyAndHoldReturnPct }
   const beat = beatBuyAndHold(r)
   const diff = vsBuyAndHold(r)
   if (beat === null || diff === null) return null
+  // C8: a rule benchmark is a reference number, not a strategy that won or lost.
+  if (benchmark) {
+    return (
+      <div className="alert text-sm">
+        <span>
+          {benchmarkReading(diff)} It returned {totalReturnPct?.toFixed(1)}% where holding
+          returned {buyAndHoldReturnPct?.toFixed(1)}%.
+        </span>
+      </div>
+    )
+  }
   return (
     <div className={`alert ${beat ? 'alert-success' : 'alert-warning'} text-sm`}>
       <span>

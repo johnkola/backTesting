@@ -29,6 +29,13 @@ import java.util.function.Supplier;
  * line to the constructor. That name is what {@code run -s},
  * {@code GET /api/strategies} and the Run tab offer.
  * <p>
+ * <b>Every strategy has a kind.</b> The author's decision of 2026-11-19
+ * (Design-Gaps C8): the five indicator rules (SMA crossover, RSI, MACD,
+ * Bollinger, triple EMA) are kept runnable for comparison and are not offered
+ * as strategies. They register as {@link Kind#BENCHMARK}; a strategy that runs
+ * a trained model is {@link Kind#MODEL}. The kind changes no figure: it is
+ * what the Run tab groups by and what a result of one is labelled with.
+ * <p>
  * <b>Warm-up is load-bearing.</b> The engine first calls {@code evaluate} at
  * {@code getWarmupBars()}, and buy-and-hold and the rule benchmarks start on
  * that same bar, so the comparison covers the bars the strategy could trade. A
@@ -39,15 +46,29 @@ public final class StrategyRegistry {
 
     private static final StrategyRegistry INSTANCE = new StrategyRegistry();
 
+    /** What a registered strategy is for. Served as lower case. */
+    public enum Kind {
+        /** Runs a trained model: what the design calls a strategy. */
+        MODEL,
+        /** A fixed indicator rule, kept runnable for comparison only (C8). */
+        BENCHMARK;
+
+        /** The name the API and the CLI print. */
+        public String label() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
     private final Map<String, Supplier<TradingStrategy>> strategies = new LinkedHashMap<>();
+    private final Map<String, Kind> kinds = new LinkedHashMap<>();
 
     private StrategyRegistry() {
-        // Register built-in strategies
-        registerStrategy("sma-crossover", SmaCrossoverStrategy::new);
-        registerStrategy("rsi", RsiStrategy::new);
-        registerStrategy("macd", MacdStrategy::new);
-        registerStrategy("bollinger", BollingerBandStrategy::new);
-        registerStrategy("ema-triple", EmaTripleCrossStrategy::new);
+        // The rule benchmarks (C8): runnable, never offered as strategies.
+        registerStrategy("sma-crossover", Kind.BENCHMARK, SmaCrossoverStrategy::new);
+        registerStrategy("rsi", Kind.BENCHMARK, RsiStrategy::new);
+        registerStrategy("macd", Kind.BENCHMARK, MacdStrategy::new);
+        registerStrategy("bollinger", Kind.BENCHMARK, BollingerBandStrategy::new);
+        registerStrategy("ema-triple", Kind.BENCHMARK, EmaTripleCrossStrategy::new);
         registerStrategy("nn-feedforward", NeuralNetworkStrategy::new);
         registerStrategy("nn-feature-store", FeatureStoreNeuralNetworkStrategy::new);
         // The tree engines' saved models (B9): the same loader path as the network.
@@ -72,7 +93,39 @@ public final class StrategyRegistry {
      * @param supplier a supplier that creates new instances of the strategy
      */
     public void registerStrategy(String name, Supplier<TradingStrategy> supplier) {
+        registerStrategy(name, Kind.MODEL, supplier);
+    }
+
+    /**
+     * Registers a strategy supplier under the given name, with its kind.
+     *
+     * @param name     the unique strategy name
+     * @param kind     model strategy or rule benchmark
+     * @param supplier a supplier that creates new instances of the strategy
+     */
+    public void registerStrategy(String name, Kind kind, Supplier<TradingStrategy> supplier) {
         strategies.put(name, supplier);
+        kinds.put(name, kind);
+    }
+
+    /**
+     * The kind a name was registered with.
+     *
+     * @param name the strategy name
+     * @return its kind, or empty for a name the registry does not hold
+     */
+    public Optional<Kind> kindOf(String name) {
+        return Optional.ofNullable(kinds.get(name));
+    }
+
+    /**
+     * The names of one kind, in registration order.
+     *
+     * @param kind model strategies or rule benchmarks
+     * @return an unmodifiable list of names
+     */
+    public List<String> namesOf(Kind kind) {
+        return strategies.keySet().stream().filter(n -> kinds.get(n) == kind).toList();
     }
 
     /**
