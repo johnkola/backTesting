@@ -37,6 +37,66 @@ def with_window(name: str, **edge) -> ss.Strategy:
     return a_strategy(windows={**WINDOWS, name: {**WINDOWS[name], **edge}})
 
 
+def sliding(train_years=5, step_years=None, **over) -> ss.Strategy:
+    w = {"kind": "sliding", "trainYears": train_years}
+    if step_years is not None:
+        w["stepYears"] = step_years
+    return a_strategy(windows={**WINDOWS, "window": w}, **over)
+
+
+class TestSlidingWindow:
+    """C6: a sliding window beside the expanding one. Refused, never rounded."""
+
+    def test_no_setting_and_expanding_are_the_same_plan(self):
+        plain = ss.fold_plan(a_strategy())
+        assert (plain.train_years, plain.step_years) == (None, 1)
+        assert ss.fold_plan(a_strategy(windows={**WINDOWS, "window": {"kind": "expanding"}})) == plain
+
+    def test_a_sliding_window_reaches_the_plan_and_the_run_settings(self):
+        s = sliding(5)
+        plan = ss.fold_plan(s)
+        assert (plan.train_years, plan.step_years) == (5, 1)
+        out = ss.overlay({"train_years": None, "step_years": 1}, set(), s, plan)
+        assert (out["train_years"], out["step_years"]) == (5, 1)
+        assert out["train_start"] == 2003
+
+    def test_the_whole_train_block_is_the_longest_window(self):
+        assert ss.fold_plan(sliding(13)).train_years == 13
+        with pytest.raises(ss.StrategyRefused, match="trainYears 14 does not fit"):
+            ss.fold_plan(sliding(14))
+
+    @pytest.mark.parametrize("bad", [0, -1, 2.5, "5", None, True])
+    def test_train_years_must_be_a_whole_number(self, bad):
+        with pytest.raises(ss.StrategyRefused, match="needs trainYears"):
+            ss.fold_plan(sliding(bad))
+
+    def test_a_step_that_does_not_divide_the_validation_years_is_refused(self):
+        assert ss.fold_plan(sliding(5, 3)).step_years == 3      # 6 years, 2 folds
+        with pytest.raises(ss.StrategyRefused, match="stepYears 4 does not divide the 6"):
+            ss.fold_plan(sliding(5, 4))
+
+    def test_one_train_year_with_early_stopping_is_refused(self):
+        assert ss.fold_plan(sliding(1)).train_years == 1
+        with pytest.raises(ss.StrategyRefused, match="leaves nothing to fit"):
+            ss.fold_plan(sliding(1, hyperparams={"earlyStoppingPatience": 10}))
+
+    def test_an_unknown_kind_or_years_on_expanding_are_refused(self):
+        with pytest.raises(ss.StrategyRefused, match="kind must be one of"):
+            ss.fold_plan(a_strategy(windows={**WINDOWS, "window": {"kind": "rolling"}}))
+        with pytest.raises(ss.StrategyRefused, match="takes no trainYears"):
+            ss.fold_plan(a_strategy(
+                windows={**WINDOWS, "window": {"kind": "expanding", "trainYears": 5}}))
+
+    def test_typing_the_window_flags_beside_a_strategy_is_refused(self):
+        s = a_strategy()
+        with pytest.raises(ss.StrategyRefused, match="--train-years"):
+            ss.overlay({}, {"strategy_id", "train_years"}, s, ss.fold_plan(s))
+
+    def test_the_train_window_checked_for_coverage_is_the_first_folds(self):
+        assert ss.train_window(a_strategy()) == (date(2003, 1, 1), date(2016, 1, 1))
+        assert ss.train_window(sliding(5)) == (date(2011, 1, 1), date(2016, 1, 1))
+
+
 class TestFromRow:
     def test_decodes_the_json_columns(self):
         s = ss.from_row((

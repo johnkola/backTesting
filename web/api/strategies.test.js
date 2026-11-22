@@ -587,3 +587,30 @@ describe('the prediction targets (G49, R71)', () => {
     assert.match(weighted.errors.join(), /class weights need a class label/);
   });
 });
+
+describe('validateStrategy — the training window (C6)', () => {
+  const withWindow = (window) => body({ windows: { ...body().windows, window } });
+
+  it('saves a sliding window with its years, stepYears defaulting to 1', () => {
+    const r = validateStrategy(withWindow({ kind: 'sliding', trainYears: 5 }));
+    assert.equal(r.ok, true, r.errors?.join('; '));
+    assert.deepEqual(r.value.windows.window, { kind: 'sliding', trainYears: 5, stepYears: 1 });
+  });
+
+  it('saves expanding as no setting, so the default has one spelling', () => {
+    const r = validateStrategy(withWindow({ kind: 'expanding' }));
+    assert.equal(r.ok, true, r.errors?.join('; '));
+    assert.equal(r.value.windows.window, undefined);
+    assert.equal(validateStrategy(body()).value.windows.window, undefined);
+  });
+
+  it('refuses a kind it does not know, missing or fractional years, and years on expanding', () => {
+    assert.match(errorsFor(withWindow({ kind: 'rolling' })), /kind must be one of expanding, sliding/);
+    assert.match(errorsFor(withWindow({ kind: 'sliding' })), /needs trainYears/);
+    assert.match(errorsFor(withWindow({ kind: 'sliding', trainYears: 2.5 })), /needs trainYears/);
+    assert.match(errorsFor(withWindow({ kind: 'sliding', trainYears: 5, stepYears: 0 })),
+      /stepYears must be a whole number/);
+    assert.match(errorsFor(withWindow({ kind: 'expanding', trainYears: 5 })),
+      /takes no trainYears/);
+  });
+});

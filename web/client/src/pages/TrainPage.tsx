@@ -12,7 +12,7 @@ import { hintFor } from '../lib/fieldHints'
 import UploadCard from '../components/UploadCard'
 import { categoryHint } from '../lib/cohesionHints'
 import { useApiData } from '../lib/useApiData'
-import { resolveFeatures } from '../lib/strategyForm'
+import { dateWindows, resolveFeatures } from '../lib/strategyForm'
 import { useTimeframe } from '../lib/useTimeframe'
 
 /**
@@ -216,7 +216,7 @@ export default function TrainPage() {
     async (signal) => {
       if (!chosenSaved) return {}
       const out: Record<string, number> = {}
-      for (const [key, w] of Object.entries(chosenSaved.windows)) {
+      for (const [key, w] of dateWindows(chosenSaved.windows)) {
         const r = await api.candles({
           instrument: chosenSaved.instrument,
           source: chosenSaved.source,
@@ -340,8 +340,11 @@ export default function TrainPage() {
                         {' '}bars. Saved by {chosenSaved.createdBy}.
                       </p>
                       <p className="text-xs font-mono break-all">
-                        {Object.entries(chosenSaved.windows)
+                        {dateWindows(chosenSaved.windows)
                           .map(([k, w]) => `${k} ${w.from}..${w.to}`).join('  ·  ')}
+                        {chosenSaved.windows.window
+                          && `  ·  sliding ${chosenSaved.windows.window.trainYears}y, step `
+                            + `${chosenSaved.windows.window.stepYears}y`}
                       </p>
                       <p className="text-xs text-warning">
                         The saved windows are not yet enforced by training — it fits the whole

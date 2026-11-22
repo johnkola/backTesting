@@ -243,6 +243,11 @@ export default function TrainingStage() {
                 </td>
                 <td className="font-mono text-xs whitespace-nowrap">
                   {r.trainStart}→{r.firstVal}..{r.lastVal}
+                  {r.window?.kind === 'sliding' && (
+                    <div className="text-base-content/60">
+                      sliding {r.window.trainYears}y, step {r.window.stepYears}y
+                    </div>
+                  )}
                 </td>
                 <td className="text-right">
                   {r.folds === 0 ? '—' : `${r.foldsWon}/${r.folds}`}

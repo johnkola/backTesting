@@ -500,6 +500,14 @@ ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS gains_tax DOUBLE PRECISIO
 -- many it trained, both NULL when the run trained a fixed number of epochs.
 -- Patience itself is a hyperparameter and lives in hyperparams_json.
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS purge_bars INT;
+
+-- The sliding window (C6, the author's decision 2026-11-19: offered beside the
+-- expanding one). train_years is how many calendar years each fold trained on,
+-- step_years how many each fold moved and was scored on. Both NULL is the
+-- expanding window from train_start, one year a fold, which every run before
+-- these columns was.
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS train_years INT;
+ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS step_years INT;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS best_epoch INT;
 ALTER TABLE walkforward_folds ADD COLUMN IF NOT EXISTS epochs_run INT;
 

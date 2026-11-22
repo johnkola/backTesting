@@ -176,6 +176,18 @@ export const fieldHints: Record<string, string> = {
     + 'forward. The design\'s choice: judging a model on a single year is luck, '
     + 'and holding up across calm, choppy and falling years is not. The list is '
     + 'the runner\'s: a scheme appears here when something can run it.',
+  'strategy.windowKind':
+    'How each fold\'s training window is cut. Expanding trains every fold from the '
+    + 'train window\'s start, so each keeps what the earlier ones had. Sliding trains '
+    + 'on a fixed number of years before each validation block, so an old regime '
+    + 'leaves the model as the window moves. Both are offered; expanding is the default.',
+  'strategy.trainYears':
+    'Sliding window only: the calendar years each fold trains on, counted back from '
+    + 'its validation block. It must fit inside the train window. With early stopping '
+    + 'the last of these years decides when to stop and is not fitted, so 1 is refused.',
+  'strategy.stepYears':
+    'Sliding window only: how many years each fold moves, which is also how many it '
+    + 'is scored on. It must divide the validation years. 1 gives one fold a year.',
   'strategy.labelHorizon':
     'Bars ahead the label looks: the return over them for the 3-class and return '
     + 'targets, whether the close is higher for direction. The same horizon as '

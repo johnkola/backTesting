@@ -640,3 +640,65 @@ class TestNothingReadsPastTheWindow:
         assert span.end == d(2021, 12, 31) and span.last_used < d(2021, 12, 31)
         # ...and freshness does not then see the purged days as unscored.
         assert staleness.new_days_in_window(dates, span.last_used, d(2021, 12, 31), 5) == []
+
+
+# --------------------------------------------------------------------------
+# The sliding window (C6): offered beside the expanding one
+# --------------------------------------------------------------------------
+
+
+def test_with_no_window_setting_the_folds_are_the_expanding_ones_fold_for_fold():
+    cal = days((2006, 5), (2007, 5), (2008, 5), (2009, 5), (2010, 5))
+    assert (wf.make_folds(cal, 2006, 2008, 2010, purge=1, train_years=None, step_years=1)
+            == wf.make_folds(cal, 2006, 2008, 2010, purge=1))
+
+
+def test_a_sliding_fold_trains_on_the_years_just_before_it_and_nothing_older():
+    cal = days((2005, 4), (2006, 4), (2007, 4), (2008, 4), (2009, 4), (2010, 4))
+    folds = wf.make_folds(cal, 2005, 2008, 2010, train_years=2)
+    assert [y for y, _, _ in folds] == [2008, 2009, 2010]
+    for year, tr, va in folds:
+        assert {cal[i].year for i in tr} == {year - 2, year - 1}
+        assert {cal[i].year for i in va} == {year}
+    # It slides: the oldest year leaves as the window moves.
+    assert not set(folds[0][1]).issubset(set(folds[2][1]))
+
+
+def test_a_sliding_window_never_reaches_before_the_train_start():
+    cal = days((2004, 3), (2005, 3), (2006, 3), (2007, 3))
+    _, tr, _ = wf.make_folds(cal, 2006, 2007, 2007, train_years=3)[0]
+    assert {cal[i].year for i in tr} == {2006}
+
+
+def test_a_sliding_fold_is_purged_like_any_other():
+    cal = days((2006, 5), (2007, 5), (2008, 5))
+    _, tr, _ = wf.make_folds(cal, 2006, 2008, 2008, purge=2, train_years=1)[0]
+    assert [cal[i] for i in tr] == [d for d in cal if d.year == 2007][:-2]
+
+
+def test_a_step_of_two_years_scores_two_years_a_fold():
+    cal = days((2005, 3), (2006, 3), (2007, 3), (2008, 3), (2009, 3), (2010, 3))
+    folds = wf.make_folds(cal, 2005, 2007, 2010, train_years=2, step_years=2)
+    assert [y for y, _, _ in folds] == [2007, 2009]
+    assert [{cal[i].year for i in va} for _, _, va in folds] == [{2007, 2008}, {2009, 2010}]
+    assert [{cal[i].year for i in tr} for _, tr, _ in folds] == [{2005, 2006}, {2007, 2008}]
+
+
+def test_the_holdout_fold_slides_too():
+    """Under a sliding window the test block's model trains on the last
+    `train_years` before it, as every validation fold's did, not on everything."""
+    cal = days((2005, 3), (2006, 3), (2007, 3), (2008, 3), (2009, 3))
+    (_, everything, _), = wf.make_test_fold(cal, 2005, 2009)
+    (_, last_two, te), = wf.make_test_fold(cal, 2005, 2009, train_years=2)
+    assert {cal[i].year for i in everything} == {2005, 2006, 2007, 2008}
+    assert {cal[i].year for i in last_two} == {2007, 2008}
+    assert {cal[i].year for i in te} == {2009}
+
+
+def test_plan_folds_reads_the_window_from_the_run_settings():
+    cal = days((2005, 30), (2006, 30), (2007, 30), (2008, 30), (2009, 30))
+    args = wf.build_parser().parse_args(
+        ["--train-start", "2005", "--first-val", "2008", "--last-val", "2009",
+         "--train-years", "2", "--forward", "1"])
+    folds, _ = wf.plan_folds(cal, args, None)
+    assert [{cal[i].year for i in tr} for _, tr, _ in folds] == [{2006, 2007}, {2007, 2008}]

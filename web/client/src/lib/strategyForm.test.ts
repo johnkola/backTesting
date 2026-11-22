@@ -3,7 +3,12 @@ import type { ObjectiveSpec, SavedStrategy } from './api'
 import {
   classifyCoverage,
   designDefaultWindows,
+  EXPANDING,
+  dateWindows,
   fitWindowsToSeries,
+  foldWindowPayload,
+  foldWindowPlan,
+  foldWindowToForm,
   horizonSpan,
   isRealDate,
   newestVersions,
@@ -444,5 +449,45 @@ describe('runnableTimeframes (G54)', () => {
   it('offers everything stored when the runner did not answer', () => {
     expect(runnableTimeframes(['D1', 'W1'], null)).toEqual({ offered: ['D1', 'W1'], leftOut: [] })
     expect(runnableTimeframes(['D1', 'W1'], undefined).offered).toEqual(['D1', 'W1'])
+  })
+})
+
+describe('the training window (C6)', () => {
+  const w: Windows = {
+    train: { from: '2003-01-01', to: '2015-12-31' },
+    validation: { from: '2016-01-01', to: '2021-12-31' },
+    test: { from: '2022-01-01', to: '2026-06-30' },
+  }
+  const sliding = (trainYears: string, stepYears = '1') =>
+    ({ kind: 'sliding' as const, trainYears, stepYears })
+
+  it('expanding gives one fold a validation year and sends no setting', () => {
+    expect(foldWindowPlan(w, EXPANDING)).toEqual({ folds: 6, problems: [] })
+    expect(foldWindowPayload(EXPANDING)).toBeUndefined()
+  })
+
+  it('sliding counts folds by the step', () => {
+    expect(foldWindowPlan(w, sliding('5')).folds).toBe(6)
+    expect(foldWindowPlan(w, sliding('5', '2')).folds).toBe(3)
+    expect(foldWindowPayload(sliding('5', '2')))
+      .toEqual({ kind: 'sliding', trainYears: 5, stepYears: 2 })
+  })
+
+  it('says why a setting gives no folds, as the runner would on save', () => {
+    expect(foldWindowPlan(w, sliding('14')).problems[0]).toMatch(/does not fit/)
+    expect(foldWindowPlan(w, sliding('5', '4')).problems[0]).toMatch(/does not divide the 6/)
+    expect(foldWindowPlan(w, sliding('')).problems[0]).toMatch(/whole number/)
+    expect(foldWindowPlan(w, sliding('2.5')).folds).toBeNull()
+  })
+
+  it('loads a saved setting back, and none as expanding', () => {
+    expect(foldWindowToForm({ kind: 'sliding', trainYears: 5, stepYears: 2 }))
+      .toEqual(sliding('5', '2'))
+    expect(foldWindowToForm(undefined)).toEqual(EXPANDING)
+  })
+
+  it('dateWindows leaves the setting out of the date ranges', () => {
+    const saved = { ...w, window: { kind: 'sliding' as const, trainYears: 5, stepYears: 1 } }
+    expect(dateWindows(saved).map(([k]) => k)).toEqual(['train', 'validation', 'test'])
   })
 })

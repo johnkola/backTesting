@@ -112,8 +112,14 @@ export default function SplitStage() {
         detail={
           <>
             Set {split.setId}, {split.columns} columns, rows {split.firstRow} to {split.lastRow}
-            {' '}({split.rows.toLocaleString()} after its columns&apos; gaps). Each fold trains
-            from {split.folds[0]?.trainFrom ?? 'the train start'} up to its year, its last{' '}
+            {' '}({split.rows.toLocaleString()} after its columns&apos; gaps).{' '}
+            {split.window?.kind === 'sliding'
+              ? <>A sliding window: each fold trains on the {split.window.trainYears} year
+                {split.window.trainYears === 1 ? '' : 's'} before its validation block and moves{' '}
+                {split.window.stepYears} year{split.window.stepYears === 1 ? '' : 's'} a fold, its
+                last{' '}</>
+              : <>Each fold trains from {split.folds[0]?.trainFrom ?? 'the train start'} up to
+                its year, its last{' '}</>}
             {split.purgeBars} training bars purged; the last fold stops {split.purgeBars} bars
             before {split.windowEnd}, so nothing reads the test block (G38).
             {split.patience != null && (

@@ -15,11 +15,12 @@ import { hintFor, paramHint } from '../lib/fieldHints'
 import { useApiData } from '../lib/useApiData'
 import { useTimeframe } from '../lib/useTimeframe'
 import {
-  WINDOW_KEYS,
-  classifyCoverage, designDefaultWindows, fitWindowsToSeries, horizonSpan, isRealDate,
+  EXPANDING, WINDOW_KEYS,
+  classifyCoverage, dateWindows, designDefaultWindows, fitWindowsToSeries, foldWindowPayload, foldWindowPlan,
+  foldWindowToForm, horizonSpan, isRealDate,
   marginProblems, resolveFeatures,
   objectiveFromForm, objectiveToForm, runnableTimeframes, windowDays, windowErrors,
-  type ObjectiveForm, type WindowKey, type Windows,
+  type FoldWindowForm, type ObjectiveForm, type WindowKey, type Windows,
 } from '../lib/strategyForm'
 import {
   DEFAULT_LABEL_FORM, HORIZON_MAX, HORIZON_MIN,
@@ -93,6 +94,8 @@ export default function StrategyPage() {
   // objective. The notices say what changed without the user asking: an engine
   // the new loss switched off, or one a cloned version named that is gone.
   const [editedEngines, setEditedEngines] = useState<EngineForm | null>(null)
+  // C6: how each fold's training window is cut. Expanding unless chosen.
+  const [foldWindow, setFoldWindow] = useState<FoldWindowForm>(EXPANDING)
   const [lossNotice, setLossNotice] = useState<string | null>(null)
   const [cloneNotice, setCloneNotice] = useState<string | null>(null)
 
@@ -244,7 +247,8 @@ export default function StrategyPage() {
     () => WINDOW_KEYS.filter((k) => barCounts?.[k] === 0), [barCounts],
   )
 
-  const windowProblems = windowErrors(windows)
+  const foldPlan = foldWindowPlan(windows, foldWindow)
+  const windowProblems = [...windowErrors(windows), ...foldPlan.problems]
   const paramSpec = saved?.paramSpec ?? {}
   const objectiveSpec = saved?.objectiveSpec
   const objectiveForm: ObjectiveForm | null = editedObjective
@@ -316,7 +320,12 @@ export default function StrategyPage() {
     modelType,
     validationScheme: scheme,
     features: selected,
-    windows,
+    // Dates only from the form's windows, plus the sliding setting when chosen;
+    // expanding is sent as no setting, which is what it has always meant.
+    windows: {
+      ...Object.fromEntries(dateWindows(windows)),
+      ...(foldWindowPayload(foldWindow) ? { window: foldWindowPayload(foldWindow) } : {}),
+    },
     label: labelPayload(labelForm, labelKinds),
     hyperparams: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '')),
     objective: objectiveFromForm(objectiveForm!, objectiveSpec!),
@@ -395,7 +404,8 @@ export default function StrategyPage() {
     setPickedTimeframe(s.timeframe)
     setModelType(s.modelType); setScheme(s.validationScheme)
     setSelected(s.features)
-    setEditedWindows(s.windows as Windows)
+    setEditedWindows(Object.fromEntries(dateWindows(s.windows)) as Windows)
+    setFoldWindow(foldWindowToForm(s.windows.window))
     // A version from before G49 (no label, or the 3-class kind) loads as the
     // 3-class label, which is what it ran.
     setLabelForm(labelToForm(s.label, labelKinds))
@@ -626,6 +636,63 @@ export default function StrategyPage() {
                 </div>
               </div>
             )}
+          </Section>
+
+          <Section
+            title="4b · Training window"
+            note="How each validation fold's training is cut from the train window. The Split tab draws the folds a saved strategy gives."
+          >
+            <div className="grid gap-4 md:grid-cols-3">
+              <label className="form-control">
+                <FieldLabel text="Window" hint={hintFor('strategy.windowKind')} />
+                <select
+                  className="select select-bordered" value={foldWindow.kind}
+                  data-testid="fold-window-kind"
+                  onChange={(e) => setFoldWindow({
+                    ...foldWindow, kind: e.target.value as FoldWindowForm['kind'],
+                  })}
+                >
+                  <option value="expanding">Expanding (default)</option>
+                  <option value="sliding">Sliding</option>
+                </select>
+              </label>
+              {foldWindow.kind === 'sliding' && (
+                <>
+                  <label className="form-control">
+                    <FieldLabel text="Train years" hint={hintFor('strategy.trainYears')} />
+                    <input
+                      type="number" min={1} step={1} className="input input-bordered"
+                      value={foldWindow.trainYears}
+                      onChange={(e) => setFoldWindow({ ...foldWindow, trainYears: e.target.value })}
+                    />
+                  </label>
+                  <label className="form-control">
+                    <FieldLabel text="Step years" hint={hintFor('strategy.stepYears')} />
+                    <input
+                      type="number" min={1} step={1} className="input input-bordered"
+                      value={foldWindow.stepYears}
+                      onChange={(e) => setFoldWindow({ ...foldWindow, stepYears: e.target.value })}
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+            <p className="text-sm text-base-content/60 mt-3">
+              {foldPlan.folds !== null && (
+                <>
+                  <span className="font-mono">{foldPlan.folds}</span> validation fold
+                  {foldPlan.folds === 1 ? '' : 's'}.{' '}
+                </>
+              )}
+              {foldWindow.kind === 'sliding'
+                ? 'Each fold trains on the train years just before its validation block and '
+                  + 'on nothing older. The held-out test is trained the same way: on the last '
+                  + 'train years before the test window, not on everything.'
+                : 'Each fold trains from the train window\'s start up to its validation year.'}
+            </p>
+            {foldPlan.problems.map((p) => (
+              <p key={p} className="text-sm text-error mt-1">{p}</p>
+            ))}
           </Section>
 
           <Section title="5 · How to fit it">

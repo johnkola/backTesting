@@ -300,6 +300,9 @@ function validateExecution(o, threshold, errors) {
  */
 const WINDOWS = ['train', 'validation', 'test', 'prediction'];
 const REQUIRED_WINDOWS = ['train', 'validation', 'test'];
+/** `windows.window.kind`: how each fold's training window is cut (C6). */
+const WINDOW_KINDS = ['expanding', 'sliding'];
+const MAX_WINDOW_YEARS = 50;
 
 const MAX_NAME_LEN = 80;
 const MAX_NOTES_LEN = 500;
@@ -480,6 +483,34 @@ function validateStrategy(body, registry = null, options = null) {
     }
     const parsed = readWindow(w, raw, errors);
     if (parsed) windows[w] = parsed;
+  }
+
+  // How each fold's training window is cut (C6): absent or `expanding` is the
+  // window every strategy had; `sliding` trains on the `trainYears` years
+  // before each validation block and moves `stepYears` a fold. Shape and
+  // bounds only: whether it fits the windows is the runner's answer, asked on
+  // save (`strategy_spec.fold_plan`).
+  const rawWindow = b.windows?.window;
+  if (rawWindow !== undefined && rawWindow !== null) {
+    const whole = (v) => Number.isInteger(v) && v >= 1 && v <= MAX_WINDOW_YEARS;
+    if (!isPlainObject(rawWindow) || !WINDOW_KINDS.includes(rawWindow.kind)) {
+      errors.push(`windows.window.kind must be one of ${WINDOW_KINDS.join(', ')}`);
+    } else if (rawWindow.kind === 'sliding') {
+      const stepYears = rawWindow.stepYears ?? 1;
+      if (!whole(rawWindow.trainYears)) {
+        errors.push(`a sliding window needs trainYears, a whole number from 1 to ${MAX_WINDOW_YEARS}`);
+      }
+      if (!whole(stepYears)) {
+        errors.push(`stepYears must be a whole number from 1 to ${MAX_WINDOW_YEARS}`);
+      }
+      if (whole(rawWindow.trainYears) && whole(stepYears)) {
+        windows.window = { kind: 'sliding', trainYears: rawWindow.trainYears, stepYears };
+      }
+    } else if (rawWindow.trainYears != null || rawWindow.stepYears != null) {
+      errors.push('an expanding window takes no trainYears or stepYears');
+    }
+    // `expanding` is saved as no setting, so the two spellings of the default
+    // are one strategy, not two.
   }
 
   // §8.1a: non-overlapping and strictly in time order. Checked between
@@ -914,6 +945,7 @@ module.exports = {
   OBJECTIVE_SPEC,
   WINDOWS,
   REQUIRED_WINDOWS,
+  WINDOW_KINDS,
   MAX_NAME_LEN,
   MAX_NOTES_LEN,
   DEFAULT_ACTOR,

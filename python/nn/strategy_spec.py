@@ -208,6 +208,11 @@ class FoldPlan:
     last_val: int
     #: Last holdout bar, inclusive. Bars after it belong to the prediction window.
     test_end: date
+    #: Sliding window (C6): calendar years each fold trains on. None is the
+    #: expanding window, from `train_start`.
+    train_years: int | None = None
+    #: Years each fold moves and is scored on.
+    step_years: int = 1
 
 
 @dataclass(frozen=True)
@@ -395,10 +400,73 @@ def fold_plan(s: Strategy) -> FoldPlan:
     if errors:
         raise StrategyRefused(errors)
 
+    train_years, step_years = _window(s, train["from"].year, val["from"].year,
+                                      val["to"].year)
     return FoldPlan(
         train_start=train["from"].year, first_val=val["from"].year,
         last_val=val["to"].year, test_end=test["to"],
+        train_years=train_years, step_years=step_years,
     )
+
+
+#: `windows.window.kind`: how each fold's training window is cut.
+WINDOW_KINDS = ("expanding", "sliding")
+
+
+def _whole(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _window(s: Strategy, train_start: int, first_val: int, last_val: int,
+            ) -> tuple[int | None, int]:
+    """`(train_years, step_years)` from `windows.window`, or `StrategyRefused`.
+
+    Absent, or `kind: "expanding"`, is the expanding window every strategy had
+    before C6: `(None, 1)`. `kind: "sliding"` needs `trainYears` and may set
+    `stepYears` (default 1). Refused, never rounded or clamped: a window longer
+    than the train block, a step the validation years do not divide by, and a
+    one-year window with early stopping, whose stopping slice is the last
+    training year and would leave nothing to fit.
+    """
+    w = s.windows.get("window")
+    if w is None:
+        return None, 1
+    if not isinstance(w, Mapping) or w.get("kind") not in WINDOW_KINDS:
+        raise StrategyRefused([
+            f"windows.window.kind must be one of {', '.join(WINDOW_KINDS)}"])
+    if w["kind"] == "expanding":
+        extra = sorted(k for k in ("trainYears", "stepYears") if w.get(k) is not None)
+        if extra:
+            raise StrategyRefused([
+                f"an expanding window takes no {' or '.join(extra)}: it trains from "
+                f"the train window's start and moves one year a fold"])
+        return None, 1
+
+    errors: list[str] = []
+    train_years, step_years = w.get("trainYears"), w.get("stepYears", 1)
+    have = first_val - train_start
+    if not _whole(train_years) or train_years < 1:
+        errors.append("a sliding window needs trainYears, a whole number of years, 1 or more")
+    elif train_years > have:
+        errors.append(
+            f"trainYears {train_years} does not fit: the train window holds {have} "
+            f"year(s) before validation starts ({train_start} to {first_val - 1})")
+    val_years = last_val - first_val + 1
+    if not _whole(step_years) or step_years < 1:
+        errors.append("stepYears must be a whole number of years, 1 or more")
+    elif val_years % step_years:
+        errors.append(
+            f"stepYears {step_years} does not divide the {val_years} validation "
+            f"year(s) ({first_val} to {last_val}), so the last fold would be short")
+    patience = s.hyperparams.get("earlyStoppingPatience")
+    if train_years == 1 and patience:
+        errors.append(
+            "trainYears 1 leaves nothing to fit with early stopping, which holds the "
+            "last training year out to decide when to stop: use 2 or more, or set "
+            "earlyStoppingPatience to 0")
+    if errors:
+        raise StrategyRefused(errors)
+    return train_years, step_years
 
 
 def runner_args(s: Strategy) -> dict[str, Any]:
@@ -600,19 +668,27 @@ def overlay(defaults: Mapping[str, Any], explicit: set[str], s: Strategy,
     out.update(
         symbol=s.instrument, source=s.source, timeframe=s.timeframe,
         train_start=plan.train_start, first_val=plan.first_val, last_val=plan.last_val,
+        train_years=plan.train_years, step_years=plan.step_years,
     )
     out.update(runner_args(s))
     return out
 
 
 def train_window(s: Strategy) -> tuple[date, date]:
-    """`[from, until)` of the first fold's training: train.from to validation.from.
+    """`[from, until)` of the first fold's training.
 
-    Folds expand, so this is the shortest training any fold gets, and the one
-    where a late-starting column costs the most.
+    Expanding: train.from to validation.from, the shortest training any fold
+    gets, and the one where a late-starting column costs the most. Sliding
+    (`windows.window`): the `trainYears` years before validation.from, which is
+    the first fold's whole window; an unusable setting falls back to the train
+    block, and `fold_plan` is what refuses it.
     """
-    return (date.fromisoformat(s.windows["train"]["from"]),
-            date.fromisoformat(s.windows["validation"]["from"]))
+    start = date.fromisoformat(s.windows["train"]["from"])
+    until = date.fromisoformat(s.windows["validation"]["from"])
+    w = s.windows.get("window")
+    if isinstance(w, Mapping) and w.get("kind") == "sliding" and _whole(w.get("trainYears")):
+        start = max(start, date(until.year - w["trainYears"], 1, 1))
+    return start, until
 
 
 def set_matches(cur, set_id: int, s: Strategy) -> bool:

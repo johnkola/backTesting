@@ -947,6 +947,8 @@ export type StrategySplit = {
   purgeBars: number
   /** No fold reads past this day (G38). */
   windowEnd: string | null
+  /** How each fold's training is cut (C6): expanding, or sliding with its years. */
+  window: { kind: 'expanding' | 'sliding', trainYears: number | null, stepYears: number }
   /** The network's early-stopping patience, or null when it trains a fixed number of epochs. */
   patience: number | null
   blocks: SplitBlock[]
@@ -1178,6 +1180,8 @@ export type SavedStrategy = {
   /** Ordered feature names, as picked from the catalogue. */
   features: string[]
   windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
+    /** How each fold's training is cut (C6); absent is the expanding window. */
+    & { window?: { kind: 'sliding', trainYears: number, stepYears: number } }
   /** What the model predicts (G49); null on a row saved before labels were recorded. */
   label: StrategyLabel | null
   hyperparams: Record<string, number>
@@ -1240,6 +1244,7 @@ export type SaveStrategyRequest = {
   validationScheme: string
   features: string[]
   windows: Partial<Record<'train' | 'validation' | 'test' | 'prediction', DateWindow>>
+    & { window?: { kind: 'sliding', trainYears: number, stepYears: number } }
   /** The kind, its horizon and its own thresholds; a missing threshold takes its default. */
   label: StrategyLabel
   hyperparams: Record<string, string | number>
@@ -1524,6 +1529,8 @@ export type WalkforwardRun = {
   lastVal: number
   /** True when the run spent the holdout. A one-way door. */
   isTest: boolean
+  /** The training window the run used (C6). Absent from an engine older than it. */
+  window?: { kind: 'expanding' | 'sliding', trainYears: number | null, stepYears: number }
   /** The input columns in order; null on a run older than the record, which read the whole set. */
   columns: string[] | null
   /**

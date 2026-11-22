@@ -1,6 +1,7 @@
 import type { SavedStrategy } from '../lib/api'
 import { tipClass } from './FieldLabel'
 import { hintFor } from '../lib/fieldHints'
+import { dateWindows } from '../lib/strategyForm'
 import { labelLine, targetOf } from '../lib/targets'
 
 /**
@@ -36,7 +37,7 @@ export default function ResolvedStrategy(
     emptyWindows: string[]
   },
 ) {
-  const windows = Object.entries(s.windows)
+  const windows = dateWindows(s.windows)
   const hyper = Object.entries(s.hyperparams)
 
   return (

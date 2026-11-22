@@ -6,7 +6,7 @@ bar while every strategy trains from its own date. A run's split is the
 strategy's windows, read through the runner's own code: `strategy_setup`
 (the run's check, its feature set and kept columns), the matrix of those
 columns (a bar where one is NULL is dropped, as the run drops it), and
-`walkforward.plan_folds` (the expanding folds, the purge, and the last fold's
+`walkforward.plan_folds` (the expanding or sliding folds, the purge, and the last fold's
 stop at the window end, G38). This module only counts and dates what those
 return, so the tab and a run cannot disagree.
 
@@ -88,6 +88,11 @@ def report(cur, strategy_id: int) -> dict[str, Any]:
         "lookback": a.lookback,
         "purgeBars": a.forward,
         "windowEnd": _iso(window_end),
+        # How each fold's training is cut (C6): expanding, or sliding with its
+        # length and step in years.
+        "window": {"kind": "sliding" if getattr(a, "train_years", None) else "expanding",
+                   "trainYears": getattr(a, "train_years", None),
+                   "stepYears": getattr(a, "step_years", None) or 1},
         "blocks": blocks(dict(s.windows), list(fm.dates)),
         "patience": getattr(a, "patience", None),
         "folds": folds(plan, label_dates, getattr(a, "patience", None), a.forward),

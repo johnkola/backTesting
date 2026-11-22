@@ -84,7 +84,8 @@ _INSERT_RUN = """
 INSERT INTO walkforward_runs
     (label, instrument_id, source_id, timeframe, feature_set_id, input_width,
      objective, loss, cost_bps, park, threshold, tax_rate, purge_bars,
-     train_start, first_val, last_val, is_test, hyperparams_json, columns_json,
+     train_start, first_val, last_val, train_years, step_years, is_test,
+     hyperparams_json, columns_json,
      strategy_id, strategy_name, strategy_version, dropped_json, partial_json,
      train_first, train_bars_used, train_bars, test_end,
      feature_run_id, input_snapshot, snapshot_json, code_hash, git_sha, lib_versions_json,
@@ -96,7 +97,8 @@ VALUES
      %(feature_set_id)s, %(input_width)s,
      %(objective)s, %(loss)s, %(cost_bps)s, %(park)s, %(threshold)s, %(tax_rate)s,
      %(purge_bars)s,
-     %(train_start)s, %(first_val)s, %(last_val)s, %(is_test)s,
+     %(train_start)s, %(first_val)s, %(last_val)s, %(train_years)s, %(step_years)s,
+     %(is_test)s,
      %(hyperparams_json)s, %(columns_json)s,
      %(strategy_id)s, %(strategy_name)s, %(strategy_version)s,
      %(dropped_json)s, %(partial_json)s,
@@ -199,6 +201,16 @@ def owner_of_set(cur, set_id: int) -> tuple[int, int]:
     return int(row[0]), int(row[1])
 
 
+def _window(args: Any) -> dict[str, int | None]:
+    """`train_years` and `step_years` as recorded: NULL, NULL for the plain
+    expanding window, else both as run."""
+    train_years = getattr(args, "train_years", None)
+    step = getattr(args, "step_years", None) or 1
+    if train_years is None and step == 1:
+        return {"train_years": None, "step_years": None}
+    return {"train_years": train_years, "step_years": step}
+
+
 def run_row(args: Any, set_id: int, input_width: int,
             instrument_id: int, source_id: int, columns: list[str] | None = None,
             provenance: dict[str, Any] | None = None,
@@ -237,6 +249,9 @@ def run_row(args: Any, set_id: int, input_width: int,
         "train_start": int(args.train_start),
         "first_val": int(args.first_val),
         "last_val": int(args.last_val),
+        # The sliding window (C6). Both NULL on an expanding run, which is what
+        # every run before it was; a sliding run records its length and step.
+        **_window(args),
         "is_test": bool(getattr(args, "test", False)),
         "hyperparams_json": json.dumps(hyperparams(args), sort_keys=True),
         "columns_json": json.dumps(list(columns)) if columns is not None else None,

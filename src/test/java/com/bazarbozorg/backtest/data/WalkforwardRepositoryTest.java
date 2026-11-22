@@ -119,7 +119,8 @@ class WalkforwardRepositoryTest {
         insertFold(taxedRunId, 2, 2017, 2.0, 8.0, 0.1, 0.9, 20.0, 6.0, 10, -1.5, -0.5, -2.0);
         exec("UPDATE walkforward_folds SET gains_tax = -2.0, best_epoch = 7, epochs_run = 12"
              + " WHERE run_id = " + taxedRunId + " AND fold = 1");
-        exec("UPDATE walkforward_runs SET purge_bars = 5 WHERE id = " + taxedRunId);
+        exec("UPDATE walkforward_runs SET purge_bars = 5, train_years = 5, step_years = 1"
+             + " WHERE id = " + taxedRunId);
         // B8: fold accuracies against the naive baseline, averaging to a tie.
         exec("UPDATE walkforward_folds SET accuracy = 0.5, baseline_acc = 0.6 WHERE run_id = "
              + taxedRunId + " AND fold = 1");
@@ -312,6 +313,8 @@ class WalkforwardRepositoryTest {
         assertNull(run.taxRate(), "null is 'off'; 0 would read as a 0% rate that was applied");
         assertNull(run.recalculatedFrom(), "a run that trained has no source run");
         assertNull(run.purgeBars(), "a run from before the purge says so");
+        assertNull(run.trainYears(), "no window recorded is the expanding one (C6)");
+        assertNull(run.stepYears());
         assertEquals(0.0, run.meanGainsTax(), 1e-9);
         assertEquals(0.0, repo.findFolds(runId).get(0).gainsTax(), 1e-9);
     }
@@ -329,6 +332,8 @@ class WalkforwardRepositoryTest {
         assertEquals(12, folds.get(0).epochsRun());
         assertNull(folds.get(1).bestEpoch(), "a fold trained for fixed epochs has none");
         assertEquals(5, run.purgeBars());
+        assertEquals(5, run.trainYears(), "a sliding run carries its window (C6)");
+        assertEquals(1, run.stepYears());
         assertEquals(0.0, folds.get(1).gainsTax(), 1e-9);
     }
 

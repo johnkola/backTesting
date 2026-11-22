@@ -22,6 +22,82 @@ export const REQUIRED_WINDOWS: WindowKey[] = ['train', 'validation', 'test']
 export type DateWindow = { from: string, to: string }
 export type Windows = Partial<Record<WindowKey, DateWindow>>
 
+/**
+ * How each fold's training window is cut (C6). Expanding trains every fold
+ * from the train window's start; sliding trains on the `trainYears` calendar
+ * years before each validation block and moves `stepYears` a fold. Kept as the
+ * form's strings, so a half-typed number is not a number yet.
+ */
+export type FoldWindowForm = { kind: 'expanding' | 'sliding', trainYears: string, stepYears: string }
+export type FoldWindowSetting = { kind: 'sliding', trainYears: number, stepYears: number }
+
+/** A strategy's date windows in time order, without the `window` setting that
+ *  is saved beside them and is not a date range. */
+export function dateWindows(
+  windows: Partial<Record<WindowKey, DateWindow>>,
+): [WindowKey, DateWindow][] {
+  return WINDOW_KEYS.filter((k) => windows[k]).map((k) => [k, windows[k]!])
+}
+
+export const EXPANDING: FoldWindowForm = { kind: 'expanding', trainYears: '5', stepYears: '1' }
+
+/** A saved strategy's setting as the form holds it; none is expanding. */
+export function foldWindowToForm(w: FoldWindowSetting | null | undefined): FoldWindowForm {
+  return w && w.kind === 'sliding'
+    ? { kind: 'sliding', trainYears: String(w.trainYears), stepYears: String(w.stepYears ?? 1) }
+    : EXPANDING
+}
+
+/** What Save sends: nothing for expanding, which is what no setting means. */
+export function foldWindowPayload(f: FoldWindowForm): FoldWindowSetting | undefined {
+  return f.kind === 'sliding'
+    ? { kind: 'sliding', trainYears: Number(f.trainYears), stepYears: Number(f.stepYears) }
+    : undefined
+}
+
+const yearOf = (iso: string | undefined) => (iso && isRealDate(iso) ? Number(iso.slice(0, 4)) : null)
+
+/**
+ * The folds the windows give, or the reasons they give none. The same rules
+ * the runner refuses on at save (`strategy_spec._window`), said while typing;
+ * the runner's answer is still the one that decides.
+ */
+export function foldWindowPlan(
+  windows: Windows, f: FoldWindowForm,
+): { folds: number | null, problems: string[] } {
+  const trainStart = yearOf(windows.train?.from)
+  const firstVal = yearOf(windows.validation?.from)
+  const lastVal = yearOf(windows.validation?.to)
+  if (trainStart === null || firstVal === null || lastVal === null || lastVal < firstVal) {
+    return { folds: null, problems: [] }
+  }
+  const valYears = lastVal - firstVal + 1
+  if (f.kind === 'expanding') return { folds: valYears, problems: [] }
+  const problems: string[] = []
+  const whole = (s: string) => /^\d+$/.test(s.trim()) && Number(s) >= 1
+  const have = firstVal - trainStart
+  if (!whole(f.trainYears)) {
+    problems.push('Train years must be a whole number, 1 or more.')
+  } else if (Number(f.trainYears) > have) {
+    problems.push(
+      `Train years ${Number(f.trainYears)} does not fit: the train window holds ${have} `
+      + 'year(s) before validation starts.',
+    )
+  }
+  if (!whole(f.stepYears)) {
+    problems.push('Step years must be a whole number, 1 or more.')
+  } else if (valYears % Number(f.stepYears) !== 0) {
+    problems.push(
+      `Step years ${Number(f.stepYears)} does not divide the ${valYears} validation year(s), `
+      + 'so the last fold would be short.',
+    )
+  }
+  return {
+    folds: problems.length === 0 ? valYears / Number(f.stepYears) : null,
+    problems,
+  }
+}
+
 /** What each window is for, straight from §8.1a — shown as the field's hint. */
 export const WINDOW_PURPOSE: Record<WindowKey, string> = {
   train: 'The bars the weights are fitted on.',

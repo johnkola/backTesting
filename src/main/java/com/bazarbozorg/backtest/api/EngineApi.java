@@ -359,6 +359,13 @@ public class EngineApi {
         out.put("trainStart", run.trainStart());
         out.put("firstVal", run.firstVal());
         out.put("lastVal", run.lastVal());
+        // The training window (C6): expanding from trainStart, or sliding with
+        // its length and step in years.
+        Map<String, Object> window = new LinkedHashMap<>();
+        window.put("kind", run.trainYears() == null ? "expanding" : "sliding");
+        window.put("trainYears", run.trainYears());
+        window.put("stepYears", run.stepYears() == null ? 1 : run.stepYears());
+        out.put("window", window);
         out.put("isTest", run.isTest());
         out.put("columns", jsonArray(run.columnsJson(), run.id(), "columns_json"));
         // Each engine trained, with its settings, library version and seed (B9);

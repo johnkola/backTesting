@@ -672,9 +672,11 @@ def backfill(cur, conn, dry_run: bool = False, log=print) -> int:
         cur.execute("SELECT current_run_id FROM feature_sets WHERE id = %s",
                     (run["feature_set_id"],))
         row = cur.fetchone()
-        cur.execute("SELECT feature_run_id, train_start, first_val, last_val, test_end "
+        cur.execute("SELECT feature_run_id, train_start, first_val, last_val, test_end, "
+                    "train_years, step_years "
                     "FROM walkforward_runs WHERE id = %s", (run["id"],))
-        fr, train_start, first_val, last_val, test_end = cur.fetchone()
+        (fr, train_start, first_val, last_val, test_end,
+         train_years, step_years) = cur.fetchone()
         if row is None or fr is None or row[0] != fr:
             log(f"  run {run['id']}: its set no longer holds the build it read; left without")
             continue
@@ -688,10 +690,13 @@ def backfill(cur, conn, dry_run: bool = False, log=print) -> int:
                             buy_threshold=float(hp.get("buy_threshold", 0.02)),
                             sell_threshold=float(hp.get("sell_threshold", -0.02)))
         wdates = wdates[: len(y)]
+        # NULL window columns are an expanding run, which every run before the
+        # sliding window (C6) was.
         folds = (make_test_fold(wdates, train_start, last_val + 1, last_day=test_end,
-                                purge=forward)
+                                purge=forward, train_years=train_years)
                  if run["is_test"] else
-                 make_folds(wdates, train_start, first_val, last_val, purge=forward))
+                 make_folds(wdates, train_start, first_val, last_val, purge=forward,
+                            train_years=train_years, step_years=step_years or 1))
         span = run_span(fm.dates, folds, lookback, forward,
                         window_end_of(last_val, run["is_test"], test_end))
         if span is None:

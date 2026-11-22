@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-21-8** · 2026-11-21 22:54 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-21-9** · 2026-11-21 23:15 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -956,7 +956,7 @@ Effort: M.
 | C3, nulls (D2) | Keep NULLs, dropped at read | no change; D2 closes as a departure from R3 |
 | C4, DL4J and ONNX (D13) | Drop it, PyTorch only | no change; D13 closes as a departure from R62 |
 | C5, TA-Lib (D14) | Keep the hand-written indicators | no change; D14 closes as a departure from R66 |
-| C6, window (D3) | Offer both, expanding the default | new work: a sliding window (length and step) on the strategy; existing strategies unchanged |
+| C6, window (D3) | Offer both, expanding the default | new work: a sliding window (length and step) on the strategy; existing strategies unchanged; done 2026-11-21 (job 6): `windows.window`, run 1101 |
 | C7, RSI, MACD, realized volatility | Selectable per strategy, off by default | new work: `data only` becomes selectable; stored runs unchanged; done 2026-11-21 (job 5): status `selectable`, role `select`; run 1077 |
 | C8, the five rule strategies | Benchmarks only | new work: kept runnable for comparison, not offered as strategies |
 | F1, VIX term structure | Selectable input, off by default | new feature column; done 2026-11-21 (job 5): VIX3M feed, `vix_term_structure` selectable, values from autumn 2006 |
@@ -973,7 +973,7 @@ The readonly design set is the author's to update where an answer departs from i
 - [x] 3. FirstRate import readiness: its file layout and names through the drop folder (S, after 2). *Done 2026-11-19; see the job 3 record*
 - [x] 4. G54: the Strategy tab and the runner agree on what can run (S). *Done 2026-11-21; see the job 4 record*
 - [x] 5. C7, F1, F2: selectable inputs off by default; the two new columns (M; a config change, so the daily and intraday sets are rebuilt once, together)
-- [ ] 6. C6: the sliding window option (M)
+- [x] 6. C6: the sliding window option (M)
 - [ ] 7. C8: the rule strategies as benchmarks only (S)
 - [ ] 8. C2: severities and the hard stop (M)
 - [ ] 9. Requirements doc: statuses re-verified, today's answers written in, draft mark removed (M)
@@ -991,7 +991,7 @@ The readonly design set is the author's to update where an answer departs from i
   - The `data-only` columns are `rsi_14`, `macd` and `realized_vol`. All three become selectable, off by default.
   - `credit_spread_hy` (F3) leaves the config.
   - One rebuild of the daily, H1 and M30 sets together. **Stop before the rebuild**: it is stored data.
-- [ ] 6. A sliding window beside the expanding one (C6), M. The runner has the expanding window only (*checked*: `walkforward.make_folds`). Length and step are saved on the strategy; existing strategies do not change. The save-time check from job 4 (`strategy_spec`) is where the new rules go.
+- [x] 6. A sliding window beside the expanding one (C6), M. The runner has the expanding window only (*checked*: `walkforward.make_folds`). Length and step are saved on the strategy; existing strategies do not change. The save-time check from job 4 (`strategy_spec`) is where the new rules go.
 - [ ] 7. The five rule strategies as benchmarks only (C8), S. **C8 has no row in this tracker yet** (*checked*), which the author asked for (Q3); it gets one with this job.
 - [ ] 8. Data checks with a severity, and errors that stop the chain (C2, D11), M.
 - [ ] 9. The requirements doc: every status re-verified against the code, the answers written in, the draft mark removed, M. With it, this tracker's decision rows are brought up to date: D2, D3, D11, D13 and D14 still read `decision` or `open` though all were answered on 2026-11-19, and `backTesting-05` still shows R22 as partial.
@@ -1037,15 +1037,15 @@ Done when: a strategy can select any of the five and its run's column list shows
 
 *Job 6 steps: a sliding window beside the expanding one (C6, D3), M.*
 
-- [ ] 6.1 **ASK**: the window's shape. Default: two whole-number settings on the strategy, `trainYears` (the length) and `stepYears` (how far each fold moves, default 1), in calendar years, because the folds are calendar years. Expanding stays the default and is what `window: "expanding"` or no setting means
-- [ ] 6.2 `walkforward.make_folds` takes the window: a sliding fold trains on the `trainYears` years before its validation year, purged as now; with `stepYears` above 1 the validation block is that many years. The expanding path is unchanged, by test, fold for fold
-- [ ] 6.3 The strategy holds it: saved with the windows, validated by the API (bounds), and checked by the runner at save (`strategy_spec.fold_plan`, the job 4 path): `trainYears` must fit between `train.from` and `validation.from`, and the validation years must divide by the step. Refused, never rounded. Tests
-- [ ] 6.4 The holdout fold: under a sliding window the test block's model trains on the last `trainYears` before it, not on everything. Say so on the tab, and test it
-- [ ] 6.5 The run records the window (`walkforward_runs`, a nullable column; NULL is expanding, which is what every stored run was). `recalculate` and the staleness check read it
-- [ ] 6.6 Early stopping holds the last year of each fold's training out; with `trainYears` 1 nothing is left to fit. Refused with the reason
-- [ ] 6.7 Split tab and Training tab draw the sliding spans from the runner's own code (`nn/split.py`), as they do for expanding. Strategy tab: the choice, the two fields, the fold count it gives
-- [ ] 6.8 Live: one strategy version on a 5-year sliding window, validation folds only, beside `phase1-full` v5. Its figures go in the record; no conclusion about which is better is drawn from one run
-- [ ] 6.9 Rows: D3 and C6 closed
+- [x] 6.1 **ASK**: the window's shape. Default: two whole-number settings on the strategy, `trainYears` (the length) and `stepYears` (how far each fold moves, default 1), in calendar years, because the folds are calendar years. Expanding stays the default and is what `window: "expanding"` or no setting means. *2026-11-21 23:15: the author said "start job 6" with this default standing, so it is what was built. Saved as `windows.window = {kind: "sliding", trainYears, stepYears}`; expanding is saved as no setting*
+- [x] 6.2 `walkforward.make_folds` takes the window: a sliding fold trains on the `trainYears` years before its validation year, purged as now; with `stepYears` above 1 the validation block is that many years. The expanding path is unchanged, by test, fold for fold. *Done 2026-11-21 23:15. `make_folds(train_years, step_years)`; a fold's year is its block's first; the window never reaches before the train start. Expanding is equal fold for fold, by test*
+- [x] 6.3 The strategy holds it: saved with the windows, validated by the API (bounds), and checked by the runner at save (`strategy_spec.fold_plan`, the job 4 path): `trainYears` must fit between `train.from` and `validation.from`, and the validation years must divide by the step. Refused, never rounded. Tests. *Done 2026-11-21 23:15. `strategy_spec._window`, reached from `fold_plan`, so the save route's runner check refuses it. Live: `trainYears` 14 and `stepYears` 4 on phase1-full's windows are refused with the reason, 5 passes. The coverage window (`train_window`) is the first fold's*
+- [x] 6.4 The holdout fold: under a sliding window the test block's model trains on the last `trainYears` before it, not on everything. Say so on the tab, and test it. *Done 2026-11-21 23:15. `make_test_fold(train_years)`; the tab says it under the choice. Tested; not run live, since that spends a holdout*
+- [x] 6.5 The run records the window (`walkforward_runs`, a nullable column; NULL is expanding, which is what every stored run was). `recalculate` and the staleness check read it. *Done 2026-11-21 23:15. `walkforward_runs.train_years` and `step_years`, both NULL on an expanding run. The staleness backfill rebuilds folds from them. `recalculate` scores stored signals and builds no folds; with another strategy version it compares the windows, so a sliding and an expanding version are a model-side difference and refused. The engine serves `window` on every run (Java, 33 repository tests)*
+- [x] 6.6 Early stopping holds the last year of each fold's training out; with `trainYears` 1 nothing is left to fit. Refused with the reason. *Done 2026-11-21 23:15. Refused at save when the strategy sets a patience; the runner already refused it at run time for any fold with one training year*
+- [x] 6.7 Split tab and Training tab draw the sliding spans from the runner's own code (`nn/split.py`), as they do for expanding. Strategy tab: the choice, the two fields, the fold count it gives. *Done 2026-11-21 23:15. The Split report carries `window` and its folds come from `plan_folds`, as before; the Training tab's run line says "sliding 5y, step 1y". Strategy tab: section 4b, the choice, the two fields, the fold count. Not looked at in a browser*
+- [x] 6.8 Live: one strategy version on a 5-year sliding window, validation folds only, beside `phase1-full` v5. Its figures go in the record; no conclusion about which is better is drawn from one run. *Done 2026-11-21 23:15. Strategy 87, `phase1-sliding5` v1 (phase1-full v5 with a 5-year window). Run 1101 on set 63, 6 folds: each trains on the 5 years before its year (2016's from 2011-01-03, 2021's from 2016-01-04), against run 785's from 2003-01-02. Mean excess −0.76 pp a fold, 1 of 6 folds ahead, accuracy 86.5% against the naive 87.0%; run 785 has 0.00 pp and exactly the naive accuracy. No conclusion is drawn from one run*
+- [x] 6.9 Rows: D3 and C6 closed. *Done 2026-11-21 23:15*
 
 Done when: the same strategy saved both ways gives two runs whose fold spans differ as the Split tab shows, and every stored run recalculates exactly.
 
@@ -1528,7 +1528,7 @@ Found in run 8, not fixed: COPPER and GOLD held on 2026-11-11..11-12. The 18:30 
 
 | # | What differs | Why it was done | Status |
 |---|---|---|---|
-| D3 | Folds always train from the start date and step one year. The design's example uses a fixed window that slides forward by a chosen step ("train 2013–2018, test 2019, then roll") | Expanding folds give later folds more data; there was never a step setting | decision |
+| D3 | Folds always train from the start date and step one year. The design's example uses a fixed window that slides forward by a chosen step ("train 2013–2018, test 2019, then roll") | Expanding folds give later folds more data; there was never a step setting | done 2026-11-21 (job 6): both are offered, expanding the default (the author, 2026-11-19). A strategy may set a sliding window of `trainYears` moving `stepYears` a fold; run 1101 |
 | D5 | Column 40 sums the members' net income, not their EPS | Summed point in time, EPS falls 4x or 20x at a split (AAPL 2020, NVDA 2021 and 2024, AMZN and GOOGL 2022), which the change column would read as collapses. Summed net income is the aggregate E the design means ("the E in the P/E") with no per-share mixing. Chosen by the author, 2026-11-11 (G7) | decision |
 | D4 | The catalogue has a fourth status, `data-only`, beside §8.2a's active, undecided and blocked | None of the three is true of RSI, MACD and realized volatility: decided, with values, and not to be offered to the builder. Design Notes' "In the model" column already gives them their own value, "No - data only" (G9a) | decision |
 
@@ -1953,6 +1953,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-21-9 | 2026-11-21 23:15 | Claude Code (Claude Fable 5.2) | Job 6 done: the sliding training window (C6, D3); strategy 87, run 1101 |
 | 2026-11-21-8 | 2026-11-21 22:54 | Claude Code (Claude Fable 5.2) | Job 5 done: sets 63 to 65 built, the 13 runs recalculate exactly, run 1077 trains on the five selectable columns |
 | 2026-11-21-7 | 2026-11-21 21:54 | Claude Code (Claude Fable 5.2) | Job 5, steps 5.2 to 5.7: VIX3M loaded; five selectable columns in the config, the build, the runner and the tabs |
 | 2026-11-21-6 | 2026-11-21 18:13 | Claude Code (Claude Fable 5.2) | Job 5, step 5.1: the VIX3M feed and its dry run |

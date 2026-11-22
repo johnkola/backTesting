@@ -883,3 +883,12 @@ def test_a_holdout_run_that_records_nothing_is_refused(capsys):
     from nn import walkforward as wf
     assert wf.main(["--test", "--no-save"]) == 2
     assert "always recorded" in capsys.readouterr().out
+
+
+def test_the_run_records_its_window_and_null_means_expanding():
+    """C6. NULL, NULL is the expanding window, which every stored run was."""
+    row = ws.run_row(an_args(), 6, 580, 47, 2)
+    assert (row["train_years"], row["step_years"]) == (None, None)
+    row = ws.run_row(an_args(train_years=5, step_years=1), 6, 580, 47, 2)
+    assert (row["train_years"], row["step_years"]) == (5, 1)
+    assert "train_years" in ws._INSERT_RUN and "%(step_years)s" in ws._INSERT_RUN

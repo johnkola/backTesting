@@ -172,9 +172,13 @@ def purged(tr: list[int], purge: int) -> list[int]:
 
 def make_test_fold(
     dates: list[date], train_start: int, first_test: int, last_day: date | None = None,
-    purge: int = 0,
+    purge: int = 0, train_years: int | None = None,
 ) -> list[tuple[int, list[int], list[int]]]:
     """ONE fold: train on everything before `first_test`, evaluate all of it.
+
+    Under a sliding window (`train_years`) the training is the last
+    `train_years` years before `first_test`, as every validation fold's was:
+    the holdout reads the variant the folds chose, trained the way they were.
 
     Not a sequence of annual folds. The holdout is a single out-of-sample read
     of a variant already chosen on the validation folds — running it year by
@@ -185,7 +189,8 @@ def make_test_fold(
     prediction window, so scoring them would spend bars the strategy set aside.
     Without a strategy there is no such window and the holdout runs to the end.
     """
-    tr = purged([i for i, d in enumerate(dates) if train_start <= d.year < first_test], purge)
+    lo = train_start if train_years is None else max(train_start, first_test - train_years)
+    tr = purged([i for i, d in enumerate(dates) if lo <= d.year < first_test], purge)
     te = [i for i, d in enumerate(dates)
           if d.year >= first_test and (last_day is None or session_of(d) <= last_day)]
     if not tr or not te:
@@ -195,18 +200,30 @@ def make_test_fold(
 
 def make_folds(
     dates: list[date], train_start: int, first_val: int, last_val: int, purge: int = 0,
+    train_years: int | None = None, step_years: int = 1,
 ) -> list[tuple[int, list[int], list[int]]]:
     """(validation year, train indices, validation indices) per fold.
 
-    Train always runs from `train_start` to the end of the year before the
-    validation year — an expanding window, not a sliding one, so each fold
-    keeps every lesson the earlier ones had. The last `purge` training bars are
-    dropped (see `purged`).
+    Expanding, the default (`train_years` None): train runs from `train_start`
+    to the end of the year before the validation year, so each fold keeps every
+    lesson the earlier ones had.
+
+    Sliding (C6, the author's decision 2026-11-19: both are offered): train is
+    the `train_years` calendar years before the validation year and nothing
+    older, so an old regime leaves the model as the window moves. It never
+    reaches before `train_start`.
+
+    `step_years` is how far each fold moves, and so how long its validation
+    block is: with 2, a fold is scored on two years and the next starts two
+    later. The fold's year is its block's first. The last `purge` training
+    bars are dropped either way (see `purged`).
     """
     out = []
-    for year in range(first_val, last_val + 1):
-        tr = purged([i for i, d in enumerate(dates) if train_start <= d.year < year], purge)
-        va = [i for i, d in enumerate(dates) if d.year == year]
+    for year in range(first_val, last_val + 1, step_years):
+        lo = train_start if train_years is None else max(train_start, year - train_years)
+        tr = purged([i for i, d in enumerate(dates) if lo <= d.year < year], purge)
+        va = [i for i, d in enumerate(dates)
+              if year <= d.year < min(year + step_years, last_val + 1)]
         if tr and va:
             out.append((year, tr, va))
     return out
@@ -259,10 +276,13 @@ def plan_folds(label_dates: list[date], args, test_end: date | None,
     wdates = label_dates[: max(0, len(label_dates) - args.forward)]
     if args.test:
         folds = make_test_fold(wdates, args.train_start, args.last_val + 1,
-                               last_day=test_end, purge=args.forward)
+                               last_day=test_end, purge=args.forward,
+                               train_years=getattr(args, "train_years", None))
     else:
         folds = make_folds(wdates, args.train_start, args.first_val, args.last_val,
-                           purge=args.forward)
+                           purge=args.forward,
+                           train_years=getattr(args, "train_years", None),
+                           step_years=getattr(args, "step_years", None) or 1)
     window_end = staleness.window_end_of(args.last_val, bool(args.test), test_end)
     return trim_to_window(folds, label_dates, args.forward, window_end), window_end
 
@@ -957,6 +977,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "central claim - that the model earns its keep on the downside - "
                         "can never be tested. Starting at 2008 costs training data on the "
                         "early folds and buys the folds that actually matter")
+    p.add_argument("--train-years", type=int, default=None,
+                   help="Sliding window: each fold trains on this many calendar years "
+                        "before its validation year. Default: expanding from --train-start")
+    p.add_argument("--step-years", type=int, default=1,
+                   help="How many years each fold moves, and is scored on (default 1)")
     p.add_argument("--last-val", type=int, default=2021,
                    help="Last validation year. 2022 onward is the untouched test block")
     p.add_argument("--objective", choices=["return", "sharpe", "drawdown"],
@@ -1400,7 +1425,9 @@ def main(argv: list[str] | None = None) -> int:
     name = f" [{args.label}]" if args.label else ""
     print(f"walk-forward{name}  set={set_id}  {len(fm.names)} columns x "
           f"{args.lookback} bars = {x_all.shape[1]} inputs")
-    print(f"folds        train from {args.train_start}, validate "
+    sliding = (f", sliding {args.train_years}y window, step {args.step_years or 1}y"
+               if getattr(args, "train_years", None) else "")
+    print(f"folds        train from {args.train_start}{sliding}, validate "
           f"{args.first_val}..{args.last_val}   "
           f"(test block {args.last_val + 1}+ untouched)")
     if window_end is not None:

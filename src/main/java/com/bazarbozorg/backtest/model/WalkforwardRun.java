@@ -58,6 +58,11 @@ import java.time.ZonedDateTime;
  * @param purgeBars           bars dropped from the end of each training window because
  *                            their targets look into the scored window; null on a run
  *                            from before the purge, which trained on them
+ * @param trainYears          sliding window: calendar years each fold trained on;
+ *                            null on an expanding run, which trains from
+ *                            {@code trainStart}
+ * @param stepYears           years each fold moved and was scored on; null on an
+ *                            expanding run (one year a fold)
  * @param threshold           position below which a money-trained model counts as flat;
  *                            null for a classifier, which has no position to cut
  * @param trainStart          first training year
@@ -112,6 +117,8 @@ public record WalkforwardRun(
         int trainStart,
         int firstVal,
         int lastVal,
+        Integer trainYears,
+        Integer stepYears,
         boolean isTest,
         String hyperparamsJson,
         String columnsJson,
