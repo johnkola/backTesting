@@ -22,9 +22,12 @@ rerun now read different inputs or parameters?
                    commit to nn/ or loader/ changes the hash, and most cannot move
                    a number.
     Backtest       a stored result is stale when an import changed stored bars
-                   (a fix, not later days) inside its window after it ran. For
-                   a strategy that reads prices only, a change to volumes alone
-                   does not count (PRICE_ONLY_STRATEGIES).
+                   (a fix, not later days) inside its window after it ran: its
+                   own bars at its timeframe or a finer one they can be rolled
+                   up from, and, for a strategy that scores the feature table,
+                   any series that table reads. For a strategy that reads
+                   prices only, a change to volumes alone does not count
+                   (PRICE_ONLY_STRATEGIES).
 
 SPANS. A walk-forward run reads the feature rows from its first training day,
 less the lookback, to its last scored day, plus `forward` rows after it for the
@@ -74,6 +77,13 @@ SERIES_LAG = {"DCOILWTICO/fred": 8, "NDXERN5D/computed": 5, "NDXERNSEASON/comput
 #: volume. A strategy missing here is checked against every change, which is
 #: the safe side.
 PRICE_ONLY_STRATEGIES = frozenset({"sma-crossover", "rsi", "macd", "bollinger", "ema-triple"})
+
+#: Backtest strategies that score a model against the stored feature table and
+#: so read every series features.toml names, not only the bars they trade
+#: (G41). A fix to VIX or a Treasury yield inside such a result's window moves
+#: its signals as surely as a fix to QQQ does. `tests/test_staleness.py` fails
+#: if a strategy source reads `feature_values` and is missing here.
+FEATURE_TABLE_STRATEGIES = frozenset({"nn-feature-store"})
 
 
 def allowed_lag(key: str, provider: str) -> int:
@@ -191,6 +201,35 @@ def fix_hits(diff_json: str | None, start: dt.date, end: dt.date,
     hit = [d.isoformat() for d in sorted(days) if start <= d <= end]
     hit += [str(y) for y in sorted(years) if start.year <= y <= end.year]
     return hit
+
+
+def may_feed(fix_tf: str, read_tf: str) -> bool:
+    """Can a fix stored at `fix_tf` move the bars a result read at `read_tf`?
+
+    At the same timeframe, yes. At a finer one, yes too: a coarser bar can be
+    rolled up from it (M30 to D1, D1 to W1), and the roll-up leaves no import
+    record saying which it was, so a finer fix counts, which is the safe side
+    (G41). A coarser fix cannot: nothing is built downward. This replaces "the
+    same timeframe or D1", which missed M30 under a D1 result and counted a D1
+    fix against an H1 one."""
+    from loader.aggregate import TIMEFRAME_ORDER as order
+
+    if fix_tf == read_tf:
+        return True
+    return fix_tf in order and read_tf in order and order[fix_tf] < order[read_tf]
+
+
+def series_read(strategy: str, symbol: str, source: str, timeframe: str,
+                table: dict[tuple[str, str], set[str]] | None,
+                ) -> dict[tuple[str, str], set[str]]:
+    """The stored series a backtest result read, each with the timeframe(s) it
+    was read at: its own bars, and for a feature-table strategy every series
+    the table is built from (`table`, from `series_timeframes`)."""
+    out: dict[tuple[str, str], set[str]] = {(symbol, source): {timeframe}}
+    if strategy in FEATURE_TABLE_STRATEGIES and table:
+        for key, tfs in table.items():
+            out.setdefault(key, set()).update(tfs)
+    return out
 
 
 def sessions_behind(last: dt.date, cutoff: dt.date) -> int:
@@ -650,22 +689,35 @@ def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
     fixes: dict[tuple[str, str], list] = {}
     for sym, src, tf, fid, at, kind, diff in ctx.cur.fetchall():
         fixes.setdefault((sym, src), []).append((tf, fid, at, kind, diff))
+    table = series_timeframes(ctx.cfg) if ctx.cfg is not None else None
     out = []
     for rid, sym, src, tf, start, end, created, strategy in results:
         reasons = []
+        notes = []
         prices_only = strategy in PRICE_ONLY_STRATEGIES
+        if strategy in FEATURE_TABLE_STRATEGIES and table is None:
+            notes.append(f"{ctx.cfg_name} could not be read, so only {sym}/{src} was checked, "
+                         "not the other series its feature table reads")
         if start is not None and end is not None and created is not None:
-            for ftf, fid, at, kind, diff in fixes.get((sym, src), []):
-                # W1 and MN1 bars are rolled up from D1, so a D1 fix moves them too.
-                if ftf not in (tf, "D1") or at is None or at <= created:
-                    continue
-                hit = fix_hits(diff, start.date(), end.date(), prices_only)
-                if hit:
-                    reasons.append(reason(
-                        "inputs", f"{sym}/{src} version #{fid} ({kind}, {at:%Y-%m-%d}) changed "
-                        f"stored bars on {', '.join(hit)}, inside this result's window, "
-                        "after it ran", version=fid))
-        out.append({"id": int(rid), "state": "stale" if reasons else "fresh", "reasons": reasons})
+            read = series_read(strategy, sym, src, tf, table)
+            for (rsym, rsrc), read_tfs in sorted(read.items()):
+                own = (rsym, rsrc) == (sym, src)
+                for ftf, fid, at, kind, diff in fixes.get((rsym, rsrc), []):
+                    if at is None or at <= created:
+                        continue
+                    if not any(may_feed(ftf, rtf) for rtf in read_tfs):
+                        continue
+                    hit = fix_hits(diff, start.date(), end.date(), prices_only)
+                    if hit:
+                        where = "" if ftf in read_tfs else f" at {ftf}"
+                        whose = "" if own else ", a series its feature table reads,"
+                        reasons.append(reason(
+                            "inputs", f"{rsym}/{rsrc}{whose} version #{fid} ({kind}, "
+                            f"{at:%Y-%m-%d}) changed stored bars{where} on {', '.join(hit)}, "
+                            "inside this result's window, after it ran", version=fid,
+                            series=f"{rsym}/{rsrc}"))
+        out.append({"id": int(rid), "state": "stale" if reasons else "fresh",
+                    "reasons": reasons, "notes": notes})
     newest_stale = bool(out) and out[0]["state"] == "stale"
     return {"state": "stale" if newest_stale else ("empty" if not out else "passed"),
             "results": out, "stale": sum(1 for r in out if r["state"] == "stale")}

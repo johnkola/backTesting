@@ -208,6 +208,49 @@ def test_the_price_only_strategies_never_read_volume():
     assert not {"nn-feedforward", "nn-feature-store"} & staleness.PRICE_ONLY_STRATEGIES
 
 
+def test_every_strategy_that_reads_the_feature_table_is_listed():
+    """FEATURE_TABLE_STRATEGIES is a claim about Java code too (G41)."""
+    readers = set()
+    for f in (JAVA / "strategy").rglob("*.java"):
+        text = f.read_text()
+        m = re.search(r'getName\(\)\s*\{\s*return\s+"([^"]+)"', text)
+        if m and "feature_values" in text:
+            readers.add(m.group(1))
+    assert readers == staleness.FEATURE_TABLE_STRATEGIES
+    assert not staleness.FEATURE_TABLE_STRATEGIES & staleness.PRICE_ONLY_STRATEGIES
+
+
+def test_a_finer_fix_can_move_a_coarser_bar_and_not_the_other_way():
+    assert staleness.may_feed("D1", "D1")
+    assert staleness.may_feed("M30", "D1")      # D1 rolled up from M30
+    assert staleness.may_feed("D1", "W1")
+    assert staleness.may_feed("D1", "MN1")
+    assert not staleness.may_feed("D1", "H1")   # nothing is built downward
+    assert not staleness.may_feed("W1", "D1")
+    assert not staleness.may_feed("X9", "D1")   # an unknown timeframe matches only itself
+    assert staleness.may_feed("X9", "X9")
+
+
+def test_a_feature_table_result_reads_every_series_the_table_reads():
+    table = {("QQQ", "yahoo"): {"D1"}, ("VIX", "yahoo"): {"D1"}, ("DGS10", "fred"): {"D1"}}
+    read = staleness.series_read("nn-feature-store", "QQQ", "yahoo", "D1", table)
+    assert read == table
+    # An intraday result reads its own bars intraday and the rest daily.
+    read = staleness.series_read("nn-feature-store", "QQQ", "yahoo", "H1",
+                                 {("QQQ", "yahoo"): {"H1"}, ("VIX", "yahoo"): {"D1"}})
+    assert read == {("QQQ", "yahoo"): {"H1"}, ("VIX", "yahoo"): {"D1"}}
+
+
+def test_any_other_result_reads_its_own_bars_only():
+    table = {("QQQ", "yahoo"): {"D1"}, ("VIX", "yahoo"): {"D1"}}
+    for name in ("sma-crossover", "nn-feedforward"):
+        assert staleness.series_read(name, "QQQ", "yahoo", "D1", table) == {
+            ("QQQ", "yahoo"): {"D1"}}
+    # No readable config: the result's own bars are still checked.
+    assert staleness.series_read("nn-feature-store", "QQQ", "yahoo", "D1", None) == {
+        ("QQQ", "yahoo"): {"D1"}}
+
+
 def _run(rid, name, version, is_test=False, label=None):
     return {"id": rid, "strategy_name": name, "strategy_version": version,
             "is_test": is_test, "label": label}
@@ -278,7 +321,8 @@ CHECK_ERROR = staleness.reason("check", "QQQ/yahoo: 1 check error(s)", severity=
 
 def test_a_check_error_upstream_is_named_by_the_stage_it_is_in():
     assert staleness._upstream_error(_stage("passed"), _stage("passed")) is None
-    assert staleness._upstream_error(_stage("failed", CHECK_ERROR), _stage("passed")).startswith("Data has")
+    assert staleness._upstream_error(_stage("failed", CHECK_ERROR), _stage("passed")).startswith(
+        "Data has")
     assert staleness._upstream_error(_stage("passed"), _stage("failed", CHECK_ERROR)).startswith(
         "Features has")
 
