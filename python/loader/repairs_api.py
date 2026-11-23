@@ -20,6 +20,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from jobs.calls import job_route
 from loader import flags, repair
 from loader.db import pool
 
@@ -68,6 +69,7 @@ def list_repairs(symbol: str | None = None, source: str | None = None,
 
 
 @router.post("/api/repairs/propose")
+@job_route("repair-propose", timeout_s=300)
 def propose(req: ProposeRequest) -> JSONResponse:
     if not req.symbol.strip() or not req.source.strip():
         return _bad("symbol and source are required")
@@ -81,6 +83,7 @@ def propose(req: ProposeRequest) -> JSONResponse:
 
 
 @router.post("/api/repairs/choose")
+@job_route("repair-choose", timeout_s=300)
 def choose(req: ChooseRequest) -> JSONResponse:
     try:
         with pool().connection() as conn:
@@ -96,6 +99,7 @@ def choose(req: ChooseRequest) -> JSONResponse:
 
 
 @router.post("/api/repairs/revert")
+@job_route("repair-revert", timeout_s=120)
 def revert(req: RevertRequest) -> JSONResponse:
     if req.id is None:
         return _bad("id is required")

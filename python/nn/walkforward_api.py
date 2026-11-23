@@ -51,6 +51,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from jobs import queue
+from jobs.calls import job_route
 from jobs.handlers import walkforward_argv, walkforward_command
 from loader.db import pool
 from nn import recalculate, strategy_spec, walkforward
@@ -139,6 +140,7 @@ def cancel(job_id: int):
 
 
 @router.get("/api/nn/walkforward/split")
+@job_route("walkforward-split", timeout_s=120, transient=True)
 def split(strategyId: int):  # noqa: N803 - the query name the client sends
     """A saved strategy's split, as a run of it makes it (G37, `nn/split.py`):
     its windows with the rows each holds, and each validation fold's spans.
@@ -162,6 +164,7 @@ def strategy_options() -> dict[str, list[str]]:
 
 
 @router.post("/api/nn/strategies/check")
+@job_route("strategy-check", timeout_s=60, transient=True)
 def strategy_check(body: dict[str, Any]):
     """Would the runner take this strategy? The body is the strategy as the API
     is about to save it. `{ok, reasons}`, every reason at once, from the same
@@ -199,6 +202,7 @@ class RecalculateRequest(BaseModel):
 
 
 @router.post("/api/nn/walkforward/runs/{run_id}/recalculate")
+@job_route("recalculate", timeout_s=900)
 def recalculate_run(run_id: int, req: RecalculateRequest | None = None):
     """Rescore a run from its stored signals. Without `strategyId` the run is
     rescored at its own settings and its folds rewritten; with one, a new run

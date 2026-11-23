@@ -506,11 +506,32 @@ def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = 
 # Run records, and runs in the background (for the API and the scheduler)
 # --------------------------------------------------------------------------
 
+# Where a run happens (G16 step 16.2). Started from the loader with a worker
+# up, a run is a `feeds-run` job: the worker does it, and "is one going" is
+# asked of the jobs table, so it is true in every process and survives a
+# restart of either. With `JOBS_INLINE=1` (the tests, or a loader run by hand
+# with no worker) it is a thread in this process, as it was before.
+JOB_TYPE = "feeds-run"
 _busy = threading.Lock()
 
 
+def _open_job(cur) -> bool:
+    from jobs import queue
+
+    cur.execute(f"SELECT 1 FROM {queue.TABLE} WHERE type = %s "
+                "AND status IN ('queued', 'running') LIMIT 1", (JOB_TYPE,))
+    return cur.fetchone() is not None
+
+
 def is_running() -> bool:
-    return _busy.locked()
+    from jobs import calls
+
+    if calls.inline():
+        return _busy.locked()
+    from loader.db import pool
+
+    with pool().connection() as conn, conn.cursor() as cur:
+        return _open_job(cur)
 
 
 def record_start(conn, trigger: str, keys: list[str] | None, apply_key: str | None) -> int:
@@ -536,17 +557,84 @@ def record_end(conn, run_id: int, status: str, result: dict | None, error: str |
 
 
 def mark_interrupted(conn) -> None:
-    """A run still 'running' when the loader starts died with the old process."""
+    """A run still 'running' with no job behind it died with its process. One
+    whose job is waiting or going is left alone: the worker has it, or will
+    take it again."""
+    from jobs import queue
+
     with conn.cursor() as cur:
-        cur.execute("UPDATE feed_runs SET status = 'interrupted', "
-                    "finished_at = CURRENT_TIMESTAMP WHERE status = 'running'")
+        cur.execute(
+            "UPDATE feed_runs r SET status = 'interrupted', finished_at = CURRENT_TIMESTAMP "
+            "WHERE r.status = 'running' AND NOT EXISTS ("
+            f"SELECT 1 FROM {queue.TABLE} j WHERE j.type = %s "
+            "AND j.status IN ('queued', 'running') AND (j.inputs->>'runId')::bigint = r.id)",
+            (JOB_TYPE,))
     conn.commit()
+
+
+def finish_run(run_id: int, trigger: str, keys: list[str] | None, apply_key: str | None,
+               rebuild: bool) -> str:
+    """Do a recorded run and write how it ended. Returns the status written."""
+    from loader.db import pool
+
+    try:
+        result = run(trigger, keys, apply_key=apply_key, rebuild=rebuild,
+                     log=lambda s: print(s, flush=True))
+        failed = [r for r in result["feeds"] if r.get("status") == "error"]
+        status = "done" if not failed else "done-with-errors"
+        err = None
+    except Exception as exc:  # noqa: BLE001
+        result, status, err = None, "failed", f"{type(exc).__name__}: {exc}"[:1000]
+    with pool().connection() as conn:
+        record_end(conn, run_id, status, result, err)
+    return status
+
+
+def _feeds_job(ctx) -> dict:
+    """The `feeds-run` job: the run the loader recorded, done by the worker."""
+    i = ctx.inputs
+    status = finish_run(int(i["runId"]), i["trigger"], i.get("keys"), i.get("applyKey"),
+                        bool(i.get("rebuild", True)))
+    return {"runId": int(i["runId"]), "status": status}
+
+
+def _register() -> None:
+    from jobs import calls
+
+    calls.REGISTRY[JOB_TYPE] = _feeds_job
+
+
+_register()
 
 
 def start(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = None,
           rebuild: bool = True) -> int:
-    """Record a run and start it in a background thread. Returns its id.
-    Raises Busy when a run is already going in this process."""
+    """Record a run and hand it to the worker (or, inline, to a thread).
+    Returns its id. Raises Busy when a run is already waiting or going."""
+    from jobs import calls, queue
+    from loader.db import pool
+
+    if calls.inline():
+        return _start_thread(trigger, keys, apply_key, rebuild)
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            # One starter at a time, so two requests cannot both find no run.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (JOB_TYPE,))
+            if _open_job(cur):
+                conn.rollback()
+                raise Busy("a feeds run is already in progress")
+            cur.execute(
+                "INSERT INTO feed_runs (trigger, feeds_json, apply_feed) VALUES (%s, %s, %s) "
+                "RETURNING id", (trigger, json.dumps(keys) if keys else None, apply_key))
+            run_id = int(cur.fetchone()[0])
+        # Commits the run and its job together, and releases the lock.
+        queue.enqueue(conn, JOB_TYPE, {"runId": run_id, "trigger": trigger, "keys": keys,
+                                       "applyKey": apply_key, "rebuild": rebuild})
+    return run_id
+
+
+def _start_thread(trigger: str, keys: list[str] | None, apply_key: str | None,
+                  rebuild: bool) -> int:
     from loader.db import pool
 
     if not _busy.acquire(blocking=False):
@@ -560,16 +648,7 @@ def start(trigger: str, keys: list[str] | None = None, *, apply_key: str | None 
 
     def work() -> None:
         try:
-            result = run(trigger, keys, apply_key=apply_key, rebuild=rebuild,
-                         log=lambda s: print(s, flush=True))
-            failed = [r for r in result["feeds"] if r.get("status") == "error"]
-            status = "done" if not failed else "done-with-errors"
-            err = None
-        except Exception as exc:  # noqa: BLE001
-            result, status, err = None, "failed", f"{type(exc).__name__}: {exc}"[:1000]
-        try:
-            with pool().connection() as conn:
-                record_end(conn, run_id, status, result, err)
+            finish_run(run_id, trigger, keys, apply_key, rebuild)
         finally:
             _busy.release()
 

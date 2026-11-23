@@ -1276,3 +1276,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_open
 -- cancelled keeps its finished folds and says so (R70).
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS job_id BIGINT;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+
+-- A job the page asked for and waited on, an answer rather than work that
+-- changed anything (G16 step 16.2): deleted a few minutes after it ends.
+ALTER TABLE jobs.jobs ADD COLUMN IF NOT EXISTS transient BOOLEAN NOT NULL DEFAULT FALSE;

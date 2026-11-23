@@ -42,6 +42,11 @@ ENGINE = "python"
 HEARTBEAT_S = 30
 TIMEOUT_S = 120
 MAX_ATTEMPTS = 3
+#: A finished job marked transient (an answer the page asked for, not work that
+#: changed anything) is deleted this long after it ended.
+TRANSIENT_KEEP_S = 600
+#: The channel an insert notifies, so a waiting worker claims at once.
+CHANNEL = "jobs_new"
 
 _COLUMNS = ("id, type, engine, inputs, status, requested_by, worker_id, attempts, "
             "cancel_requested, result, error, created_at, claimed_at, heartbeat_at, finished_at")
@@ -52,19 +57,23 @@ def _row(row) -> dict[str, Any] | None:
     return dict(zip(_KEYS, row, strict=True)) if row else None
 
 
-def enqueue(conn, job_type: str, inputs: dict[str, Any], engine: str = ENGINE) -> dict[str, Any]:
+def enqueue(conn, job_type: str, inputs: dict[str, Any], engine: str = ENGINE, *,
+            transient: bool = False) -> dict[str, Any]:
     with conn.cursor() as cur:
         cur.execute(
-            f"INSERT INTO {TABLE} (type, engine, inputs) VALUES (%s, %s, %s::jsonb) "
-            f"RETURNING {_COLUMNS}", (job_type, engine, json.dumps(inputs)))
+            f"INSERT INTO {TABLE} (type, engine, inputs, transient) "
+            f"VALUES (%s, %s, %s::jsonb, %s) RETURNING {_COLUMNS}",
+            (job_type, engine, json.dumps(inputs), transient))
         row = _row(cur.fetchone())
+        cur.execute("SELECT pg_notify(%s, %s)", (CHANNEL, engine))
     conn.commit()
     return row
 
 
 def sweep(conn, timeout_s: float = TIMEOUT_S) -> dict[str, int]:
     """Settle the jobs no worker is going to: fail the ones abandoned on their
-    last attempt, and cancel the ones asked to stop that nobody holds."""
+    last attempt, cancel the ones asked to stop that nobody holds, and forget
+    the transient ones that ended a while ago."""
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -84,8 +93,12 @@ def sweep(conn, timeout_s: float = TIMEOUT_S) -> dict[str, int]:
                     AND heartbeat_at < now() - make_interval(secs => %(timeout)s)))
             """, {"timeout": timeout_s})
         cancelled = cur.rowcount
+        cur.execute(
+            f"DELETE FROM {TABLE} WHERE transient AND status IN ('done', 'failed', 'cancelled') "
+            "AND finished_at < now() - make_interval(secs => %s)", (TRANSIENT_KEEP_S,))
+        forgotten = cur.rowcount
     conn.commit()
-    return {"failed": failed, "cancelled": cancelled}
+    return {"failed": failed, "cancelled": cancelled, "forgotten": forgotten}
 
 
 def claim(conn, worker_id: str, engine: str = ENGINE, *, types: Iterable[str] | None = None,

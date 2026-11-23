@@ -13,6 +13,7 @@ import time
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from jobs.calls import task
 from loader.db import pool
 from nn import staleness
 
@@ -22,13 +23,20 @@ _CACHE: dict[str, tuple[float, dict]] = {}
 _TTL_S = 60.0
 
 
+@task("pipeline-status", timeout_s=120, transient=True)
+def compute_status(timeframe: str) -> dict:
+    """Every stage's state, worked out by the worker (G16 step 16.2). The
+    route keeps the cache and adds whether a feeds run is going."""
+    with pool().connection() as conn, conn.cursor() as cur:
+        return staleness.status(cur, timeframe)
+
+
 @router.get("/api/nn/pipeline/status")
 def get_status(timeframe: str = "D1", fresh: bool = False) -> JSONResponse:
     hit = _CACHE.get(timeframe)
     if hit and not fresh and time.monotonic() - hit[0] < _TTL_S:
         return JSONResponse(hit[1])
-    with pool().connection() as conn, conn.cursor() as cur:
-        body = staleness.status(cur, timeframe)
+    body = compute_status(timeframe)
     try:
         from loader.feeds import runner
 

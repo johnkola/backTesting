@@ -4,7 +4,9 @@ side effects don't fight unit tests that don't need a database."""
 
 from __future__ import annotations
 
+import contextvars
 import os
+from contextlib import contextmanager
 
 from psycopg_pool import ConnectionPool
 
@@ -18,6 +20,34 @@ _pool: ConnectionPool | None = None
 # Override per job (`DB_ACTOR=loader:feature_build python -m nn.train_features`)
 # so a row can be traced to the specific task, not just the service.
 _ACTOR = os.environ.get("DB_ACTOR", "loader")
+
+
+# The job this thread is working for, set by the worker around each handler
+# (`jobs/worker.py`). While it is set, every connection taken from the pool
+# writes its audit columns as "<actor>:job-<id>", so a computed row names the
+# job that wrote it (R67 b) without any insert statement knowing about jobs.
+JOB: contextvars.ContextVar[int | None] = contextvars.ContextVar("job_id", default=None)
+
+
+def actor() -> str:
+    job = JOB.get()
+    return _ACTOR if job is None else f"{_ACTOR}:job-{job}"
+
+
+class _Pool(ConnectionPool):
+    """The pool, with the actor set to match the job at every checkout. A
+    connection remembers the actor it last carried, so outside a job this adds
+    no statement."""
+
+    @contextmanager
+    def connection(self, timeout: float | None = None):
+        with super().connection(timeout) as conn:
+            want = actor()
+            if getattr(conn, "_actor", _ACTOR) != want:
+                conn.execute("SELECT set_config('app.actor', %s, false)", (want,))
+                conn.commit()
+                conn._actor = want
+            yield conn
 
 
 def _configure(conn) -> None:
@@ -40,7 +70,7 @@ def _dsn() -> str:
 def pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        _pool = ConnectionPool(
+        _pool = _Pool(
             conninfo=_dsn(), min_size=1, max_size=8, open=True,
             configure=_configure,
         )

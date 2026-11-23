@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-23-4** · 2026-11-23 09:56 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-5** · 2026-11-23 17:41 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -16,8 +16,8 @@ A fifth, `pgadmin`, is an optional tool rather than part of the system.
 | **3000** | `client` | The React SPA, static files behind nginx. No backend of its own — it calls the API by URL. |
 | **8001** | `api` | The single API origin. Reads Postgres directly; proxies writes to the loader and strategy/run calls to the engine. Also serves the project docs as rendered HTML for the client to display. |
 | *internal* | `engine` | Java. The strategy registry and the backtest engine — the only component that can run a backtest. Reached through the API, not published. |
-| **8003** | `loader` | Python/FastAPI. CSV import, aggregation, cohesion checks, NN train/predict. Published only so the host-run CLI can reach it; in-network callers use `http://loader:8001`. |
-| *none* | `worker` | Python, the loader's image started as `python -m jobs.worker`. Claims jobs from the jobs table (`jobs.jobs`) and runs them; serves no HTTP. A walk-forward run started from the Train tab runs here. See [The jobs table](#the-jobs-table). |
+| **8003** | `loader` | Python/FastAPI. Receives the calls for CSV import, aggregation, cohesion checks and NN train/predict, and hands the work to `worker`. Published only so the host-run CLI can reach it; in-network callers use `http://loader:8001`. |
+| *none* | `worker` | Python, the loader's image started as `python -m jobs.worker`. Claims jobs from the jobs table (`jobs.jobs`) and runs them; serves no HTTP. All of the loader's work runs here, and the daily feeds timer. See [The jobs table](#the-jobs-table). |
 | **5432** | `timescaledb` | PostgreSQL + TimescaleDB. |
 | **5050** | `pgadmin` | pgAdmin 4, a browser UI on the database. Not in the default stack — see [Database UI](#database-ui). |
 
@@ -480,7 +480,7 @@ Each file runs through the **same pipeline as `POST /api/imports`** — sliced i
 
 ## The jobs table
 
-Work the web side asks for and a worker does meets in one table, `jobs.jobs` (the design's rule: the web side and the compute workers never call each other). A start inserts a row; a worker claims it, runs it and writes back its status and result. This is the first step of the move to the designed stack, and so far one kind of work goes through it: a walk-forward run started from the Train tab.
+Work the web side asks for and a worker does meets in one table, `jobs.jobs` (the design's rule: the web side and the compute workers never call each other). A start inserts a row; a worker claims it, runs it and writes back its status and result. This is the start of the move to the designed stack. Everything the loader's routes used to do themselves now goes through it: an import, an undo, a roll-up, an audit, accepting flags, a repair, training, a prediction for a backtest, a recalculation, a feeds refresh, and the computed answers (pipeline status, feature preview, strategy check, split, rule calls). The loader receives the call, inserts the job, waits for it and answers with its result; the `worker` container does the work. A walk-forward run is the one job nobody waits on.
 
 | Rule | What happens |
 |---|---|
@@ -491,7 +491,16 @@ Work the web side asks for and a worker does meets in one table, `jobs.jobs` (th
 | Cancel | The web side sets `cancel_requested`. A queued job is never started; a running one stops within seconds, keeps what it wrote and is `cancelled` |
 | Engine | Each job names its engine (`python` or `java-compute`) and only that engine's workers claim it. There is no `java-compute` worker yet |
 
-The worker runs two lanes: one for walk-forward runs, one at a time, and one for everything else, so short work never waits behind a long run.
+The worker runs four lanes: one for walk-forward runs, one at a time, and three for everything else, so short work never waits behind a long run. An insert wakes the worker, so a waited-on call costs milliseconds more than it did. It also holds the daily feeds timer (`FEEDS_SCHEDULE`).
+
+Other things to know:
+
+- **With the worker down**, a call that needs it answers `504` after its wait, saying no worker took the job, and the job is cancelled so it does not run later by surprise.
+- **A job that raised** answers `500` with the reason; the row stays in `jobs.jobs` as `failed`.
+- **Computed answers are not kept**: their jobs are deleted ten minutes after they end. Work that changed something stays.
+- **Who wrote a row**: inside a job the audit columns read `worker:job-N`, so a row leads back to its job.
+- **An upload** waits in `data/uploads` (`UPLOAD_SPOOL_DIR`) between the loader and the worker and is removed when the import ends.
+- **`JOBS_INLINE=1`** on the loader does the work in the loader with no jobs and no worker. The tests run this way; it is also how to run the loader alone by hand.
 
 ```bash
 docker logs -f backtest-worker                 # claims and endings, one line each
@@ -1474,6 +1483,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-5 | 2026-11-23 17:41 | Claude Code (Claude Fable 5.2) | G16 step 16.2: the loader hands all its work to the worker through the jobs table; what happens with the worker down, transient jobs, `UPLOAD_SPOOL_DIR`, `JOBS_INLINE` |
 | 2026-11-23-4 | 2026-11-23 09:56 | Claude Code (Claude Fable 5.2) | The jobs table and the `worker` service (G16 step 16.1): a walk-forward start is a queued job, with cancel; the import row no longer says a file with a check error is refused (G75) |
 | 2026-11-23-3 | 2026-11-23 01:34 | Claude Code (Claude Fable 5.2) | Data repair (G76): the repair log, the adjusted view, candidates and the rule, the Repairs page, `loader.repair`, `/api/repairs` |
 | 2026-11-23-2 | 2026-11-23 00:52 | Claude Code (Claude Fable 5.2) | The prediction check in ONNX Runtime (G77): what a fold keeps, the route, the command, `ENGINE_URL` |

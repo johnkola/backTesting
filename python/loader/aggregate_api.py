@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from jobs.calls import job_route
 from loader.aggregate import (
     aggregate,
     is_valid_pair,
@@ -44,6 +45,7 @@ class AggregateRequest(BaseModel):
 
 
 @router.post("/api/aggregate")
+@job_route("aggregate", timeout_s=600)
 def post_aggregate(req: AggregateRequest) -> JSONResponse:
     if not req.target_tfs:
         return JSONResponse(status_code=400, content={"error": "target_tfs must be non-empty"})

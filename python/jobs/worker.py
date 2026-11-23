@@ -8,10 +8,17 @@ through the jobs table. This process serves no HTTP.
 
 Invariants a change must keep:
 
-* **Two lanes.** A walk-forward run takes minutes to hours and there is one
-  at a time, because two would compete for the same CPU. Everything else is
-  short and must not wait behind it. So one lane claims only the long types and
-  the other claims the rest; each runs one job at a time.
+* **A long lane and short lanes.** A walk-forward run takes minutes to hours
+  and there is one at a time, because two would compete for the same CPU.
+  Everything else is short and must not wait behind it, nor behind each other
+  for long: a route is waiting on the answer (`calls.py`). So one lane claims
+  only the long types and `SHORT_LANES` lanes claim the rest; each lane runs
+  one job at a time.
+
+* **A lane is woken, not only polling.** An insert notifies `queue.CHANNEL`;
+  one listener wakes every lane, so a waiting route is answered in
+  milliseconds. The poll stays as the fallback (and is what finds a job gone
+  silent), so a missed notification costs seconds, never a job.
 
 * **The heartbeat is its own thread.** A handler that is busy computing cannot
   be relied on to say it is alive. The thread beats every `HEARTBEAT_S`, and it
@@ -42,7 +49,8 @@ from jobs import queue
 
 #: Types that get the long lane to themselves.
 LONG_TYPES = ("walkforward",)
-POLL_S = 0.5
+SHORT_LANES = 3
+POLL_S = 2.0
 
 
 class Stopped(Exception):
@@ -99,6 +107,13 @@ def _beats(ctx: Context, every_s: float, done: threading.Event) -> None:
             traceback.print_exc()
 
 
+def _job_var():
+    """The pool's "which job is this thread working for" (`loader/db.py`)."""
+    from loader.db import JOB
+
+    return JOB
+
+
 def run_job(job: dict[str, Any], worker_id: str, connect: Callable[[], Any],
             handlers: dict[str, Handler], heartbeat_s: float = queue.HEARTBEAT_S) -> str:
     """Run one claimed job to its end. Returns the status written, or 'lost'."""
@@ -108,6 +123,7 @@ def run_job(job: dict[str, Any], worker_id: str, connect: Callable[[], Any],
                              name=f"job-{job['id']}-heartbeat")
     beats.start()
     status, error = "done", None
+    token = _job_var().set(job["id"])
     try:
         handler = handlers.get(job["type"])
         if handler is None:
@@ -123,6 +139,7 @@ def run_job(job: dict[str, Any], worker_id: str, connect: Callable[[], Any],
         traceback.print_exc()
         status, error = "failed", f"{type(exc).__name__}: {exc}"
     finally:
+        _job_var().reset(token)
         done.set()
         beats.join(timeout=5)
     if status == "lost":
@@ -139,16 +156,19 @@ class Lane:
     exclude: tuple[str, ...] | None = None
 
 
-LANES = (Lane("long", types=LONG_TYPES), Lane("short", exclude=LONG_TYPES))
+LANES = (Lane("long", types=LONG_TYPES),
+         *(Lane(f"short-{n}", exclude=LONG_TYPES) for n in range(1, SHORT_LANES + 1)))
 
 
 def run_lane(lane: Lane, worker_id: str, connect: Callable[[], Any],
              handlers: dict[str, Handler], halt: threading.Event, *, once: bool = False,
-             poll_s: float = POLL_S, log=print) -> int:
+             poll_s: float = POLL_S, wake: threading.Event | None = None, log=print) -> int:
     """Claim and run jobs until `halt` is set (or, with `once`, until none is
-    waiting). Returns how many it ran."""
+    waiting). Returns how many it ran. `wake` ends a wait early."""
     ran = 0
+    wake = wake or threading.Event()
     while not halt.is_set():
+        wake.clear()
         try:
             with connect() as conn:
                 job = queue.claim(conn, worker_id, types=lane.types, exclude=lane.exclude)
@@ -160,13 +180,33 @@ def run_lane(lane: Lane, worker_id: str, connect: Callable[[], Any],
         if job is None:
             if once:
                 return ran
-            halt.wait(poll_s)
+            wake.wait(poll_s)
             continue
         log(f"[{lane.name}] job {job['id']} {job['type']} claimed (attempt {job['attempts']})")
         status = run_job(job, worker_id, connect, handlers)
         log(f"[{lane.name}] job {job['id']} {status}")
         ran += 1
     return ran
+
+
+def listen(dsn: str, wakes: Sequence[threading.Event], halt: threading.Event,
+           engine: str = queue.ENGINE) -> None:
+    """Wake every lane when a job for this engine is inserted. Reconnects when
+    the connection drops; until it does the lanes fall back to their poll."""
+    import psycopg
+
+    while not halt.is_set():
+        try:
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                conn.execute(f"LISTEN {queue.CHANNEL}")
+                while not halt.is_set():
+                    for note in conn.notifies(timeout=1.0):
+                        if note.payload == engine:
+                            for wake in wakes:
+                                wake.set()
+        except Exception:  # noqa: BLE001 - the database being away is not fatal
+            traceback.print_exc()
+            halt.wait(5)
 
 
 def worker_id() -> str:
@@ -178,15 +218,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--once", action="store_true", help="run what is waiting, then exit")
     args = p.parse_args(argv)
 
+    # Importing the loader's app imports every module that owns work, and each
+    # registers its handlers as it loads (`calls.REGISTRY`).
+    import loader.main  # noqa: F401
+    from jobs import calls
     from jobs.handlers import HANDLERS
-    from loader.db import pool
+    from loader.db import _dsn, pool
 
+    handlers = {**calls.REGISTRY, **HANDLERS}
     me = worker_id()
     halt = threading.Event()
+
+    def stop(*_):
+        halt.set()
+        for wake in wakes:
+            wake.set()
+
+    wakes = [threading.Event() for _ in LANES]
     for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda *_: halt.set())
+        signal.signal(sig, stop)
     print(f"worker {me}: lanes {', '.join(lane.name for lane in LANES)}; "
-          f"types {', '.join(sorted(HANDLERS))}", flush=True)
+          f"types {', '.join(sorted(handlers))}", flush=True)
 
     def connect():
         return pool().connection()
@@ -194,9 +246,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     def log(line: str) -> None:
         print(line, flush=True)
 
+    if not args.once:
+        # The daily feeds refresh (`FEEDS_SCHEDULE`): the timer lives here and
+        # inserts a `feeds-run` job, which one of this worker's lanes takes.
+        from loader.feeds import schedule as feeds_schedule
+
+        feeds_schedule.start_from_env()
+        threading.Thread(target=listen, args=(_dsn(), wakes, halt), daemon=True,
+                         name="jobs-listen").start()
     threads = [threading.Thread(
-        target=run_lane, args=(lane, f"{me}:{lane.name}", connect, HANDLERS, halt),
-        kwargs={"once": args.once, "log": log}, name=f"lane-{lane.name}") for lane in LANES]
+        target=run_lane, args=(lane, f"{me}:{lane.name}", connect, handlers, halt),
+        kwargs={"once": args.once, "wake": wake, "log": log}, name=f"lane-{lane.name}")
+        for lane, wake in zip(LANES, wakes, strict=True)]
     for t in threads:
         t.start()
     for t in threads:

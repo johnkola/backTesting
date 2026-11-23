@@ -17,6 +17,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from jobs.calls import job_route
 from loader import flags
 from loader.db import pool
 
@@ -49,6 +50,7 @@ def list_rows(symbol: str | None = None, source: str | None = None,
 
 
 @router.post("/api/checks/accept")
+@job_route("checks-accept", timeout_s=120)
 def accept_checks(req: AcceptRequest) -> JSONResponse:
     if not req.symbol.strip() or not req.source.strip():
         return JSONResponse(status_code=400, content={"error": "symbol and source are required"})

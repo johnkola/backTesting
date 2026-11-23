@@ -146,6 +146,9 @@ services:
       PGUSER: backtest
       PGPASSWORD: backtest
       CSV_ARCHIVE_DIR: /data/csv-archive
+      # Where an uploaded CSV waits between the loader, which receives it, and
+      # the worker, which imports it. Both containers mount it.
+      UPLOAD_SPOOL_DIR: /data/uploads
       MODELS_DIR: /data/models
       # The engine, asked for the ONNX Runtime check when a walk-forward run
       # finishes (R62, G77). Unset, the run says the check was not asked for.
@@ -168,6 +171,7 @@ services:
       # CSV archive — owned by the loader, read by anyone who needs the on-disk
       # slices (the host-side gradle path also writes here through the same mount).
       - ./data/csv-archive:/data/csv-archive
+      - ./data/uploads:/data/uploads
       # Trained NN models. RW because the loader writes new versions; the
       # web service mounts the same host dir read-only above.
       - ./data/models:/data/models
@@ -184,9 +188,11 @@ services:
 
   # The Python compute worker (G16 step 16.1; Architecture §2). The loader's
   # image, started as `python -m jobs.worker`: it claims jobs from the jobs
-  # table and runs them, and serves no HTTP, so it has no port. A walk-forward
-  # run started from the Train tab is a job this container runs; restarting the
-  # loader does not touch it, and a job cut off by a restart of this container
+  # table and runs them, and serves no HTTP, so it has no port. The loader's
+  # routes hand their work to it (imports, audits, repairs, training,
+  # predictions, the pipeline status), a walk-forward run started from the
+  # Train tab is a job it runs, and it fires the daily feeds refresh
+  # (FEEDS_SCHEDULE). Restarting the loader does not touch a job, and a job cut off by a restart of this container
   # is claimed again when it comes back (three attempts, then failed).
   worker:
     build: *loader_build
@@ -199,8 +205,6 @@ services:
     environment:
       <<: *loader_env
       DB_ACTOR: worker
-      # The feeds' daily refresh belongs to the loader, not to this process.
-      FEEDS_SCHEDULE: "off"
     volumes: *loader_volumes
 
   # Database UI. Not part of the default stack — it sits behind the `tools`

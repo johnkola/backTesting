@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-23-9** · 2026-11-23 10:11 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-10** · 2026-11-23 17:41 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -11,6 +11,74 @@ author before work starts) · **gated** (the design puts it after something else
 **done**.
 
 Effort is an estimate: S is under a day, M a few days, L a week or more, XL a rebuild.
+
+---
+
+## Where it stands — 2026-11-23
+
+A summary of the tracker below, for reading first. The gap rows and their records further down stay the detail. Statuses here are the tracker's own; the ones changed since 2026-11-22 (G16, G40 to G42, G50, G75 to G80) were checked against the running code as they were built, the older ones were not re-checked today.
+
+**80 gaps: 53 done · 4 partial · 1 under way (G16) · 19 open · 3 gated.**
+
+**In progress: G16, the move to the designed stack** (the author, 2026-11-22: move now; plan agreed 2026-11-23). Nine steps, each leaving a working app; the full plan is "G16 plan" below.
+
+| Step | What | State |
+|---|---|---|
+| 16.1 | The jobs table and a Python worker: atomic claim, heartbeat, re-claim, three attempts, cancel | done 2026-11-23 |
+| 16.2 | Every piece of Python work the routes did is a job the worker runs (20 types) | done 2026-11-23 |
+| 16.3 | The Spring Boot service, beside Node | next |
+| 16.4 | Routes move to it area by area (about 50); each Node route deleted as its area moves | |
+| 16.5 | The engine becomes the Java compute worker: backtests, the ONNX check | |
+| 16.6 | Node and FastAPI removed | |
+| 16.7 | Three schemas and three logins. **Stop: changes the stored database, needs the author's go** | |
+| 16.8 | Next.js replaces the Vite client (17 pages); Recharts replaced. Its own gap after the backend | |
+| 16.9 | Requirements re-marked, docs, the operating path walked on the new stack | |
+
+**Built from the author's answers of 2026-11-22:** G75 an import always lands and its errors are flagged rows; G76 data repair for a wrong value (the 743 stored bars are settled: GOLD and COPPER repaired from the calculated value, WBD's two accepted); G77 the ONNX Runtime prediction check per fold; G78 TA-Lib as the one indicator source; G79 the five rule benchmarks on every run; G80 unscheduled closures.
+
+**Partial**
+
+| Gap | What is left |
+|---|---|
+| G9 | The vendor cross-check of MACD and RSI waits for a Twelve Data key |
+| G14 | The result page still draws with Recharts; goes with Next.js (16.8) |
+| G50 | Runs stored before 2026-11-22 kept no fold models or ONNX copies |
+| G76 | A missing bar, a second vendor, split adjustment, roll-ups from adjusted bars |
+
+**Open**
+
+| Gap | What | Size |
+|---|---|---|
+| G10 | No Verify tab: a number cannot be followed back to its raw row | L |
+| G13 | No shared table (per-column filters, column controls, CSV export) | M |
+| G51 | Data verification as designed (Pandera, exchange_calendars) | L |
+| G52 | Non-price series stored as candles, not at their native cadence | L |
+| G53 | Separate cost items, superficial loss, dividends, currency | L |
+| G55 | The coverage grid covers the train window only | M |
+| G56 | Not instrument-agnostic in practice | L |
+| G58 | Train and Run are still two tabs with their own forms | M |
+| G59 | Tooltips come from three dictionaries and hard-coded text | S |
+| G60 | Testing layers: component tests, Newman in CI, end to end | M |
+| G61 | The lineage chain cannot be followed; two hops missing | M |
+| G62 | Models are files only, with no database record or file hash | S |
+| G63 | Catalogue entries for the benchmarks | S |
+| G66 | Reloading a series from its archive is not one action | S |
+| G67 | The archive keeps only the newest version of a slice | M |
+| G70 | An engine cannot train on a subset of the strategy's features | M |
+| G72 | A metric with no value shows 0, not a dash | M |
+| G73 | The Nasdaq-100 member series are not fed | S |
+| G74 | The three objectives are not all run; the test block is not guarded | M |
+
+**Gated by the design:** G17 (intraday, phase two), G18 (live sentiment), G65 (signal voting).
+
+**Waiting on the author**
+
+- G16 step 16.7: the go to move the tables into three schemas, when the plan reaches it.
+- The SMA crossover benchmark is pinned at 50/200 while the engine's default is 10/50; and the triple EMA's settings and rule (G79).
+- Backtest results 1019 and 1028: keep or delete.
+- G72: a plan (the figures are `NOT NULL` today). G74: whether "touched once" is enforced. G73: feed the members or mark them a one-time import.
+- WBD 2026-10-05: the true open, if it is to be entered by hand (its repair rows are held).
+- The `JAVA_HOME` under WSL.
 
 ---
 
@@ -1043,7 +1111,7 @@ Each piece of new work above has a gap row since revision 2026-11-22-12: G16 (th
 
 *Gated by the design.* G65 (signal voting) and G18 (live sentiment).
 
-**G16 plan: the stack move (R6, R48, R60, R67, R70; C1, the author 2026-11-22), XL. Agreed by the author 2026-11-23 ("go on") with the five answers proposed below: the backend is G16 and Next.js its own gap after it; side by side; backtests in the compute worker; computed reads as short jobs; Recharts with Next.js. Step 16.1 done. Written 2026-11-23 09:47.**
+**G16 plan: the stack move (R6, R48, R60, R67, R70; C1, the author 2026-11-22), XL. Agreed by the author 2026-11-23 ("go on") with the five answers proposed below: the backend is G16 and Next.js its own gap after it; side by side; backtests in the compute worker; computed reads as short jobs; Recharts with Next.js. Steps 16.1 and 16.2 done. Written 2026-11-23 09:47.**
 
 What the design says (Architecture §2, §6): one Spring Boot service is the only API the UI calls and never computes; Python computes and never serves HTTP; the two meet only in a jobs table (atomic claim, heartbeat, three attempts, cancel); a separate Java compute worker takes jobs too; one database with three schemas, `app`, `data` and `jobs`, each with one writer enforced by roles; Next.js replaces the Vite client; the Node API is retired.
 
@@ -1066,7 +1134,7 @@ Three places where today's code is the reverse of the design and no rewrite of a
 The order, each phase leaving a stack that works end to end, with the four suites passing before the next begins:
 
 - [x] 16.1 **Jobs.** Schema `jobs`, the jobs table (type, engine, inputs, status, worker, heartbeat, attempts, cancel requested, result, audit columns). A Python worker process: claim with `FOR UPDATE SKIP LOCKED` in a short transaction, heartbeat every 30 s, re-claim after 2 min silent, failed after 3 attempts, stop on cancel with partial outputs kept. Walk-forward and training run through it first; the routes that start them insert a job. Tests for every rule of R67 (a) and R70 Done 2026-11-23: `jobs.jobs` (schema `jobs`), `python/jobs/queue.py`, `worker.py`, `handlers.py`, a `worker` container (the loader's image, no port), two lanes (walk-forward one at a time; everything else). `POST /api/nn/walkforward` inserts a job and a second start waits instead of a 409; `POST /api/nn/walkforward/jobs/:id/cancel`; the Train tab shows waiting, running, stopping, cancelled and has a Cancel button. A run carries `job_id`; a cancelled or crashed run gets `failed_reason` so it reads as over. 25 tests for the rules and the routes (atomic claim under six concurrent workers, skip locked, engine, lanes, re-claim, three attempts, lost claim, cancel) and one that starts the worker as the container does. Live: one run ran while a second waited; cancelling stopped the runner in 0.6 s. **Changed from the plan:** only walk-forward goes through the table here. `POST /api/nn/train` is a call the engine waits on, so it moves with the other request-and-wait work in 16.2. Found on the way: a run that failed (a NaN loss) kept the Training stage at "running" for good; it now counts only runs that are neither finished nor failed
-- [ ] 16.2 **Every other piece of Python work is a job type:** import and undo, aggregate, audit, feature build, recalculation, flag accept and scan, repair propose, choose and revert, predictions for a backtest, and the four computed reads. Computed rows carry the job that wrote them (R67 b)
+- [x] 16.2 **Every other piece of Python work is a job type:** import and undo, aggregate, audit, feature build, recalculation, flag accept and scan, repair propose, choose and revert, predictions for a backtest, and the four computed reads. Computed rows carry the job that wrote them (R67 b) Done 2026-11-23. `jobs/calls.py`: a route's body is registered as a job type and runs in the worker; the route inserts the job, waits and answers with its result, so the route layer does none of the work and Spring Boot can insert the same job later with no change in Python. 20 job types: `import` (the route spools the upload to `data/uploads`, which both containers mount), `import-undo`, `aggregate`, `audit`, `checks-accept`, `repair-propose`, `repair-choose`, `repair-revert`, `train`, `predict`, `predict-range`, `predict-features`, `recalculate`, `feeds-run`, the computed reads `pipeline-status`, `feature-preview`, `strategy-check`, `walkforward-split`, `rule-calls`, and `walkforward` from 16.1. The daily feeds timer moved to the worker, and "is a feeds run going" is asked of the jobs table. Three short lanes beside the long one; an insert wakes the worker (`LISTEN/NOTIFY`), measured live at 0.02 to 0.5 s a call. A computed read is a transient job, deleted ten minutes after it ends. R67 b: every connection a job takes writes its audit columns as `worker:job-N` (`loader/db.py`), seen live on an import's `data_imports` row. `JOBS_INLINE=1` runs the work in place, which the tests use; `test_job_calls.py` (13) covers the path through the table. **Not in this step:** the routes that only read the database or a constant (`/api/checks`, `/api/repairs`, `/api/feeds`, `/api/nn/models`, `/api/nn/engines`, the strategy options, the feature schema and config) stay in FastAPI until Java serves them in 16.4; a backtest of a network still asks the loader for predictions over HTTP (the loader hands them to the worker), until the engine is a worker in 16.5; none of these short jobs stops part-way on a cancel; the feature build and the flag scan have no route and stay terminal commands, though a feeds run's rebuild now happens in the worker
 - [ ] 16.3 **The Spring Boot service**, a second Gradle module beside the engine, on its own port while Node still runs: health, Postgres, paging, sorting and filters for lists, the error shape the client already reads. A JUnit test and a Postman request per route from the first one (§6)
 - [ ] 16.4 **Routes move area by area**, the client switched one area at a time and the Node route deleted in the same step: sources and instruments; candles; imports, flags and repairs; features; strategies; training and walk-forward; results and backtests; models; docs; health. Saved strategies and settings get a `version` column and a stale save is refused (R67 c)
 - [ ] 16.5 **The Java compute worker.** The engine becomes a worker that claims `java-compute` jobs: backtests and the ONNX check (G77 moves here unchanged). `EngineApi.java` is deleted
@@ -2121,7 +2189,7 @@ a stored result now, since every result left is newer than every such fix.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G16 | Spring Boot and Next.js replace Node and Vite, and Python stops serving HTTP. New work still lands in Node (`../../web/api/strategies.js`) | Architecture §2, §3.5 | `../../web/api`, `python/nn/nn_api.py`, `EngineApi.java` | XL | open, under way: plan agreed 2026-11-23 ("G16 plan", steps 16.1 to 16.9). Step 16.1 done: the jobs table, the Python worker and cancel, with walk-forward runs going through them. Next: 16.2, every other piece of Python work as a job type |
+| G16 | Spring Boot and Next.js replace Node and Vite, and Python stops serving HTTP. New work still lands in Node (`../../web/api/strategies.js`) | Architecture §2, §3.5 | `../../web/api`, `python/nn/nn_api.py`, `EngineApi.java` | XL | open, under way: plan agreed 2026-11-23 ("G16 plan", steps 16.1 to 16.9). Steps 16.1 and 16.2 done: the jobs table, the Python worker, cancel, and every piece of Python work the routes did (20 job types) now runs in the worker. Next: 16.3, the Spring Boot service |
 | G17 | Intraday, phase two: paid data, after the daily model is proven | Design Notes, Two Phases | follows the phase-one answer | XL | gated |
 | G18 | Live X sentiment, monitoring only and never a training input | Design Notes, News & Sentiment | not started | L | gated |
 
@@ -2147,6 +2215,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-10 | 2026-11-23 17:41 | Claude Code (Claude Fable 5.2) | A "Where it stands" summary at the top (80 gaps: 53 done, 4 partial, G16 under way, 19 open, 3 gated; the G16 steps; what waits on the author); G16 step 16.2 done (20 job types run in the worker) |
 | 2026-11-23-9 | 2026-11-23 10:11 | Claude Code (Claude Fable 5.2) | G16 plan agreed; step 16.1 done (the jobs table, the Python worker, cancel; walk-forward runs go through them) |
 | 2026-11-23-8 | 2026-11-23 09:47 | Claude Code (Claude Fable 5.2) | G16 plan written (nine phases, five choices for the author); nothing started |
 | 2026-11-23-7 | 2026-11-23 09:42 | Claude Code (Claude Fable 5.2) | Steps 75.7 and 76.7 done on the author's go: the 743 stored bars are flagged; GOLD and COPPER repaired from the calculated value, WBD's two accepted as they are |

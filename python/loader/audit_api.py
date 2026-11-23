@@ -16,6 +16,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from jobs.calls import job_route
 from loader.audit import _fetch_candles, _series
 from loader.cohesion import ALL_CHECKS, CATEGORIES, check_candles
 from loader.db import pool
@@ -36,6 +37,7 @@ class AuditRequest(BaseModel):
 
 
 @router.post("/api/audit")
+@job_route("audit", timeout_s=300)
 def post_audit(req: AuditRequest) -> JSONResponse:
     checks = set(req.checks) if req.checks else set(ALL_CHECKS)
     unknown = checks - ALL_CHECKS

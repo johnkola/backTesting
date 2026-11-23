@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
+from jobs.calls import job_route
 from loader.db import pool
 from nn import data_checks, profit, rules, walkforward
 
@@ -62,6 +63,7 @@ def rule_payload(symbol: str, px: profit.Prices, spy: profit.Prices | None,
 
 
 @router.get("/api/nn/rules")
+@job_route("rule-calls", timeout_s=300, transient=True)
 def rule_calls(symbol: str, source: str, start: str = Query(..., alias="from"),
                end: str = Query(..., alias="to"), timeframe: str = "D1"):
     if timeframe != "D1":

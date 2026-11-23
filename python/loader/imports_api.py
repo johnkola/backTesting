@@ -11,8 +11,10 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
+from jobs.calls import job_route
 from loader.aggregate import aggregate, is_valid_pair
 from loader.cohesion import check_import, gate
 from loader.csv_import import (
@@ -84,172 +86,17 @@ async def post_imports(
     force_flag = str(force).strip().lower() == "true"
     source_name = source or "default"
 
-    # Spool the upload to a temp file so scan_and_bucket can stream over it
-    # without holding the whole CSV in memory.
-    tmp_dir = Path(tempfile.gettempdir())
-    fd, tmp_path = tempfile.mkstemp(prefix="upload-", suffix=".csv", dir=tmp_dir)
+    # Spool the upload to a file the worker can read too (`UPLOAD_SPOOL_DIR`,
+    # a directory both containers mount), so scan_and_bucket can stream over
+    # it without holding the whole CSV in memory.
+    fd, tmp_path = tempfile.mkstemp(prefix="upload-", suffix=".csv", dir=_spool_dir())
     try:
         with os.fdopen(fd, "wb") as out:
             shutil.copyfileobj(file.file, out)
-
-        first_line = read_header(tmp_path)
-        header_problem = check_header(first_line) if first_line else None
-        if header_problem:
-            return _bad(header_problem)
-
-        # An identical file is answered from its hash, before parsing, but only
-        # while every year it produced is still what the database holds.
-        file_hash, file_size = file_sha256(tmp_path)
-        source_file = SourceFile(hash=file_hash, size=file_size,
-                                 name=file.filename or "upload.csv")
-        with pool().connection() as conn:
-            loaded = find_loaded_file(conn, file_hash, source_name=source_name,
-                                      symbol=symbol, timeframe=timeframe)
-        if loaded is not None:
-            # The same file again with a reason accepts the flagged rows it
-            # left when it first landed (G75); nothing else is read or written.
-            accepted = None
-            if override_reason.strip():
-                from loader import flags
-
-                with pool().connection() as conn:
-                    n = flags.accept(conn, override_reason, symbol, source_name, timeframe)
-                if n:
-                    accepted = {"reason": override_reason.strip(), "errors": n}
-            return JSONResponse(status_code=200, content={
-                "status": "completed", **loaded,
-                **({"checkOverride": accepted} if accepted else {})})
-
-        with open(tmp_path, "rb") as stream:
-            skipped = SkippedRows()
-            header, rows_by_year = scan_and_bucket(
-                stream, skipped, timeframe, regular_hours_only(type, timeframe))
-        if not header or not rows_by_year:
-            return _bad("CSV contains no parseable data rows")
-
-        # The checks. They never refuse the file (G75): it lands, and its
-        # errors become flagged rows that hold the feature build and training.
-        report = check_import(header, rows_by_year, timeframe)
-        override = gate(report, override_reason)
-
-        with pool().connection() as conn:
-            slices = plan_slices(
-                conn,
-                header,
-                rows_by_year,
-                source_name=source_name,
-                symbol=symbol,
-                timeframe=timeframe,
-                force=force_flag,
-            )
-
-            conflicts = [s for s in slices if s.plan == "conflict"]
-            if conflicts:
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "status": "conflict",
-                        "message": (
-                            f"{len(conflicts)} of {len(slices)} year slice"
-                            f"{'' if len(slices) == 1 else 's'} conflict; "
-                            "pass force=true to overwrite"
-                        ),
-                        "imports": conflict_preview(slices),
-                        "file": {"hash": file_hash, "name": source_file.name},
-                    },
-                )
-
-            try:
-                results, file_rec = commit_file(
-                    conn,
-                    slices,
-                    source_file,
-                    source_name=source_name,
-                    symbol=symbol,
-                    type_=type,
-                    timeframe=timeframe,
-                    override=override,
-                )
-            except Exception as exc:  # noqa: BLE001 — narrow check below
-                if is_compressed_chunk_error(exc):
-                    return JSONResponse(
-                        status_code=409,
-                        content={
-                            "status": "compressed_chunk",
-                            "error": (
-                                "Postgres rejected the upsert because target rows "
-                                "fall inside a TimescaleDB-compressed chunk"
-                            ),
-                            "hint": (
-                                "Run SELECT decompress_chunk(show_chunks(...)) for "
-                                "the affected range and retry. Auto-compress will "
-                                "re-apply on its next pass."
-                            ),
-                            "detail": str(exc),
-                        },
-                    )
-                raise
-
-        # DB committed — now write the archive files. Skipped slices already
-        # match their on-disk file by hash, so they're left alone.
-        write_archive_files(slices)
-
-        # Opt-in fan-out. Runs after the import transaction is durable so a
-        # failure here doesn't roll back the underlying candle write.
-        aggregate_results: list[dict[str, object]] = []
-        if fanout:
-            committed_years = [s.year for s in slices if s.plan != "skip"]
-            if committed_years:
-                since = f"{min(committed_years)}-01-01T00:00:00Z"
-                until = f"{max(committed_years) + 1}-01-01T00:00:00Z"
-            else:
-                since = until = None
-            with pool().connection() as conn:
-                # Resolved within the same DB call to dodge a race where the
-                # import created the instrument/source row mid-flight.
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM instruments WHERE symbol = %s", (symbol,))
-                    inst_row = cur.fetchone()
-                    cur.execute("SELECT id FROM data_sources WHERE name = %s", (source_name,))
-                    src_row = cur.fetchone()
-                if inst_row and src_row:
-                    with conn.transaction():
-                        for tf in fanout:
-                            written = aggregate(
-                                conn,
-                                instrument_id=int(inst_row[0]),
-                                source_id=int(src_row[0]),
-                                source_tf=timeframe,
-                                target_tf=tf,
-                                since=since,
-                                until=until,
-                            )
-                            aggregate_results.append({"timeframe": tf, "rowsWritten": written})
-
-        payload: dict[str, object] = {"status": "completed", "imports": results,
-                                      "file": file_rec}
-        if aggregate_results:
-            payload["aggregated"] = aggregate_results
-        # The check report: warnings, and any errors that were overridden.
-        payload["cohesion"] = report.to_dict()
-        if override.errors:
-            # What the file left behind: rows flagged, and whether they hold
-            # anything. `checkOverride` keeps its name for an acceptance made
-            # with the upload.
-            payload["flagged"] = {
-                "errors": override.errors, "held": override.held,
-                "lines": report.error_lines(),
-                **(file_rec.get("flagged") or {}),
-                "hint": (None if not override.held else
-                         "The file is stored. Its flagged rows hold the feature build and "
-                         "training until they are accepted (POST /api/checks/accept) or a "
-                         "corrected file is imported."),
-            }
-        if override.reason:
-            payload["checkOverride"] = {"reason": override.reason, "errors": override.errors}
-        # R6: rows that produced no candle, said rather than silently dropped.
-        payload["skipped"] = skipped.to_dict()
-        return JSONResponse(status_code=200, content=payload)
+        return await run_in_threadpool(
+            import_spooled, path=tmp_path, filename=file.filename or "upload.csv",
+            symbol=symbol, type=type, timeframe=timeframe, source_name=source_name,
+            force_flag=force_flag, fanout=fanout, override_reason=override_reason)
     finally:
         try:
             os.unlink(tmp_path)
@@ -257,7 +104,183 @@ async def post_imports(
             pass
 
 
+def _spool_dir() -> Path:
+    spool = Path(os.environ.get("UPLOAD_SPOOL_DIR") or tempfile.gettempdir())
+    spool.mkdir(parents=True, exist_ok=True)
+    return spool
+
+
+@job_route("import", timeout_s=900)
+def import_spooled(path: str, filename: str, symbol: str, type: str,  # noqa: A002
+                   timeframe: str, source_name: str, force_flag: bool, fanout: list[str],
+                   override_reason: str) -> JSONResponse:
+    """Import an uploaded file that has been spooled to `path`. The work of
+    `POST /api/imports`, as a job (G16 step 16.2): the route checks the form
+    and spools the upload; everything that reads the file or writes the
+    database is here, in the worker. The route removes the spooled file."""
+    tmp_path = path
+    first_line = read_header(tmp_path)
+    header_problem = check_header(first_line) if first_line else None
+    if header_problem:
+        return _bad(header_problem)
+
+    # An identical file is answered from its hash, before parsing, but only
+    # while every year it produced is still what the database holds.
+    file_hash, file_size = file_sha256(tmp_path)
+    source_file = SourceFile(hash=file_hash, size=file_size,
+                             name=filename or "upload.csv")
+    with pool().connection() as conn:
+        loaded = find_loaded_file(conn, file_hash, source_name=source_name,
+                                  symbol=symbol, timeframe=timeframe)
+    if loaded is not None:
+        # The same file again with a reason accepts the flagged rows it
+        # left when it first landed (G75); nothing else is read or written.
+        accepted = None
+        if override_reason.strip():
+            from loader import flags
+
+            with pool().connection() as conn:
+                n = flags.accept(conn, override_reason, symbol, source_name, timeframe)
+            if n:
+                accepted = {"reason": override_reason.strip(), "errors": n}
+        return JSONResponse(status_code=200, content={
+            "status": "completed", **loaded,
+            **({"checkOverride": accepted} if accepted else {})})
+
+    with open(tmp_path, "rb") as stream:
+        skipped = SkippedRows()
+        header, rows_by_year = scan_and_bucket(
+            stream, skipped, timeframe, regular_hours_only(type, timeframe))
+    if not header or not rows_by_year:
+        return _bad("CSV contains no parseable data rows")
+
+    # The checks. They never refuse the file (G75): it lands, and its
+    # errors become flagged rows that hold the feature build and training.
+    report = check_import(header, rows_by_year, timeframe)
+    override = gate(report, override_reason)
+
+    with pool().connection() as conn:
+        slices = plan_slices(
+            conn,
+            header,
+            rows_by_year,
+            source_name=source_name,
+            symbol=symbol,
+            timeframe=timeframe,
+            force=force_flag,
+        )
+
+        conflicts = [s for s in slices if s.plan == "conflict"]
+        if conflicts:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "conflict",
+                    "message": (
+                        f"{len(conflicts)} of {len(slices)} year slice"
+                        f"{'' if len(slices) == 1 else 's'} conflict; "
+                        "pass force=true to overwrite"
+                    ),
+                    "imports": conflict_preview(slices),
+                    "file": {"hash": file_hash, "name": source_file.name},
+                },
+            )
+
+        try:
+            results, file_rec = commit_file(
+                conn,
+                slices,
+                source_file,
+                source_name=source_name,
+                symbol=symbol,
+                type_=type,
+                timeframe=timeframe,
+                override=override,
+            )
+        except Exception as exc:  # noqa: BLE001 — narrow check below
+            if is_compressed_chunk_error(exc):
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "status": "compressed_chunk",
+                        "error": (
+                            "Postgres rejected the upsert because target rows "
+                            "fall inside a TimescaleDB-compressed chunk"
+                        ),
+                        "hint": (
+                            "Run SELECT decompress_chunk(show_chunks(...)) for "
+                            "the affected range and retry. Auto-compress will "
+                            "re-apply on its next pass."
+                        ),
+                        "detail": str(exc),
+                    },
+                )
+            raise
+
+    # DB committed — now write the archive files. Skipped slices already
+    # match their on-disk file by hash, so they're left alone.
+    write_archive_files(slices)
+
+    # Opt-in fan-out. Runs after the import transaction is durable so a
+    # failure here doesn't roll back the underlying candle write.
+    aggregate_results: list[dict[str, object]] = []
+    if fanout:
+        committed_years = [s.year for s in slices if s.plan != "skip"]
+        if committed_years:
+            since = f"{min(committed_years)}-01-01T00:00:00Z"
+            until = f"{max(committed_years) + 1}-01-01T00:00:00Z"
+        else:
+            since = until = None
+        with pool().connection() as conn:
+            # Resolved within the same DB call to dodge a race where the
+            # import created the instrument/source row mid-flight.
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM instruments WHERE symbol = %s", (symbol,))
+                inst_row = cur.fetchone()
+                cur.execute("SELECT id FROM data_sources WHERE name = %s", (source_name,))
+                src_row = cur.fetchone()
+            if inst_row and src_row:
+                with conn.transaction():
+                    for tf in fanout:
+                        written = aggregate(
+                            conn,
+                            instrument_id=int(inst_row[0]),
+                            source_id=int(src_row[0]),
+                            source_tf=timeframe,
+                            target_tf=tf,
+                            since=since,
+                            until=until,
+                        )
+                        aggregate_results.append({"timeframe": tf, "rowsWritten": written})
+
+    payload: dict[str, object] = {"status": "completed", "imports": results,
+                                  "file": file_rec}
+    if aggregate_results:
+        payload["aggregated"] = aggregate_results
+    # The check report: warnings, and any errors that were overridden.
+    payload["cohesion"] = report.to_dict()
+    if override.errors:
+        # What the file left behind: rows flagged, and whether they hold
+        # anything. `checkOverride` keeps its name for an acceptance made
+        # with the upload.
+        payload["flagged"] = {
+            "errors": override.errors, "held": override.held,
+            "lines": report.error_lines(),
+            **(file_rec.get("flagged") or {}),
+            "hint": (None if not override.held else
+                     "The file is stored. Its flagged rows hold the feature build and "
+                     "training until they are accepted (POST /api/checks/accept) or a "
+                     "corrected file is imported."),
+        }
+    if override.reason:
+        payload["checkOverride"] = {"reason": override.reason, "errors": override.errors}
+    # R6: rows that produced no candle, said rather than silently dropped.
+    payload["skipped"] = skipped.to_dict()
+    return JSONResponse(status_code=200, content=payload)
+
+
 @router.delete("/api/imports/{import_id}")
+@job_route("import-undo", timeout_s=300)
 def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
     """Undo one import: delete the candles it wrote, then its audit row.
 

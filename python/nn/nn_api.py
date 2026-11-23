@@ -21,6 +21,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from jobs.calls import job_route
 from nn.data import (
     load_candles_with_timestamps,
     resolve_instrument,
@@ -131,6 +132,7 @@ def _config_from_request(req: TrainRequest) -> TrainConfig:
 
 
 @router.post("/api/nn/train")
+@job_route("train", timeout_s=3600)
 def post_train(req: TrainRequest) -> JSONResponse:
     cfg = _config_from_request(req)
 
@@ -358,6 +360,7 @@ class PredictRequest(BaseModel):
 
 
 @router.post("/api/nn/predict")
+@job_route("predict", timeout_s=300, transient=True)
 def post_predict(req: PredictRequest) -> JSONResponse:
     if not req.features:
         return JSONResponse(status_code=400, content={"error": "features must be non-empty"})
@@ -429,6 +432,7 @@ class PredictRangeRequest(BaseModel):
 
 
 @router.post("/api/nn/predict_range")
+@job_route("predict-range", timeout_s=600, transient=True)
 def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
     if req.engine not in ENGINE_STRATEGIES:
         return JSONResponse(status_code=400, content={
@@ -556,6 +560,7 @@ class PredictFeaturesRequest(BaseModel):
 
 
 @router.post("/api/nn/predict_features")
+@job_route("predict-features", timeout_s=600, transient=True)
 def post_predict_features(req: PredictFeaturesRequest) -> JSONResponse:
     """Predict from the stored feature table instead of rebuilding features.
 
@@ -739,6 +744,7 @@ def get_features_schema() -> JSONResponse:
 
 
 @router.get("/api/nn/features/preview")
+@job_route("feature-preview", timeout_s=120, transient=True)
 def get_feature_preview(column: str, set: int | None = None,  # noqa: A002 - the query name
                         start: str | None = Query(None, alias="from"),
                         end: str | None = Query(None, alias="to"),
