@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-9** · 2026-11-22 23:25 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-10** · 2026-11-22 23:36 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -758,8 +758,9 @@ over the same dates: that starts flat on the first day. A window that starts ins
 rule's warm-up (201 daily closes for the crossover) reports it as not available. The
 engine keeps its own copy of each rule for the Run tab, and a shared fixture
 (`src/test/resources/crosscheck/indicator-rules.json`) holds the two copies to the same
-entries and exits. Runs and results stored before 2026-11-22 have no line for the five
-until they are recalculated.
+entries and exits. Walk-forward runs stored before 2026-11-22 were recalculated that day and carry
+them. A backtest result stored before then has no line for the five and cannot be
+recalculated; run it again from the Run tab for a result that has them.
 
 **Three simplifications that flatter a result.** Deliberate, not bugs. The limits beyond
 the engine are under [Known limitations](#known-limitations):
@@ -1368,6 +1369,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-10 | 2026-11-22 23:36 | Claude Code (Claude Fable 5.2) | The indicator rules: stored runs carry them, stored backtest results cannot |
 | 2026-11-22-9 | 2026-11-22 23:25 | Claude Code (Claude Fable 5.2) | The five indicator rules as benchmarks on every run (G79): their pinned settings, `indicatorRules` on `GET /api/nn/rules`, the benchmark fields |
 | 2026-11-22-8 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | Walk-forward fold models (G50): where they are kept, `FOLD_MODELS_DIR`, the check and the prune |
 | 2026-11-22-7 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | Roadmap follows the author's decisions of 2026-11-22 (the stack moves now, ONNX Runtime check, TA-Lib, data repair); the span backfill and the Backtest staleness row (G41, G42) |
