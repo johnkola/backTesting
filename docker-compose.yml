@@ -163,6 +163,10 @@ services:
       # Trained NN models. RW because the loader writes new versions; the
       # web service mounts the same host dir read-only above.
       - ./data/models:/data/models
+      # The model each walk-forward fold trained, with its scaler (G50,
+      # nn/fold_models.py). Beside the registry, not in it: /api/models walks
+      # that tree as strategy / cache key / version.
+      - ./data/fold-models:/data/fold-models
       # Breadth members' daily closes, kept current by the feeds and read by
       # build_ndx_breadth.py on the host.
       - ./data/ndx-constituents:/data/ndx-constituents

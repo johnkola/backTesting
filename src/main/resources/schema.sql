@@ -1098,3 +1098,24 @@ ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS failed_reason TEXT;
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS target VARCHAR(16);
 ALTER TABLE walkforward_runs ADD COLUMN IF NOT EXISTS label_json TEXT;
 ALTER TABLE walkforward_signals ADD COLUMN IF NOT EXISTS target_value DOUBLE PRECISION;
+
+-- G50 (R34, R68, R49): the model each walk-forward fold trained, per engine,
+-- and the network's scaler. The files are on disk under FOLD_MODELS_DIR
+-- (python/nn/fold_models.py); this row is their record.
+--   path        the fold's directory, relative to FOLD_MODELS_DIR
+--   file_hash   SHA-256 over its files, checked before a model is loaded
+--   arch_json   what loading needs besides the files: the network's shape, or
+--               a tree engine's target
+-- The rows go with their run; `python -m nn.fold_models --prune` removes the
+-- files of runs that are gone.
+CREATE TABLE IF NOT EXISTS walkforward_fold_models (
+    run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
+    fold INT NOT NULL,
+    engine VARCHAR(16) NOT NULL,
+    path TEXT NOT NULL,
+    file_hash CHAR(64) NOT NULL,
+    bytes BIGINT NOT NULL,
+    arch_json TEXT NOT NULL,
+    kept_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, fold, engine)
+);

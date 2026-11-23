@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-7** · 2026-11-22 22:42 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-8** · 2026-11-22 23:01 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -788,7 +788,7 @@ The work list of 2026-11-19 is done: selectable inputs (C7, F1, F2), a sliding t
 window (C6), the rule strategies as benchmarks only (C8), check errors that stop an
 import or a build (C2), and the requirements doc verified against the code
 ([`docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`](docs/readonly-doc/backTesting-05-Requirements-Consolidated.md):
-22 done, 46 partial, 16 missing, 1 departure, 3 gated).
+23 done, 45 partial, 16 missing, 1 departure, 3 gated).
 
 1. Real intraday data: a calendar file for the bought series, the hourly roll-up from
    30-minute files, a feature set and the first walk-forward run on real bars (G17).
@@ -796,8 +796,9 @@ import or a build (C2), and the requirements doc verified against the code
    summary and the Pipeline Backtest table (R82) and the Requirements doc on the Docs
    tab (R59) are done; a dash instead of 0 for Sharpe, win rate and Calmar with no value
    (R83, G72) is left, and it changes stored figures, so it has its own plan.
-3. Phase one's leftovers that phase two will want too: folds that keep their models
-   (G50). A backtest result keeps its run settings now (G40), shown on its page. Walk-forward runs are on
+3. Phase one's leftovers that phase two will want too: a fold keeps its model and
+   scaler now (G50), for runs made from 2026-11-22; predicting with one over new bars
+   is not built. A backtest result keeps its run settings now (G40), shown on its page. Walk-forward runs are on
    **Results** now, under the backtests, and up to four can be ticked and compared side
    by side by features, windows and metric (G57).
 
@@ -982,6 +983,34 @@ If `run` is invoked without a matching cached model, it prints the exact `train`
 
 ---
 
+### Walk-forward fold models
+
+A walk-forward run keeps the model each fold trained, per engine, and the network's
+scaler as fitted on that fold's training rows (G50). They are not in the registry above
+and do not show on the Models page:
+
+```
+data/fold-models/run-<id>/fold-<nn>/<engine>/
+    model.pt + scaler.json     the network
+    model.json | model.txt     XGBoost | LightGBM, which keep no scaler
+```
+
+Each has a row in `walkforward_fold_models` with its path and a SHA-256 over its files;
+a model whose files no longer match is refused on load. The loader mounts
+`./data/fold-models -> /data/fold-models`.
+
+```bash
+docker compose exec loader python -m nn.fold_models --list RUN_ID
+docker compose exec loader python -m nn.fold_models --check RUN_ID    # exit 0 same, 1 different, 2 not checkable
+docker compose exec loader python -m nn.fold_models --prune --dry-run
+```
+
+`--check` loads every kept model, predicts its fold's scored bars again from the feature
+table and compares with the signals the run stored. It needs the run's feature set to
+still hold the build the run read. Deleting a run deletes its rows, not its files;
+`--prune` removes the files of runs that are gone. Runs from before 2026-11-22, and runs
+made by a recalculation, kept none: rerun the strategy to have its models.
+
 ## Storage compression
 
 **Chunk interval.** `candles` is partitioned into **one-year** chunks (`create_hypertable(..., chunk_time_interval => INTERVAL '1 year')`), not TimescaleDB's 7-day default, because the table is daily-bar dominant over a multi-decade history — 7-day chunks produced thousands of near-empty chunks, and chunk count is a correctness concern rather than a tidiness one (it is what broke `backtest-audit` with `out of shared memory ... increase max_locks_per_transaction`). The reasoning is the comment above `create_hypertable('candles', …)` in `schema.sql`. Compose raises `max_locks_per_transaction` to 1024 for headroom. Revisit the interval if this database ever becomes minute-bar dominant; a month is the better choice once one year of one instrument stops fitting comfortably in a chunk.
@@ -1087,6 +1116,7 @@ The Python loader is configured via environment variables (set in `docker-compos
 | `CSV_ARCHIVE_DIR`   | `data/csv-archive`     | Root for archived CSV slices                                 |
 | `MODELS_DIR`        | `data/models`          | Root for the on-disk model registry                          |
 | `MODEL_KEEP_LAST_N` | `0`                    | NN model retention; `0` disables pruning                     |
+| `FOLD_MODELS_DIR`   | `fold-models` beside `MODELS_DIR` | Root for the models walk-forward folds keep ([Walk-forward fold models](#walk-forward-fold-models)) |
 | `FEEDS_SCHEDULE`    | unset (compose: `18:30`) | New York times of the daily [data feeds](#data-feeds) run, Monday to Friday, comma-separated; unset or `off` for none |
 | `FRED_API_KEY`      | unset                  | FRED API key for the feeds and `fetch_fred_series.py`; compose passes it from `.env`. Without one the keyless graph CSV is used |
 | `NDX_CONSTITUENTS_DIR` | `data/ndx-constituents` | The breadth members' cached closes (mounted into the loader) |
@@ -1314,6 +1344,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-8 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | Walk-forward fold models (G50): where they are kept, `FOLD_MODELS_DIR`, the check and the prune |
 | 2026-11-22-7 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | Roadmap follows the author's decisions of 2026-11-22 (the stack moves now, ONNX Runtime check, TA-Lib, data repair); the span backfill and the Backtest staleness row (G41, G42) |
 | 2026-11-22-6 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | `GET /api/results/:id` carries `settings` (G40); roadmap follows |
 | 2026-11-22-5 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | Roadmap: walk-forward runs on Results and the compare page are done (G57) |

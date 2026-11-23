@@ -70,6 +70,7 @@ from nn import (
     data_checks,
     engines,
     feature_store,
+    fold_models,
     label_kinds,
     lineage,
     profit,
@@ -93,7 +94,7 @@ from nn.profit import (  # noqa: F401
     simulate_taxed,
 )
 from nn.standardise import fit as fit_scaler
-from nn.train_features import build_labels, load_closes, load_opens
+from nn.train_features import load_closes, load_opens
 
 
 @dataclass
@@ -613,12 +614,14 @@ def predict(model: nn.Module, scaler, x: np.ndarray, loss: str,
 
 def fit_network(
     tr: list[int], va: list[int], x_all: np.ndarray, y_all: np.ndarray,
-    full: profit.Market, dates: list[date], args, on_epoch=None,
+    full: profit.Market, dates: list[date], args, on_epoch=None, keep=None,
 ) -> tuple[np.ndarray, list[int], Stopper | None]:
     """The network on one fold: (output over `va`, rows fitted, stopper).
 
     With early stopping the last training year is held out of its fitting to
     decide when to stop, so the rows fitted are fewer than the fold's.
+    `keep("mlp", model, scaler)` is handed the trained network and the scaler
+    fitted on this fold's training rows, before either is let go (G50).
     """
     patience = getattr(args, "patience", None)
     stop_ix: list[int] = []
@@ -636,6 +639,8 @@ def fit_network(
         model, scaler, stopper = train_money(
             x_tr, seg(tr), args, stop=(x_all[stop_ix], seg(stop_ix)) if patience else None,
             on_epoch=on_epoch)
+    if keep is not None:
+        keep("mlp", model, scaler)
     return (predict(model, scaler, x_all[va], args.loss, getattr(args, "target", None) or "class"),
             tr, stopper)
 
@@ -645,6 +650,7 @@ def run_fold(
     x_all: np.ndarray, y_all: np.ndarray, full: profit.Market,
     dates: list[date], args, decisions: RuleView | rules.Decisions | None = None,
     record=None, labels_all: np.ndarray | None = None, values_all: np.ndarray | None = None,
+    keep=None,
 ) -> list[tuple[FoldResult, profit.Signals]]:
     """Train every enabled engine on `tr`, predict `va`, and hand each engine's
     signals to the profit step.
@@ -659,13 +665,18 @@ def run_fold(
     early-stopping loss) rows (G11): the network's one epoch at a time as it
     trains, a tree engine's rounds once its model is fitted. A non-finite loss
     raises `NonFiniteLoss` naming the fold, engine and epoch.
+
+    `keep(engine, model, scaler)` receives each engine's trained model, with
+    the network's scaler and None for a tree engine, so the run can keep them
+    (G50, `nn.fold_models`). Without it they are let go, as before.
     """
     y_va = y_all[va]
     target = getattr(args, "target", None) or "class"
     settings = profit.Settings.from_args(args)
     market = full.take(va)
     va_dates = [dates[i] for i in va]
-    view = decisions if isinstance(decisions, RuleView) or decisions is None else RuleView(decisions)
+    view = (decisions if isinstance(decisions, RuleView) or decisions is None
+            else RuleView(decisions))
     benchmarks = fold_rules(view, va_dates, market, settings, args.symbol)
     out: list[tuple[FoldResult, profit.Signals]] = []
     for name, saved in walkforward_store.engines_of(args).items():
@@ -676,7 +687,7 @@ def run_fold(
                     if record is not None:
                         record(_name, [(epoch, train_loss, stop_loss)])
                 output, fitted, stopper = fit_network(tr, va, x_all, y_all, full, dates, args,
-                                                      on_epoch=on_epoch)
+                                                      on_epoch=on_epoch, keep=keep)
             else:
                 model = trees.train(name, x_all[tr], y_all[tr],
                                     engines.ENGINES[name].resolve(saved),
@@ -686,6 +697,8 @@ def run_fold(
                     report_epoch(None, epoch, v, None)
                 if record is not None and model.curve:
                     record(name, [(i, v, None) for i, v in enumerate(model.curve, 1)])
+                if keep is not None:
+                    keep(name, model, None)
                 output, fitted = model.predict(x_all[va]), tr
         except NonFiniteLoss as exc:
             raise NonFiniteLoss(f"fold {fold_no} ({year}), {name}, {exc}") from exc
@@ -1533,11 +1546,24 @@ def main(argv: list[str] | None = None) -> int:
                       f"-> {rows[-1][1]:.4f}", flush=True)
         return record
 
+    def keeper(fold_no: int):
+        """Keep each engine's model as the fold trains it (G50): files under
+        the fold-models directory, and a row with their hash."""
+        if run_id is None:
+            return None
+
+        def keep(engine: str, model, scaler) -> None:
+            arch = fold_models.network_arch(model, args) if engine == "mlp" else None
+            fold_models.record(conn, fold_models.save(models_base, run_id, fold_no, engine,
+                                                      model, scaler, arch))
+        return keep
+
+    models_base = fold_models.base_dir()
     for i, (year, tr, va) in enumerate(folds, 1):
         try:
             fold_results = run_fold(i, year, tr, va, x_all, y_all, full, wdates, args, view,
                                     record=recorder(i), labels_all=labels_all,
-                                    values_all=values_all)
+                                    values_all=values_all, keep=keeper(i))
         except NonFiniteLoss as exc:
             print(f"FAILED       {exc}: training diverged, so the run stops here (G11)")
             if run_id is not None:

@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-6** · 2026-11-22 22:42 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-7** · 2026-11-22 23:01 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -96,7 +96,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 - **R22** Engine types and options come from what the backend registers; the UI cannot offer an unrunnable combination. · *partial (G54 done; label kinds and losses are copied lists held by a test, and two runner refusals are not asked at save)*
 - **R23** Adding an engine type = new code + its settings section + its catalogue entry (R74); existing engines untouched. · *done (B9)*
 - **R24** Every strategy has instrument, timeframe and a start–end data range. · *done*
-- **R25** Feature subset, train/validation/test/prediction windows (no overlap, time order), validation scheme (single split, k-fold by time, walk-forward; the walk-forward training window expanding by default, or sliding with a set length and step [C6, the author 2026-11-19]), prediction target and horizon, shared by all engines; model type and hyperparameters (epochs, early stopping, learning rate, layers, seed) per engine. · *partial (walk-forward only; the prediction window is saved and never predicted over, G50)*
+- **R25** Feature subset, train/validation/test/prediction windows (no overlap, time order), validation scheme (single split, k-fold by time, walk-forward; the walk-forward training window expanding by default, or sliding with a set length and step [C6, the author 2026-11-19]), prediction target and horizon, shared by all engines; model type and hyperparameters (epochs, early stopping, learning rate, layers, seed) per engine. · *partial (walk-forward only; the prediction window is saved and never predicted over: the fold models it needs are kept now, G50, but nothing predicts with them)*
 - **R26** Coverage grid per feature per window before training; empty features dropped, partial flagged, nothing padded. · *partial (G55: the train window only)*
 - **R27** Strategies are named and versioned; edits create a new version; clone from any run or strategy. · *partial (G55: clone from the newest version only, none from a run)*
 - **R28** Costs block, each with an on/off flag: commission, slippage, other expenses. · *partial (G53: one cost figure, no flags, no other expenses)*
@@ -111,11 +111,11 @@ Every question this section used to hold was answered by the author on 2026-11-1
 ## E. Training, runs and benchmarks
 
 - **R33** Train & Run runs a saved strategy only; no choices on that tab. · *partial (C1 no longer defers it, the author 2026-11-22; G58): Pipeline > Training starts a saved strategy with no choices; the Train and Run tabs keep their forms*
-- **R34** Every run records strategy name and version, instrument, exact feature list with code versions, all four windows, hyperparameters, seed, library versions, input snapshot, outputs, audit. · *partial (the prediction window and the fold models are not recorded, G50; a Run-tab result records its settings, G40, but no code version or input snapshot, G61)*
+- **R34** Every run records strategy name and version, instrument, exact feature list with code versions, all four windows, hyperparameters, seed, library versions, input snapshot, outputs, audit. · *partial (the fold models are kept, G50; the prediction window is not recorded, and the windows are kept as years; a Run-tab result records its settings, G40, but no code version or input snapshot, G61)*
 - **R35** Re-running creates a new run record. Walk-forward is one run with one record per fold. · *done*
 - **R36** Three benchmarks (buy-and-hold, Faber 10-month MA, dual momentum) recalculated on every run, never cached, before training, under the strategy's costs, tax, superficial loss, dividends and currency, and stored with the run. Same window and settings must give the same figure; a difference is a defect. Dual momentum: at each month's last bar take the better 12-month return of the instrument and SPY; hold it next month if it beats T-bills over the same 12 months, else cash at the T-bill rate (D7). · *partial (B6, B7 done; dividends, currency, superficial loss not built)*
 - **R37** Margin overlay is compared against plain buy-and-hold of the same core, and against always-long at the same leverage with no model; a win that only beats the first is labelled leverage, not timing. [+ G25] · *done (G25)*
-- **R68** The feature scaler is fitted on the training window only, per fold, applied unchanged to validation, test and prediction, and stored with the run. Tree engines need none. · *partial (G50: a walk-forward fold's scaler is not kept)*
+- **R68** The feature scaler is fitted on the training window only, per fold, applied unchanged to validation, test and prediction, and stored with the run. Tree engines need none. · *done (G50: each fold's scaler is kept with its model and reloaded unchanged; runs from before 2026-11-22 have none)*
 - **R69** A test window is marked seen once a run reports on it; later runs reusing it are flagged "test window reused". · *partial (G48 done for backtests; a walk-forward holdout rerun is not flagged in the UI; reuse is flagged, never refused)*
 - **R70** A queued or running job can be cancelled from the UI; the worker stops at its next heartbeat; partial outputs kept, marked cancelled. · *missing (C1, the author 2026-11-22: no longer deferred; needs the jobs table)*
 - **R71** Prediction target per strategy: (a) direction, probability the next bar closes up, with buy and sell thresholds; or (b) return over N bars, with a minimum-return threshold. Target, thresholds and horizon recorded on the run. · *done (G49; walk-forward runs. The single-split Train tab is 3-class only)*
@@ -180,12 +180,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-90 numbers: 2 retired, 88 live. By the first status on each line: done 22 · partial 46 · missing 16 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
+90 numbers: 2 retired, 88 live. By the first status on each line: done 23 · partial 45 · missing 16 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-7 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | G50: a fold keeps its model and scaler. R68 done; the reasons on R25, R34 and R38 follow; the count follows |
 | 2026-11-22-6 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | The lines changed on 2026-11-22-5 verified against the code at `65d71fc`: no status changes. R12's reason says the import still refuses on an error (G75); R3's says closed days are not counted as missing, unscheduled closures included (G80). "Deferred" is no longer used by any line |
 | 2026-11-22-5 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22: C1 the stack moves now (R6, R33, R48, R60, R67, R70 no longer deferred); C4 R62 becomes an ONNX Runtime check, Deeplearning4j stays out; C5 TA-Lib is the single source and the hand-written module the cross-check (R66); R89 data repair and R90 (parked) added; R3, R12 and R21 clarified. Brought from the Google Drive doc set, the source of truth; these lines were not re-verified against the code |
 | 2026-11-22-4 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | G40 done: the reasons on R1, R5, R34, R38 and R77 follow; no status changes |
