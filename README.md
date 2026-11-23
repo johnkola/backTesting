@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-6** · 2026-11-22 12:04 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-7** · 2026-11-22 22:42 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -788,7 +788,7 @@ The work list of 2026-11-19 is done: selectable inputs (C7, F1, F2), a sliding t
 window (C6), the rule strategies as benchmarks only (C8), check errors that stop an
 import or a build (C2), and the requirements doc verified against the code
 ([`docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`](docs/readonly-doc/backTesting-05-Requirements-Consolidated.md):
-19 done, 47 partial, 9 missing, 6 deferred to the stack move, 3 departures, 2 gated).
+22 done, 46 partial, 16 missing, 1 departure, 3 gated).
 
 1. Real intraday data: a calendar file for the bought series, the hourly roll-up from
    30-minute files, a feature set and the first walk-forward run on real bars (G17).
@@ -801,9 +801,19 @@ import or a build (C2), and the requirements doc verified against the code
    **Results** now, under the backtests, and up to four can be ticked and compared side
    by side by features, windows and metric (G57).
 
-The author's decisions of 2026-11-19 are recorded in
+The author's decisions are recorded in
 [`docs/readonly-doc/backTesting-06-Questions-for-John.md`](docs/readonly-doc/backTesting-06-Questions-for-John.md): FirstRate Data is the intraday
-source, and the Spring Boot move waits until phase two works on real data.
+source (2026-11-19). Three answers were replaced on 2026-11-22 and none of them is built
+yet; each has a row in the gap tracker, and the order between them is the author's to set:
+
+- The stack moves now, not after phase two: Spring Boot as the single backend, Next.js,
+  three schemas with roles, the jobs table (C1, G16).
+- Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (C4, G77).
+- TA-Lib becomes the single source of indicators, with the hand-written module as its
+  cross-check (C5, G78).
+- New the same day: an import always lands and the feature build and training hold the
+  stop (G75), data repair with a repair log (G76), and the five rule benchmarks
+  recalculated on every run (G79).
 
 ### Done
 
@@ -1304,6 +1314,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-7 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | Roadmap follows the author's decisions of 2026-11-22 (the stack moves now, ONNX Runtime check, TA-Lib, data repair); the span backfill and the Backtest staleness row (G41, G42) |
 | 2026-11-22-6 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | `GET /api/results/:id` carries `settings` (G40); roadmap follows |
 | 2026-11-22-5 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | Roadmap: walk-forward runs on Results and the compare page are done (G57) |
 | 2026-11-22-4 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | `POST /api/run` answers `inSample`; roadmap: G64 and G71 done |

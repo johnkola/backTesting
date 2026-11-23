@@ -35,8 +35,9 @@ Invariants a change must keep:
   with the reason. A partial average would be a different rule.
 
 * **The average uses the shared indicator module** (`indicators.sma`), which
-  is hand-written rather than TA-Lib; R66 asks for TA-Lib, which waits on the
-  author's D14. `data_checks.rule_checks` holds the 10-month average and the
+  is hand-written rather than TA-Lib. R66 asks for TA-Lib as the single
+  source with this module as its cross-check (the author 2026-11-22, D14);
+  that is not built yet. `data_checks.rule_checks` holds the 10-month average and the
   12-month return to a copy computed independently in pandas.
 """
 

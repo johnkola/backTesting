@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-5** · 2026-11-22 22:45 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-6** · 2026-11-22 22:42 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -12,7 +12,7 @@ One list of what the system must do, merged from every doc in `johnkola/backTest
 
 Source tags: **DN** Design Notes · **A §n** Architecture · **F** Features · **AG** AGENTS.md · **D/G/B n** rows in backTesting-07-Design-Gaps.md.
 
-Status: **done** · **partial** · **missing** · **departure** (the code does something else, by the author's decision; it will not be built) · **deferred** (waits for the stack move, by the author's decision) · **gated** (waits for an earlier phase).
+Status: **done** · **partial** · **missing** · **departure** (the code does something else, by the author's decision; it will not be built) · **deferred** (waited for the stack move; no line uses it since the author's answer to C1 of 2026-11-22) · **gated** (waits for an earlier phase).
 
 ## Overview
 
@@ -52,7 +52,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 - **R1** Every number is verifiable: any value traces to its source, code version, time, author or job, and upstream values. · *partial (`candles` has no audit columns or link to its import, G61; a backtest result has no code version or input snapshot, G61; no Verify tab, G10)*
 - **R2** Raw provider data is never lost: every archived CSV version is kept and any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider. [D10, amends "corrections are new rows"] · *partial (G66, G67: a fix overwrites the older slice's archive file, and nothing reloads a version in one action)*
-- **R3** Each feature exists only over its own available range; no trimming to overlap, no null padding. Days the exchange is closed (weekends, holidays, any other closure) have no row at all and are never counted as missing [the author 2026-11-22]. · *departure, by the author's decision 2026-11-19 (C3): NULLs are stored for warm-up and pre-start days and dropped at read; no trimming to overlap is done*
+- **R3** Each feature exists only over its own available range; no trimming to overlap, no null padding. Days the exchange is closed (weekends, holidays, any other closure) have no row at all and are never counted as missing [the author 2026-11-22]. · *departure, by the author's decision 2026-11-19 (C3): NULLs are stored for warm-up and pre-start days and dropped at read; no trimming to overlap is done. Closed days have no row and are not counted as missing, unscheduled closures included, G80*
 - **R4** Audit columns (created/updated at/by) on every table holding computed or ingested values. · *partial (G61: not on `candles`, nor on the benchmark, signal and epoch tables)*
 - **R5** Reproducibility: a feature or model run is identified by code version plus input snapshot; the same seed and snapshot give the same result. · *partial (a backtest result has no code version or snapshot, G61)*
 - **R6** Separation: Python computes, Java serves, Next.js shows; the UI never touches the database. · *partial (C1, the author 2026-11-22: the stack moves now; today the UI calls the API only, Java does not serve it and there is no Next.js)*
@@ -72,7 +72,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## B2. Data verification
 
-- **R12** Cohesion checks on every import and on demand (gaps, duplicates, order, bad prices), as fixed steps: after parse, before candles are written, again after features. Pandera for row rules; exchange_calendars for missing trading days. Findings go to `data_checks`. Warnings continue; errors stop the chain. [C2, the author 2026-11-19 and 2026-11-22: an error is a bar whose prices contradict each other or whose volume is negative, a duplicate, or an out-of-order timestamp; storing one anyway is an override with a recorded reason] [the author 2026-11-22, evening: the import itself always lands, so raw data is never lost; features and training refuse to run until the flagged rows are accepted or repaired, R89] · *partial (the stop is built, C2; Pandera, exchange_calendars and a `data_checks` table are not, G51)*
+- **R12** Cohesion checks on every import and on demand (gaps, duplicates, order, bad prices), as fixed steps: after parse, before candles are written, again after features. Pandera for row rules; exchange_calendars for missing trading days. Findings go to `data_checks`. Warnings continue; errors stop the chain. [C2, the author 2026-11-19 and 2026-11-22: an error is a bar whose prices contradict each other or whose volume is negative, a duplicate, or an out-of-order timestamp; storing one anyway is an override with a recorded reason] [the author 2026-11-22, evening: the import itself always lands, so raw data is never lost; features and training refuse to run until the flagged rows are accepted or repaired, R89] · *partial (the stop is built, C2, but an import with an error is still refused unless overridden, where the answer of 2026-11-22 lets it land and stops the feature build and training instead, G75; Pandera, exchange_calendars and a `data_checks` table are not built, G51)*
 - **R55** Cross-verification: any value obtainable twice (published copy, another provider, rolled up from a finer timeframe) is compared with ours. Default thresholds: prices 0.5%, volume 10%, indicators 1% after warm-up, yields and spreads 0.02 pp absolute, otherwise 5%. Differences show with both values and the diff, set the row's `cross_check` column, and are never silently fixed. · *partial (one live check, the yield curve; no default thresholds, no second provider, no `cross_check` column)*
 - **R63** Splits: two candle tables of the same shape, raw (as received) and adjusted. An unadjusted split is detected (overnight jump near a split ratio, volume moving the opposite way), checked against imported split history and harmonized. Checks, features, training and backtests read adjusted; every adjustment links to its raw row. · *missing*
 - **R64** Data review: ydata-profiling report per series, viewable in the UI; Evidently flags sudden shifts between periods. Findings go to `data_checks`. · *missing*
@@ -180,12 +180,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-90 numbers: 2 retired, 88 live. By the first status on each line: done 22 · partial 46 · missing 16 · departure 1 · gated 3. Verified against the code on 2026-11-22, except the lines changed by the author's answers of that evening (R6, R33, R48, R60, R62, R66, R67, R70, R89, R90), which were not re-verified.
+90 numbers: 2 retired, 88 live. By the first status on each line: done 22 · partial 46 · missing 16 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-6 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | The lines changed on 2026-11-22-5 verified against the code at `65d71fc`: no status changes. R12's reason says the import still refuses on an error (G75); R3's says closed days are not counted as missing, unscheduled closures included (G80). "Deferred" is no longer used by any line |
 | 2026-11-22-5 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22: C1 the stack moves now (R6, R33, R48, R60, R67, R70 no longer deferred); C4 R62 becomes an ONNX Runtime check, Deeplearning4j stays out; C5 TA-Lib is the single source and the hand-written module the cross-check (R66); R89 data repair and R90 (parked) added; R3, R12 and R21 clarified. Brought from the Google Drive doc set, the source of truth; these lines were not re-verified against the code |
 | 2026-11-22-4 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | G40 done: the reasons on R1, R5, R34, R38 and R77 follow; no status changes |
 | 2026-11-22-3 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | R40 done (G57); R38's reason follows; the count follows |

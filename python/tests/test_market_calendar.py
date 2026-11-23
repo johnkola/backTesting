@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from loader.market_calendar import (
     easter,
@@ -75,3 +75,27 @@ def test_the_half_days_follow_the_standing_rules():
     assert not is_early_close(date(2021, 12, 24))    # Christmas observed
     assert not is_early_close(date(2022, 7, 1))      # the 4th was a Monday
     assert not is_early_close(date(2024, 12, 23))
+
+
+def test_a_closure_nobody_scheduled_is_not_a_missing_day():
+    """R3 (the author 2026-11-22): a day the exchange is closed has no row and
+    is never counted as missing, whatever closed it."""
+    from loader.market_calendar import is_closed, missing_trading_days
+
+    assert missing_trading_days(date(2001, 9, 10), date(2001, 9, 17)) == 0   # 9/11
+    assert missing_trading_days(date(2012, 10, 26), date(2012, 10, 31)) == 0  # Sandy
+    for d in (date(2004, 6, 11), date(2007, 1, 2), date(2018, 12, 5), date(2025, 1, 9)):
+        assert is_closed(d)
+        assert missing_trading_days(d - timedelta(days=1), d + timedelta(days=1)) == 0
+    # An ordinary session between two bars is still missing.
+    assert missing_trading_days(date(2001, 9, 17), date(2001, 9, 19)) == 1
+
+
+def test_an_unscheduled_closure_is_not_a_holiday_to_anything_looking_ahead():
+    """The holiday feature reads scheduled holidays only: on 2001-09-10 nobody
+    knew the next day would have no session."""
+    from loader.market_calendar import is_trading_holiday
+    from nn.feature_build import next_scheduled_session
+
+    assert not is_trading_holiday(date(2001, 9, 11))
+    assert next_scheduled_session(date(2001, 9, 10)) == date(2001, 9, 11)

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-22-11** · 2026-11-22 22:45 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
+> **Revision 2026-11-22-12** · 2026-11-22 22:42 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -102,6 +102,12 @@ stored run.
 | G72 | A metric with no value shows 0, not a dash: Sharpe with under two returns or no variance, win rate with no decided trade, Calmar with no drawdown. Sortino and profit factor already show a dash | R83 | `MetricsCalculator.calculateSharpeRatio`, `profit.sharpe`; found by the verification of 2026-11-22 | stored results keep their 0 until rescored | M | open, and not small: the figures are `double` in the engine's metrics and `NOT NULL` in `walkforward_folds` (`strat_sharpe`, `hold_sharpe`), they feed the Sharpe verdict and the fold means, and a stored fold that is flat would change from 0 to no value, so the stored runs would no longer recalculate exactly. It needs its own plan and the author's go before stored data moves |
 | G73 | The Nasdaq-100 member series are not fed: 101 symbols stored under `yahoo` end 2026-11-06 (WBD 2026-10-05). The breadth feed refreshes its own cache, so the features are current; the stored member candles are not | R86 | `feeds/registry.py`; `candles`; found by the verification of 2026-11-22 | the member candles | S | open: feed them, or say on Instruments that they are a one-time import |
 | G74 | The three objectives are not all run, and the test block is not guarded: all 15 stored runs use `return`; nothing picks a winner on the folds; a second holdout run is warned, not refused; Run-tab backtests have read saved test windows 83 times | R81, R69 | `walkforward_runs.objective`; `test_window_looks`; found by the verification of 2026-11-22 | none | M | open; the author says whether "touched once" is to be enforced |
+| G75 | An import with a check error is refused. The author's answer of 2026-11-22 is that the import always lands, so raw data is never lost, and the feature build and training refuse to run until the flagged rows are accepted or repaired. Job 8 put the stop at the import too | R12 | `imports_api.py` (422 `check_failed`), `ingest.py`, `feeds/runner.py` (`ChecksRefused`); `feature_build.py` already exits 3; training has no gate of its own | none: the 743 stored bars that break the rule (GOLD 441, COPPER 300, WBD 2) would then be flagged rows to accept or repair | M | open: needs the per-row accept (R65) to be useful; order is the author's |
+| G76 | Data repair is not built: no adjusted table, no candidates (second source, calculated, hand-entered), no automatic apply when the first two agree within the R55 thresholds, no repair log | R89, R63, R55 | no `repair` table or module; `candles` is one table | none until built; a repair then changes what features read, so the sets and runs downstream follow the stale-records rule | L | open: depends on the raw and adjusted tables (G52, R63) and a second source (G9b) |
+| G77 | The ONNX Runtime prediction check is not built: nothing exports a trained network to ONNX, and no Java compute worker runs it and compares with PyTorch per fold | R62, D13 | no `onnx` dependency in `python/` or `build.gradle`; `engines.py` says so in the catalogue | none | M | open; a fold has to keep its model first (G50) |
+| G78 | Indicators are hand-written, not TA-Lib. TA-Lib is to be the single source for features and benchmarks, with `nn/indicators.py` kept only as the cross-check | R66, D14, R55 | `nn/indicators.py`; no `talib` dependency | every set's RSI, MACD, moving-average and Bollinger columns and the five rule benchmarks, wherever TA-Lib's figures differ (warm-up and smoothing seeds); those sets and runs follow the stale-records rule | M | open: measure the differences on stored data first, read-only, before anything is rebuilt |
+| G79 | The five rule benchmarks are not part of a run. Each is to be pinned to its standard published settings and recalculated on every run under the run's costs and tax; today a run's benchmark set is buy-and-hold, Faber and dual momentum, and the five run only from the Run tab | R21, R36 | `walkforward.score_rules`, `nn/rules.py`; `StrategyRegistry.Kind.BENCHMARK` | none: stored runs gain rows on recalculation | M | open |
+| G80 | A closure nobody scheduled was counted as a missing day: 9/11 (four sessions), Hurricane Sandy (two) and the days of mourning of 1994, 2004, 2007, 2018 and 2025. R3 as clarified on 2026-11-22: a day the exchange is closed is never counted as missing | R3 | `loader/market_calendar.py` `missing_trading_days` | none: gap findings are warnings and are recomputed | S | done 2026-11-22: `UNSCHEDULED_CLOSURES` and `is_closed`, used by the gap count and the lag count only. The holiday feature still reads scheduled holidays alone (`next_scheduled_session`), since nobody knew these the day before; a test holds both |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
 
@@ -984,6 +990,8 @@ The readonly design set is the author's to update where an answer departs from i
 | Users, load targets, signal publishing (R90, new) | Parked until the calculation path gives trusted results against the benchmarks | nothing now |
 
 The author's stated priority the same evening is that the calculation runs through correctly with no gap, so a strategy can be tested against the benchmarks on QQQ or any other instrument. The order between that and the stack move (C1) is his to set before work starts.
+
+Each piece of new work above has a gap row since revision 2026-11-22-12: G16 (the stack, C1), G75 (the import always lands, C2), G76 (data repair, R89), G77 (the ONNX Runtime check, C4), G78 (TA-Lib, C5), G79 (the five rule benchmarks on every run, C8) and G80 (closed days, C3; done).
 
 **Work order.** One job at a time, each with its own plan and record here, and a stop before any stored data moves:
 
@@ -1950,7 +1958,7 @@ a stored result now, since every result left is newer than every such fix.
 
 | # | Gap | Design | Evidence | Effort | Status |
 |---|---|---|---|---|---|
-| G16 | Spring Boot and Next.js replace Node and Vite, and Python stops serving HTTP. New work still lands in Node (`../../web/api/strategies.js`) | Architecture §2, §3.5 | `../../web/api`, `python/nn/nn_api.py`, `EngineApi.java` | XL | decision |
+| G16 | Spring Boot and Next.js replace Node and Vite, and Python stops serving HTTP. New work still lands in Node (`../../web/api/strategies.js`) | Architecture §2, §3.5 | `../../web/api`, `python/nn/nn_api.py`, `EngineApi.java` | XL | open: the author's answer to C1 of 2026-11-22 is to move now; no plan yet, and the order against G75 to G79 is his to set |
 | G17 | Intraday, phase two: paid data, after the daily model is proven | Design Notes, Two Phases | follows the phase-one answer | XL | gated |
 | G18 | Live X sentiment, monitoring only and never a training input | Design Notes, News & Sentiment | not started | L | gated |
 
@@ -1976,6 +1984,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-12 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | The decisions of 2026-11-22 given gap rows G75 to G80; G80 (unscheduled closures counted as missing days) done; G16 open, no longer a decision |
 | 2026-11-22-11 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22 recorded under "Decisions changed, 2026-11-22": C1 move the stack now, C4 keep the ONNX Runtime check, C5 TA-Lib as the single source; R89 data repair and R90 added; D13, D14 and group E follow |
 | 2026-11-22-10 | 2026-11-22 22:31 | Claude Code (Claude Fable 5.2) | G42 done: the span backfill leaves a run fixed since it finished without a span |
 | 2026-11-22-9 | 2026-11-22 14:14 | Claude Code (Claude Fable 5.2) | G41 done: the backtest staleness check reads through the feature table and finer timeframes |

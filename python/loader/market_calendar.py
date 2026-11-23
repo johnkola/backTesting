@@ -120,14 +120,41 @@ def is_early_close(d: date) -> bool:
     return d in nyse_early_closes(d.year)
 
 
+#: Whole days the NYSE was closed that no rule scheduled: the 9/11 attacks,
+#: Hurricane Sandy, and the national days of mourning for Presidents Nixon,
+#: Reagan, Ford, G. H. W. Bush and Carter. A day the exchange is closed has no
+#: bar and is never a missing one (R3, the author 2026-11-22), whatever closed
+#: it. Kept apart from `nyse_holidays` on purpose: nobody knew these the day
+#: before, so anything that looks ahead to the next session (the holiday
+#: feature, `feature_build.next_scheduled_session`) must not read them, or the
+#: model would learn from a closure that had not been announced. A closure
+#: missing from this list shows as one gap warning, never as lost data.
+UNSCHEDULED_CLOSURES = frozenset({
+    date(1994, 4, 27),
+    date(2001, 9, 11), date(2001, 9, 12), date(2001, 9, 13), date(2001, 9, 14),
+    date(2004, 6, 11),
+    date(2007, 1, 2),
+    date(2012, 10, 29), date(2012, 10, 30),
+    date(2018, 12, 5),
+    date(2025, 1, 9),
+})
+
+
+def is_closed(d: date) -> bool:
+    """True when the NYSE held no session on `d`: a weekend, a scheduled
+    holiday, or a closure nobody scheduled. For looking back only; to look
+    ahead use `is_trading_holiday`, which knows only what was scheduled."""
+    return d.weekday() >= _SAT or is_trading_holiday(d) or d in UNSCHEDULED_CLOSURES
+
+
 def missing_trading_days(a: date, b: date) -> int:
-    """Count weekdays strictly between `a` and `b` that are NOT NYSE
-    holidays — i.e. trading days for which a D1 bar is genuinely missing.
-    Weekends and market holidays don't count."""
+    """Count the days strictly between `a` and `b` on which the NYSE held a
+    session, i.e. trading days for which a D1 bar is genuinely missing.
+    Weekends, market holidays and unscheduled closures don't count."""
     n = 0
     d = a + timedelta(days=1)
     while d < b:
-        if d.weekday() < _SAT and not is_trading_holiday(d):
+        if not is_closed(d):
             n += 1
         d += timedelta(days=1)
     return n
