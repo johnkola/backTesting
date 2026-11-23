@@ -36,7 +36,9 @@ it (`walkforward_runs.span_*`). Days appended after the span cannot change the
 run, so they do not make it stale; a day inside it changing does, and the part
 that moved (matrix, closes, park, margin) is named. Runs from before G12 have no
 span: `python -m nn.staleness --backfill` gives them one from their own feature
-set, which is exact while that set still holds the build they read.
+set, which is exact while that set still holds the build they read and no
+series it hashes has been fixed inside the span since the run finished; a run
+that fails either is left without a span, and reads "not recorded".
 """
 
 from __future__ import annotations
@@ -232,6 +234,42 @@ def series_read(strategy: str, symbol: str, source: str, timeframe: str,
     return out
 
 
+def store_series(symbol: str, source: str, timeframe: str, park: str,
+                 execution: str | None) -> dict[str, list[tuple[str, str, str]]]:
+    """The stored series a run's snapshot is hashed from besides the feature
+    matrix, by part: `walkforward.snapshot_parts`, said as series. The matrix
+    is left out because a feature build is kept whole; these are read from the
+    store as it is at the time of reading."""
+    from nn import profit
+
+    out = {"closes": [(symbol, source, timeframe)]}
+    if park != "cash":
+        out["park"] = [(profit.PARK_SERIES[park], "fred", "D1")]
+    if execution == "margin":
+        out["margin"] = [("PSQ", source, "D1"), ("DFF", "fred", "D1")]
+    return out
+
+
+def fixes_since(fixes: dict[tuple[str, str], list],
+                series: dict[str, list[tuple[str, str, str]]], after: dt.datetime,
+                start: dt.date, end: dt.date) -> list[str]:
+    """The fixes imported after `after` that changed a bar of `series` inside
+    [start, end], one line each. What the span backfill must not bake in (G42):
+    it hashes the store as it is now, and a fix since the run means that is
+    not what the run read."""
+    out = []
+    for part, members in sorted(series.items()):
+        for sym, src, read_tf in members:
+            for ftf, fid, at, kind, diff in fixes.get((sym, src), []):
+                if at is None or at <= after or not may_feed(ftf, read_tf):
+                    continue
+                hit = fix_hits(diff, start, end)
+                if hit:
+                    out.append(f"{sym}/{src} version #{fid} ({kind}, {at:%Y-%m-%d %H:%M}) "
+                               f"changed {PART_TEXT.get(part, part)} on {', '.join(hit)}")
+    return out
+
+
 def sessions_behind(last: dt.date, cutoff: dt.date) -> int:
     """NYSE sessions after `last`, up to and including `cutoff`."""
     from loader.market_calendar import missing_trading_days
@@ -288,6 +326,19 @@ def _newest_versions(cur) -> dict[tuple[str, str, str], int]:
         "GROUP BY 1, 2, 3"
     )
     return {(sym, src, tf): int(v) for sym, src, tf, v in cur.fetchall()}
+
+
+def _fixes(cur) -> dict[tuple[str, str], list]:
+    """Every import that changed stored bars, by series:
+    (timeframe, version id, imported at, kind, diff)."""
+    cur.execute(
+        "SELECT i.symbol, s.name, f.timeframe, f.id, f.imported_at, f.change_kind, f.diff_json "
+        "FROM import_files f JOIN instruments i ON i.id = f.instrument_id "
+        "JOIN data_sources s ON s.id = f.source_id WHERE f.change_kind IN ('fix', 'update+fix')")
+    fixes: dict[tuple[str, str], list] = {}
+    for sym, src, tf, fid, at, kind, diff in cur.fetchall():
+        fixes.setdefault((sym, src), []).append((tf, fid, at, kind, diff))
+    return fixes
 
 
 def _latest_feed_results(cur) -> tuple[dict[str, dict], bool]:
@@ -682,13 +733,7 @@ def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
         "strategy_name FROM backtest_results WHERE timeframe = %s ORDER BY id DESC LIMIT %s",
         (ctx.timeframe, limit))
     results = ctx.cur.fetchall()
-    ctx.cur.execute(
-        "SELECT i.symbol, s.name, f.timeframe, f.id, f.imported_at, f.change_kind, f.diff_json "
-        "FROM import_files f JOIN instruments i ON i.id = f.instrument_id "
-        "JOIN data_sources s ON s.id = f.source_id WHERE f.change_kind IN ('fix', 'update+fix')")
-    fixes: dict[tuple[str, str], list] = {}
-    for sym, src, tf, fid, at, kind, diff in ctx.cur.fetchall():
-        fixes.setdefault((sym, src), []).append((tf, fid, at, kind, diff))
+    fixes = _fixes(ctx.cur)
     table = series_timeframes(ctx.cfg) if ctx.cfg is not None else None
     out = []
     for rid, sym, src, tf, start, end, created, strategy in results:
@@ -779,9 +824,11 @@ def backfill(cur, conn, dry_run: bool = False, log=print) -> int:
 
     Exact only while that set still holds the build the run read (its
     `current_run_id` is the run's `feature_run_id`): the values are then the
-    ones it read. The closes and park come from the store as it is now, so a
-    fix to them since the run would be baked in; the store's import versions
-    say whether there was one. Runs whose set was rebuilt are left without."""
+    ones it read. The closes, park and margin series come from the store as it
+    is now, so a fix to one of them inside the span since the run finished
+    would be baked in and the run would read fresh against inputs it never
+    saw; such a run is left without too (G42, `fixes_since`). So is a run
+    whose set was rebuilt."""
     from nn import feature_store
     from nn.walkforward import (
         build_labels,
@@ -794,6 +841,7 @@ def backfill(cur, conn, dry_run: bool = False, log=print) -> int:
     cur.execute(_RUN_SQL + " WHERE r.span_snapshot IS NULL AND r.finished_at IS NOT NULL "
                 "ORDER BY r.id")
     runs = [dict(zip(_RUN_KEYS, row, strict=True)) for row in cur.fetchall()]
+    fixes = _fixes(cur) if runs else {}
     done = 0
     for run in runs:
         cur.execute("SELECT current_run_id FROM feature_sets WHERE id = %s",
@@ -828,6 +876,14 @@ def backfill(cur, conn, dry_run: bool = False, log=print) -> int:
                         window_end_of(last_val, run["is_test"], test_end))
         if span is None:
             log(f"  run {run['id']}: no folds rebuild from its record; left without")
+            continue
+        since = (fixes_since(fixes, store_series(run["symbol"], run["source"], run["timeframe"],
+                                                 run["park"], run["execution"]),
+                             run["finished_at"], span.start, span.end)
+                 if run["finished_at"] is not None else [])
+        if since:
+            log(f"  run {run['id']}: fixed since it finished, so the store no longer holds "
+                f"what it read; left without ({'; '.join(since)})")
             continue
         margin_source = run["source"] if run["execution"] == "margin" else None
         parts = snapshot_parts(cur, restrict(fm, span.start, span.end), closes, run["park"],

@@ -251,6 +251,37 @@ def test_any_other_result_reads_its_own_bars_only():
         ("QQQ", "yahoo"): {"D1"}}
 
 
+def test_a_run_s_snapshot_reads_these_series_besides_the_matrix():
+    assert staleness.store_series("QQQ", "yahoo", "D1", "cash", None) == {
+        "closes": [("QQQ", "yahoo", "D1")]}
+    s = staleness.store_series("QQQ", "yahoo", "D1", "bills", "margin")
+    assert s["park"] == [("DTB3", "fred", "D1")]
+    assert s["margin"] == [("PSQ", "yahoo", "D1"), ("DFF", "fred", "D1")]
+
+
+def test_the_backfill_sees_a_fix_made_after_the_run_finished():
+    """Runs 299 to 301 finished 2026-11-10 and were backfilled on 2026-11-12,
+    39 minutes after PSQ was fixed, so they read fresh against a margin input
+    they never saw (G42)."""
+    finished = dt.datetime(2026, 11, 10, 20, 0, tzinfo=dt.UTC)
+    day = ["2024-03-05T00:00:00Z"]
+    diff = json.dumps({"2024": {"changed": 1, "removed": 0, "examples": day}})
+    at = dt.datetime(2026, 11, 12, 17, 40, tzinfo=dt.UTC)
+    fixes = {("PSQ", "yahoo"): [("D1", 351, at, "fix", diff)]}
+    series = staleness.store_series("QQQ", "yahoo", "D1", "cash", "margin")
+    span = (dt.date(2010, 1, 4), dt.date(2025, 12, 31))
+    lines = staleness.fixes_since(fixes, series, finished, *span)
+    assert len(lines) == 1 and "PSQ/yahoo version #351" in lines[0]
+    assert "PSQ and Fed funds" in lines[0] and "2024-03-05" in lines[0]
+    # A fix before the run finished is what the run read.
+    assert staleness.fixes_since(fixes, series, at, *span) == []
+    # A fix outside the span, or to a series the run does not read, is none.
+    assert staleness.fixes_since(fixes, series, finished, dt.date(2010, 1, 4),
+                                 dt.date(2023, 12, 29)) == []
+    plain = staleness.store_series("QQQ", "yahoo", "D1", "cash", None)
+    assert staleness.fixes_since(fixes, plain, finished, *span) == []
+
+
 def _run(rid, name, version, is_test=False, label=None):
     return {"id": rid, "strategy_name": name, "strategy_version": version,
             "is_test": is_test, "label": label}
