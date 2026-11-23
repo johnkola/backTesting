@@ -1,4 +1,12 @@
-"""TA4J-compatible technical indicators, in pure Python.
+"""The cross-check of `nn/ta.py`: ta4j-style indicators, in pure Python.
+
+Nothing that is used is computed here any more (R66, the author 2026-11-22;
+G78). TA-Lib, through `nn/ta.py`, is the single source of every indicator;
+this module is the second, independent copy it is compared with (R55,
+`data_checks.indicator_checks`). It shares no code with TA-Lib and starts a
+series the way ta4j does, so the two agree only once a series' start has
+decayed (`ta.SETTLE_BARS`). Do not import it to compute a feature or a rule.
+
 
 Each function takes a list of floats and returns a list of the same length.
 For indices where the indicator can't be fully computed, TA4J returns the

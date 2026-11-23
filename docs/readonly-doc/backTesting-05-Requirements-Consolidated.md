@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-9** · 2026-11-22 23:36 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-10** · 2026-11-22 23:58 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -30,8 +30,8 @@ A learning project: train engines on daily history to time entries and exits for
 | 2 | XGBoost | Engine | XGBoost | Naive baseline (R72) |
 | 3 | LightGBM | Engine | LightGBM | Naive baseline (R72) |
 | 4 | Buy-and-hold | Benchmark | none | Same costs and tax as the strategy (R36) |
-| 5 | Faber 10-month MA | Benchmark | `nn/indicators.py` (R66) | Cross-check (R55) |
-| 6 | Dual momentum | Benchmark | `nn/indicators.py` (R66) | Cross-check (R55) |
+| 5 | Faber 10-month MA | Benchmark | `nn/ta.py`, TA-Lib (R66) | Cross-check (R55) |
+| 6 | Dual momentum | Benchmark | `nn/ta.py`, TA-Lib (R66) | Cross-check (R55) |
 
 ## Decided
 
@@ -43,7 +43,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 | C2 | Do data checks stop the chain? | Errors stop, warnings continue. An error is a bar whose prices contradict each other, a duplicate or an out-of-order timestamp; "two or more flags" is not used | R12, R65 | built 2026-11-22 |
 | C3 | Are nulls allowed in feature values? | Keep NULLs, dropped at read | R3 | departure (D2) |
 | C4 | Keep the Deeplearning4j and ONNX check? | Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (2026-11-22; replaces "drop it, PyTorch only") | R62 | open (D13) |
-| C5 | TA-Lib or the hand-written indicators? | TA-Lib is the single source; the hand-written indicators stay only as the cross-check (2026-11-22; replaces "keep the hand-written indicators") | R66 | open (D14) |
+| C5 | TA-Lib or the hand-written indicators? | TA-Lib is the single source; the hand-written indicators stay only as the cross-check (2026-11-22; replaces "keep the hand-written indicators") | R66 | built 2026-11-22 (G78) |
 | C6 | Walk-forward: expanding or sliding? | Offer both, expanding the default | R25 | built 2026-11-21 (D3) |
 | C7 | Are RSI, MACD and realized volatility model inputs? | Selectable per strategy, off by default | R19, R78 | built 2026-11-21 (D4) |
 | C8 | What happens to the five rule strategies? | Benchmarks only: kept runnable for comparison, not offered as strategies | R21, R22 | built 2026-11-22 |
@@ -86,7 +86,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 - **R18** Scope flag instrument | market; instrument features switch with the instrument, market features stay. · *partial (G56: hard-coded to QQQ)*
 - **R19** Active features are offered for selection, ticked; selectable ones (RSI, MACD, realized volatility, the VIX term structure, QQQ against SPY) are offered unticked; nothing else is offered. [C7, the author 2026-11-19] · *done*
 - **R20** Feature lineage: `feature_runs` keyed by code version + input snapshot. Old values are not kept; they are rebuilt on demand from stored inputs. [D12, amends "earlier values stay"] · *partial (no rebuild of a named past build; older input versions are not kept, G67)*
-- **R66** Technical indicators come from TA-Lib through one shared module, for features and benchmarks, cross-checked per R55; the hand-written `nn/indicators.py` is kept only as the cross-check against it. [C5, the author 2026-11-22, replacing "keep the hand-written indicators" of 2026-11-19] · *missing (D14: the hand-written module still computes them; TA-Lib is not installed)*
+- **R66** Technical indicators come from TA-Lib through one shared module, for features and benchmarks, cross-checked per R55; the hand-written `nn/indicators.py` is kept only as the cross-check against it. [C5, the author 2026-11-22, replacing "keep the hand-written indicators" of 2026-11-19] · *done (G78, 2026-11-22: `nn/ta.py` over TA-Lib is read by the feature table, the Run tab network, Faber and the five rules; `nn/indicators.py` is its cross-check on every run, ten series at 1%)*
 - **R78** The feature set is the table in `backTesting-02-Features.md` / Design Notes: each row has a status of in the model, selectable (built, off by default; this replaces "data only" for the price-derived indicators, C7), undecided, blocked, or later (paid). The VIX term structure and QQQ against SPY are selectable (F1, F2); the high-yield spread is dropped (F3). Free columns are built first; paid columns wait until the free table works. Column 40 sums members' net income, not EPS (D5). The breadth family carries a survivorship-bias caveat. [DN, F] · *partial (design rows 18 to 20, the options series, have no entry)*
 - **R79** Nothing enters the model as a raw value. Each feature is tagged with its data type and the pipeline picks the method: rolling z-score (bounded, mean-reverting), returns or rolling z-score (drifting), ratio to rolling average (volume), rescale (fixed scale), sine/cosine (calendar). Adding a feature = tag its type. [DN] · *partial (nothing enters raw; but each feature names its method by hand, nothing picks it from a type tag)*
 
@@ -163,7 +163,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 Layers run smallest first, each passing before the next: unit → service → front end → end to end. All in the repo, all in CI.
 
 - **R50** Unit tests: pytest, JUnit, Vitest + React Testing Library. · *partial (G60: no React Testing Library, no component test)*
-- **R61** Python tests in three layers: unit (each parser, year slicing, each indicator against published values, alignment never looks ahead); job (through the jobs table against a test database); reproducibility. · *partial (no job layer; indicators are not checked against published values)*
+- **R61** Python tests in three layers: unit (each parser, year slicing, each indicator against published values, alignment never looks ahead); job (through the jobs table against a test database); reproducibility. · *partial (no job layer; each indicator is checked against a value worked by hand and against the second module, G78, not against a published table)*
 - **R62** Prediction check for NN only: the trained network is exported to ONNX and run in ONNX Runtime by a separate Java compute worker; its predictions are compared with PyTorch's on the same inputs, for every walk-forward fold, within a set tolerance. Differences are warnings. Deeplearning4j is not used. [C4, the author 2026-11-22, replacing "PyTorch only" of 2026-11-19] · *missing (D13)*
 - **R51** Postman collection for every endpoint, mirroring every JUnit case, with an environment per target, run in CI via Newman. Every new endpoint ships with its request and its unit test. · *partial (a request per Node route, enforced by a test; not run in CI by Newman)*
 - **R52** One end-to-end path: CSV drop to trained run to result on screen. · *partial (`tools/datagen/pipeline.py`, by hand, not in CI)*
@@ -180,12 +180,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-90 numbers: 2 retired, 88 live. By the first status on each line: done 23 · partial 45 · missing 16 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
+90 numbers: 2 retired, 88 live. By the first status on each line: done 24 · partial 45 · missing 15 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-10 | 2026-11-22 23:58 | Claude Code (Claude Fable 5.2) | G78: R66 done (TA-Lib through `nn/ta.py`, the hand-written module its cross-check); C5 built; R61's reason and the count follow |
 | 2026-11-22-9 | 2026-11-22 23:36 | Claude Code (Claude Fable 5.2) | R21's reason: the 15 stored runs carry the five rule benchmarks now |
 | 2026-11-22-8 | 2026-11-22 23:25 | Claude Code (Claude Fable 5.2) | G79: the five rule benchmarks are scored on every new run and result; R21's text and reason follow; no status change |
 | 2026-11-22-7 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | G50: a fold keeps its model and scaler. R68 done; the reasons on R25, R34 and R38 follow; the count follows |

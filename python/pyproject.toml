@@ -16,6 +16,9 @@ dependencies = [
     # APIs, so neither needs scikit-learn.
     "xgboost-cpu>=2.1",
     "lightgbm>=4.5",
+    # The one source of technical indicators (R66, G78; nn/ta.py). The wheel
+    # carries the TA-Lib C library, so the image needs nothing installed for it.
+    "TA-Lib>=0.6",
 ]
 
 [project.scripts]

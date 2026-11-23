@@ -15,7 +15,9 @@ same decisions and nobody keeps a second copy of the rules.
 A call is the symbol to hold from the next open, "SPY", or null for cash. A rule
 without enough history before `from` is `available: false` with the reason and
 no calls. `checks` are the data checks of the 10-month average and the 12-month
-return against an independent copy (`data_checks.rule_checks`).
+return against an independent copy (`data_checks.rule_checks`), and of every
+indicator the five rules read, TA-Lib against the hand-written module
+(`data_checks.indicator_checks`, G78).
 """
 
 from __future__ import annotations
@@ -54,7 +56,8 @@ def rule_payload(symbol: str, px: profit.Prices, spy: profit.Prices | None,
                            for c in indicator},
         "bills": None if bills is None else [float(v) for v in bills],
         "checks": [{"name": c.name, "ok": c.ok, "summary": c.summary()}
-                   for c in data_checks.rule_checks(dec, px.closes)],
+                   for c in (*data_checks.rule_checks(dec, px.closes),
+                             *data_checks.indicator_checks(px.closes))],
     }
 
 

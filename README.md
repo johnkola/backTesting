@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-10** · 2026-11-22 23:36 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-11** · 2026-11-22 23:58 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -450,7 +450,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/nn/walkforward` | `strategyId`, `label` | Starts `python -m nn.walkforward --strategy-id N [--label=…]` in the loader and returns `202` with the job. The strategy is checked first: `400` with `reasons` if it cannot run as saved, `404` if it does not exist, `409` while another run is going (one at a time). Validation folds only; the holdout (`--test`) is terminal-only. The run itself lands in `GET /api/walkforward/runs` as the runner records it |
 | `GET /api/nn/walkforward/split` | `strategyId` | A saved strategy's split as a walk-forward run of it makes it (G37), from the runner's own code: its windows (`blocks`, each with the rows of its feature set inside, after its columns' gaps drop bars) and each fold's training and scored spans and rows (`folds`; with early stopping, `earlyStopping` gives the network's fitted span and the year it stops on). `purgeBars` and `windowEnd` say where training is purged and where scoring stops. The Split tab draws it. `400` with `reasons` when the strategy cannot run as saved, `404` when it does not exist. `window` is `{kind, trainYears, stepYears}`: `expanding`, or `sliding` with its years (C6) |
 | `GET /api/nn/walkforward/jobs` | — | `{items, running}` — jobs started since the loader came up, newest first (last 20): `running`, `exitCode`, `runId` once the runner opens its row, and the last 40 lines of output. In memory only; a restart forgets them, and `walkforward_runs` stays the record. A job that ends with `runId: null` was refused or crashed, and its output says which |
-| `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `indicatorRules`, the same for the five indicator rules by name, each with the `settings` it is pinned to (G79); `bills`, the T-bill carry dual momentum's cash earns per bar; and `checks`, the 10-month average and 12-month return against an independent copy. The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
+| `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `indicatorRules`, the same for the five indicator rules by name, each with the `settings` it is pinned to (G79); `bills`, the T-bill carry dual momentum's cash earns per bar; and `checks`, the 10-month average and 12-month return against an independent copy, and each indicator the five rules read, TA-Lib against the hand-written module (G78). The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
 | `GET /api/nn/models/window` | `strategy`, `versionId` | The bars a model version was trained on (B4): `{status, since, until, symbol, source}`, `status` being `known`, `not recorded` or `version gone`. The engine stores it with an nn result |
 | `POST /api/nn/walkforward/runs/:id/recalculate` | `strategyId`, `dryRun` | Rescores a run from its stored per-bar signals, without retraining, in the request (seconds). Engines are blind to costs, tax and margin (D9), so anything the profit step applies can change this way: cost, tax, park, Strategy 2 and its dials, the thresholds. Without `strategyId` the run is rescored at its own settings and its folds rewritten in place, which is what a change to the profit code needs; on unchanged code it reproduces every fold exactly. With `strategyId`, another version of the strategy that trains the same model (same features, windows, label, loss and hyperparameters), it writes a new run linked by `recalculatedFrom`. `dryRun` returns the figures and writes nothing. Returns `{sourceRunId, runId, mode, dryRun, strategy, settings, folds: [{fold, valYear, before, after}]}`. `400` with `reasons` for a model-side difference or a holdout run under other settings, `404` for an unknown run or strategy, `409` for a run still going or one that stored no signals (run before 2026-11-15: rerun it once). The terminal form is `python -m nn.recalculate --run N [--strategy-id M] [--dry-run]` in the loader |
 
@@ -737,6 +737,18 @@ before the window, on a result that is not daily, or without SPY on the source, 
 available, with the reason; it is never computed on fewer months. The Training tab and the
 result page show the strategy and all three benchmarks side by side.
 
+**Where indicators come from** (R66, G78). Every technical indicator is TA-Lib's, read
+through one module, `python/nn/ta.py`: the feature table's RSI, MACD and realized
+volatility, the Run tab network's twelve inputs, Faber's average and the five indicator
+rules below. A bar that does not yet have a full window behind it has no value, so those
+columns are empty on their first 14 to 33 bars. The hand-written `nn/indicators.py`
+computes nothing that is used; it is the second copy TA-Lib is compared with. Every
+walk-forward run prints that comparison as data checks, and `GET /api/nn/rules` returns
+it in `checks`: ten series at 1%, from bar 400 of the history, since the two start a
+series differently and agree once that start has decayed. The TA-Lib version is recorded
+with each feature build and run (`talib` in the library versions). The loader image needs
+nothing extra: the `TA-Lib` wheel carries the C library.
+
 **The five indicator rules beside every run** (R21, G79). The SMA crossover, the triple
 EMA, MACD, RSI and Bollinger bands are scored with every run too, as benchmarks, under
 the same costs and tax. Their settings are pinned in `python/nn/rules.py` and nothing on
@@ -829,14 +841,14 @@ import or a build (C2), and the requirements doc verified against the code
 
 The author's decisions are recorded in
 [`docs/readonly-doc/backTesting-06-Questions-for-John.md`](docs/readonly-doc/backTesting-06-Questions-for-John.md): FirstRate Data is the intraday
-source (2026-11-19). Three answers were replaced on 2026-11-22 and none of them is built
-yet; each has a row in the gap tracker, and the order between them is the author's to set:
+source (2026-11-19). Three answers were replaced on 2026-11-22; each has a row in the gap
+tracker, and the order of what is left is the author's to set:
 
 - The stack moves now, not after phase two: Spring Boot as the single backend, Next.js,
   three schemas with roles, the jobs table (C1, G16).
 - Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (C4, G77).
-- TA-Lib becomes the single source of indicators, with the hand-written module as its
-  cross-check (C5, G78).
+- TA-Lib is the single source of indicators, with the hand-written module as its
+  cross-check (C5, G78): built 2026-11-22.
 - New the same day: an import always lands and the feature build and training hold the
   stop (G75), data repair with a repair log (G76), and the five rule benchmarks
   recalculated on every run (G79).
@@ -1369,6 +1381,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-11 | 2026-11-22 23:58 | Claude Code (Claude Fable 5.2) | Indicators come from TA-Lib through `nn/ta.py` (G78): where they are used, the cross-check, the dependency; roadmap follows |
 | 2026-11-22-10 | 2026-11-22 23:36 | Claude Code (Claude Fable 5.2) | The indicator rules: stored runs carry them, stored backtest results cannot |
 | 2026-11-22-9 | 2026-11-22 23:25 | Claude Code (Claude Fable 5.2) | The five indicator rules as benchmarks on every run (G79): their pinned settings, `indicatorRules` on `GET /api/nn/rules`, the benchmark fields |
 | 2026-11-22-8 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | Walk-forward fold models (G50): where they are kept, `FOLD_MODELS_DIR`, the check and the prune |

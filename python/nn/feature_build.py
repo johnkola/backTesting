@@ -37,16 +37,16 @@ from typing import Any
 
 import psycopg
 
-from nn import data_checks, feature_config, lineage
-from nn.feature_store import (  # noqa: F401 - re-exported
-    DATE_KEYED, UNBUILDABLE_TIMEFRAMES, is_intraday, session_of,
-)
-from nn.feature_store import key_sql as _key_sql
+from nn import data_checks, feature_config, lineage, ta
 from nn import normalize as nz
 from nn.feature_config import Feature, FeatureConfig
-from nn.indicators import macd as macd_series
-from nn.indicators import population_stdev
-from nn.indicators import rsi as rsi_series
+from nn.feature_store import (  # noqa: F401 - re-exported
+    DATE_KEYED,
+    UNBUILDABLE_TIMEFRAMES,
+    is_intraday,
+    session_of,
+)
+from nn.feature_store import key_sql as _key_sql
 
 # Dates are the join key throughout: every series is reduced to {date: value}
 # before anything else happens, because the source series disagree about which
@@ -150,17 +150,24 @@ def _ordered(obs: Observed) -> tuple[list[date], list[float]]:
     return days, [obs[d] for d in days]
 
 
+def _with_values(days: list[date], series: list[float]) -> Observed:
+    """An indicator series as observations: the days it has a value on. A bar
+    inside the indicator's warm-up has none (`nn/ta.py`), so it is left out
+    and the column is NULL there, like any feature before its start (R3)."""
+    return {d: v for d, v in zip(days, series, strict=True) if ta.has_value(v)}
+
+
 def _computed_rsi(cur, spec: dict, cal: list[date], tf: str) -> Observed:
     obs = _fetch_field(cur, spec["symbol"], spec["source"], tf, "close")
     days, closes = _ordered(obs)
-    return dict(zip(days, rsi_series(closes, int(spec.get("period", 14))), strict=True))
+    return _with_values(days, ta.rsi(closes, int(spec.get("period", 14))))
 
 
 def _computed_macd(cur, spec: dict, cal: list[date], tf: str) -> Observed:
     obs = _fetch_field(cur, spec["symbol"], spec["source"], tf, "close")
     days, closes = _ordered(obs)
-    line = macd_series(closes, int(spec.get("short", 12)), int(spec.get("long", 26)))
-    return dict(zip(days, line, strict=True))
+    line, _ = ta.macd(closes, int(spec.get("short", 12)), int(spec.get("long", 26)))
+    return _with_values(days, line)
 
 
 def _computed_realized_vol(cur, spec: dict, cal: list[date], tf: str) -> Observed:
@@ -170,7 +177,7 @@ def _computed_realized_vol(cur, spec: dict, cal: list[date], tf: str) -> Observe
         (closes[i] / closes[i - 1] - 1.0) if closes[i - 1] else 0.0
         for i in range(1, len(closes))
     ]
-    return dict(zip(days, population_stdev(rets, int(spec.get("period", 20))), strict=True))
+    return _with_values(days, ta.stddev(rets, int(spec.get("period", 20))))
 
 
 def _computed_day_of_week(cur, spec: dict, cal: list[date], tf: str) -> Observed:

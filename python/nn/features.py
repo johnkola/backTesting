@@ -15,10 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from nn.indicators import ema, macd, population_stdev, rsi, sma
+from nn import ta
 
 FEATURES_PER_BAR = 12
-FEATURE_SCHEMA_VERSION = 1
+FEATURE_SCHEMA_VERSION = 2
 
 # Indicator periods — pin matches FeatureExtractor.java line 67-80.
 _SMA_SHORT = 10
@@ -171,16 +171,15 @@ def _build_cache(candles: Sequence[Candle]) -> _IndicatorCache:
     closes = [c.close for c in candles]
     volumes = [c.volume for c in candles]
 
-    sma_short = sma(closes, _SMA_SHORT)
-    sma_long = sma(closes, _SMA_LONG)
-    vol_sma = sma(volumes, _VOL_SMA)
-    rsi_v = rsi(closes, _RSI)
-    macd_v = macd(closes, _MACD_SHORT, _MACD_LONG)
-    macd_signal = ema(macd_v, _MACD_SIGNAL)
-    bb_mid = sma(closes, _BB_PERIOD)
-    bb_std = population_stdev(closes, _BB_PERIOD)
-    bb_upper = [m + 2.0 * s for m, s in zip(bb_mid, bb_std, strict=False)]
-    bb_lower = [m - 2.0 * s for m, s in zip(bb_mid, bb_std, strict=False)]
+    # Every indicator from the shared module (R66, G78). A bar inside an
+    # indicator's warm-up has NaN; the longest is SMA(50), and no window
+    # starts before `min_bar_index`, which is past it.
+    sma_short = ta.sma(closes, _SMA_SHORT)
+    sma_long = ta.sma(closes, _SMA_LONG)
+    vol_sma = ta.sma(volumes, _VOL_SMA)
+    rsi_v = ta.rsi(closes, _RSI)
+    macd_v, macd_signal = ta.macd(closes, _MACD_SHORT, _MACD_LONG, _MACD_SIGNAL)
+    bb_lower, _, bb_upper = ta.bollinger(closes, _BB_PERIOD, 2.0)
 
     return _IndicatorCache(
         sma_short=sma_short,

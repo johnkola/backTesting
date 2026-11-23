@@ -45,11 +45,12 @@ Invariants a change must keep:
   and a window whose first bar has none reports the rule as not available,
   with the reason. A partial average would be a different rule.
 
-* **The average uses the shared indicator module** (`indicators.sma`), which
-  is hand-written rather than TA-Lib. R66 asks for TA-Lib as the single
-  source with this module as its cross-check (the author 2026-11-22, D14);
-  that is not built yet. `data_checks.rule_checks` holds the 10-month average and the
-  12-month return to a copy computed independently in pandas.
+* **Every indicator comes from the shared module** (`nn/ta.py`, TA-Lib: R66,
+  the author 2026-11-22, G78), the same one the feature table reads.
+  `data_checks.rule_checks` holds the 10-month average and the 12-month
+  return to a copy computed independently in numpy, and
+  `data_checks.indicator_checks` holds every indicator the rules read to the
+  hand-written `nn/indicators.py`.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ from datetime import date
 
 import numpy as np
 
-from nn import indicators, profit
+from nn import profit, ta
 
 FABER_MONTHS = 10
 MOMENTUM_MONTHS = 12
@@ -94,35 +95,39 @@ def indicator_signals(name: str, closes: list[float],
                       ) -> tuple[int, list[bool], list[bool]]:
     """One indicator rule over a series of closes: (warm-up bars, entry per
     bar, exit per bar). The engine's rule, line for line: each strategy's
-    `getWarmupBars` and `evaluate`. Before the warm-up a bar has neither."""
+    `getWarmupBars` and `evaluate`. Before the warm-up a bar has neither.
+
+    The warm-up is the engine's, and it is never shorter than the bars
+    TA-Lib needs for a first value, so no comparison below reads a bar
+    without one (`tests/test_ta.py` holds that)."""
     p = settings or INDICATOR_SETTINGS[name]
     n = len(closes)
     entry, exit_ = [False] * n, [False] * n
     if name == SMA_CROSSOVER:
-        short = indicators.sma(closes, int(p["shortPeriod"]))
-        long_ = indicators.sma(closes, int(p["longPeriod"]))
+        short = ta.sma(closes, int(p["shortPeriod"]))
+        long_ = ta.sma(closes, int(p["longPeriod"]))
         warm = int(p["longPeriod"]) + 1
         for i in range(warm, n):
             now, was = short[i] > long_[i], short[i - 1] > long_[i - 1]
             entry[i], exit_[i] = now and not was, was and not now
     elif name == EMA_TRIPLE:
-        fast = indicators.ema(closes, int(p["fastPeriod"]))
-        medium = indicators.ema(closes, int(p["mediumPeriod"]))
-        slow = indicators.ema(closes, int(p["slowPeriod"]))
+        fast = ta.ema(closes, int(p["fastPeriod"]))
+        medium = ta.ema(closes, int(p["mediumPeriod"]))
+        slow = ta.ema(closes, int(p["slowPeriod"]))
         warm = int(p["slowPeriod"]) + 1
         for i in range(warm, n):
             aligned = fast[i] > medium[i] > slow[i]
             entry[i] = aligned and not fast[i - 1] > medium[i - 1]
             exit_[i] = not entry[i] and fast[i] < medium[i]
     elif name == MACD:
-        line = indicators.macd(closes, int(p["shortPeriod"]), int(p["longPeriod"]))
-        signal = indicators.ema(line, int(p["signalPeriod"]))
+        line, signal = ta.macd(closes, int(p["shortPeriod"]), int(p["longPeriod"]),
+                               int(p["signalPeriod"]))
         warm = int(p["longPeriod"]) + int(p["signalPeriod"]) + 1
         for i in range(warm, n):
             now, was = line[i] > signal[i], line[i - 1] > signal[i - 1]
             entry[i], exit_[i] = now and not was, was and not now
     elif name == RSI:
-        r = indicators.rsi(closes, int(p["period"]))
+        r = ta.rsi(closes, int(p["period"]))
         low, high = p["oversold"], p["overbought"]
         warm = int(p["period"]) + 1
         for i in range(warm, n):
@@ -130,9 +135,7 @@ def indicator_signals(name: str, closes: list[float],
             exit_[i] = not entry[i] and r[i - 1] < high and r[i] >= high
     elif name == BOLLINGER:
         period, k = int(p["period"]), float(p["deviations"])
-        middle = indicators.sma(closes, period)
-        dev = indicators.population_stdev(closes, period)
-        lower = [m - k * d for m, d in zip(middle, dev, strict=True)]
+        lower, middle, _ = ta.bollinger(closes, period, k)
         warm = period + 1
         for i in range(warm, n):
             entry[i] = closes[i - 1] > lower[i - 1] and closes[i] < lower[i]
@@ -211,7 +214,7 @@ def decide(symbol: str, px: profit.Prices, spy: profit.Prices | None,
     ends = month_ends(days)
     closes = [px.closes[d] for d in ends]
 
-    raw = indicators.sma(closes, FABER_MONTHS)
+    raw = ta.sma(closes, FABER_MONTHS)
     sma = [raw[k] if k >= FABER_MONTHS - 1 else None for k in range(len(ends))]
     faber = [None if a is None else bool(c > a) for c, a in zip(closes, sma, strict=True)]
 

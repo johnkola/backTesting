@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * side (G79).
  *
  * <p>Every walk-forward run scores the five rules as benchmarks, decided by
- * {@code python/nn/rules.py} at pinned settings. The engine keeps its own copy
+ * {@code python/nn/rules.py} at pinned settings, from TA-Lib. The engine keeps its own copy
  * of each rule for the Run tab. Two copies of a rule are two benchmarks unless
  * something holds them together, so {@code crosscheck/indicator-rules.json}
  * carries a series of closes and, per rule, the bars where it enters and
@@ -86,12 +86,15 @@ class IndicatorRulesCrossCheckTest {
         strategy.initialize(series, params);
         assertEquals(rule.get("warmupBars").getAsInt(), strategy.getWarmupBars(), "warm-up bars");
 
-        // Every rule is compared from its first bar except RSI. ta4j starts
-        // Wilder's two averages from zero and nn/indicators.py from the first
-        // change, so the first few dozen bars of a series can differ by an exit;
-        // the start decays by 13/14 a bar and the two agree from then on.
+        // The Python side takes its indicators from TA-Lib (G78), which starts
+        // an EMA or a Wilder average from the first window's mean; ta4j starts
+        // one from the first observation. The two rules built on plain moving
+        // averages are compared from the first bar. The three built on an EMA
+        // or Wilder average can differ by a signal in a series' first bars and
+        // are compared from bar 400, where both starts have decayed.
         int from = rule.get("compareFrom").getAsInt();
-        assertEquals("rsi".equals(name) ? 250 : 0, from, "compared from");
+        boolean plainAverages = name.equals("sma-crossover") || name.equals("bollinger");
+        assertEquals(plainAverages ? 0 : 400, from, "compared from");
         List<Integer> entries = new ArrayList<>();
         List<Integer> exits = new ArrayList<>();
         for (int i = from; i < series.getBarCount(); i++) {

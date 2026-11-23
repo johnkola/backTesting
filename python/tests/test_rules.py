@@ -252,8 +252,8 @@ def test_rsi_buys_the_fall_through_30_and_sells_the_rise_through_70():
     closes = [100.0, 101.0, 100.0, 101.0, 100.0, 96.0, 92.0, 88.0, 84.0,
               90.0, 96.0, 102.0, 108.0, 114.0]
     small = {"period": 3, "overbought": 70, "oversold": 30}
-    from nn import indicators
-    r = indicators.rsi(closes, 3)
+    from nn import ta
+    r = ta.rsi(closes, 3)
     _, entry, exit_ = rules.indicator_signals("rsi", closes, small)
     for i in range(4, len(closes)):
         assert entry[i] == (r[i - 1] > 30 and r[i] <= 30)
@@ -289,7 +289,6 @@ def test_a_window_inside_a_rule_s_warm_up_is_not_available():
 
 def test_an_indicator_rule_s_cash_earns_the_run_s_park_not_t_bills():
     px = history([100.0 + 3 * k for k in range(14)])
-    dec = rules.decide("QQQ", px, None, None)
     dates = sorted(px.closes)[220:240]
     m = profit.market(px, dates, profit.next_dates(dates), None, "cash")
     s = profit.Settings(loss="ce", cost_bps=5.0)
@@ -323,7 +322,10 @@ def test_python_and_the_engine_agree_on_every_entry_and_exit():
     assert fixture_now() == f["rules"]
     for name, r in f["rules"].items():
         start = r["compareFrom"]
-        assert start == (250 if name == "rsi" else 0)
+        # The two built on plain moving averages are compared from the first
+        # bar; the three on an EMA or Wilder average from where TA-Lib's start
+        # and ta4j's have decayed (`ta.SETTLE_BARS`).
+        assert start == (0 if name in ("sma-crossover", "bollinger") else 400)
         # Not a vacuous check: several of each on the bars the engine is held to.
         assert sum(i >= start for i in r["entries"]) >= 2, name
         assert sum(i >= start for i in r["exits"]) >= 2, name

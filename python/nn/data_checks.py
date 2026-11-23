@@ -334,3 +334,67 @@ def rule_checks(dec, closes: dict[date, float]) -> list[CheckResult]:
         compare(Check("dual momentum 12-month return", "dual_momentum", {}, tolerance=1e-12),
                 ends, dec.r12, as_list(r12)),
     ]
+
+
+def indicator_checks(closes: dict[date, float]) -> list[CheckResult]:
+    """R66, R55 (G78): every indicator the rule benchmarks read, from the
+    shared TA-Lib module, against the hand-written `nn/indicators.py`.
+
+    The two share no code: one is TA-Lib's C, the other plain Python written
+    to match ta4j. They start a series differently (TA-Lib from the first full
+    window's mean, the other from the first observation), so they are compared
+    from `ta.SETTLE_BARS` on, where both starts have decayed, at R55's 1%. Each
+    value is divided by its scale first (itself, the price for a MACD line,
+    100 for an RSI), so one tolerance reads the same for all of them.
+
+    A history shorter than that has nothing to compare and gets no check,
+    rather than one that says it compared nothing."""
+    from nn import indicators as hand
+    from nn import rules, ta
+    from nn.feature_config import Check
+
+    days = sorted(closes)
+    if len(days) <= ta.SETTLE_BARS:
+        return []
+    c = [closes[d] for d in days]
+    s = rules.INDICATOR_SETTINGS
+    macd_s = s[rules.MACD]
+    line, signal = ta.macd(c, int(macd_s["shortPeriod"]), int(macd_s["longPeriod"]),
+                           int(macd_s["signalPeriod"]))
+    hand_line = hand.macd(c, int(macd_s["shortPeriod"]), int(macd_s["longPeriod"]))
+    boll = s[rules.BOLLINGER]
+    lower, middle, _ = ta.bollinger(c, int(boll["period"]), float(boll["deviations"]))
+    hand_mid = hand.sma(c, int(boll["period"]))
+    hand_dev = hand.population_stdev(c, int(boll["period"]))
+    pairs: list[tuple[str, list[float], list[float], list[float] | float | None]] = [
+        (f"SMA {int(p)}", ta.sma(c, int(p)), hand.sma(c, int(p)), None)
+        for p in (s[rules.SMA_CROSSOVER]["shortPeriod"], s[rules.SMA_CROSSOVER]["longPeriod"])
+    ] + [
+        (f"EMA {int(p)}", ta.ema(c, int(p)), hand.ema(c, int(p)), None)
+        for p in s[rules.EMA_TRIPLE].values()
+    ] + [
+        ("MACD line", line, hand_line, c),
+        ("MACD signal", signal, hand.ema(hand_line, int(macd_s["signalPeriod"])), c),
+        (f"RSI {int(s[rules.RSI]['period'])}", ta.rsi(c, int(s[rules.RSI]["period"])),
+         hand.rsi(c, int(s[rules.RSI]["period"])), 100.0),
+        ("Bollinger middle", middle, hand_mid, None),
+        ("Bollinger lower", lower,
+         [m - float(boll["deviations"]) * d for m, d in zip(hand_mid, hand_dev, strict=True)],
+         None),
+    ]
+
+    def scaled(series: list[float], lib: list[float], scale) -> list[float | None]:
+        out: list[float | None] = []
+        for i, v in enumerate(series):
+            by = abs(lib[i]) if scale is None else (scale if isinstance(scale, float)
+                                                    else abs(scale[i]))
+            out.append(None if not ta.has_value(v) or not ta.has_value(by) or by == 0.0
+                       else v / by)
+        return out
+
+    return [
+        compare(Check(f"{name}: TA-Lib against the hand-written module", "indicators", {},
+                      tolerance=ta.CROSS_CHECK_TOLERANCE, warmup_days=ta.SETTLE_BARS),
+                days, scaled(lib, lib, scale), scaled(other, lib, scale))
+        for name, lib, other, scale in pairs
+    ]

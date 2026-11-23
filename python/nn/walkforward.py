@@ -1527,7 +1527,8 @@ def main(argv: list[str] | None = None) -> int:
             line += (f"; {f.name} {f.return_pct:+.2f}%" if f.available
                      else f"; {f.name} not available")
         print(line)
-    for check in data_checks.rule_checks(decisions, rule_closes):
+    for check in (*data_checks.rule_checks(decisions, rule_closes),
+                  *data_checks.indicator_checks(rule_closes)):
         print(f"data check   {check.summary()}")
     print(header_line())
     results: list[FoldResult] = []

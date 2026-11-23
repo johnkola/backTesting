@@ -154,6 +154,13 @@ def lib_versions() -> dict[str, str]:
         out["psycopg"] = psycopg.__version__
     except ImportError:
         pass
+    # The indicator library (R66, G78): a build's RSI and a run's benchmarks
+    # are its figures.
+    try:
+        import talib  # noqa: PLC0415
+        out["talib"] = str(talib.__version__)
+    except ImportError:
+        pass
     # The tree engines' libraries (B9), when installed.
     for name in ("xgboost", "lightgbm"):
         with contextlib.suppress(ImportError):
