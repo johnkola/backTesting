@@ -729,7 +729,7 @@ def run_fold(
 
 def score_rules(decisions: rules.Decisions, dates: list[date], m: profit.Market,
                 s: profit.Settings, symbol: str) -> tuple:
-    """Faber and dual momentum over a fold's bars (B7), with the run's costs."""
+    """Every rule benchmark over a fold's bars (B7, G79), with the run's costs."""
     return tuple(profit.score_rule(c.name, c.calls if c.available else None, c.reason, m, s,
                                    symbol)
                  for c in rules.window_calls(decisions, dates))
@@ -951,8 +951,10 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
     # Faber and dual momentum beside it (B7), under the same costs and tax.
     print(f"\nBENCHMARKS   mean return a fold, same costs and tax:  strategy "
           f"{mean_return:+.2f}%  buy & hold {mean_hold_return:+.2f}%", end="")
-    for name in (rules.FABER, rules.DUAL_MOMENTUM):
+    for name in rules.ALL_RULES:
         figs = [f for r in results for f in r.rules if f.name == name]
+        if name == rules.INDICATOR_RULES[0]:
+            print("\n             the five indicator rules, pinned settings:", end="")
         if figs and all(f.available for f in figs):
             print(f"  {name} {np.mean([f.return_pct for f in figs]):+.2f}%", end="")
         elif figs:

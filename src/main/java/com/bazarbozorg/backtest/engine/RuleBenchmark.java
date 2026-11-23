@@ -22,7 +22,8 @@ import java.util.List;
  * loader could not serve the decisions. Its figures are then null: a rule is
  * never computed on fewer months or reported as a zero.
  *
- * @param name      {@code faber} or {@code dual_momentum}
+ * @param name      {@code faber}, {@code dual_momentum}, or one of the five indicator
+ *                  rules ({@code BacktestEngine.INDICATOR_RULES}, G79)
  * @param metrics   the same metrics the strategy gets, over the same bars
  * @param equity    one value per point of the strategy's equity history
  */

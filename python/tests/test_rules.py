@@ -7,7 +7,9 @@ costs and tax, checked against an independent copy by
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -58,7 +60,7 @@ class TestFaber:
     def test_a_window_before_ten_month_ends_is_not_available(self):
         px = history([100.0] * 12)
         dec = rules.decide("QQQ", px, None, None)
-        faber, _ = rules.window_calls(dec, [dec.month_ends[5]])
+        faber, *_ = rules.window_calls(dec, [dec.month_ends[5]])
         assert not faber.available and "10 month-end closes" in faber.reason
 
     def test_a_bar_takes_the_latest_month_end_decision(self):
@@ -66,7 +68,7 @@ class TestFaber:
         dec = rules.decide("QQQ", px, None, None)
         # The day after the 11th month end (cash) and the 11th month end itself.
         after = min(d for d in px.closes if d > dec.month_ends[10])
-        faber, _ = rules.window_calls(dec, [dec.month_ends[10], after, dec.month_ends[11]])
+        faber, *_ = rules.window_calls(dec, [dec.month_ends[10], after, dec.month_ends[11]])
         assert faber.calls == [None, None, "QQQ"]
 
 
@@ -103,7 +105,7 @@ class TestDualMomentum:
     def test_without_spy_or_t_bills_there_is_no_decision(self):
         px = history([100.0] * 13)
         dec = rules.decide("QQQ", px, None, None)
-        _, momentum = rules.window_calls(dec, [dec.month_ends[12]])
+        _, momentum, *_ = rules.window_calls(dec, [dec.month_ends[12]])
         assert not momentum.available and "SPY and T-bills" in momentum.reason
 
 
@@ -204,5 +206,124 @@ def test_the_runner_scores_both_rules_over_a_fold():
     dates = sorted(d for d in px.closes if d > dec.month_ends[12])[:8]
     m = profit.market(px, dates, profit.next_dates(dates), None, "cash", spy=spy, dtb3=dtb3)
     figs = wf.score_rules(dec, dates, m, profit.Settings(loss="ce", cost_bps=5.0), "QQQ")
-    assert [f.name for f in figs] == [rules.FABER, rules.DUAL_MOMENTUM]
-    assert all(f.available and f.trades >= 1 for f in figs)
+    assert [f.name for f in figs] == list(rules.ALL_RULES)
+    assert all(f.available and f.trades >= 1 for f in figs[:2])
+
+
+# --------------------------------------------------------------------------
+# The five indicator rules (G79)
+# --------------------------------------------------------------------------
+
+FIXTURE = Path(__file__).parents[2] / "src/test/resources/crosscheck/indicator-rules.json"
+
+
+def test_the_five_rules_are_pinned_to_these_settings():
+    """R21 (the author 2026-11-22): each pinned to its standard published
+    settings. A change here changes every run's benchmark, so it is a decision."""
+    assert rules.INDICATOR_SETTINGS == {
+        "sma-crossover": {"shortPeriod": 50, "longPeriod": 200},
+        "ema-triple": {"fastPeriod": 5, "mediumPeriod": 13, "slowPeriod": 34},
+        "macd": {"shortPeriod": 12, "longPeriod": 26, "signalPeriod": 9},
+        "rsi": {"period": 14, "overbought": 70, "oversold": 30},
+        "bollinger": {"period": 20, "deviations": 2.0},
+    }
+    assert rules.ALL_RULES == ("faber", "dual_momentum", "sma-crossover", "ema-triple",
+                               "macd", "rsi", "bollinger")
+
+
+def test_a_crossover_enters_on_the_cross_and_leaves_on_the_cross_back():
+    # 3 over 5: flat, then a rise lifts the short average over the long one,
+    # then a fall takes it back under.
+    closes = [10.0] * 7 + [11.0, 12.0, 13.0, 14.0, 13.0, 11.0, 9.0, 8.0, 8.0]
+    small = {"shortPeriod": 3, "longPeriod": 5}
+    warm, entry, exit_ = rules.indicator_signals("sma-crossover", closes, small)
+    assert warm == 6
+    assert [i for i, e in enumerate(entry) if e] == [7]
+    # Bar 12: the short average (14, 13, 11) is 12.67, still over the long 12.6.
+    # Bar 13: (13, 11, 9) is 11, under the long 12.
+    assert [i for i, e in enumerate(exit_) if e] == [13]
+    held = rules.indicator_holdings("sma-crossover", closes, small)
+    assert held[:6] == [None] * 6                 # nothing inside the warm-up
+    assert held[6] is False                       # flat until the first entry
+    assert held[7:13] == [True] * 6 and held[13:] == [False] * 3
+
+
+def test_rsi_buys_the_fall_through_30_and_sells_the_rise_through_70():
+    closes = [100.0, 101.0, 100.0, 101.0, 100.0, 96.0, 92.0, 88.0, 84.0,
+              90.0, 96.0, 102.0, 108.0, 114.0]
+    small = {"period": 3, "overbought": 70, "oversold": 30}
+    from nn import indicators
+    r = indicators.rsi(closes, 3)
+    _, entry, exit_ = rules.indicator_signals("rsi", closes, small)
+    for i in range(4, len(closes)):
+        assert entry[i] == (r[i - 1] > 30 and r[i] <= 30)
+        assert exit_[i] == (not entry[i] and r[i - 1] < 70 and r[i] >= 70)
+    assert any(entry) and any(exit_)
+    held = rules.indicator_holdings("rsi", closes, small)
+    first_in, first_out = entry.index(True), exit_.index(True)
+    assert first_in < first_out
+    assert held[first_in] is True and held[first_out] is False
+
+
+def test_an_entry_while_holding_and_an_exit_while_flat_do_nothing(monkeypatch):
+    def fake(name, closes, settings=None):
+        return 1, [False, True, True, False, False, True], [False, False, False, True, True, False]
+    monkeypatch.setattr(rules, "indicator_signals", fake)
+    assert rules.indicator_holdings("rsi", [0.0] * 6) == [None, True, True, False, False, True]
+
+
+def test_a_window_inside_a_rule_s_warm_up_is_not_available():
+    px = history([100.0 + k for k in range(14)])      # about 290 daily bars
+    dec = rules.decide("QQQ", px, None, None)
+    days = sorted(px.closes)
+    by_name = {c.name: c for c in rules.window_calls(dec, days[150:160])}
+    assert not by_name["sma-crossover"].available     # needs 201 closes
+    assert "201 daily closes of QQQ" in by_name["sma-crossover"].reason
+    assert "never computed on fewer days" in by_name["sma-crossover"].reason
+    for name in ("ema-triple", "macd", "rsi", "bollinger"):
+        assert by_name[name].available, name
+        assert set(by_name[name].calls) <= {"QQQ", None}
+    late = {c.name: c for c in rules.window_calls(dec, days[210:220])}
+    assert late["sma-crossover"].available
+
+
+def test_an_indicator_rule_s_cash_earns_the_run_s_park_not_t_bills():
+    px = history([100.0 + 3 * k for k in range(14)])
+    dec = rules.decide("QQQ", px, None, None)
+    dates = sorted(px.closes)[220:240]
+    m = profit.market(px, dates, profit.next_dates(dates), None, "cash")
+    s = profit.Settings(loss="ce", cost_bps=5.0)
+    fig = profit.score_rule("rsi", [None] * len(dates), None, m, s, "QQQ")
+    assert fig.available and fig.return_pct == 0.0 and fig.trades == 0
+    # Dual momentum's cash is T-bills, which this market does not have.
+    assert not profit.score_rule("dual_momentum", [None] * len(dates), None, m, s,
+                                 "QQQ").available
+
+
+def fixture_now() -> dict:
+    """What the Python side says about the shared fixture's closes."""
+    f = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    out = {}
+    for name in rules.INDICATOR_RULES:
+        warm, entry, exit_ = rules.indicator_signals(name, f["closes"])
+        out[name] = {"settings": rules.INDICATOR_SETTINGS[name], "warmupBars": warm,
+                     "entries": [i for i, e in enumerate(entry) if e],
+                     "exits": [i for i, e in enumerate(exit_) if e],
+                     # Where the engine is compared from; this side has no say in it.
+                     "compareFrom": f["rules"][name]["compareFrom"]}
+    return out
+
+
+def test_python_and_the_engine_agree_on_every_entry_and_exit():
+    """`crosscheck/indicator-rules.json` holds closes and, per rule, the bars
+    where it enters and exits. This side recomputes them from `nn/rules.py`;
+    `IndicatorRulesCrossCheckTest` recomputes them from the engine's own
+    strategies. Two copies of a rule that drift apart fail one of the two."""
+    f = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert fixture_now() == f["rules"]
+    for name, r in f["rules"].items():
+        start = r["compareFrom"]
+        assert start == (250 if name == "rsi" else 0)
+        # Not a vacuous check: several of each on the bars the engine is held to.
+        assert sum(i >= start for i in r["entries"]) >= 2, name
+        assert sum(i >= start for i in r["exits"]) >= 2, name

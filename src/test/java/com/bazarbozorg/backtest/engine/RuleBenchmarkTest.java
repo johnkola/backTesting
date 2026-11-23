@@ -124,12 +124,49 @@ class RuleBenchmarkTest {
     }
 
     @Test
+    @DisplayName("the five indicator rules are scored beside the two, in order, from the same payload")
+    void indicatorRulesAreScoredToo() {
+        String no = "{\"available\":false,\"reason\":\"x\"}";
+        String held = "{\"available\":true,\"calls\":[\"QQQ\",\"QQQ\",null,\"QQQ\",\"QQQ\"],"
+                + "\"settings\":{\"period\":14}}";
+        String early = "{\"available\":false,\"reason\":\"needs 201 daily closes of QQQ\"}";
+        String json = body(no, no, "[0.001,0.001,0.001,0.001,0.001]");
+        json = json.substring(0, json.length() - 1) + ",\"indicatorRules\":{\"rsi\":" + held
+                + ",\"sma-crossover\":" + early + "}}";
+        List<RuleBenchmark> all = score(json, 0.0);
+        assertEquals(List.of("faber", "dual_momentum", "sma-crossover", "ema-triple", "macd",
+                "rsi", "bollinger"), all.stream().map(RuleBenchmark::name).toList());
+        RuleBenchmark rsi = all.get(5);
+        assertTrue(rsi.available());
+        // Traded exactly as Faber is on the same calls, and its cash earns nothing.
+        assertEquals(CAPITAL * 102 / 101 * 106 / 104, rsi.finalEquity(), 1e-9);
+        assertEquals(2, rsi.trades().size());
+        assertEquals("needs 201 daily closes of QQQ", all.get(2).reason());
+        // A rule the loader's payload does not carry is not available, never a zero.
+        assertFalse(all.get(4).available());
+        assertTrue(all.get(4).reason().contains("did not serve"));
+        assertNull(all.get(4).metrics());
+    }
+
+    @Test
+    @DisplayName("a payload from before the indicator rules still scores the two")
+    void anOlderPayloadStillScoresTheTwo() {
+        String faber = "{\"available\":true,\"calls\":[\"QQQ\",\"QQQ\",null,\"QQQ\",\"QQQ\"]}";
+        List<RuleBenchmark> all = score(body(faber, "{\"available\":false,\"reason\":\"x\"}", "null"), 0.0);
+        assertEquals(7, all.size());
+        assertTrue(all.get(0).available());
+        assertTrue(all.subList(2, 7).stream().noneMatch(RuleBenchmark::available));
+    }
+
+    @Test
     @DisplayName("a result that is not daily has no month ends to decide on")
     void notDailyIsNotAvailable() {
         BacktestEngine engine = new BacktestEngine(null, new FixedCommission(0.0),
                 new PercentageSlippage(0.0), CAPITAL);
         List<RuleBenchmark> r = engine.ruleBenchmarks(QQQ, Timeframe.H1, 0, null, null);
-        assertFalse(r.get(0).available());
+        assertEquals(7, r.size());
+        assertTrue(r.stream().noneMatch(RuleBenchmark::available));
         assertTrue(r.get(1).reason().contains("daily bars"));
+        assertTrue(r.get(6).reason().contains("daily bars"));
     }
 }

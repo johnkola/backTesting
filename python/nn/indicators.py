@@ -53,7 +53,14 @@ def rsi(values: Sequence[float], period: int) -> list[float]:
 
     Seeded at i=1 with the first observation. For i=0 TA4J returns 0,
     matched here so the normalized RSI feature is well-defined.
-    Returns values in [0, 100]."""
+    Returns values in [0, 100].
+
+    Not bit for bit with ta4j 0.18 on a series' first bars (found by G79's
+    cross-check, 2026-11-22): ta4j starts both averages from zero, so its
+    value at i=1 is the first change over `period`, not the first change.
+    The difference decays by (period-1)/period a bar; with 14 it is gone
+    within a few dozen bars, and `crosscheck/indicator-rules.json` holds the
+    two to the same RSI crossings from bar 250 on."""
 
     if not values:
         return []

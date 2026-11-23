@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-7** · 2026-11-22 23:01 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-8** · 2026-11-22 23:25 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -92,7 +92,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## D. Strategy
 
-- **R21** One strategy covers all engines. Instrument, timeframe, windows, features, prediction target and the shared cost/tax panel are set once; each engine has its own settings section and on/off switch, and may override the feature list. One run trains and tests every enabled engine and computes the three benchmarks. Storage: shared settings on the strategy version, one child row per engine; each run links to the exact strategy version and stores one result per engine and per benchmark. No rule-based strategy types; the five indicator rules are kept runnable as rule benchmarks only [C8, the author 2026-11-19], each pinned to its standard published settings and recalculated on every run under the same costs and tax [the author 2026-11-22; not built]. · *partial (B9 done; the per-engine feature override is not built, G70)*
+- **R21** One strategy covers all engines. Instrument, timeframe, windows, features, prediction target and the shared cost/tax panel are set once; each engine has its own settings section and on/off switch, and may override the feature list. One run trains and tests every enabled engine and computes the three benchmarks. Storage: shared settings on the strategy version, one child row per engine; each run links to the exact strategy version and stores one result per engine and per benchmark. No rule-based strategy types; the five indicator rules are kept runnable as rule benchmarks only [C8, the author 2026-11-19], each pinned to its standard published settings and recalculated on every run under the same costs and tax [the author 2026-11-22; built 2026-11-22, G79: 50/200, 5/13/34, 12/26/9, 14 with 30/70, 20 with 2; the triple EMA's settings are the engine's own, for the author to confirm]. · *partial (B9 done; the five rule benchmarks are scored on every new run and result, G79, and stored ones have none until recalculated; the per-engine feature override is not built, G70)*
 - **R22** Engine types and options come from what the backend registers; the UI cannot offer an unrunnable combination. · *partial (G54 done; label kinds and losses are copied lists held by a test, and two runner refusals are not asked at save)*
 - **R23** Adding an engine type = new code + its settings section + its catalogue entry (R74); existing engines untouched. · *done (B9)*
 - **R24** Every strategy has instrument, timeframe and a start–end data range. · *done*
@@ -186,6 +186,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-8 | 2026-11-22 23:25 | Claude Code (Claude Fable 5.2) | G79: the five rule benchmarks are scored on every new run and result; R21's text and reason follow; no status change |
 | 2026-11-22-7 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | G50: a fold keeps its model and scaler. R68 done; the reasons on R25, R34 and R38 follow; the count follows |
 | 2026-11-22-6 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | The lines changed on 2026-11-22-5 verified against the code at `65d71fc`: no status changes. R12's reason says the import still refuses on an error (G75); R3's says closed days are not counted as missing, unscheduled closures included (G80). "Deferred" is no longer used by any line |
 | 2026-11-22-5 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22: C1 the stack moves now (R6, R33, R48, R60, R67, R70 no longer deferred); C4 R62 becomes an ONNX Runtime check, Deeplearning4j stays out; C5 TA-Lib is the single source and the hand-written module the cross-check (R66); R89 data repair and R90 (parked) added; R3, R12 and R21 clarified. Brought from the Google Drive doc set, the source of truth; these lines were not re-verified against the code |

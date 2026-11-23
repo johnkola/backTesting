@@ -9,7 +9,7 @@ the way it trades a strategy's signals, so both sides of the stack score the
 same decisions and nobody keeps a second copy of the rules.
 
   200 {symbol, dates, faber: {available, reason, calls}, dualMomentum: {...},
-       bills, checks}
+       indicatorRules: {name: {available, reason, calls, settings}}, bills, checks}
   400 a bad date or a timeframe other than D1; 404 no candles for the series.
 
 A call is the symbol to hold from the next open, "SPY", or null for cash. A rule
@@ -37,7 +37,7 @@ def rule_payload(symbol: str, px: profit.Prices, spy: profit.Prices | None,
     """The route's body, without a database. Pure."""
     dec = rules.decide(symbol, px, spy, dtb3)
     dates = [d for d in sorted(px.closes) if start <= d <= end]
-    faber, momentum = rules.window_calls(dec, dates)
+    faber, momentum, *indicator = rules.window_calls(dec, dates)
     bills = profit.park_returns(dtb3, dates, profit.next_dates(dates), "bills") if dtb3 else None
 
     def rule(c: rules.Calls) -> dict[str, Any]:
@@ -49,6 +49,9 @@ def rule_payload(symbol: str, px: profit.Prices, spy: profit.Prices | None,
         "dates": [d.isoformat() for d in dates],
         "faber": rule(faber),
         "dualMomentum": rule(momentum),
+        # The five indicator rules (G79), by name, with the settings they are pinned to.
+        "indicatorRules": {c.name: {**rule(c), "settings": rules.INDICATOR_SETTINGS[c.name]}
+                           for c in indicator},
         "bills": None if bills is None else [float(v) for v in bills],
         "checks": [{"name": c.name, "ok": c.ok, "summary": c.summary()}
                    for c in data_checks.rule_checks(dec, px.closes)],

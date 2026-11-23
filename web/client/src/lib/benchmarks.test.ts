@@ -62,3 +62,28 @@ describe('resultBenchmarkRows (B7)', () => {
     expect(d.note).toMatch(/before the rule benchmarks/)
   })
 })
+
+describe('the five indicator rules (G79)', () => {
+  const rsi: FoldBenchmark = { ...faber, name: 'rsi', returnPct: 3 }
+  const sma: FoldBenchmark = { name: 'sma-crossover', available: false,
+    reason: 'needs 201 daily closes of QQQ', returnPct: null, sharpe: null, maxdd: null,
+    trades: null, barsHeld: null, commissions: null, gainsTax: null }
+
+  it('are listed after the two, in the loader\'s order, once a run scored any of them', () => {
+    const rows = foldBenchmarkRows([fold({}, [faber, momentumOff, sma, rsi])])
+    expect(rows.map((r) => r.key)).toEqual(['strategy', 'buy_and_hold', 'faber', 'dual_momentum',
+      'sma-crossover', 'ema-triple', 'macd', 'rsi', 'bollinger'])
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]))
+    expect(byKey.rsi.label).toBe('RSI 14, 30/70')
+    expect(byKey.rsi.returnPct).toBe(3)
+    expect(byKey['sma-crossover'].note).toBe('Fold 1: needs 201 daily closes of QQQ')
+    expect(byKey['sma-crossover'].returnPct).toBeNull()
+    // Scored for none of the folds: said, never a zero.
+    expect(byKey.macd.note).toBe('Not scored for fold 1.')
+  })
+
+  it('are left out of a run stored before them', () => {
+    const rows = foldBenchmarkRows([fold({}, [faber, momentumOff])])
+    expect(rows).toHaveLength(4)
+  })
+})

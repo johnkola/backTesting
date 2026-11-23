@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-22-13** · 2026-11-22 23:01 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-15** · 2026-11-22 23:25 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -106,7 +106,7 @@ stored run.
 | G76 | Data repair is not built: no adjusted table, no candidates (second source, calculated, hand-entered), no automatic apply when the first two agree within the R55 thresholds, no repair log | R89, R63, R55 | no `repair` table or module; `candles` is one table | none until built; a repair then changes what features read, so the sets and runs downstream follow the stale-records rule | L | open: depends on the raw and adjusted tables (G52, R63) and a second source (G9b) |
 | G77 | The ONNX Runtime prediction check is not built: nothing exports a trained network to ONNX, and no Java compute worker runs it and compares with PyTorch per fold | R62, D13 | no `onnx` dependency in `python/` or `build.gradle`; `engines.py` says so in the catalogue | none | M | open; a fold has to keep its model first (G50) |
 | G78 | Indicators are hand-written, not TA-Lib. TA-Lib is to be the single source for features and benchmarks, with `nn/indicators.py` kept only as the cross-check | R66, D14, R55 | `nn/indicators.py`; no `talib` dependency | every set's RSI, MACD, moving-average and Bollinger columns and the five rule benchmarks, wherever TA-Lib's figures differ (warm-up and smoothing seeds); those sets and runs follow the stale-records rule | M | open: measure the differences on stored data first, read-only, before anything is rebuilt |
-| G79 | The five rule benchmarks are not part of a run. Each is to be pinned to its standard published settings and recalculated on every run under the run's costs and tax; today a run's benchmark set is buy-and-hold, Faber and dual momentum, and the five run only from the Run tab | R21, R36 | `walkforward.score_rules`, `nn/rules.py`; `StrategyRegistry.Kind.BENCHMARK` | none: stored runs gain rows on recalculation | M | open |
+| G79 | The five rule benchmarks are not part of a run. Each is to be pinned to its standard published settings and recalculated on every run under the run's costs and tax; today a run's benchmark set is buy-and-hold, Faber and dual momentum, and the five run only from the Run tab | R21, R36 | `walkforward.score_rules`, `nn/rules.py`; `StrategyRegistry.Kind.BENCHMARK` | none: stored runs gain rows on recalculation | M | built 2026-11-22 for new runs and results (steps 79.1 to 79.6); the 15 stored runs and 21 stored results have no line for the five until recalculated, which waits for the author (79.7) |
 | G80 | A closure nobody scheduled was counted as a missing day: 9/11 (four sessions), Hurricane Sandy (two) and the days of mourning of 1994, 2004, 2007, 2018 and 2025. R3 as clarified on 2026-11-22: a day the exchange is closed is never counted as missing | R3 | `loader/market_calendar.py` `missing_trading_days` | none: gap findings are warnings and are recomputed | S | done 2026-11-22: `UNSCHEDULED_CLOSURES` and `is_closed`, used by the gap count and the lag count only. The holiday feature still reads scheduled holidays alone (`next_scheduled_session`), since nobody knew these the day before; a test holds both |
 
 **G46 plan, 2026-11-15.** The author: fix G46 first. A slice is its archive path (source, symbol, year, timeframe), and its newest audit row is what is stored.
@@ -1042,6 +1042,37 @@ Each piece of new work above has a gap row since revision 2026-11-22-12: G16 (th
 *E. No longer deferred: the author's answer to C1 of 2026-11-22 is to move now (it was "after phase two works on real data"); the order is his to set.* G16, the Spring Boot move, and the large pieces that depend on it or on which requirements the author keeps: G51 (data verification as designed), G52 (a raw series table at native cadence), G53 (separate cost items, superficial loss, dividends, currency), G56 (instrument-agnostic), G58 (one Train & Run tab), G60 (the testing layers; *checked*: no React Testing Library, no Newman in CI), G61 (lineage hops), G10 (the Verify tab), G13 (the shared table).
 
 *Gated by the design.* G65 (signal voting) and G18 (live sentiment).
+
+**G79 steps: the five rule benchmarks on every run (R21, the author 2026-11-22), M. Written 2026-11-22 23:09.**
+
+What the answer means in the code: a run's benchmark set grows from three (buy-and-hold, Faber, dual momentum) to eight. Each of the five indicator rules is decided once over the instrument's daily history with fixed settings, traded by the same profit step as Faber under the run's costs and tax, and stored per fold beside them. Nobody sets them up and no strategy can change them.
+
+The settings, pinned in `nn/rules.py`. Three are the engine's defaults today and are the published standard; one changes; one has no single published standard:
+
+| Rule | Pinned settings | Source | Engine default today |
+|---|---|---|---|
+| `sma-crossover` | 50 and 200 days | the golden cross and death cross | 10 and 50: **differs** |
+| `ema-triple` | 5, 13 and 34 days | no single standard; the engine's own, **the author's to confirm** | the same |
+| `macd` | 12, 26, signal 9 | Appel | the same |
+| `rsi` | 14 days, buy at 30, sell at 70 | Wilder | the same |
+| `bollinger` | 20 days, 2 deviations | Bollinger | the same |
+
+The rule of each is the engine's, line for line (`strategy/impl/*.java`): the Python side decides, the engine keeps its own copy for the Run tab, and a test holds the two to the same entries and exits. Cash earns what the strategy's idle money earns, as Faber's does. A window whose first bar is inside a rule's warm-up reports the rule as not available, never a figure on fewer bars. Position at a window's start is the rule's own state from the history before it, as Faber's is.
+
+- [x] 79.1 `nn/rules.py`: the five rules decided over the daily history with the pinned settings, from `nn/indicators.py`; unit tests on hand-built series for each entry and exit. *Done 2026-11-22: `INDICATOR_SETTINGS`, `indicator_signals`, `indicator_holdings`*
+- [x] 79.2 `window_calls` and `score_rule` carry all seven; a fold stores eight benchmark lines; the run's report prints them; `nn.recalculate` rescoring a run gives the same. *Done: the dry-run recalculation of the check run printed the same seven figures*
+- [x] 79.3 The same decisions against the Java rule over the same bars: equal entries and exits, as a test. *Done: `crosscheck/indicator-rules.json` (2,000 closes), held by `test_rules.py` and `IndicatorRulesCrossCheckTest`. Four rules agree on every bar. RSI agrees from bar 250: see the first finding below*
+- [x] 79.4 `GET /api/nn/rules` serves the five; the engine scores them on a Run-tab backtest beside Faber and dual momentum. *Done: `indicatorRules` in the payload, `BacktestEngine.INDICATOR_RULES`*
+- [x] 79.5 The client shows them: the benchmark table of a walk-forward run and of a backtest result. *Done in `lib/benchmarks.ts`, each labelled with its settings; listed only where at least one was scored. Not looked at in a browser. The result chart still draws buy-and-hold, Faber and dual momentum only*
+- [x] 79.6 Live check on one run; tests; containers rebuilt. *Done: Python 1,028, Java 190, client 246, API 133. A two-fold run on the live data (1246, deleted after) stored seven rule lines a fold, served by `GET /api/walkforward/runs/:id`; the 50/200 crossover held all of 2021 and returned buy-and-hold's +31.38% exactly. A Run-tab backtest (result 1061, deleted after) carried all seven*
+- [ ] 79.7 **STOP.** The 15 stored runs and the stored backtest results have no rows for the five. A recalculation adds them without retraining. Needs the author's go
+- [x] 79.8 Docs: README, the requirements doc (R21), this tracker, the Postman assertions. *Done 2026-11-22*
+
+Found while building it, not changed:
+
+- `nn/indicators.py` says its RSI matches ta4j bit for bit. It does not on a series' first bars: ta4j 0.18 starts Wilder's two averages from zero, the Python module from the first change. On the fixture the engine exits at bars 18, 33 and 41 where Python does not, and the two agree from then on. No run window is near an instrument's first 250 bars, so no stored figure is affected; the docstring now says so. G78 (TA-Lib) replaces both seeds with a third.
+- The triple EMA as the engine wrote it enters only on the day the fast average crosses the medium while the medium is already over the slow. It was in QQQ for 129 of 505 bars in 2020 and 2021 and returned +4.13% a fold against buy-and-hold's +38.53%. That is the engine's rule, copied line for line; whether it is the rule the author means is his to say.
+- A run's `rsi` line differs from running `rsi` on the Run tab over the same dates (+67.34% against +54.89% on 2019 to 2021): the benchmark carries its position and its indicator from the history before the window, the Run tab starts flat on the first day.
 
 **Steps for jobs 5 to 9, written 2026-11-21 18:12.** The author asked for all five to be written out before any of them starts. Each list is the plan as the code stands today; a step is ticked when it is done, and a job's record is written under its list. Every job ends the same way, so it is said once: the CI jobs pass, the containers it touches are rebuilt, every stored run recalculates exactly (or the ones that should move are named first), and the README, the Postman collection and this tracker's rows say what changed. A line marked **STOP** waits for the author. A line marked **ASK** is a choice the plan cannot make; the default it names is what is built if the author says nothing else.
 
@@ -1984,6 +2015,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-15 | 2026-11-22 23:25 | Claude Code (Claude Fable 5.2) | G79 steps 79.1 to 79.6 and 79.8 done; 79.7 (recalculating stored runs and results) waits for the author; two findings recorded |
+| 2026-11-22-14 | 2026-11-22 23:09 | Claude Code (Claude Fable 5.2) | G79 started: the plan for the five rule benchmarks on every run |
 | 2026-11-22-13 | 2026-11-22 23:01 | Claude Code (Claude Fable 5.2) | G50: a fold keeps its model and scaler, checked against the stored signals; what is left of the row is named |
 | 2026-11-22-12 | 2026-11-22 22:42 | Claude Code (Claude Fable 5.2) | The decisions of 2026-11-22 given gap rows G75 to G80; G80 (unscheduled closures counted as missing days) done; G16 open, no longer a decision |
 | 2026-11-22-11 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22 recorded under "Decisions changed, 2026-11-22": C1 move the stack now, C4 keep the ONNX Runtime check, C5 TA-Lib as the single source; R89 data repair and R90 added; D13, D14 and group E follow |

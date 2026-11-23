@@ -665,8 +665,8 @@ def score_rule(name: str, calls: list[str | None] | None, reason: str | None, m:
                s: Settings, symbol: str) -> RuleFigures:
     """One rule's figures over `m`, traded with the run's costs and tax.
 
-    Faber's cash earns what the strategy's idle money earns (the run's park);
-    dual momentum's earns T-bills, as the rule says."""
+    Dual momentum's cash earns T-bills, as the rule says; every other rule's
+    earns what the strategy's idle money earns (the run's park)."""
     if reason is not None or calls is None:
         return RuleFigures(name, False, reason or "not computed")
     segs = {symbol: (m.gap, m.intra)}
@@ -676,9 +676,10 @@ def score_rule(name: str, calls: list[str | None] | None, reason: str | None, m:
         if np.isnan(m.spy_gap).any() or np.isnan(m.spy_intra).any():
             return RuleFigures(name, False, "SPY has no price for part of the window")
         segs["SPY"] = (m.spy_gap, m.spy_intra)
-    cash = m.park if name == "faber" else m.bills
+    cash = m.bills if name == "dual_momentum" else m.park
     if cash is None:
-        return RuleFigures(name, False, "T-bills (DTB3) are not loaded")
+        return RuleFigures(name, False, "T-bills (DTB3) are not loaded"
+                           if name == "dual_momentum" else "the parked return is not loaded")
     equity, trades, tax, held = simulate_holdings(
         calls, segs, cash, cost_bps=s.cost_bps, tax_rate=s.tax_fraction, tradable=m.tradable)
     return RuleFigures(

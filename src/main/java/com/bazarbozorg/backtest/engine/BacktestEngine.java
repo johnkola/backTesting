@@ -365,16 +365,16 @@ public class BacktestEngine {
     }
 
     /**
-     * Faber and dual momentum over the result's window (B7). The decisions come
+     * Faber, dual momentum (B7) and the five indicator rules (G79) over the
+     * result's window. The decisions come
      * from the loader; SPY's bars from the store. Anything that stops a rule
      * from being scored makes it not available with the reason, never a zero.
      */
     List<RuleBenchmark> ruleBenchmarks(BarSeries series, Timeframe timeframe, int warmupBars,
                                        Instrument instrument, DataSource source) {
         if (timeframe != Timeframe.D1) {
-            String why = "the rules decide at month ends on daily bars; this result is " + timeframe;
-            return List.of(RuleBenchmark.unavailable(FABER, why),
-                    RuleBenchmark.unavailable(DUAL_MOMENTUM, why));
+            String why = "the rule benchmarks are decided on daily bars; this result is " + timeframe;
+            return unavailableRules(why);
         }
         int start = benchmarkStartIndex(series.getBarCount(), warmupBars);
         java.time.LocalDate from = barDate(series.getBar(start)).toLocalDate();
@@ -387,8 +387,7 @@ public class BacktestEngine {
                     + "&from=" + from + "&to=" + to);
         } catch (RuntimeException e) {
             String why = "the loader could not serve the rule decisions: " + e.getMessage();
-            return List.of(RuleBenchmark.unavailable(FABER, why),
-                    RuleBenchmark.unavailable(DUAL_MOMENTUM, why));
+            return unavailableRules(why);
         }
         Map<java.time.LocalDate, Bar> spy = new java.util.HashMap<>();
         try {
@@ -413,10 +412,33 @@ public class BacktestEngine {
 
     static final String FABER = "faber";
     static final String DUAL_MOMENTUM = "dual_momentum";
+    /**
+     * The five indicator rules, scored beside every result as benchmarks at the
+     * settings the loader pins them to (G79; python/nn/rules.py). The same
+     * names as the strategies in {@code strategy/impl}, which are the engine's
+     * own copy of each rule; {@code IndicatorRulesCrossCheckTest} holds the two
+     * to the same entries and exits.
+     */
+    static final List<String> INDICATOR_RULES =
+            List.of("sma-crossover", "ema-triple", "macd", "rsi", "bollinger");
+
+    /** Every rule benchmark as not available, for one shared reason. */
+    static List<RuleBenchmark> unavailableRules(String why) {
+        List<RuleBenchmark> out = new ArrayList<>();
+        out.add(RuleBenchmark.unavailable(FABER, why));
+        out.add(RuleBenchmark.unavailable(DUAL_MOMENTUM, why));
+        INDICATOR_RULES.forEach(name -> out.add(RuleBenchmark.unavailable(name, why)));
+        return out;
+    }
     /** An id for SPY's positions inside a switching run; never stored. */
     private static final long SPY_ID = -1L;
 
-    /** Both rules from the loader's decisions. Package-private for the tests. */
+    /**
+     * Every rule benchmark from the loader's decisions: Faber, dual momentum and
+     * the five indicator rules. An indicator rule's cash earns nothing here, as
+     * Faber's does; only dual momentum's earns T-bills. Package-private for the
+     * tests.
+     */
     List<RuleBenchmark> scoreRules(com.google.gson.JsonObject body, BarSeries series,
                                    Timeframe timeframe, int warmupBars, long instrumentId,
                                    String symbol, Map<java.time.LocalDate, Bar> spy) {
@@ -430,8 +452,20 @@ public class BacktestEngine {
             }
         }
         List<RuleBenchmark> out = new ArrayList<>();
-        for (String[] rule : new String[][] {{FABER, "faber"}, {DUAL_MOMENTUM, "dualMomentum"}}) {
-            com.google.gson.JsonObject r = body.getAsJsonObject(rule[1]);
+        List<String[]> rules = new ArrayList<>();
+        rules.add(new String[] {FABER, "faber"});
+        rules.add(new String[] {DUAL_MOMENTUM, "dualMomentum"});
+        INDICATOR_RULES.forEach(name -> rules.add(new String[] {name, null}));
+        com.google.gson.JsonObject indicator = body.has("indicatorRules")
+                ? body.getAsJsonObject("indicatorRules") : null;
+        for (String[] rule : rules) {
+            com.google.gson.JsonObject r = rule[1] != null ? body.getAsJsonObject(rule[1])
+                    : indicator == null ? null : indicator.getAsJsonObject(rule[0]);
+            if (r == null) {
+                out.add(RuleBenchmark.unavailable(rule[0],
+                        "the loader did not serve this rule's decisions"));
+                continue;
+            }
             if (!r.get("available").getAsBoolean()) {
                 out.add(RuleBenchmark.unavailable(rule[0], r.get("reason").getAsString()));
                 continue;
