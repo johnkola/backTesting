@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-22-2** · 2026-11-22 11:46 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-3** · 2026-11-22 22:45 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -87,6 +87,22 @@ steps.
   `-04` in `docs/readonly-doc/`. The trackers and Getting Started (`-05` to `-10`)
   share the folder and are edited as usual. Each new fact goes in exactly one place:
   see [`CLAUDE.md`](CLAUDE.md).
+- **The Google Drive doc set is the source of truth**, by the author's decision of
+  2026-11-22: the folder "backTesting docs — SOURCE OF TRUTH (Google Docs)". A copy
+  here is a copy; where one differs from the Drive document, the Drive document wins.
+  The never-edit rule above binds the coding agent. The author, and Claude working
+  with him on the design, edit `backTesting-01` to `-04` in Drive, so the copies in
+  `docs/readonly-doc/` can lag behind it.
+- **Decisions of 2026-11-22 come before the 2026-11-19 answers they replace.** The
+  stack moves now (C1, G16). Deeplearning4j stays dropped and ONNX Runtime is kept as
+  the prediction check (C4, R62). TA-Lib is the single source of indicators and the
+  hand-written `nn/indicators.py` is only its cross-check (C5, R66). Data repair
+  (R89) is new; users, load targets and signal publishing are parked (R90). The
+  record and the work each opens are in
+  [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md)
+  ("Decisions changed, 2026-11-22"); the requirement text is in
+  `backTesting-05-Requirements-Consolidated.md`. None of it has a build step yet:
+  ask the author for the order before starting any of it.
 - **Settings the user chooses don't change the signal.** The app may become a
   signal provider, so per-user settings such as tax must not change the signal it
   publishes, unless that is the explicit choice.
@@ -617,6 +633,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-3 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | Working rules: the Google Drive doc set is the source of truth; the author's decisions of 2026-11-22 (C1, C4, C5, R89, R90) and where they are recorded |
 | 2026-11-22-2 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Step 2: the null condition is decided, not unbuilt (D2, the author 2026-11-19) |
 | 2026-11-22-1 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Steps 1 and 2: check errors are now stopped by the app (job 8); the warnings stay a review |
 | 2026-11-21-3 | 2026-11-21 21:32 | Claude Code (Claude Fable 5.2) | Step 2's review line follows the `selectable` status (job 5) |
