@@ -1,3 +1,5 @@
+> **Revision 2026-11-22-1** · 2026-11-22 22:52 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+
 Project docs live in `docs/readonly-doc/backTesting-10-Getting-Started.md` (the operating path end to end) and `README.md` (roadmap, model cache, storage, deployment). The design the project implements lives in `docs/readonly-doc/` — `backTesting-04-Architecture.md`, `backTesting-03-Design-Notes.md`, `backTesting-02-Features.md` — and is the authority on what this system is for. Start with the first two, then the design set. Before changing anything, read the working rules at the top of `AGENTS.md`.
 
 The design set is read-only in the literal sense: the author maintains those files (`backTesting-01-Requirements.md` to `backTesting-04-Architecture.md`) by hand and nothing in this repo may write to them. Read them, cite them, never edit them. Since 2026-11-22 the author's source of truth for the whole doc set is the Google Drive folder "backTesting docs — SOURCE OF TRUTH (Google Docs)": the copies here can lag behind it, and where they differ the Drive document wins (`AGENTS.md`, Working rules). The other files in `docs/readonly-doc/` (`backTesting-05` to `-10`: the trackers, the questions and Getting Started) are not part of the design set and are edited as usual. The design set supersedes `docs/reference/qqq-backtesting-model/`, which is an earlier revision of the same three documents and is kept only for history — its `backTesting-OLD-Design.md` still fits normalization statistics on each feature's full history, where the current text fits them on the training window only, per walk-forward fold, so the old wording describes a leak. Do not quote it as current.
@@ -13,3 +15,11 @@ Standalone tools keep their own README beside the code rather than a section in 
 `AGENTS.md` is the step-by-step review list: the app's steps from a running stack to the held-out test, what has to be true for each to count as done, and a review table we fill in one step at a time. It also holds the author's working rules for agents, and the build steps: for each open gap in `docs/readonly-doc/backTesting-07-Design-Gaps.md` that is being closed, what has to be true before it is done. It owns the definitions of done and nothing else: the evidence and the plan for a gap stay in `docs/readonly-doc/backTesting-07-Design-Gaps.md`, and how to run a step stays in `README.md` and `docs/readonly-doc/backTesting-10-Getting-Started.md`, and it links there. Like the trackers, it is not in the `DOCS` registry.
 
 Note: the `/architecture` and `/claude` routes on the API are 301 redirects to the client's `/docs/qqq-architecture` — the only Architecture document left, and there is no separate Claude-facing doc page. Those targets are checked against the registry in `docsRegistry.test.js`, because a redirect to a slug the registry does not know is a 301 into a 404. The docs render inside the React client at `/docs`; the API serves them as JSON from `/api/docs`.
+
+## Revision history
+
+Newest first, Toronto time. Every change to this file bumps the revision line at the top and adds a row here (`AGENTS.md`, Working rules). The file had no stamp before 2026-11-22; earlier changes are in the commits.
+
+| Revision | When | Who | Change |
+|---|---|---|---|
+| 2026-11-22-1 | 2026-11-22 22:52 | Claude Code (Claude Fable 5.2) | The Google Drive folder is the source of truth for the doc set (the author 2026-11-22); this file gets a revision stamp |
