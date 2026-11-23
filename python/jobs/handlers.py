@@ -133,6 +133,13 @@ def walkforward(ctx: Context) -> dict[str, Any]:
     return ctx.result
 
 
+def ping(ctx: Context) -> dict[str, Any]:
+    """Is a worker taking jobs? The Spring Boot service's health check asks
+    with this, the only way it may ask the worker anything."""
+    return {"pong": True, "worker": ctx.worker_id}
+
+
 HANDLERS: dict[str, Handler] = {
     "walkforward": walkforward,
+    "ping": ping,
 }

@@ -43,14 +43,20 @@ function collectionRequests(items, trail = []) {
       continue;
     }
     const raw = item.request?.url?.raw ?? '';
+    // The Spring Boot service's requests (G16) are addressed through
+    // {{serverUrl}} and are matched against ITS routes by its own test
+    // (server/.../PostmanCoverageTest.java). Here they still have to carry
+    // assertions, but they are not this API's routes.
+    const forServer = raw.startsWith('{{serverUrl}}');
     // Strip the base-url variable and any query string: what matters for
     // coverage is the path.
-    const withoutBase = raw.replace('{{baseUrl}}', '');
+    const withoutBase = raw.replace('{{baseUrl}}', '').replace('{{serverUrl}}', '');
     const pathOnly = withoutBase.split('?')[0] || '/';
     out.push({
       name: [...trail, item.name].join(' / '),
       method: (item.request?.method ?? 'GET').toUpperCase(),
       path: pathOnly,
+      forServer,
       tests: (item.event ?? [])
         .filter((e) => e.listen === 'test')
         .flatMap((e) => e.script?.exec ?? [])
@@ -80,7 +86,9 @@ function matches(route, requestPath) {
 
 const ROUTES = declaredRoutes();
 const COLLECTION_JSON = JSON.parse(fs.readFileSync(COLLECTION, 'utf8'));
-const REQUESTS = collectionRequests(COLLECTION_JSON.item);
+const ALL_REQUESTS = collectionRequests(COLLECTION_JSON.item);
+// The requests for this API; the route checks below are about these.
+const REQUESTS = ALL_REQUESTS.filter((r) => !r.forServer);
 
 describe('Postman collection exists and is well formed', () => {
   it('is checked in at postman/ with an environment per target', () => {
@@ -106,12 +114,12 @@ describe('Postman collection exists and is well formed', () => {
   it('gives every request at least one assertion', () => {
     // A request with no pm.test is a page view, not a test. §10 wants
     // assertions on "status, shape, key values".
-    const bare = REQUESTS.filter((r) => !r.tests.includes('pm.test('));
+    const bare = ALL_REQUESTS.filter((r) => !r.tests.includes('pm.test('));
     assert.deepEqual(bare.map((r) => r.name), [], 'requests with no pm.test');
   });
 
   it('asserts a status on every request', () => {
-    const noStatus = REQUESTS.filter(
+    const noStatus = ALL_REQUESTS.filter(
       (r) => !/pm\.response\.to\.have\.status|pm\.response\.code/.test(r.tests),
     );
     assert.deepEqual(noStatus.map((r) => r.name), [], 'requests that assert no status');
@@ -120,7 +128,7 @@ describe('Postman collection exists and is well formed', () => {
   it('addresses every request through the baseUrl variable', () => {
     // A hard-coded host would pass locally and fail in the docker environment,
     // which is the whole reason there are two environment files.
-    const hardCoded = REQUESTS.filter((r) => /https?:\/\//.test(
+    const hardCoded = ALL_REQUESTS.filter((r) => /https?:\/\//.test(
       COLLECTION_JSON ? r.path : '',
     ));
     assert.deepEqual(hardCoded.map((r) => r.name), []);

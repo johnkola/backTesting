@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-23-5** · 2026-11-23 17:41 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-6** · 2026-11-23 18:12 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -17,6 +17,7 @@ A fifth, `pgadmin`, is an optional tool rather than part of the system.
 | **8001** | `api` | The single API origin. Reads Postgres directly; proxies writes to the loader and strategy/run calls to the engine. Also serves the project docs as rendered HTML for the client to display. |
 | *internal* | `engine` | Java. The strategy registry and the backtest engine — the only component that can run a backtest. Reached through the API, not published. |
 | **8003** | `loader` | Python/FastAPI. Receives the calls for CSV import, aggregation, cohesion checks and NN train/predict, and hands the work to `worker`. Published only so the host-run CLI can reach it; in-network callers use `http://loader:8001`. |
+| **8004** | `server` | Java, Spring Boot. The backend the design gives the client; it will replace `api`. It reads the database and hands work to the workers through the jobs table, and calls no other service. Today it serves health and the jobs table. See [The Spring Boot service](#the-spring-boot-service). |
 | *none* | `worker` | Python, the loader's image started as `python -m jobs.worker`. Claims jobs from the jobs table (`jobs.jobs`) and runs them; serves no HTTP. All of the loader's work runs here, and the daily feeds timer. See [The jobs table](#the-jobs-table). |
 | **5432** | `timescaledb` | PostgreSQL + TimescaleDB. |
 | **5050** | `pgadmin` | pgAdmin 4, a browser UI on the database. Not in the default stack — see [Database UI](#database-ui). |
@@ -305,7 +306,7 @@ inside an error boundary so a bad row cannot blank the app.
 
 ```bash
 ./gradlew build                  # compile + test + assemble
-./gradlew test                   # Java tests
+./gradlew test                   # Java tests: the engine and the Spring Boot service
 ./gradlew run --args="--help"    # CLI help
 cd python && .venv/bin/python -m pytest    # Python tests (needs the dev extra installed)
 
@@ -478,6 +479,38 @@ cd python && python -m loader.ingest            # --dry-run to preview, --force 
 
 Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / extend / overwrite / conflict), and upserted into `candles` in one transaction. Every distinct file is recorded as a version in `import_files` and labelled `new`, `update` (later days only), `fix` (past bars changed or dropped) or `update+fix`. An identical file prints `SAME` and is not parsed, and a changed year prints its diff with the first changed dates. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). **FirstRate Data files keep their own names:** `QQQ_full_30min_adjsplitdiv.txt` is filed as `firstrate-adj/QQQ` at M30, `..._adjsplit.txt` as `firstrate-split`, `..._UNADJUSTED.txt` as `firstrate-raw`, and the free sample (`QQQ_30min_sample.csv`) as `firstrate`. The three adjustments are three price series, so each has its own source and none can overwrite another. Their 1-hour file is refused, because its bars start on the clock hour and the 09:00 bar mixes pre-market trading into the session; import the 30-minute file. **An intraday stock file keeps only its regular-session bars** (those starting from 09:30 up to, not including, 16:00 New York time, or 13:00 on a half day), on this path and on `POST /api/imports` alike; the number left out is printed. Forex and crypto files are stored whole. After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
 
+## The Spring Boot service
+
+The design has one backend: a Spring Boot service that serves REST to the client, reads the database, and reaches the compute workers only through the jobs table. It is being built beside the Node API and takes over its routes area by area; until then the client still calls `api` on 8001. The code is the Gradle project `server/`.
+
+It is on `http://localhost:8004`. What it serves today:
+
+| Route | Params | Returns |
+|---|---|---|
+| `GET /api/health` | — | Always `200` while the service is alive, verdict in the body, in the Node API's shape: `status` (`ok`, `degraded`, `maintenance`), `ok`, `maintenance`, `db`, `services`. It answers for the database and for the Python worker, which it asks with a `ping` job; the worker's answer is kept for 15 seconds |
+| `GET /api/jobs` | `limit`, `offset`, `sort`, and the filters `type`, `status`, `engine`, `transient`, `cancelRequested` | A page of the jobs table, newest first: `{items, total, limit, offset, sort}` |
+| `GET /api/jobs/:id` | — | One job, with its `inputs` and `result` as stored. `404` for an unknown id |
+| `POST /api/jobs/:id/cancel` | — | Asks a queued or running job of any type to stop: `202` with the job, `cancelRequested: true`. The worker ends it at its next heartbeat. `404` for an unknown id, `409` for a job already over |
+
+Every list this service serves follows the same rules, for the shared table:
+
+- **Paging:** `limit` from 1 to 200 (default 50) and `offset`. A value out of bounds is corrected, not refused.
+- **Sorting:** `sort` is a comma-separated list of fields, a leading `-` for descending (`sort=-createdAt,type`). An unknown field is a `400` that lists the fields allowed.
+- **Filters:** one query parameter per field; comma-separated values mean any of them (`status=queued,running`). A value of the wrong type is a `400`.
+- **Errors:** every failure is `{"error": "..."}` with the status that fits, the shape the client already reads.
+
+Settings (environment variables): the `PG*` variables as everywhere else, `PORT` (8004), `DB_ACTOR` (`server`, written to the audit columns), `DB_POOL_MAX` (5), `CORS_ALLOW_ORIGIN` (`*`), `MAINTENANCE` and `MAINTENANCE_MESSAGE` as on the Node API.
+
+The database allows 25 connections in all, shared by every service, so this one keeps a small pool and opens connections only as it needs them.
+
+```bash
+./gradlew :server:test           # its tests; they need Postgres up, and are skipped without it
+./gradlew :server:bootRun        # run it on the host, port 8004
+docker compose up -d --build server
+```
+
+Its tests start the service on a free port and call it over HTTP, on a copy of the jobs table. One of them fails the build when a route has no request in the Postman collection.
+
 ## The jobs table
 
 Work the web side asks for and a worker does meets in one table, `jobs.jobs` (the design's rule: the web side and the compute workers never call each other). A start inserts a row; a worker claims it, runs it and writes back its status and result. This is the start of the move to the designed stack. Everything the loader's routes used to do themselves now goes through it: an import, an undo, a roll-up, an audit, accepting flags, a repair, training, a prediction for a backtest, a recalculation, a feeds refresh, and the computed answers (pipeline status, feature preview, strategy check, split, rule calls). The loader receives the call, inserts the job, waits for it and answers with its result; the `worker` container does the work. A walk-forward run is the one job nobody waits on.
@@ -490,6 +523,7 @@ Work the web side asks for and a worker does meets in one table, `jobs.jobs` (th
 | Failure | A job whose work failed (the runner exited non-zero) is `failed` at once and is not retried |
 | Cancel | The web side sets `cancel_requested`. A queued job is never started; a running one stops within seconds, keeps what it wrote and is `cancelled` |
 | Engine | Each job names its engine (`python` or `java-compute`) and only that engine's workers claim it. There is no `java-compute` worker yet |
+| Who writes what | The web side (the loader today, the Spring Boot service as routes move) inserts a job and may set `cancel_requested`; everything else on the row is the worker's |
 
 The worker runs four lanes: one for walk-forward runs, one at a time, and three for everything else, so short work never waits behind a long run. An insert wakes the worker, so a waited-on call costs milliseconds more than it did. It also holds the daily feeds timer (`FEEDS_SCHEDULE`).
 
@@ -1483,6 +1517,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-6 | 2026-11-23 18:12 | Claude Code (Claude Fable 5.2) | G16 step 16.3: the Spring Boot service (`server`, port 8004): health, the jobs API, the list rules; who writes what on a job row |
 | 2026-11-23-5 | 2026-11-23 17:41 | Claude Code (Claude Fable 5.2) | G16 step 16.2: the loader hands all its work to the worker through the jobs table; what happens with the worker down, transient jobs, `UPLOAD_SPOOL_DIR`, `JOBS_INLINE` |
 | 2026-11-23-4 | 2026-11-23 09:56 | Claude Code (Claude Fable 5.2) | The jobs table and the `worker` service (G16 step 16.1): a walk-forward start is a queued job, with cancel; the import row no longer says a file with a check error is refused (G75) |
 | 2026-11-23-3 | 2026-11-23 01:34 | Claude Code (Claude Fable 5.2) | Data repair (G76): the repair log, the adjusted view, candidates and the rule, the Repairs page, `loader.repair`, `/api/repairs` |

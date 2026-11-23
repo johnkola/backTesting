@@ -71,6 +71,33 @@ services:
       - "./docs/readonly-doc/backTesting-03-Design-Notes.md:/app/docs/docs/readonly-doc/backTesting-03-Design-Notes.md:ro"
       - "./docs/readonly-doc/backTesting-02-Features.md:/app/docs/docs/readonly-doc/backTesting-02-Features.md:ro"
 
+  # The Spring Boot service (G16 step 16.3; Architecture §2, §6): the backend
+  # the design gives the client. It reads the database, and hands work to the
+  # compute workers through the jobs table; it calls no other service. While
+  # the move is under way it runs beside `api` on its own port, and routes
+  # move here area by area. Today it serves health and the jobs table.
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: backtest-server
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    ports:
+      - "8004:8004"
+    environment:
+      PGHOST: timescaledb
+      PGPORT: 5432
+      PGDATABASE: backtest
+      PGUSER: backtest
+      PGPASSWORD: backtest
+      PORT: 8004
+      DB_ACTOR: server
+      MAINTENANCE: ${MAINTENANCE:-}
+      MAINTENANCE_MESSAGE: ${MAINTENANCE_MESSAGE:-}
+
   # The React SPA, static files behind nginx. No backend of its own: it calls
   # the API by the URL baked in at build time.
   client:

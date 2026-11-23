@@ -10,12 +10,16 @@ WORKDIR /build
 # source-only changes.
 COPY gradle/ gradle/
 COPY gradlew settings.gradle build.gradle ./
-RUN chmod +x gradlew && ./gradlew --no-daemon dependencies --configuration runtimeClasspath > /dev/null 2>&1 || true
+# settings.gradle includes the `server` project (the Spring Boot service), so
+# its build file has to be present for Gradle to configure; its sources are
+# not, and nothing of it is built here.
+COPY server/build.gradle server/
+RUN chmod +x gradlew && ./gradlew --no-daemon :dependencies --configuration runtimeClasspath > /dev/null 2>&1 || true
 
 COPY src/ src/
 # installDist lays out bin/ + lib/ — the `application` plugin's own launcher,
 # so the runtime image needs no Gradle.
-RUN ./gradlew --no-daemon installDist -x test
+RUN ./gradlew --no-daemon :installDist -x test
 
 # --- 2. Runtime ---
 FROM eclipse-temurin:21-jre

@@ -1,6 +1,6 @@
 # Postman collection
 
-> **Revision 2026-11-16-9** · 2026-11-16 16:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-23-1** · 2026-11-23 18:12 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 Every endpoint the API origin serves, with assertions on status, shape and key
 values. Required by `docs/reference/qqq-backtesting-model/backTesting-OLD-Architecture.md` §10:
@@ -16,6 +16,8 @@ values. Required by `docs/reference/qqq-backtesting-model/backTesting-OLD-Archit
 | `backtest.postman_collection.json` | 64 requests in 9 folders, 201 assertions |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://api:8001` — from inside the compose network |
+
+Both also set `serverUrl` (`http://localhost:8004`, `http://server:8004`): the Spring Boot service that is replacing the Node API. Its requests are in the folder "Spring Boot service (G16)" and are matched against its routes by its own test (`server/src/test/.../PostmanCoverageTest.java`); the Node API's coverage test leaves them alone.
 
 ## Running it
 
@@ -86,6 +88,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-1 | 2026-11-23 18:12 | Claude Code (Claude Fable 5.2) | `serverUrl` and the "Spring Boot service (G16)" folder: five requests for the new service's four routes |
 | 2026-11-16-9 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | Counts (64 requests, 201 assertions): the targets, a money loss with one refused, a run's name kept (G49) |
 | 2026-11-16-8 | 2026-11-16 15:43 | Claude Code (Claude Opus 5.5) | Counts (63 requests, 197 assertions): epochs, loss, failure and progress (G11) |
 | 2026-11-16-7 | 2026-11-16 15:14 | Claude Code (Claude Opus 5.5) | Counts (63 requests, 195 assertions): a refused tax rate, and results' `taxRate` (G20) |

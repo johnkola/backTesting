@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-23-5** · 2026-11-23 17:41 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-23-6** · 2026-11-23 18:12 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -153,7 +153,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## H. Stack and services
 
-- **R48** Java (Spring Boot) is the single backend serving REST to Next.js. Python computes; Java and Python talk only through the jobs table. The Node API is retired. · *missing (C1, the author 2026-11-22: the move happens now; G16, plan agreed 2026-11-23. Steps 16.1 and 16.2 of nine are done: the jobs table and a Python worker exist, and all the work the Python routes did runs in the worker as jobs. There is no Spring Boot service yet: Node still serves, and FastAPI still receives each call and waits on its job)*
+- **R48** Java (Spring Boot) is the single backend serving REST to Next.js. Python computes; Java and Python talk only through the jobs table. The Node API is retired. · *missing (C1, the author 2026-11-22: the move happens now; G16, plan agreed 2026-11-23. Steps 16.1 and 16.2 of nine are done: the jobs table and a Python worker exist, and all the work the Python routes did runs in the worker as jobs. Step 16.3: the Spring Boot service exists (`server/`, port 8004) with health, the jobs API, the list rules and the error shape, and it reaches the Python worker through the jobs table. It serves none of the client's routes yet: Node still serves them, and FastAPI still receives each call and waits on its job)*
 - **R49** PostgreSQL/TimescaleDB is the single store; raw and adjusted candle tables in one-year chunks. Model files on disk, with record, path and hash in the database; hash checked on load. Python aligns features for training; Java serves them at native cadence. · *partial (G51, G52, G62)*
 - **R60** One database, three schemas, each with one writer enforced by roles: `app` (Java web), `data` (Python and the Java compute worker), `jobs` (Java inserts; workers update status, result, timestamps). · *missing (C1, the author 2026-11-22: no longer deferred)*
 - **R67** No client overwrites another. (a) Jobs claimed atomically (`FOR UPDATE SKIP LOCKED`) in a short transaction, stamped with worker id and engine; heartbeat about every 30 s; a running job silent for 2 min is re-claimed, attempts + 1; failed and shown after 3. (b) Computed rows are insert-only and tagged with their job. (c) User-edited rows carry a version; a stale save is rejected. · *partial (G16 step 16.1, 2026-11-23: (a) is built and tested, `jobs.jobs` with the atomic claim, worker id and engine, heartbeat, re-claim after 2 minutes, failed after 3 attempts; since step 16.2 every piece of work the Python routes did goes through it, 20 job types. (b) a run carries its job's id, and every row written inside a job has `worker:job-N` in its audit columns; rows are not yet insert-only everywhere. (c) not built)*
@@ -186,6 +186,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-6 | 2026-11-23 18:12 | Claude Code (Claude Fable 5.2) | G16 step 16.3: R48's reason updated (the Spring Boot service exists; no client route has moved yet) |
 | 2026-11-23-5 | 2026-11-23 17:41 | Claude Code (Claude Fable 5.2) | G16 step 16.2: R67, R70 and R48 reasons updated (all Python work runs in the worker as jobs) |
 | 2026-11-23-4 | 2026-11-23 10:11 | Claude Code (Claude Fable 5.2) | G16 step 16.1: R67 and R70 partial (the jobs table, the worker, cancel for walk-forward runs); R48's reason updated; counts now done 24 · partial 50 · missing 10 |
 | 2026-11-23-3 | 2026-11-23 01:34 | Claude Code (Claude Fable 5.2) | G76: R89 and R63 partial (the repair log and the adjusted view); the count follows |

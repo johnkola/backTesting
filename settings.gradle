@@ -3,3 +3,8 @@ plugins {
 }
 
 rootProject.name = 'BackTesting'
+
+// The root project is the engine (the backtest code and its CLI). `server` is
+// the Spring Boot service that becomes the one API the client calls (G16;
+// Architecture §6). They share nothing but the database.
+include 'server'
