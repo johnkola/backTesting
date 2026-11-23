@@ -1,7 +1,8 @@
 """Start a walk-forward run of a saved strategy from the web, and follow it.
 
-  POST /api/nn/walkforward       {strategyId, label?} -> 202 job | 400 | 404 | 409
-  GET  /api/nn/walkforward/jobs  jobs started since this process came up
+  POST /api/nn/walkforward       {strategyId, label?} -> 202 job | 400 | 404
+  GET  /api/nn/walkforward/jobs  the latest walk-forward jobs, newest first
+  POST /api/nn/walkforward/jobs/{id}/cancel  -> 202 job | 404 | 409
   GET  /api/nn/walkforward/split?strategyId=N  a strategy's split, as a run makes it
   POST /api/nn/walkforward/runs/{id}/recalculate  {strategyId?, dryRun?}
                                  -> 200 figures | 400 | 404 | 409 (`nn/recalculate.py`)
@@ -15,133 +16,76 @@ runs, so a run started here and one started there cannot differ.
 
 Invariants a change must keep:
 
-* **A separate process, not a thread or the request.** A run retrains once per
-  fold, minutes to hours on CPU. Inside the request it would time out; in a
-  thread it would hold the GIL against every import and audit request this
-  service answers, and a crash in torch would take the service down with it.
+* **This service starts nothing.** A start is a row in the jobs table
+  (`jobs/queue.py`, G16 step 16.1); the worker (`jobs/worker.py`) claims it and
+  runs the command (`jobs/handlers.py`). So a job survives a restart of this
+  service or of the worker, and it can be cancelled (R70).
 
-* **Checked before it is started.** `strategy_setup` runs here first, the
+* **Checked before it is queued.** `strategy_setup` runs here first, the
   same function the runner calls, so a strategy that cannot run is a 400 with
   every reason rather than a job that dies a second later. The runner checks
   again; this is a courtesy, not the guard.
 
-* **The job list exists because some refusals come late.** The runner can
-  still refuse after reading the matrix (no train bar with every kept column),
-  and that happens before it opens a `walkforward_runs` row. Without the
-  captured output that failure would leave no trace anywhere. The list is in
-  memory on purpose: the durable record of a run is `walkforward_runs`, which
-  the runner writes as folds land, and a job list that survived restarts would
-  be a second, disagreeing copy of it.
+* **The job is not the run.** The runner can still refuse after reading the
+  matrix (no train bar with every kept column), before it opens a
+  `walkforward_runs` row; the job's captured output is then the only trace.
+  The durable record of a run is `walkforward_runs`.
 
-* **One run at a time.** Two would compete for the same CPU and each take
-  twice as long; a second POST while one runs is a 409 naming it.
+* **One run at a time, and the rest wait.** The worker's long lane runs one
+  walk-forward job at a time; a second start is queued behind it, not refused.
 
 * **No holdout from here.** `--test` spends the 2022-onward block once, and
   a button is too easy to press twice. It stays a deliberate terminal command.
 
 * **A recalculation runs in the request.** It trains nothing: it reads a
   run's stored signals and scores them (D9, R75), seconds even for a long run,
-  so it needs no job, and it does not wait for a training run to finish.
+  and it does not wait for a training run to finish.
 """
 
 from __future__ import annotations
 
-import os
-import re
-import subprocess
-import sys
-import threading
-from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from jobs import queue
+from jobs.handlers import walkforward_argv, walkforward_command
 from loader.db import pool
 from nn import recalculate, strategy_spec, walkforward
 
 router = APIRouter()
 
-OUTPUT_LINES = 40
+JOB_TYPE = "walkforward"
 KEEP_JOBS = 20
-_RUN_ID = re.compile(r"walkforward_runs id=(\d+)")
-# The directory `nn` is a package of, so `-m nn.walkforward` resolves however
-# the service was started.
-_PKG_ROOT = Path(__file__).resolve().parents[1]
-
-# Replaced in tests, so the endpoint can be exercised without training anything.
-_spawn = subprocess.Popen
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _iso(value) -> str | None:
+    return None if value is None else value.isoformat(timespec="seconds")
 
 
-@dataclass
-class Job:
-    id: int
-    strategy_id: int
-    label: str
-    argv: list[str]
-    started_at: str
-    proc: Any = None
-    output: deque = field(default_factory=lambda: deque(maxlen=OUTPUT_LINES))
-    run_id: int | None = None
-    exit_code: int | None = None
-    finished_at: str | None = None
-
-    @property
-    def running(self) -> bool:
-        return self.exit_code is None
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "strategyId": self.strategy_id,
-            "label": self.label,
-            "command": " ".join(["python", "-m", "nn.walkforward", *self.argv]),
-            "startedAt": self.started_at,
-            "finishedAt": self.finished_at,
-            "running": self.running,
-            "exitCode": self.exit_code,
-            "runId": self.run_id,
-            "output": list(self.output),
-        }
-
-
-_lock = threading.Lock()
-_jobs: deque[Job] = deque(maxlen=KEEP_JOBS)
-_next_id = 1
-
-
-def _follow(job: Job) -> None:
-    """Collect the runner's output until it exits. Runs on its own thread."""
-    for raw in job.proc.stdout:
-        line = raw.rstrip("\n")
-        with _lock:
-            job.output.append(line)
-            if job.run_id is None and (m := _RUN_ID.search(line)):
-                job.run_id = int(m.group(1))
-    code = job.proc.wait()
-    with _lock:
-        job.exit_code = code
-        job.finished_at = _now()
-
-
-def _running() -> Job | None:
-    return next((j for j in _jobs if j.running), None)
-
-
-def _reset() -> None:
-    """Forget every job. Tests only."""
-    global _next_id
-    with _lock:
-        _jobs.clear()
-        _next_id = 1
+def job_json(job: dict[str, Any]) -> dict[str, Any]:
+    """A jobs-table row as the Train tab reads it. `running` covers a job that
+    is still waiting too: either way there is more to come."""
+    result = job["result"] or {}
+    return {
+        "id": job["id"],
+        "strategyId": job["inputs"].get("strategyId"),
+        "label": job["inputs"].get("label", ""),
+        "command": result.get("command") or walkforward_command(job["inputs"]),
+        "status": job["status"],
+        "queuedAt": _iso(job["created_at"]),
+        "startedAt": _iso(job["claimed_at"]),
+        "finishedAt": _iso(job["finished_at"]),
+        "running": job["status"] in ("queued", "running"),
+        "attempts": job["attempts"],
+        "cancelRequested": job["cancel_requested"],
+        "exitCode": result.get("exitCode"),
+        "runId": result.get("runId"),
+        "output": result.get("output") or [],
+        "error": job["error"],
+    }
 
 
 class StartRequest(BaseModel):
@@ -150,12 +94,7 @@ class StartRequest(BaseModel):
 
 
 def _argv(req: StartRequest) -> list[str]:
-    argv = ["--strategy-id", str(req.strategyId)]
-    label = req.label.strip()
-    if label:
-        # `=` form, so a label that starts with a dash is a value, not a flag.
-        argv.append(f"--label={label}")
-    return argv
+    return walkforward_argv({"strategyId": req.strategyId, "label": req.label})
 
 
 def _check(argv: list[str]) -> JSONResponse | None:
@@ -176,44 +115,27 @@ def _check(argv: list[str]) -> JSONResponse | None:
 
 @router.post("/api/nn/walkforward", status_code=202)
 def start(req: StartRequest):
-    global _next_id
-    with _lock:
-        busy = _running()
-    if busy is not None:
-        return JSONResponse(status_code=409, content={
-            "error": f"run job {busy.id} (strategy {busy.strategy_id}) is still going; "
-                     "one walk-forward run at a time",
-            "job": busy.to_json(),
-        })
-
-    argv = _argv(req)
-    refused = _check(argv)
+    refused = _check(_argv(req))
     if refused is not None:
         return refused
+    with pool().connection() as conn:
+        job = queue.enqueue(conn, JOB_TYPE, {"strategyId": req.strategyId,
+                                             "label": req.label.strip()})
+    return job_json(job)
 
-    with _lock:
-        # Checked again under the lock: two POSTs can both pass the first check.
-        busy = _running()
-        if busy is not None:
+
+@router.post("/api/nn/walkforward/jobs/{job_id}/cancel", status_code=202)
+def cancel(job_id: int):
+    """Ask a queued or running job to stop (R70). The worker stops at its next
+    heartbeat; the folds already written stay, and the run is marked cancelled."""
+    with pool().connection() as conn:
+        job = queue.get(conn, job_id)
+        if job is None or job["type"] != JOB_TYPE:
+            return JSONResponse(status_code=404, content={"error": f"no walk-forward job {job_id}"})
+        if queue.request_cancel(conn, job_id) != "requested":
             return JSONResponse(status_code=409, content={
-                "error": f"run job {busy.id} started first; one walk-forward run at a time",
-                "job": busy.to_json(),
-            })
-        job = Job(id=_next_id, strategy_id=req.strategyId, label=req.label.strip(),
-                  argv=argv, started_at=_now())
-        _next_id += 1
-        env = {**os.environ, "PYTHONUNBUFFERED": "1",
-               "DB_ACTOR": os.environ.get("DB_ACTOR_WALKFORWARD", "loader:walkforward")}
-        job.proc = _spawn(
-            [sys.executable, "-m", "nn.walkforward", *argv],
-            cwd=_PKG_ROOT, env=env, text=True, bufsize=1,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-        _jobs.appendleft(job)
-        body = job.to_json()
-    threading.Thread(target=_follow, args=(job,), daemon=True,
-                     name=f"walkforward-job-{job.id}").start()
-    return body
+                "error": f"job {job_id} is already {job['status']}", "job": job_json(job)})
+        return job_json(queue.get(conn, job_id))
 
 
 @router.get("/api/nn/walkforward/split")
@@ -265,9 +187,10 @@ def strategy_check(body: dict[str, Any]):
 
 @router.get("/api/nn/walkforward/jobs")
 def jobs() -> dict[str, Any]:
-    with _lock:
-        items = [j.to_json() for j in _jobs]
-    return {"items": items, "running": next((i["id"] for i in items if i["running"]), None)}
+    with pool().connection() as conn:
+        items = [job_json(j) for j in queue.listing(conn, JOB_TYPE, KEEP_JOBS)]
+    return {"items": items,
+            "running": next((i["id"] for i in items if i["status"] == "running"), None)}
 
 
 class RecalculateRequest(BaseModel):

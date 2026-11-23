@@ -119,7 +119,7 @@ services:
       - ./data/fold-models:/data/fold-models:ro
 
   loader:
-    build:
+    build: &loader_build
       context: .
       dockerfile: python/Dockerfile
       # The commit the image is built from, recorded with every run and feature
@@ -139,7 +139,7 @@ services:
       # LOADER_URL=http://localhost:8003 for those. In-network callers use
       # http://loader:8001 and are unaffected.
       - "8003:8001"
-    environment:
+    environment: &loader_env
       PGHOST: timescaledb
       PGPORT: 5432
       PGDATABASE: backtest
@@ -164,7 +164,7 @@ services:
       # (.env.example); unset, a generic tool name is sent.
       SEC_USER_AGENT: ${SEC_USER_AGENT:-}
       NDX_EARNINGS_DIR: /data/ndx-earnings
-    volumes:
+    volumes: &loader_volumes
       # CSV archive — owned by the loader, read by anyone who needs the on-disk
       # slices (the host-side gradle path also writes here through the same mount).
       - ./data/csv-archive:/data/csv-archive
@@ -181,6 +181,27 @@ services:
       # The members' SEC filings (8-K dates, net income facts), kept current by
       # the feeds and read by build_ndx_earnings.py on the host.
       - ./data/ndx-earnings:/data/ndx-earnings
+
+  # The Python compute worker (G16 step 16.1; Architecture §2). The loader's
+  # image, started as `python -m jobs.worker`: it claims jobs from the jobs
+  # table and runs them, and serves no HTTP, so it has no port. A walk-forward
+  # run started from the Train tab is a job this container runs; restarting the
+  # loader does not touch it, and a job cut off by a restart of this container
+  # is claimed again when it comes back (three attempts, then failed).
+  worker:
+    build: *loader_build
+    container_name: backtest-worker
+    restart: unless-stopped
+    command: ["python", "-m", "jobs.worker"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      <<: *loader_env
+      DB_ACTOR: worker
+      # The feeds' daily refresh belongs to the loader, not to this process.
+      FEEDS_SCHEDULE: "off"
+    volumes: *loader_volumes
 
   # Database UI. Not part of the default stack — it sits behind the `tools`
   # profile, so `docker compose up -d` is unchanged and you ask for this one

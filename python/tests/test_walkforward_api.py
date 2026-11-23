@@ -1,128 +1,150 @@
-"""Starting a walk-forward run from the web: check first, one at a time, follow it.
+"""Starting a walk-forward run from the web: check first, queue it, follow it.
 
-No database and no training: the strategy check and the process launcher are
-both replaced, so these test the endpoint's own rules and nothing else.
+No training: the strategy check is replaced, and a start is a row in a copy of
+the jobs table (`jobs.jobs_test`), which no worker reads. What the worker does
+with such a row is `test_jobs.py`.
 """
 
 from __future__ import annotations
 
-import io
-import threading
-
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+from jobs import queue
 from loader.main import app
 from nn import strategy_spec, walkforward_api
 
+from .dbfixtures import db_up, dsn
+
 client = TestClient(app)
-
-
-class FakeProc:
-    """A runner that prints the given lines, then waits for `finish()`."""
-
-    def __init__(self, lines: list[str], code: int = 0):
-        self.stdout = io.StringIO("".join(f"{line}\n" for line in lines))
-        self._code = code
-        self._done = threading.Event()
-
-    def finish(self):
-        self._done.set()
-
-    def wait(self):
-        self._done.wait(5)
-        return self._code
+TEST_TABLE = "jobs.jobs_test_api"
+needs_db = pytest.mark.skipif(not db_up(), reason="Postgres is not reachable")
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch):
-    walkforward_api._reset()
     # The real check runs, against a stand-in pool and a setup that accepts.
     monkeypatch.setattr(walkforward_api, "pool", lambda: _NoDb())
     monkeypatch.setattr(walkforward_api.walkforward, "strategy_setup",
                         lambda cur, args, explicit: None)
-    procs: list[FakeProc] = []
-    calls: list[list[str]] = []
-
-    def spawn(cmd, **_kw):
-        calls.append(cmd)
-        proc = FakeProc(["strategy     s v1 (id 7)",
-                         "recording    walkforward_runs id=31 (folds committed as they finish)"])
-        procs.append(proc)
-        return proc
-
-    monkeypatch.setattr(walkforward_api, "_spawn", spawn)
-    yield procs, calls
-    for p in procs:
-        p.finish()
-    walkforward_api._reset()
 
 
-def _wait_finished(job_id: int):
-    for _ in range(100):
-        job = next(j for j in client.get("/api/nn/walkforward/jobs").json()["items"]
-                   if j["id"] == job_id)
-        if not job["running"]:
-            return job
-        threading.Event().wait(0.02)
-    raise AssertionError("job never finished")
+class _Pool:
+    """The route's pool, on one real connection."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def connection(self):
+        return self
+
+    def __enter__(self):
+        return self._conn
+
+    def __exit__(self, *exc):
+        return False
 
 
-def test_a_start_runs_the_same_command_a_terminal_would(isolated):
-    _, calls = isolated
-    r = client.post("/api/nn/walkforward", json={"strategyId": 7, "label": "-wide"})
+@pytest.fixture
+def jobs_table(monkeypatch):
+    conn = psycopg.connect(dsn())
+    conn.execute(f"DROP TABLE IF EXISTS {TEST_TABLE}")
+    conn.execute(f"CREATE TABLE {TEST_TABLE} (LIKE jobs.jobs INCLUDING ALL)")
+    conn.commit()
+    monkeypatch.setattr(queue, "TABLE", TEST_TABLE)
+    monkeypatch.setattr(walkforward_api, "pool", lambda: _Pool(conn))
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.execute(f"DROP TABLE IF EXISTS {TEST_TABLE}")
+        conn.commit()
+        conn.close()
+
+
+def _count(conn) -> int:
+    return conn.execute(f"SELECT count(*) FROM {TEST_TABLE}").fetchone()[0]
+
+
+@needs_db
+def test_a_start_queues_the_command_a_terminal_would_run(jobs_table):
+    r = client.post("/api/nn/walkforward", json={"strategyId": 7, "label": " -quick look "})
     assert r.status_code == 202
-    assert r.json()["running"] is True
-    assert calls[0][1:] == ["-m", "nn.walkforward", "--strategy-id", "7", "--label=-wide"]
-    assert "--test" not in calls[0]
+    job = r.json()
+    assert job["status"] == "queued" and job["running"] is True and job["startedAt"] is None
+    assert job["strategyId"] == 7 and job["label"] == "-quick look"
+    assert job["command"] == "python -m nn.walkforward --strategy-id 7 --label=-quick look"
+    row = queue.get(jobs_table, job["id"])
+    assert row["type"] == "walkforward" and row["engine"] == "python"
+    assert row["inputs"] == {"strategyId": 7, "label": "-quick look"}
 
 
-def test_output_and_run_id_are_captured_and_the_exit_code_recorded(isolated):
-    procs, _ = isolated
-    job_id = client.post("/api/nn/walkforward", json={"strategyId": 7}).json()["id"]
-    procs[0].finish()
-    job = _wait_finished(job_id)
-    assert job["exitCode"] == 0
-    assert job["runId"] == 31
-    assert job["output"][-1].startswith("recording")
-    assert client.get("/api/nn/walkforward/jobs").json()["running"] is None
+@needs_db
+def test_the_job_list_shows_what_the_worker_wrote(jobs_table):
+    job = client.post("/api/nn/walkforward", json={"strategyId": 7}).json()
+    queue.claim(jobs_table, "w1")
+    queue.beat(jobs_table, job["id"], "w1", {"command": "python -m nn.walkforward --strategy-id 7",
+                                              "output": ["recording    walkforward_runs id=31"],
+                                              "runId": 31, "exitCode": None})
+    listed = client.get("/api/nn/walkforward/jobs").json()
+    assert listed["running"] == job["id"]
+    during = listed["items"][0]
+    assert during["status"] == "running" and during["runId"] == 31 and during["attempts"] == 1
+    assert during["output"] == ["recording    walkforward_runs id=31"] and during["startedAt"]
+
+    queue.finish(jobs_table, job["id"], "w1", "failed",
+                 {"output": ["refused"], "runId": None, "exitCode": 2}, "exit 2")
+    after = client.get("/api/nn/walkforward/jobs").json()
+    assert after["running"] is None
+    done = after["items"][0]
+    assert done["running"] is False and done["exitCode"] == 2 and done["error"] == "exit 2"
+    assert done["finishedAt"]
 
 
-def test_a_second_start_while_one_runs_is_a_409(isolated):
-    procs, calls = isolated
+@needs_db
+def test_a_second_start_waits_its_turn(jobs_table):
     first = client.post("/api/nn/walkforward", json={"strategyId": 7}).json()
-    r = client.post("/api/nn/walkforward", json={"strategyId": 8})
-    assert r.status_code == 409
-    assert r.json()["job"]["id"] == first["id"]
-    assert len(calls) == 1
-    procs[0].finish()
-    _wait_finished(first["id"])
-    assert client.post("/api/nn/walkforward", json={"strategyId": 8}).status_code == 202
+    queue.claim(jobs_table, "w1")
+    second = client.post("/api/nn/walkforward", json={"strategyId": 8})
+    assert second.status_code == 202 and second.json()["status"] == "queued"
+    items = client.get("/api/nn/walkforward/jobs").json()["items"]
+    assert [i["id"] for i in items] == [second.json()["id"], first["id"]], "newest first"
 
 
-def test_a_refused_strategy_is_a_400_with_every_reason_and_nothing_starts(monkeypatch, isolated):
-    _, calls = isolated
+@needs_db
+def test_cancel_asks_and_a_finished_job_cannot_be_cancelled(jobs_table):
+    job = client.post("/api/nn/walkforward", json={"strategyId": 7}).json()
+    r = client.post(f"/api/nn/walkforward/jobs/{job['id']}/cancel")
+    assert r.status_code == 202 and r.json()["cancelRequested"] is True
+    assert queue.claim(jobs_table, "w1") is None, "a cancelled job is never started"
+    again = client.post(f"/api/nn/walkforward/jobs/{job['id']}/cancel")
+    assert again.status_code == 409 and "already cancelled" in again.json()["error"]
+    assert client.post("/api/nn/walkforward/jobs/999999/cancel").status_code == 404
 
+
+@needs_db
+def test_a_refused_strategy_is_a_400_with_every_reason_and_nothing_is_queued(
+        monkeypatch, jobs_table):
     def refuse(cur, args, explicit):
-        raise strategy_spec.StrategyRefused(["no feature set", "test.to before train.from"])
+        raise strategy_spec.StrategyRefused(["model type 'lstm' is not built", "no folds"])
 
     monkeypatch.setattr(walkforward_api.walkforward, "strategy_setup", refuse)
     r = client.post("/api/nn/walkforward", json={"strategyId": 7})
     assert r.status_code == 400
-    assert r.json()["reasons"] == ["no feature set", "test.to before train.from"]
-    assert calls == []
+    assert r.json()["reasons"] == ["model type 'lstm' is not built", "no folds"]
+    assert _count(jobs_table) == 0
 
 
-def test_an_unknown_strategy_is_a_404_and_nothing_starts(monkeypatch, isolated):
-    _, calls = isolated
-
+@needs_db
+def test_an_unknown_strategy_is_a_404_and_nothing_is_queued(monkeypatch, jobs_table):
     def missing(cur, args, explicit):
-        raise LookupError("strategy 99 not found")
+        raise LookupError("no saved strategy with id 7")
 
     monkeypatch.setattr(walkforward_api.walkforward, "strategy_setup", missing)
-    r = client.post("/api/nn/walkforward", json={"strategyId": 99})
-    assert r.status_code == 404
-    assert calls == []
+    r = client.post("/api/nn/walkforward", json={"strategyId": 7})
+    assert r.status_code == 404 and "no saved strategy" in r.json()["error"]
+    assert _count(jobs_table) == 0
 
 
 def test_a_bad_body_is_a_422():

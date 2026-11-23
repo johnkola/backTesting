@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-23-3** · 2026-11-23 01:34 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-23-4** · 2026-11-23 10:11 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -117,7 +117,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 - **R37** Margin overlay is compared against plain buy-and-hold of the same core, and against always-long at the same leverage with no model; a win that only beats the first is labelled leverage, not timing. [+ G25] · *done (G25)*
 - **R68** The feature scaler is fitted on the training window only, per fold, applied unchanged to validation, test and prediction, and stored with the run. Tree engines need none. · *done (G50: each fold's scaler is kept with its model and reloaded unchanged; runs from before 2026-11-22 have none)*
 - **R69** A test window is marked seen once a run reports on it; later runs reusing it are flagged "test window reused". · *partial (G48 done for backtests; a walk-forward holdout rerun is not flagged in the UI; reuse is flagged, never refused)*
-- **R70** A queued or running job can be cancelled from the UI; the worker stops at its next heartbeat; partial outputs kept, marked cancelled. · *missing (C1, the author 2026-11-22: no longer deferred; needs the jobs table)*
+- **R70** A queued or running job can be cancelled from the UI; the worker stops at its next heartbeat; partial outputs kept, marked cancelled. · *partial (G16 step 16.1, 2026-11-23: a walk-forward job, queued or running, is cancelled from the Train tab; the worker ends the runner within seconds, the folds written stay and the run is marked cancelled. Only walk-forward runs are jobs so far, so nothing else can be cancelled)*
 - **R71** Prediction target per strategy: (a) direction, probability the next bar closes up, with buy and sell thresholds; or (b) return over N bars, with a minimum-return threshold. Target, thresholds and horizon recorded on the run. · *done (G49; walk-forward runs. The single-split Train tab is 3-class only)*
 - **R73** Signal voting (Phase 2): trained engines and benchmark rules each vote per bar; a setup buys when at least a set number agree (e.g. 3 of 4). Votes stored per bar; the vote is backtested like any run. · *gated (G65)*
 - **R75** Engines output buy/sell points only and know nothing about costs, tax or margin. One profit step applies commission, slippage, expenses, tax, superficial loss, dividends, currency and margin to every engine's and benchmark's points; changing a setting recalculates profit without retraining. Per-user settings never change the published signal. [D9; supersedes DN "tax inside the objective"] · *partial (B10; slippage, dividends, currency, superficial loss not in the step yet)*
@@ -153,10 +153,10 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## H. Stack and services
 
-- **R48** Java (Spring Boot) is the single backend serving REST to Next.js. Python computes; Java and Python talk only through the jobs table. The Node API is retired. · *missing (C1, the author 2026-11-22: the move happens now, replacing "after phase two works on real data"; G16)*
+- **R48** Java (Spring Boot) is the single backend serving REST to Next.js. Python computes; Java and Python talk only through the jobs table. The Node API is retired. · *missing (C1, the author 2026-11-22: the move happens now; G16, plan agreed 2026-11-23. Step 16.1 of nine is done: the jobs table and a Python worker exist and walk-forward runs go through them. There is no Spring Boot service yet, Node still serves, and every other piece of Python work is still an HTTP call)*
 - **R49** PostgreSQL/TimescaleDB is the single store; raw and adjusted candle tables in one-year chunks. Model files on disk, with record, path and hash in the database; hash checked on load. Python aligns features for training; Java serves them at native cadence. · *partial (G51, G52, G62)*
 - **R60** One database, three schemas, each with one writer enforced by roles: `app` (Java web), `data` (Python and the Java compute worker), `jobs` (Java inserts; workers update status, result, timestamps). · *missing (C1, the author 2026-11-22: no longer deferred)*
-- **R67** No client overwrites another. (a) Jobs claimed atomically (`FOR UPDATE SKIP LOCKED`) in a short transaction, stamped with worker id and engine; heartbeat about every 30 s; a running job silent for 2 min is re-claimed, attempts + 1; failed and shown after 3. (b) Computed rows are insert-only and tagged with their job. (c) User-edited rows carry a version; a stale save is rejected. · *missing (C1, the author 2026-11-22: no longer deferred)*
+- **R67** No client overwrites another. (a) Jobs claimed atomically (`FOR UPDATE SKIP LOCKED`) in a short transaction, stamped with worker id and engine; heartbeat about every 30 s; a running job silent for 2 min is re-claimed, attempts + 1; failed and shown after 3. (b) Computed rows are insert-only and tagged with their job. (c) User-edited rows carry a version; a stale save is rejected. · *partial (G16 step 16.1, 2026-11-23: (a) is built and tested, `jobs.jobs` with the atomic claim, worker id and engine, heartbeat, re-claim after 2 minutes, failed after 3 attempts; one job type uses it, the walk-forward run. (b) a run carries its job's id; other computed rows do not yet. (c) not built)*
 
 ## I. Testing
 
@@ -180,12 +180,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-90 numbers: 2 retired, 88 live. By the first status on each line: done 24 · partial 48 · missing 12 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
+90 numbers: 2 retired, 88 live. By the first status on each line: done 24 · partial 50 · missing 10 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-4 | 2026-11-23 10:11 | Claude Code (Claude Fable 5.2) | G16 step 16.1: R67 and R70 partial (the jobs table, the worker, cancel for walk-forward runs); R48's reason updated; counts now done 24 · partial 50 · missing 10 |
 | 2026-11-23-3 | 2026-11-23 01:34 | Claude Code (Claude Fable 5.2) | G76: R89 and R63 partial (the repair log and the adjusted view); the count follows |
 | 2026-11-23-2 | 2026-11-23 00:52 | Claude Code (Claude Fable 5.2) | G77: R62 partial (the ONNX Runtime check runs for every fold, in the engine); C4 built; the count follows |
 | 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | G75: R12 and R65 reasons follow the import that always lands; no status change |

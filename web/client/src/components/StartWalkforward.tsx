@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type SavedStrategy, type WalkforwardJob } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import { canCancel, jobBadge, jobNotes } from '../lib/walkforwardJob'
 
 const POLL_MS = 3000
 
@@ -12,8 +13,10 @@ const POLL_MS = 3000
  * everything that changes the result lives in the strategy. The holdout is not
  * offered: it may be spent once, and stays a deliberate terminal command.
  *
- * What is shown here is the job (the runner process and its last lines of
- * output), not the run. The run is the `walkforward_runs` row the runner opens
+ * A start is a row in the jobs table (G16): a worker claims it and runs it, so
+ * it survives a restart, waits behind a run already going, and can be cancelled
+ * (R70). What is shown here is the job (its state and the runner's last lines
+ * of output), not the run. The run is the `walkforward_runs` row the runner opens
  * before its first fold, and it appears in the table below like any other.
  * `onRunChange` asks the parent to re-read that table when the job opens its
  * run or exits, rather than on every poll.
@@ -89,7 +92,8 @@ export default function StartWalkforward({ onRunChange }: { onRunChange: () => v
         <h2 className="card-title text-base">Run a saved strategy</h2>
         <p className="text-xs text-base-content/70">
           Runs every validation fold of the strategy as saved: instrument, windows, features,
-          hyperparameters and objective all come from it. One run at a time. The holdout is not
+          hyperparameters and objective all come from it. One run at a time; a run can be
+          cancelled, and keeps the folds it finished. The holdout is not
           offered here; spend it from a terminal with <code>--test</code> once a variant is chosen.
         </p>
         {savedError && <div className="alert alert-error text-sm">{savedError}</div>}
@@ -140,28 +144,46 @@ export default function StartWalkforward({ onRunChange }: { onRunChange: () => v
             </ul>
           </div>
         )}
-        {job && <JobView job={job} />}
+        {job && <JobView job={job} onChange={setJob} />}
       </div>
     </div>
   )
 }
 
-function JobView({ job }: { job: WalkforwardJob }) {
-  const state = job.running
-    ? <span className="badge badge-info badge-sm">running</span>
-    : job.exitCode === 0
-      ? <span className="badge badge-success badge-sm">finished</span>
-      : <span className="badge badge-error badge-sm">exit {job.exitCode}</span>
+// Whole class names, so the stylesheet build finds them.
+const BADGE_CLASS = {
+  info: 'badge-info', success: 'badge-success', error: 'badge-error',
+  warning: 'badge-warning', ghost: 'badge-ghost',
+} as const
+
+function JobView({ job, onChange }: { job: WalkforwardJob, onChange: (j: WalkforwardJob) => void }) {
+  const [error, setError] = useState<string | null>(null)
+  const badge = jobBadge(job)
+  const notes = jobNotes(job)
+
+  async function cancel() {
+    setError(null)
+    try {
+      onChange(await api.walkforwardCancel(job.id))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   return (
     <div className="mt-2">
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        {state}
+        <span className={`badge badge-sm ${BADGE_CLASS[badge.tone]}`}>{badge.text}</span>
         <span>job {job.id} · strategy {job.strategyId}{job.label && ` · ${job.label}`}</span>
-        {job.runId !== null && <span>· recording as run {job.runId}</span>}
-        {!job.running && job.runId === null && (
-          <span className="text-warning">· no run was recorded; the output says why</span>
+        {job.runId !== null && job.running && <span>· recording as run {job.runId}</span>}
+        {canCancel(job) && (
+          <button type="button" className="btn btn-outline btn-xs" onClick={cancel}>
+            Cancel
+          </button>
         )}
       </div>
+      {notes.map((n) => <p key={n} className="text-xs text-warning mt-1">{n}</p>)}
+      {error && <div className="alert alert-error text-sm mt-1">{error}</div>}
       <p className="text-xs text-base-content/60 mt-1"><code>{job.command}</code></p>
       <pre className="bg-base-300 rounded p-2 mt-1 text-xs overflow-x-auto max-h-64">
         {job.output.length ? job.output.join('\n') : 'waiting for output…'}

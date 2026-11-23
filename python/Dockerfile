@@ -28,6 +28,7 @@ RUN pip install --upgrade pip \
 
 COPY python/loader ./loader
 COPY python/nn ./nn
+COPY python/jobs ./jobs
 
 # Last, so a new commit rebuilds only this layer: resolve HEAD from the files
 # (the image has no git binary) and keep it where `nn.lineage.git_sha()` looks.

@@ -787,7 +787,7 @@ def training_stage(ctx: Context, features: dict[str, Any]) -> dict[str, Any]:
         reasons.append(reason("upstream", "the feature table is stale (see Features), so every "
                               "run reads from an out-of-date build"))
     ctx.cur.execute("SELECT count(*) FROM walkforward_runs WHERE timeframe = %s "
-                    "AND finished_at IS NULL", (ctx.timeframe,))
+                    "AND finished_at IS NULL AND failed_reason IS NULL", (ctx.timeframe,))
     in_progress = int(ctx.cur.fetchone()[0])
     stale_runs = [r for r in checked if r["state"] == "stale"]
     if in_progress:

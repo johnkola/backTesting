@@ -1238,9 +1238,19 @@ export type WalkforwardJob = {
   strategyId: number
   label: string
   command: string
-  startedAt: string
+  /** The jobs-table status (R67): a job waits, runs, and ends one of three ways. */
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  queuedAt: string
+  /** When a worker claimed it; null while it waits. */
+  startedAt: string | null
   finishedAt: string | null
+  /** True while there is more to come: queued or running. */
   running: boolean
+  /** Claims so far: above 1 when a worker went silent and the job was taken again. */
+  attempts: number
+  cancelRequested: boolean
+  /** Why it failed, when it did. */
+  error: string | null
   exitCode: number | null
   runId: number | null
   /** The runner's last 40 lines. */
@@ -2092,7 +2102,15 @@ export const api = {
     }
     throw new Error(parsed.error ?? `${res.status} ${res.statusText}`)
   },
-  /** Jobs the loader has started since it came up, newest first. */
+  /** Ask a queued or running job to stop; the worker stops at its next heartbeat (R70). */
+  walkforwardCancel: async (id: number): Promise<WalkforwardJob> => {
+    const res = await fetch(apiUrl(`/api/nn/walkforward/jobs/${id}/cancel`), { method: 'POST' })
+    let parsed: { error?: string } & Partial<WalkforwardJob> = {}
+    try { parsed = await res.json() } catch { /* not JSON */ }
+    if (!res.ok) throw new Error(parsed.error ?? `${res.status} ${res.statusText}`)
+    return parsed as WalkforwardJob
+  },
+  /** The latest walk-forward jobs from the jobs table, newest first. */
   walkforwardJobs: (signal?: AbortSignal) =>
     getJson<WalkforwardJobs>('/api/nn/walkforward/jobs', signal),
   features: (timeframe?: string, signal?: AbortSignal) =>
