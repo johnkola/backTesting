@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-23-1** · 2026-11-23 00:22 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-23-2** · 2026-11-23 00:52 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -42,7 +42,7 @@ Every question this section used to hold was answered by the author on 2026-11-1
 | C1 | When does the stack move? | Now, before further feature work; the designed stack is the target for high traffic and heavy processing (2026-11-22; replaces "after phase two works on real data") | R6, R33, R48, R60, R67, R70 | open (G16) |
 | C2 | Do data checks stop the chain? | Errors stop, warnings continue. An error is a bar whose prices contradict each other, a duplicate or an out-of-order timestamp; "two or more flags" is not used | R12, R65 | built 2026-11-22 |
 | C3 | Are nulls allowed in feature values? | Keep NULLs, dropped at read | R3 | departure (D2) |
-| C4 | Keep the Deeplearning4j and ONNX check? | Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (2026-11-22; replaces "drop it, PyTorch only") | R62 | open (D13) |
+| C4 | Keep the Deeplearning4j and ONNX check? | Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (2026-11-22; replaces "drop it, PyTorch only") | R62 | built 2026-11-23 (G77), in the engine until the compute worker exists |
 | C5 | TA-Lib or the hand-written indicators? | TA-Lib is the single source; the hand-written indicators stay only as the cross-check (2026-11-22; replaces "keep the hand-written indicators") | R66 | built 2026-11-22 (G78) |
 | C6 | Walk-forward: expanding or sliding? | Offer both, expanding the default | R25 | built 2026-11-21 (D3) |
 | C7 | Are RSI, MACD and realized volatility model inputs? | Selectable per strategy, off by default | R19, R78 | built 2026-11-21 (D4) |
@@ -164,7 +164,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 - **R50** Unit tests: pytest, JUnit, Vitest + React Testing Library. · *partial (G60: no React Testing Library, no component test)*
 - **R61** Python tests in three layers: unit (each parser, year slicing, each indicator against published values, alignment never looks ahead); job (through the jobs table against a test database); reproducibility. · *partial (no job layer; each indicator is checked against a value worked by hand and against the second module, G78, not against a published table)*
-- **R62** Prediction check for NN only: the trained network is exported to ONNX and run in ONNX Runtime by a separate Java compute worker; its predictions are compared with PyTorch's on the same inputs, for every walk-forward fold, within a set tolerance. Differences are warnings. Deeplearning4j is not used. [C4, the author 2026-11-22, replacing "PyTorch only" of 2026-11-19] · *missing (D13)*
+- **R62** Prediction check for NN only: the trained network is exported to ONNX and run in ONNX Runtime by a separate Java compute worker; its predictions are compared with PyTorch's on the same inputs, for every walk-forward fold, within a set tolerance. Differences are warnings. Deeplearning4j is not used. [C4, the author 2026-11-22, replacing "PyTorch only" of 2026-11-19] · *partial (G77, 2026-11-23: every fold's network is exported to ONNX and run in ONNX Runtime 1.32 against PyTorch's output, and a difference is a warning on the run; it runs in the engine, not in a separate compute worker, which waits for the stack move, G16; runs stored before it have no exported network)*
 - **R51** Postman collection for every endpoint, mirroring every JUnit case, with an environment per target, run in CI via Newman. Every new endpoint ships with its request and its unit test. · *partial (a request per Node route, enforced by a test; not run in CI by Newman)*
 - **R52** One end-to-end path: CSV drop to trained run to result on screen. · *partial (`tools/datagen/pipeline.py`, by hand, not in CI)*
 
@@ -180,12 +180,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-90 numbers: 2 retired, 88 live. By the first status on each line: done 24 · partial 45 · missing 15 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
+90 numbers: 2 retired, 88 live. By the first status on each line: done 24 · partial 46 · missing 14 · departure 1 · gated 3. Verified against the code on 2026-11-22. The lines changed by the author's answers of that evening (R3, R6, R12, R21, R33, R48, R60, R62, R66, R67, R70, R89, R90) were verified at `65d71fc`: there is no Spring Boot, Next.js, jobs table, schema or role, no ONNX or TA-Lib dependency, no repair table, and the five rule benchmarks are not part of a run.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-2 | 2026-11-23 00:52 | Claude Code (Claude Fable 5.2) | G77: R62 partial (the ONNX Runtime check runs for every fold, in the engine); C4 built; the count follows |
 | 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | G75: R12 and R65 reasons follow the import that always lands; no status change |
 | 2026-11-22-10 | 2026-11-22 23:58 | Claude Code (Claude Fable 5.2) | G78: R66 done (TA-Lib through `nn/ta.py`, the hand-written module its cross-check); C5 built; R61's reason and the count follow |
 | 2026-11-22-9 | 2026-11-22 23:36 | Claude Code (Claude Fable 5.2) | R21's reason: the 15 stored runs carry the five rule benchmarks now |

@@ -110,8 +110,13 @@ services:
       PGPASSWORD: backtest
       ENGINE_PORT: "8002"
       LOADER_URL: http://loader:8001
+      # Where the loader keeps each walk-forward fold's model, with its ONNX
+      # copy: the engine runs those in ONNX Runtime for the prediction check
+      # (R62, G77). Read-only here.
+      FOLD_MODELS_DIR: /data/fold-models
     volumes:
       - ./data/models:/data/models:ro
+      - ./data/fold-models:/data/fold-models:ro
 
   loader:
     build:
@@ -142,6 +147,9 @@ services:
       PGPASSWORD: backtest
       CSV_ARCHIVE_DIR: /data/csv-archive
       MODELS_DIR: /data/models
+      # The engine, asked for the ONNX Runtime check when a walk-forward run
+      # finishes (R62, G77). Unset, the run says the check was not asked for.
+      ENGINE_URL: http://engine:8002
       # Keep-last-N retention for trained NN models. 0 disables retention,
       # matching the Java side's default when --keep-last-N isn't passed.
       MODEL_KEEP_LAST_N: "0"

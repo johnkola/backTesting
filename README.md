@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-23-1** · 2026-11-23 00:22 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-2** · 2026-11-23 00:52 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -419,6 +419,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | Endpoint | Body / params | Does |
 |---|---|---|
 | `GET /api/walkforward/runs` | `timeframe` `includeTest` `limit` | `{items, timeframe, includeTest, limit}` — walk-forward runs, newest first, each with its folds summarised on read: `folds`, `foldsWon`, `meanExcess`, `worstStratDrawdown`, `totalTrades` and the cost attribution (`meanDriftTax`, `meanCommissions`, `meanTiming`). None of that is stored; it is aggregated from `walkforward_folds`, so it cannot disagree with the folds. A run with no folds yet reports `null` for each average rather than a zero that reads as a measurement, and `inProgress` is true until `finishedAt` is stamped. **Holdout runs are excluded** unless `includeTest=true` — spending the test block is a one-way door, and listing those runs beside the validation ones is how it becomes training data. `limit` defaults to 50, capped at 500 |
+| `POST /api/walkforward/onnx-check` | `run` | Runs [the prediction check](#the-prediction-check) for a walk-forward run (R62, G77): each fold's exported network in ONNX Runtime against PyTorch's output. Stores a row per fold and answers `{runId, runtime, checked, agreed, folds}`, each fold with `bars`, `maxDiff`, `tolerance`, `agreed` and `problem`. A fold that differs is in the answer, not an error status. `404` for an unknown run; a run that kept no exported network answers with no folds |
 | `GET /api/walkforward/runs/:id` | — | `{run, folds}` — the run plus every fold in sequence, each with both sides of the comparison (`stratReturn`/`holdReturn`, Sharpe, drawdown) and the attribution that says whether a loss was the model's timing or the structural cost of being out. The run carries `columns` (the input columns in order; `null` on runs recorded before the list was) and `strategy` (`{id, name, version, dropped, partial, trainFirst, trainBarsUsed, trainBars, testEnd}` for a run of a saved strategy, `null` for one launched from flags); the list route carries both too. A run scored after tax carries `taxRate` (percent on realized gains; `null` when scored before tax) and `meanGainsTax`, and each fold its `gainsTax`, beside the other cost terms. Every run carries `execution`: `kind` is `signals` (Strategy 1) or `margin` (Strategy 2), with its dials (`leveragePct`, `hedgePct`, `marginSpreadPct`, `maintenancePct`, `longThreshold`) and margin summary (`meanMarginInterest`, `marginCalls`, `trims`, `coreAtRisk`, `meanDaysLong`, `meanDaysHedged`), all `null` under Strategy 1; a Strategy 2 fold carries `marginInterest`, `marginCalls`, `trims`, `daysLong`, `daysHedged`, `coreAtRisk` and `leveredReturn` (the same fold always long on margin, no model), and the run `execution.meanLeveredReturn`, `execution.foldsBeatLevered` and `beatsLeveredOnReturn` (false beside a win over buy-and-hold means the win is the borrowing, not the timing); each fold's buy-and-hold (`holdReturn`, `holdSharpe`, `holdMaxdd`) is scored with the fold under the run's own settings, with its own `holdCommissions` and `holdGainsTax`; the gap's cost terms are the strategy's minus these. Every run carries `meanAccuracy` and `meanBaselineAcc`, the fold means of the model's accuracy and of the naive predictor's (R72), and `beatsNaive`, false when the model does not beat it (a tie does not); the Training tab badges such a run "below naive" and the runner prints a `NAIVE` line. Each fold's `benchmarks` holds Faber and dual momentum: `{name, available, reason, returnPct, sharpe, maxdd, trades, barsHeld, commissions, gainsTax}`. `recalculatedFrom` is the run whose stored signals this one was scored from without retraining, `null` on a run that trained. A run trains every engine its strategy switches on (B9): `run.engines` lists each one's `{engine, library, version, seed, scaled, settings}` (`null` on a run from before, which trained the network alone), each fold row carries its `engine`, one row per engine per fold, and `engineSummaries` gives each engine's `{folds, foldsWon, meanExcess, meanStratReturn, meanHoldReturn, meanStratSharpe, worstStratDrawdown, totalTrades, meanTiming, meanAccuracy, meanBaselineAcc, beatsNaive, beatsHoldOnReturn}`. The run's own summary figures, here and in the list, are its first engine's. Each run says what it predicted (G49): `target` (`class`, `direction` or `return`) and `labelSpec` (the strategy's label with its horizon and thresholds; `null` before G49, the 3-class label). For a return target the accuracy figures are mean absolute errors and `beatsNaive` means lower. Every epoch is recorded (G11): `epochs` gives each engine's loss curve per fold (`{fold, engine, train, stop}`, `stop` being the network's early-stopping loss), each fold row its `loss` (`{epochs, first, lowest, last, decreased}`; null before G11), a run that stopped on a NaN or infinite loss its `failedReason` (and is not `inProgress`), and a run still going its `progress` (`{fold, engine, epoch, trainLoss, unitsDone, unitsPlanned, elapsedSeconds, etaSeconds}`), in the list too. `404` for an unknown id, `400` for a non-numeric one. Every run carries `window` (`{kind, trainYears, stepYears}`): `expanding` for a run that trained from `trainStart`, which every run before the sliding window was, or `sliding` with its years (C6); under a sliding window a holdout run trains on the last `trainYears` before the test block |
 | `GET /api/strategies` | — | `{items: [...]}` — every registered strategy with its description, default parameters, and `requiresTrainedModel`. What a strategy picker and parameter form are built from. Each carries `kind`: `model`, or `benchmark` for the five indicator rules kept for comparison only (C8) |
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing`, `taxRate` | Runs a backtest, saves it, returns the full result. `taxRate` (a percent above 0 and below 100) scores it after tax (G20); `400` outside that range. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range. For a model strategy the answer also carries `inSample` (true when the tested window overlaps the model's training window, `null` when that window is unknown) and `inSampleNote`, the sentence naming both windows (R82) |
@@ -865,7 +866,8 @@ tracker, and the order of what is left is the author's to set:
 
 - The stack moves now, not after phase two: Spring Boot as the single backend, Next.js,
   three schemas with roles, the jobs table (C1, G16).
-- Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (C4, G77).
+- Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (C4, G77):
+  built 2026-11-23, in the engine until the compute worker exists.
 - TA-Lib is the single source of indicators, with the hand-written module as its
   cross-check (C5, G78): built 2026-11-22.
 - New the same day: an import always lands and the feature build and training hold the
@@ -1048,6 +1050,7 @@ and do not show on the Models page:
 ```
 data/fold-models/run-<id>/fold-<nn>/<engine>/
     model.pt + scaler.json     the network
+    model.onnx + check_*       the network again, exported to ONNX, with the batch it is checked on
     model.json | model.txt     XGBoost | LightGBM, which keep no scaler
 ```
 
@@ -1066,6 +1069,27 @@ table and compares with the signals the run stored. It needs the run's feature s
 still hold the build the run read. Deleting a run deletes its rows, not its files;
 `--prune` removes the files of runs that are gone. Runs from before 2026-11-22, and runs
 made by a recalculation, kept none: rerun the strategy to have its models.
+
+### The prediction check
+
+Every fold's network is also run on a second runtime (R62, G77). As a fold is kept, the
+loader exports it to ONNX with its scaler and output head inside the graph, beside the
+inputs of the fold's scored bars and PyTorch's output on them. When the run finishes it
+asks the engine, which runs each `model.onnx` in ONNX Runtime on those inputs and compares
+the result with PyTorch's, to a tolerance of 1e-5. The run prints the outcome, the
+Training tab shows it on the run ("prediction check"), and each fold's row is in
+`walkforward_onnx_checks`. A fold that differs is a warning and stops nothing.
+
+```bash
+curl -X POST "http://localhost:8001/api/walkforward/onnx-check?run=RUN_ID"   # check again, or a run the engine missed
+docker compose exec engine ./bin/BackTesting onnx-check --run RUN_ID
+```
+
+The loader needs `ENGINE_URL` to ask (compose sets `http://engine:8002`); without it the
+run says the check was not asked for. The engine mounts `./data/fold-models` read-only.
+Only the network is exported: the tree engines are their libraries' own models. Runs from
+before 2026-11-23 kept no ONNX copy and read "not checked". The design puts this check in
+a separate Java compute worker; until the stack move (G16) the engine is that Java side.
 
 ## Storage compression
 
@@ -1172,6 +1196,7 @@ The Python loader is configured via environment variables (set in `docker-compos
 | `CSV_ARCHIVE_DIR`   | `data/csv-archive`     | Root for archived CSV slices                                 |
 | `MODELS_DIR`        | `data/models`          | Root for the on-disk model registry                          |
 | `MODEL_KEEP_LAST_N` | `0`                    | NN model retention; `0` disables pruning                     |
+| `ENGINE_URL`        | unset (compose: `http://engine:8002`) | Where a finished walk-forward run asks for [the prediction check](#the-prediction-check) |
 | `FOLD_MODELS_DIR`   | `fold-models` beside `MODELS_DIR` | Root for the models walk-forward folds keep ([Walk-forward fold models](#walk-forward-fold-models)) |
 | `FEEDS_SCHEDULE`    | unset (compose: `18:30`) | New York times of the daily [data feeds](#data-feeds) run, Monday to Friday, comma-separated; unset or `off` for none |
 | `FRED_API_KEY`      | unset                  | FRED API key for the feeds and `fetch_fred_series.py`; compose passes it from `.env`. Without one the keyless graph CSV is used |
@@ -1400,6 +1425,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-2 | 2026-11-23 00:52 | Claude Code (Claude Fable 5.2) | The prediction check in ONNX Runtime (G77): what a fold keeps, the route, the command, `ENGINE_URL` |
 | 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | An import always lands and its errors are flagged rows (G75): what they hold, accepting them, `loader.flags`, `/api/checks` |
 | 2026-11-22-11 | 2026-11-22 23:58 | Claude Code (Claude Fable 5.2) | Indicators come from TA-Lib through `nn/ta.py` (G78): where they are used, the cross-check, the dependency; roadmap follows |
 | 2026-11-22-10 | 2026-11-22 23:36 | Claude Code (Claude Fable 5.2) | The indicator rules: stored runs carry them, stored backtest results cannot |

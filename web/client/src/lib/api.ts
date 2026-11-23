@@ -1758,6 +1758,27 @@ export type WalkforwardRunDetail = {
   engineSummaries?: EngineSummary[]
   /** Every engine's loss curve, fold by fold (G11); empty before epochs were recorded. */
   epochs?: EpochCurve[]
+  /** The prediction check, a row per fold (R62, G77); empty for a run never checked. */
+  onnxChecks?: OnnxFoldCheck[]
+}
+
+/**
+ * One fold of the prediction check (R62, G77): the fold's network, exported to
+ * ONNX, run in ONNX Runtime by the Java side on the fold's own scored inputs
+ * and compared with PyTorch's output.
+ */
+export type OnnxFoldCheck = {
+  fold: number
+  /** Rows compared; 0 when the fold could not be checked. */
+  bars: number
+  /** Largest absolute difference from PyTorch's output; null when not checked. */
+  maxDiff: number | null
+  tolerance: number
+  agreed: boolean
+  /** Why the fold could not be checked, or null. */
+  problem: string | null
+  runtimeVersion: string | null
+  checkedAt: string
 }
 
 // ---------------------------------------------------------------------------

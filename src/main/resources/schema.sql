@@ -1149,3 +1149,24 @@ CREATE TABLE IF NOT EXISTS data_checks (
 );
 CREATE INDEX IF NOT EXISTS idx_data_checks_open
     ON data_checks (instrument_id, source_id, timeframe) WHERE accepted_at IS NULL;
+
+-- G77 (R62): the prediction check. One row per fold of a run whose network
+-- was exported to ONNX: the engine ran it in ONNX Runtime on the fold's own
+-- scored inputs and compared with PyTorch's output (engine/OnnxCheck.java).
+--   bars        rows compared; 0 when the fold could not be checked
+--   max_diff    largest absolute difference; NULL when not checked
+--   agreed      checked and max_diff <= tolerance; a fold that did not agree
+--               is a warning on the run, never a stop
+--   problem     why a fold could not be checked, or NULL
+CREATE TABLE IF NOT EXISTS walkforward_onnx_checks (
+    run_id BIGINT NOT NULL REFERENCES walkforward_runs(id) ON DELETE CASCADE,
+    fold INT NOT NULL,
+    bars INT NOT NULL,
+    max_diff DOUBLE PRECISION,
+    tolerance DOUBLE PRECISION NOT NULL,
+    agreed BOOLEAN NOT NULL,
+    problem TEXT,
+    runtime_version VARCHAR(32),
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (run_id, fold)
+);

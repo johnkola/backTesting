@@ -97,6 +97,10 @@ public class EngineApi {
         // trailing segment is present -- the same shape /api/results uses.
         server.createContext("/api/walkforward/runs",
                 ex -> serve(ex, "GET", this::walkforwardRuns));
+        // The prediction check (R62, G77). Its own context, since the one above
+        // answers GET only: POST /api/walkforward/onnx-check?run={id}.
+        server.createContext("/api/walkforward/onnx-check",
+                ex -> serve(ex, "POST", this::onnxCheck));
         server.createContext("/api/health", ex -> serve(ex, "GET", this::health));
 
         server.start();
@@ -327,6 +331,14 @@ public class EngineApi {
             // above are its first engine's.
             body.put("engineSummaries",
                     com.bazarbozorg.backtest.model.EngineSummary.of(folds, run.target()));
+            // R62 (G77): each fold's network run in ONNX Runtime against
+            // PyTorch's output. Empty for a run that was never checked.
+            try {
+                body.put("onnxChecks",
+                        com.bazarbozorg.backtest.engine.OnnxCheck.stored(databaseManager, id));
+            } catch (java.sql.SQLException e) {
+                throw new IllegalStateException("could not read the ONNX checks of run " + id, e);
+            }
             return body;
         }
 
@@ -554,6 +566,39 @@ public class EngineApi {
             out.add(obj);
         }
         return out;
+    }
+
+    /**
+     * Runs the prediction check for one walk-forward run (R62, G77): every fold
+     * whose network was exported to ONNX is run in ONNX Runtime on its own
+     * scored inputs and compared with PyTorch's output. Stores a row per fold
+     * and answers with them. A fold that differs is a warning in the answer,
+     * never an error status: the check reports, it does not stop anything.
+     */
+    private Object onnxCheck(HttpExchange exchange) {
+        String raw = query(exchange).get("run");
+        if (raw == null || raw.isBlank()) {
+            throw badRequest("expected ?run={id}");
+        }
+        long id = parseRunId(raw);
+        new WalkforwardRepository(databaseManager).findRun(id)
+                .orElseThrow(() -> notFound("no walk-forward run with id " + id));
+        try {
+            List<com.bazarbozorg.backtest.engine.OnnxCheck.FoldCheck> folds =
+                    com.bazarbozorg.backtest.engine.OnnxCheck.checkRun(databaseManager, id,
+                            com.bazarbozorg.backtest.engine.OnnxCheck.baseDir());
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("runId", id);
+            body.put("runtime", "onnxruntime "
+                    + com.bazarbozorg.backtest.engine.OnnxCheck.runtimeVersion());
+            body.put("checked", folds.stream().filter(f -> f.problem() == null).count());
+            body.put("agreed", folds.stream().filter(
+                    com.bazarbozorg.backtest.engine.OnnxCheck.FoldCheck::agreed).count());
+            body.put("folds", folds);
+            return body;
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("the ONNX check of run " + id + " failed", e);
+        }
     }
 
     private static long parseRunId(String segment) {

@@ -621,8 +621,10 @@ def fit_network(
 
     With early stopping the last training year is held out of its fitting to
     decide when to stop, so the rows fitted are fewer than the fold's.
-    `keep("mlp", model, scaler)` is handed the trained network and the scaler
-    fitted on this fold's training rows, before either is let go (G50).
+    `keep("mlp", model, scaler, check=(inputs, output))` is handed the trained
+    network and the scaler fitted on this fold's training rows, before either
+    is let go (G50), with the fold's scored inputs and its output on them: the
+    batch the ONNX copy is checked on (G77).
     """
     patience = getattr(args, "patience", None)
     stop_ix: list[int] = []
@@ -640,10 +642,11 @@ def fit_network(
         model, scaler, stopper = train_money(
             x_tr, seg(tr), args, stop=(x_all[stop_ix], seg(stop_ix)) if patience else None,
             on_epoch=on_epoch)
+    output = predict(model, scaler, x_all[va], args.loss,
+                     getattr(args, "target", None) or "class")
     if keep is not None:
-        keep("mlp", model, scaler)
-    return (predict(model, scaler, x_all[va], args.loss, getattr(args, "target", None) or "class"),
-            tr, stopper)
+        keep("mlp", model, scaler, check=(x_all[va], output))
+    return output, tr, stopper
 
 
 def run_fold(
@@ -667,9 +670,10 @@ def run_fold(
     trains, a tree engine's rounds once its model is fitted. A non-finite loss
     raises `NonFiniteLoss` naming the fold, engine and epoch.
 
-    `keep(engine, model, scaler)` receives each engine's trained model, with
-    the network's scaler and None for a tree engine, so the run can keep them
-    (G50, `nn.fold_models`). Without it they are let go, as before.
+    `keep(engine, model, scaler, check=None)` receives each engine's trained
+    model, with the network's scaler and None for a tree engine, so the run
+    can keep them (G50, `nn.fold_models`); the network also hands over its
+    check batch (G77). Without it they are let go, as before.
     """
     y_va = y_all[va]
     target = getattr(args, "target", None) or "class"
@@ -1132,6 +1136,50 @@ def margin_hash(cur, dates: list[date], source: str) -> str:
         (d, (psq.opens.get(d), psq.closes.get(d), rate(d))) for d in dates)
 
 
+def onnx_check_lines(run_id: int, engine_url: str | None = None, timeout: float = 300.0,
+                     ) -> list[str]:
+    """Ask the Java side for the prediction check of a finished run (R62, G77)
+    and return what to print.
+
+    Each fold's network was exported to ONNX as it was kept; the engine runs
+    it in ONNX Runtime on the fold's scored inputs and compares with the output
+    stored here. A fold that differs is a WARNING line. Nothing this function
+    meets fails the run: an engine that cannot be reached is said, and the
+    check can be asked for again (`POST /api/walkforward/onnx-check?run=N`)."""
+    import urllib.error
+    import urllib.request
+
+    base = (engine_url if engine_url is not None else os.environ.get("ENGINE_URL", "")).rstrip("/")
+    again = f"POST /api/walkforward/onnx-check?run={run_id}"
+    if not base:
+        return [f"onnx check   not asked: ENGINE_URL is not set. Ask the engine with {again}"]
+    try:
+        req = urllib.request.Request(f"{base}/api/walkforward/onnx-check?run={run_id}",
+                                     data=b"", method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - our own engine
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return [f"onnx check   NOT CHECKED: the engine did not answer ({exc}). "
+                f"Ask again with {again}"]
+    folds = body.get("folds") or []
+    if not folds:
+        return ["onnx check   nothing to check: the run kept no exported network"]
+    lines = []
+    for f in folds:
+        if f.get("problem"):
+            lines.append(f"onnx check   fold {f['fold']}: NOT CHECKED, {f['problem']}")
+        elif not f.get("agreed"):
+            lines.append(f"onnx check   fold {f['fold']}: WARNING, ONNX Runtime differs from "
+                         f"PyTorch by {f['maxDiff']:.3g} on {f['bars']} bars "
+                         f"(tolerance {f['tolerance']:g})")
+    checked = [f for f in folds if not f.get("problem")]
+    worst = max((f["maxDiff"] for f in checked), default=0.0)
+    lines.append(f"onnx check   {body.get('agreed', 0)} of {len(folds)} folds agree with PyTorch "
+                 f"on {body.get('runtime', 'ONNX Runtime')}"
+                 + (f"; largest difference {worst:.3g}" if checked else ""))
+    return lines
+
+
 def series_read(cur, args, set_id: int | None) -> list[tuple[str, str, str]]:
     """Every stored series a run reads, as (symbol, source, timeframe): its
     instrument's bars, the inputs of its feature set's build, the series its
@@ -1581,10 +1629,12 @@ def main(argv: list[str] | None = None) -> int:
         if run_id is None:
             return None
 
-        def keep(engine: str, model, scaler) -> None:
+        def keep(engine: str, model, scaler, check=None) -> None:
             arch = fold_models.network_arch(model, args) if engine == "mlp" else None
-            fold_models.record(conn, fold_models.save(models_base, run_id, fold_no, engine,
-                                                      model, scaler, arch))
+            head = (args.loss, getattr(args, "target", None) or "class")
+            fold_models.record(conn, fold_models.save(
+                models_base, run_id, fold_no, engine, model, scaler, arch,
+                check=check, head=head))
         return keep
 
     models_base = fold_models.base_dir()
@@ -1621,6 +1671,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"recorded     run {run_id}, {len(results)} folds in walkforward_folds")
         print("             nothing derivable is stored -- folds won, mean excess and")
         print("             worst drawdown are all computed on read from the folds")
+        if "mlp" in args.engines:
+            for line in onnx_check_lines(run_id):
+                print(line)
 
     conn.close()
     return 0

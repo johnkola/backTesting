@@ -6,6 +6,7 @@ import {
   type TrainedModel,
   type WalkforwardRun,
   type WalkforwardFold,
+  type WalkforwardRunDetail,
 } from '../../lib/api'
 import {
   NETWORK, engineBenchmarkRows, engineRecordLine, engineTitle, foldEngine, isNetworkAlone,
@@ -23,6 +24,8 @@ import { mergeState } from '../../lib/stageStatus'
 import StageShell from './StageShell'
 import LossCurves from '../../components/LossCurves'
 import { progressLine } from '../../lib/epochs'
+import { onnxCheckLine } from '../../lib/onnxCheck'
+import { tipClass } from '../../components/FieldLabel'
 import { labelLine, runLabel, runName, runTarget, scoreLabel } from '../../lib/targets'
 
 type Loaded = { items: TrainedModel[], modelsDir: string }
@@ -374,6 +377,7 @@ export default function TrainingStage() {
               {engineColumn && detail.engineSummaries && (
                 <EngineSummaries run={detail.run} summaries={detail.engineSummaries} />
               )}
+              <OnnxCheckNote checks={detail.onnxChecks} />
               <p className="text-xs text-base-content/70 mb-1">
                 Beside the benchmarks, a fold&apos;s mean under the run&apos;s own costs and tax
                 (worst drawdown of any fold){engineColumn && ', one strategy line per engine'}:
@@ -872,4 +876,31 @@ function RunLineage({ run }: { run: WalkforwardRun }) {
   const { tone, text } = lineageLine(run.id, run.lineage)
   const cls = tone === 'warn' ? 'text-warning' : tone === 'muted' ? 'text-base-content/60' : ''
   return <p className={`${cls} break-words`}>{text}</p>
+}
+
+/**
+ * The prediction check of the run (R62, G77): its network run in ONNX Runtime
+ * by the Java side against PyTorch's own output, fold by fold.
+ */
+function OnnxCheckNote({ checks }: { checks: WalkforwardRunDetail['onnxChecks'] }) {
+  const line = onnxCheckLine(checks)
+  const tip = 'Each fold\'s network is exported to ONNX and run on a second runtime, ONNX Runtime, '
+    + 'on the same bars the fold scored. Agreement means the stored signals are the model\'s and '
+    + 'not an accident of one library. A difference is a warning and stops nothing.'
+  return (
+    <div className="text-xs mt-2" data-testid="onnx-check">
+      <span className={tipClass} data-tip={tip}>
+        <span className={`badge badge-xs mr-1 cursor-help ${line.tone === 'ok' ? 'badge-success'
+          : line.tone === 'warning' ? 'badge-warning' : 'badge-ghost'}`}>
+          prediction check
+        </span>
+      </span>
+      <span className={line.tone === 'none' ? 'text-base-content/60' : undefined}>{line.text}</span>
+      {line.details.length > 0 && (
+        <ul className="list-disc list-inside text-warning mt-1">
+          {line.details.map((d) => <li key={d}>{d}</li>)}
+        </ul>
+      )}
+    </div>
+  )
 }

@@ -6,6 +6,7 @@ import com.bazarbozorg.backtest.cli.ListImportsCommand;
 import com.bazarbozorg.backtest.cli.ListInstrumentsCommand;
 import com.bazarbozorg.backtest.cli.ListModelsCommand;
 import com.bazarbozorg.backtest.cli.ListSourcesCommand;
+import com.bazarbozorg.backtest.cli.OnnxCheckCommand;
 import com.bazarbozorg.backtest.cli.ListStrategiesCommand;
 import com.bazarbozorg.backtest.cli.ReportCommand;
 import com.bazarbozorg.backtest.cli.ServeCommand;
@@ -31,6 +32,7 @@ import picocli.CommandLine.Command;
              BacktestCommand.class,
              SignalsCommand.class,
              ReportCommand.class,
+             OnnxCheckCommand.class,
              ServeCommand.class,
          })
 public class BacktestApplication implements Runnable {

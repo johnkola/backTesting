@@ -12,6 +12,9 @@ Layout, under `FOLD_MODELS_DIR` (beside the model registry, not inside it:
     <base>/run-<id>/fold-<nn>/<engine>/
         model.pt + scaler.json      the network: its state dict, and the
                                     scaler fitted on that fold's training rows
+        model.onnx + check_*        the same network exported to ONNX, and the
+                                    batch the Java side checks it on in ONNX
+                                    Runtime (R62, G77; `nn/onnx_export.py`)
         model.json | model.txt      a tree engine, in its library's own format;
                                     it has no scaler (R68)
 
@@ -120,9 +123,16 @@ def network_arch(model, args) -> dict[str, Any]:
 
 
 def save(base: Path, run_id: int, fold: int, engine: str, model, scaler=None,
-         arch: dict[str, Any] | None = None) -> dict[str, Any]:
+         arch: dict[str, Any] | None = None, check=None,
+         head: tuple[str, str] | None = None) -> dict[str, Any]:
     """Write one fold's model (and the network's scaler) and return its row.
-    A fold trained again replaces what was there."""
+    A fold trained again replaces what was there.
+
+    With `check` (the fold's scored inputs and its output on them) and `head`
+    (loss, target), the network is also exported to ONNX with that batch
+    beside it, for the prediction check (G77). An export that fails is said
+    and left out: the fold keeps its PyTorch model, and the check reports the
+    fold as not exported. It never fails the run."""
     dir_ = fold_dir(base, run_id, fold, engine)
     if dir_.exists():
         shutil.rmtree(dir_)
@@ -133,6 +143,18 @@ def save(base: Path, run_id: int, fold: int, engine: str, model, scaler=None,
 
         torch.save(model.state_dict(), dir_ / MODEL_FILE)
         (dir_ / SCALER_FILE).write_text(json.dumps(scaler.to_dict()), encoding="utf-8")
+        if check is not None and head is not None:
+            try:
+                from nn import onnx_export
+
+                onnx_export.write(dir_, model, scaler, check[0], check[1], *head)
+                arch["onnx"] = True
+            except Exception as exc:  # noqa: BLE001 - the export is a check, not the run
+                for name in ("model.onnx", "check_inputs.f32", "check_outputs.f64",
+                             "check.json"):
+                    (dir_ / name).unlink(missing_ok=True)
+                arch["onnx"] = False
+                print(f"  onnx export  fold {fold}: FAILED, {type(exc).__name__}: {exc}"[:300])
     else:
         from nn.trees import MODEL_FILES
 
@@ -189,7 +211,7 @@ def load_row(row: dict[str, Any], base: Path | None = None) -> Kept:
         from nn.model import ArchSpec, build
         from nn.standardise import MinMaxScaler
 
-        model = build(ArchSpec(**arch))
+        model = build(ArchSpec(**{k: v for k, v in arch.items() if k != "onnx"}))
         model.load_state_dict(torch.load(dir_ / MODEL_FILE, weights_only=True))
         model.eval()
         scaler = MinMaxScaler.from_dict(json.loads((dir_ / SCALER_FILE).read_text("utf-8")))

@@ -1710,6 +1710,44 @@
               }
             }
           ]
+        },
+        {
+          "name": "Prediction check: an unknown run is a 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/walkforward/onnx-check?run=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "walkforward",
+                "onnx-check"
+              ],
+              "query": [
+                {
+                  "key": "run",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "R62 (G77): runs each fold's exported network in ONNX Runtime and compares it with PyTorch's output; stores a row per fold and answers `{runId, runtime, checked, agreed, folds}`. Sent here for a run that does not exist, so nothing is checked or stored."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404 for a run that does not exist', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
