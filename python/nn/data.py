@@ -54,7 +54,7 @@ def load_candles(
     to handle Decimal."""
 
     where, params = _build_clauses(instrument_id, source_id, timeframe, since, until)
-    sql = f"SELECT open, high, low, close, volume FROM candles WHERE {where} ORDER BY timestamp ASC"
+    sql = f"SELECT open, high, low, close, volume FROM candles_adjusted WHERE {where} ORDER BY timestamp ASC"
     out: list[Candle] = []
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -86,7 +86,7 @@ def load_candles_with_timestamps(
 
     where, params = _build_clauses(instrument_id, source_id, timeframe, since, until)
     sql = (
-        f"SELECT timestamp, open, high, low, close, volume FROM candles "
+        f"SELECT timestamp, open, high, low, close, volume FROM candles_adjusted "
         f"WHERE {where} ORDER BY timestamp ASC"
     )
     timestamps: list[str] = []

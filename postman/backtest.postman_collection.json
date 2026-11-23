@@ -806,6 +806,105 @@
               }
             }
           ]
+        },
+        {
+          "name": "Repair log: every repair with its candidates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/repairs?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repairs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "G76 (R89): a repair never edits the raw candle. It is a row here, one per bar and field: the original, the candidates (second source, calculated, hand-entered), the one applied, and who, when and why. `series` counts held and applied per series; `flagged` is the series with flagged rows a repair could be proposed for."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('carries the log, the counts and the thresholds', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "    pm.expect(d.series).to.be.an('array');",
+                  "    pm.expect(d.flagged).to.be.an('array');",
+                  "    pm.expect(d.tolerances).to.eql({ price: 0.005, volume: 0.1 });",
+                  "    for (const r of d.items) {",
+                  "        pm.expect(r).to.include.keys('barTime', 'field', 'original', 'secondSource', 'calculated', 'handEntered', 'status', 'applied', 'reason');",
+                  "        pm.expect(r.status === 'applied').to.equal(r.applied !== null);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Repair: a choice needs a reason",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/repairs/choose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repairs",
+                "choose"
+              ]
+            },
+            "description": "Applying a candidate is the author's choice and is recorded with its reason. Sent here without one, so it is refused and changes nothing.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"which\": \"calculated\",\n  \"symbol\": \"{{instrument}}\",\n  \"source\": \"{{source}}\",\n  \"reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400 without a reason', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says a reason is needed', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('needs a reason');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

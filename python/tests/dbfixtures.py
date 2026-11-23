@@ -94,9 +94,16 @@ def purge_instrument(symbol: str, source: str) -> None:
                 "DELETE FROM import_files WHERE instrument_id = %s", (instrument_id,)
             )
         if instrument_id is not None and source_id is not None:
+            # Never as a prepared statement. psycopg prepares a query once it
+            # has run a few times on a connection, and Postgres then plans it
+            # without the ids; TimescaleDB can no longer skip the compressed
+            # segments of other series, decompresses every candle to look, and
+            # hits its per-transaction limit. With the ids in the plan it
+            # touches this series only. A file with many seeded tests on one
+            # pool (test_repair.py) is what reached the threshold.
             cur.execute(
                 "DELETE FROM candles WHERE instrument_id = %s AND source_id = %s",
-                (instrument_id, source_id),
+                (instrument_id, source_id), prepare=False,
             )
         if instrument_id is not None:
             cur.execute(

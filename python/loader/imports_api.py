@@ -394,6 +394,11 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
                            AND timestamp >= %s AND timestamp < %s
                         """,
                         (instrument_id, source_id, timeframe, since, until),
+                        # Never prepared: with a generic plan TimescaleDB cannot
+                        # skip other series' compressed segments and the delete
+                        # fails on its decompression limit (found by G76's
+                        # tests, which hit it in the test cleanup's delete).
+                        prepare=False,
                     )
                     deleted = cur.rowcount or 0
                     cur.execute(

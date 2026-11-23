@@ -842,7 +842,7 @@ def load_park(cur, mode: str) -> dict[date, float] | None:
         return None
     symbol = PARK_SERIES[mode]
     cur.execute(
-        "SELECT c.timestamp::date, c.close FROM candles c "
+        "SELECT c.timestamp::date, c.close FROM candles_adjusted c "
         "JOIN instruments i ON i.id = c.instrument_id "
         "JOIN data_sources ds ON ds.id = c.source_id "
         "WHERE i.symbol = %s AND ds.name = 'fred' AND c.timeframe = 'D1' "

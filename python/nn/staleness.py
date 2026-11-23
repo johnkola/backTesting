@@ -338,7 +338,52 @@ def _fixes(cur) -> dict[tuple[str, str], list]:
     fixes: dict[tuple[str, str], list] = {}
     for sym, src, tf, fid, at, kind, diff in cur.fetchall():
         fixes.setdefault((sym, src), []).append((tf, fid, at, kind, diff))
+    # A repair applied or taken back (G76) changes what is read from a bar as
+    # surely as a corrected file does. One entry per series and moment of
+    # decision, in the shape of an import's diff: every bar listed, so the
+    # days are exact, and the price fields apart from volume.
+    try:
+        cur.execute(
+            "SELECT i.symbol, s.name, r.timeframe, r.decided_at, "
+            "array_agg(DISTINCT (r.bar_time AT TIME ZONE 'UTC')::date), "
+            "array_agg(DISTINCT (r.bar_time AT TIME ZONE 'UTC')::date) "
+            "FILTER (WHERE r.field <> 'volume') "
+            "FROM candle_repairs r JOIN instruments i ON i.id = r.instrument_id "
+            "JOIN data_sources s ON s.id = r.source_id WHERE r.decided_at IS NOT NULL "
+            "GROUP BY 1, 2, 3, 4")
+    except Exception as exc:  # noqa: BLE001 - a database from before G76 has no repairs
+        if getattr(exc, "sqlstate", None) != "42P01":
+            raise
+        cur.connection.rollback()
+        return fixes
+    for sym, src, tf, at, days, price_days in cur.fetchall():
+        by_year: dict[str, dict] = {}
+        for d in days:
+            y = by_year.setdefault(str(d.year), {"changed": 0, "removed": 0, "examples": [],
+                                                 "priceChanged": 0, "priceExamples": []})
+            y["changed"] += 1
+            y["examples"].append(d.isoformat())
+            if d in (price_days or []):
+                y["priceChanged"] += 1
+                y["priceExamples"].append(d.isoformat())
+        fixes.setdefault((sym, src), []).append((tf, None, at, "repair", json.dumps(by_year)))
     return fixes
+
+
+def repairs_since(cur, when: dt.datetime) -> dict[tuple[str, str, str, str], int]:
+    """Repairs applied or taken back after `when`, counted by series and
+    field (G76): (symbol, source, timeframe, field)."""
+    try:
+        cur.execute(
+            "SELECT i.symbol, s.name, r.timeframe, r.field, count(*) FROM candle_repairs r "
+            "JOIN instruments i ON i.id = r.instrument_id JOIN data_sources s "
+            "ON s.id = r.source_id WHERE r.decided_at > %s GROUP BY 1, 2, 3, 4", (when,))
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "sqlstate", None) != "42P01":
+            raise
+        cur.connection.rollback()
+        return {}
+    return {(sym, src, tf, field): int(n) for sym, src, tf, field, n in cur.fetchall()}
 
 
 def _latest_feed_results(cur) -> tuple[dict[str, dict], bool]:
@@ -586,6 +631,24 @@ def features_stage(ctx: Context) -> dict[str, Any]:
                 reasons.append(reason(
                     "input", f"{key} has a newer stored version (#{now}) than build "
                     f"{build_id} read (#{then})", series=key))
+        # A repair of a field the build read, made after it (G76). Feature
+        # values are never repaired; they are rebuilt from the repaired input.
+        # A repair of a field the table does not read (GOLD's high, when only
+        # its close is an input) changes no feature and is no reason.
+        repaired = repairs_since(ctx.cur, row[1]) if row and row[1] else {}
+        seen: set[tuple] = set()
+        for e in json.loads(row[0]) if row and row[0] else []:
+            fields = (("open", "high", "low", "close", "volume") if e.get("field") == "ohlcv"
+                      else (e.get("field"),))
+            for f in fields:
+                at = (e["symbol"], e["source"], e["timeframe"], f)
+                if at in repaired and at not in seen:
+                    seen.add(at)
+                    key = f"{e['symbol']}/{e['source']}"
+                    reasons.append(reason(
+                        "input", f"{key} had {repaired[at]} repair(s) to its {f} applied or "
+                        f"taken back after build {build_id}; rebuild with "
+                        "python -m nn.feature_build", series=key))
     ctx.cur.execute("SELECT check_override_reason, check_override_errors, check_override_by "
                     "FROM feature_sets WHERE id = %s", (set_id,))
     o = ctx.cur.fetchone()
@@ -767,10 +830,14 @@ def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
                     if hit:
                         where = "" if ftf in read_tfs else f" at {ftf}"
                         whose = "" if own else ", a series its feature table reads,"
+                        what = (f"a repair ({at:%Y-%m-%d})" if kind == "repair"
+                                else f"version #{fid} ({kind}, {at:%Y-%m-%d})")
+                        shown = ", ".join(hit[:5]) + (f" and {len(hit) - 5} more"
+                                                      if len(hit) > 5 else "")
                         reasons.append(reason(
-                            "inputs", f"{rsym}/{rsrc}{whose} version #{fid} ({kind}, "
-                            f"{at:%Y-%m-%d}) changed stored bars{where} on {', '.join(hit)}, "
-                            "inside this result's window, after it ran", version=fid,
+                            "inputs", f"{rsym}/{rsrc}{whose} {what} changed "
+                            f"{'the adjusted' if kind == 'repair' else 'stored'} bars{where} on "
+                            f"{shown}, inside this result's window, after it ran", version=fid,
                             series=f"{rsym}/{rsrc}"))
         out.append({"id": int(rid), "state": "stale" if reasons else "fresh",
                     "reasons": reasons, "notes": notes})

@@ -106,8 +106,12 @@ public class CandleRepository {
     public List<Candle> findByInstrumentAndTimeframe(long instrumentId, long sourceId, Timeframe timeframe,
                                                      ZonedDateTime from, ZonedDateTime to) {
         StringBuilder sql = new StringBuilder(
+                // The adjusted candles (R63, G76): the raw rows with the applied repairs
+                // laid over them. What a backtest trades is what the features were built
+                // from. The counts and ranges below read the raw table, which has the
+                // same rows.
                 "SELECT id, instrument_id, source_id, timeframe, timestamp, open, high, low, close, volume " +
-                "FROM candles WHERE instrument_id = ? AND source_id = ? AND timeframe = ?");
+                "FROM candles_adjusted WHERE instrument_id = ? AND source_id = ? AND timeframe = ?");
 
         if (from != null) {
             sql.append(" AND timestamp >= ?");

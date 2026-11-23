@@ -60,7 +60,7 @@ def _fetch_candles(conn, instrument_id: int, source_id: int, timeframe: str):
         cur.execute(
             """
             SELECT timestamp, open, high, low, close, volume
-              FROM candles
+              FROM candles_adjusted
              WHERE instrument_id = %s AND source_id = %s AND timeframe = %s
              ORDER BY timestamp
             """,

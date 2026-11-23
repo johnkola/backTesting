@@ -305,8 +305,9 @@ app.get('/api/candles', async (req, res) => {
       where += ` AND c.timestamp ${end.op} $${params.length}`;
     }
     const { rows } = await pool.query(
+      // The adjusted candles (G76): what the features and backtests read.
       `SELECT c.timestamp, c.open, c.high, c.low, c.close, c.volume
-         FROM candles c
+         FROM candles_adjusted c
          JOIN instruments i ON i.id = c.instrument_id
          JOIN data_sources ds ON ds.id = c.source_id
         WHERE ${where}
@@ -497,6 +498,8 @@ app.use('/api/nn', proxyToLoader);
 app.use('/api/feeds', proxyToLoader);
 // Flagged rows (G75): bars an import found an error on, and their acceptance.
 app.use('/api/checks', proxyToLoader);
+// Data repair (G76): candidates, choices and the repair log.
+app.use('/api/repairs', proxyToLoader);
 
 // Strategy listing and backtest execution live in Java — nothing else can read
 // StrategyRegistry or drive BacktestEngine.

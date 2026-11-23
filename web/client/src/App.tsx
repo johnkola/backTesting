@@ -12,6 +12,7 @@ import HomePage from './pages/HomePage'
 import SourcesPage from './pages/SourcesPage'
 import InstrumentsPage from './pages/InstrumentsPage'
 import ImportsPage from './pages/ImportsPage'
+import RepairsPage from './pages/RepairsPage'
 import ResultsPage from './pages/ResultsPage'
 import RunPage from './pages/RunPage'
 import FeaturesPage from './pages/FeaturesPage'
@@ -47,6 +48,7 @@ export default function App() {
             </Route>
             <Route path="/instruments" element={<InstrumentsPage />} />
             <Route path="/imports" element={<ImportsPage />} />
+            <Route path="/repairs" element={<RepairsPage />} />
             <Route path="/run" element={<RunPage />} />
             <Route path="/features" element={<FeaturesPage />} />
             <Route path="/strategy" element={<StrategyPage />} />

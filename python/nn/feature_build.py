@@ -99,7 +99,7 @@ def _fetch_field(cur, symbol: str, source: str, timeframe: str, field: str) -> O
     if field not in ("open", "high", "low", "close", "volume"):
         raise BuildError(f"unknown field {field!r}")
     cur.execute(
-        f"SELECT {_key_sql(timeframe)}, c.{field} FROM candles c "  # noqa: S608 - field whitelisted, key fixed
+        f"SELECT {_key_sql(timeframe)}, c.{field} FROM candles_adjusted c "  # noqa: S608 - field whitelisted, key fixed
         "JOIN instruments i ON i.id = c.instrument_id "
         "JOIN data_sources ds ON ds.id = c.source_id "
         "WHERE i.symbol = %s AND ds.name = %s AND c.timeframe = %s "
@@ -117,7 +117,7 @@ def _fetch_field(cur, symbol: str, source: str, timeframe: str, field: str) -> O
 
 def _fetch_ohlcv(cur, symbol: str, source: str, timeframe: str) -> dict[str, Observed]:
     cur.execute(
-        f"SELECT {_key_sql(timeframe)}, c.open, c.high, c.low, c.close, c.volume FROM candles c "  # noqa: S608
+        f"SELECT {_key_sql(timeframe)}, c.open, c.high, c.low, c.close, c.volume FROM candles_adjusted c "  # noqa: S608
         "JOIN instruments i ON i.id = c.instrument_id "
         "JOIN data_sources ds ON ds.id = c.source_id "
         "WHERE i.symbol = %s AND ds.name = %s AND c.timeframe = %s "

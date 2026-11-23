@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-23-2** · 2026-11-23 00:52 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-3** · 2026-11-23 01:34 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -453,6 +453,10 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `GET /api/nn/walkforward/jobs` | — | `{items, running}` — jobs started since the loader came up, newest first (last 20): `running`, `exitCode`, `runId` once the runner opens its row, and the last 40 lines of output. In memory only; a restart forgets them, and `walkforward_runs` stays the record. A job that ends with `runId: null` was refused or crashed, and its output says which |
 | `GET /api/checks` | — | Series with flagged rows (bars an import found an error on, G75): `series` with `open` and `accepted` counts, the dates they span and the reason they were accepted with. `GET /api/checks/rows` lists the rows (`symbol`, `source`, `timeframe`, `all=1` for accepted ones too, `limit`) |
 | `POST /api/checks/accept` | JSON: `symbol`, `source`, `timeframe?`, `reason` | Accepts a series' open flagged rows, recording the reason, who and when on each; the feature build and training read the series again. `400` without the series or without a reason |
+| `GET /api/repairs` | `symbol`, `source`, `status` (`held`, `applied`), `limit` | The repair log (G76): `items`, one per bar and field, with `original`, `secondSource` and whose, `calculated` and how, `handEntered`, `status`, `applied`, `appliedFrom`, `reason`, `decidedBy`, `decidedAt`; `series` with held and applied counts; `flagged`, the series a repair can be proposed for; `tolerances` |
+| `POST /api/repairs/propose` | JSON: `symbol`, `source`, `timeframe?` | Writes repair rows with their candidates for the series' flagged bars and applies the ones the rule allows. Answers `{bars, proposed, applied, held}`. `404` for a series that is not stored |
+| `POST /api/repairs/choose` | JSON: `which` (`second_source`, `calculated`, `hand`), `reason`, and `ids` or `symbol` + `source`; `value` with `hand` | Applies a candidate to the named rows, or to every held row of a series. A row without that candidate stays held. `400` without a reason |
+| `POST /api/repairs/revert` | JSON: `id`, `reason` | Takes a repair back: the raw value shows through and the flag re-opens. `404` when the repair is not applied |
 | `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `indicatorRules`, the same for the five indicator rules by name, each with the `settings` it is pinned to (G79); `bills`, the T-bill carry dual momentum's cash earns per bar; and `checks`, the 10-month average and 12-month return against an independent copy, and each indicator the five rules read, TA-Lib against the hand-written module (G78). The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
 | `GET /api/nn/models/window` | `strategy`, `versionId` | The bars a model version was trained on (B4): `{status, since, until, symbol, source}`, `status` being `known`, `not recorded` or `version gone`. The engine stores it with an nn result |
 | `POST /api/nn/walkforward/runs/:id/recalculate` | `strategyId`, `dryRun` | Rescores a run from its stored per-bar signals, without retraining, in the request (seconds). Engines are blind to costs, tax and margin (D9), so anything the profit step applies can change this way: cost, tax, park, Strategy 2 and its dials, the thresholds. Without `strategyId` the run is rescored at its own settings and its folds rewritten in place, which is what a change to the profit code needs; on unchanged code it reproduces every fold exactly. With `strategyId`, another version of the strategy that trains the same model (same features, windows, label, loss and hyperparameters), it writes a new run linked by `recalculatedFrom`. `dryRun` returns the figures and writes nothing. Returns `{sourceRunId, runId, mode, dryRun, strategy, settings, folds: [{fold, valYear, before, after}]}`. `400` with `reasons` for a model-side difference or a holdout run under other settings, `404` for an unknown run or strategy, `409` for a run still going or one that stored no signals (run before 2026-11-15: rerun it once). The terminal form is `python -m nn.recalculate --run N [--strategy-id M] [--dry-run]` in the loader |
@@ -553,6 +557,22 @@ A reason can also come with the import, which accepts the file's flags as it lan
 - upload: `override_reason` on `POST /api/imports`; the upload card shows the flagged rows after the file is stored and offers the acceptance there;
 - drop folder: `python -m loader.ingest --override-checks "<reason>"` (it applies to every file in the run). A file that leaves flagged rows moves to `processed/` like any other, with its report beside it as `<name>.checks.json`;
 - feeds: `python -m loader.feeds refresh --feed SYMBOL/SOURCE --override-checks "<reason>"`.
+
+**Repairing a flagged bar** (R89, G76). The third way out is a repair. The stored candle is never changed: a repair is a row in the repair log (`candle_repairs`), one per bar and field, and the applied ones are laid over the raw rows by the view `candles_adjusted`, which is what the feature build, training, the cohesion audit, the engine's backtests and `GET /api/candles` read. With no repair applied the view is `candles`, row for row.
+
+Each wrong value has up to three candidates, in this order: a **second source** (another vendor's value for the same bar; `yahoo` and `yahoo-adj` are one vendor and never each other's), a **calculated** value (the nearest one consistent with the bar's other prices: a high raised to the higher of the open and close, a low lowered to the lower; a missing price has none), and a **hand-entered** value. When the first two both exist and agree within 0.5% (10% for volume), the second source's value is applied by itself, logged as `auto`. Otherwise the row is held for a choice, and every choice needs a reason. A repair that leaves the bar consistent accepts its flag as repaired. Taking a repair back shows the raw value again and re-opens the flag. A later import that changes the raw value takes the repair back by itself; one that brings the same value leaves it standing.
+
+The **Repairs** page shows the log on one screen: the original, each candidate, the value applied, and who, when and why, with the choices beside each held row and one button to apply the calculated value to every held row of a series.
+
+```bash
+docker compose exec loader python -m loader.repair --propose --symbol GOLD --source yahoo   # write repair rows for its flagged bars
+docker compose exec loader python -m loader.repair --list [--symbol GOLD] [--all]
+docker compose exec loader python -m loader.repair --choose calculated --symbol GOLD --source yahoo --reason "<why>"
+docker compose exec loader python -m loader.repair --choose hand --id 12 --value 30.95 --reason "<why>"
+docker compose exec loader python -m loader.repair --revert --id 12 --reason "<why>"
+```
+
+A repair is a change to stored inputs. Features reads stale when a field it read was repaired after its build (a repair to GOLD's high is no reason: the table reads GOLD's close), and a backtest result when a bar in its window was. Feature values are never repaired; the set is rebuilt. Not built: repairing a missing bar, a second vendor to compare with (none is stored), and roll-ups, which are still made from the raw bars.
 
 Bars stored before 2026-11-23 were never flagged. `--scan` finds 743 of them that break the rule (GOLD 441, COPPER 300, WBD 2); they hold nothing until `--scan --record` writes them.
 
@@ -871,7 +891,8 @@ tracker, and the order of what is left is the author's to set:
 - TA-Lib is the single source of indicators, with the hand-written module as its
   cross-check (C5, G78): built 2026-11-22.
 - New the same day: an import always lands and the feature build and training hold the
-  stop (G75), data repair with a repair log (G76), and the five rule benchmarks
+  stop (G75, built), data repair with a repair log (G76, built for wrong values on
+  stored bars), and the five rule benchmarks
   recalculated on every run (G79).
 
 ### Done
@@ -1425,6 +1446,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-3 | 2026-11-23 01:34 | Claude Code (Claude Fable 5.2) | Data repair (G76): the repair log, the adjusted view, candidates and the rule, the Repairs page, `loader.repair`, `/api/repairs` |
 | 2026-11-23-2 | 2026-11-23 00:52 | Claude Code (Claude Fable 5.2) | The prediction check in ONNX Runtime (G77): what a fold keeps, the route, the command, `ENGINE_URL` |
 | 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | An import always lands and its errors are flagged rows (G75): what they hold, accepting them, `loader.flags`, `/api/checks` |
 | 2026-11-22-11 | 2026-11-22 23:58 | Claude Code (Claude Fable 5.2) | Indicators come from TA-Lib through `nn/ta.py` (G78): where they are used, the cross-check, the dependency; roadmap follows |

@@ -82,12 +82,18 @@ def record(conn, instrument_id: int, source_id: int, timeframe: str, flagged: Fl
                 "AND timeframe = %s AND bar_time = ANY(%s) AND accepted_at IS NULL",
                 (flagged.reason, *series, sorted({t for t, _, _ in found})))
             accepted = cur.rowcount
+        # Repairs of these bars (G76): one whose raw value this file changed is
+        # reverted, and a bar whose repair still stands keeps its flag accepted.
+        from loader import repair
+
+        reverted = repair.after_import(cur, *series, times) if times else 0
         cur.execute(
             "SELECT count(*) FROM data_checks WHERE instrument_id = %s AND source_id = %s "
             "AND timeframe = %s AND bar_time = ANY(%s) AND accepted_at IS NULL", (*series, times))
         still_open = int(cur.fetchone()[0])
     return {"found": len(found), "new": len(new), "cleared": len(gone),
-            "accepted": accepted, "open": still_open}
+            "accepted": accepted, "open": still_open,
+            **({"repairsReverted": reverted} if reverted else {})}
 
 
 _SUMMARY = """

@@ -280,6 +280,54 @@ export type FlaggedSeries = {
   reason: string | null
 }
 
+/**
+ * One row of the repair log (G76; R89): one field of one bar. The raw candle is
+ * never edited; an applied repair is laid over it for everything that reads
+ * the adjusted candles.
+ */
+export type Repair = {
+  id: number
+  symbol: string, source: string, timeframe: string
+  barTime: string
+  field: 'open' | 'high' | 'low' | 'close' | 'volume'
+  /** The raw value, as received. */
+  original: number | null
+  /** Why the field is doubted. */
+  problem: string
+  /** Candidate 1: another vendor's value for the same bar, and whose. */
+  secondSource: number | null
+  secondSourceName: string | null
+  /** Candidate 2: the nearest value consistent with the bar's other prices, and how it was reached. */
+  calculated: number | null
+  calculatedHow: string | null
+  /** Candidate 3: a value typed by hand. */
+  handEntered: number | null
+  status: 'held' | 'applied'
+  applied: number | null
+  appliedFrom: RepairChoice | null
+  reason: string | null
+  proposedAt: string
+  decidedAt: string | null
+  /** Who chose; `auto` when the first two candidates agreed and the rule applied it. */
+  decidedBy: string | null
+}
+
+export type RepairChoice = 'second_source' | 'calculated' | 'hand'
+
+/** GET /api/repairs. */
+export type RepairLog = {
+  items: Repair[]
+  /** Per series: rows held for a choice, rows applied. */
+  series: { symbol: string, source: string, timeframe: string, held: number, applied: number,
+    heldWithCalculated: number, heldWithSecondSource: number }[]
+  /** Series with flagged rows, which repairs can be proposed for. */
+  flagged: FlaggedSeries[]
+  held: number
+  applied: number
+  /** R55: how close two values must be to agree. */
+  tolerances: { price: number, volume: number }
+}
+
 /** Discriminated union of POST /api/imports response shapes. */
 export type UploadImportResponse =
   | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; skipped?: SkippedRows; file?: UploadedFile; checkOverride?: CheckOverride; flagged?: FlaggedRows }
@@ -2153,6 +2201,19 @@ export const api = {
   deleteImport: (id: string | number) =>
     sendJson<ImportDeleteResult>(`/api/imports/${encodeURIComponent(String(id))}`, 'DELETE'),
   audit: (req: AuditRequest) => sendJson<AuditResponse>('/api/audit', 'POST', req),
+  /** The repair log (G76): every repair with its candidates and what was applied. */
+  repairs: (q: { symbol?: string, source?: string, status?: string, limit?: number }, signal?: AbortSignal) =>
+    getJson<RepairLog>(`/api/repairs?${qs(q)}`, signal),
+  /** Write repair rows, with candidates, for a series' flagged bars. */
+  proposeRepairs: (req: { symbol: string, source: string, timeframe?: string }) =>
+    sendJson<{ bars: number, proposed: number, applied: number, held: number }>('/api/repairs/propose', 'POST', req),
+  /** Apply a candidate to the named rows, or to every held row of a series. A reason is required. */
+  chooseRepair: (req: { which: RepairChoice, reason: string, ids?: number[], symbol?: string,
+    source?: string, timeframe?: string, value?: number }) =>
+    sendJson<{ applied: number, which: string, reason: string }>('/api/repairs/choose', 'POST', req),
+  /** Take a repair back: the raw value shows through again. */
+  revertRepair: (req: { id: number, reason: string }) =>
+    sendJson<{ reverted: number }>('/api/repairs/revert', 'POST', req),
   /** Series with flagged rows: bars an import found an error on (G75). */
   checks: (signal?: AbortSignal) => getJson<{ series: FlaggedSeries[], open: number, accepted: number }>('/api/checks', signal),
   /** Accept a series' open flagged rows. The reason is required and recorded with them. */
