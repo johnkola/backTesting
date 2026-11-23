@@ -93,6 +93,13 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: gradle
+      # The Spring Boot service's tests copy the jobs table, so it has to
+      # exist before they run; the engine would only create it at startup.
+      - name: Apply schema.sql
+        env:
+          PGUSER: backtest
+          PGPASSWORD: backtest
+        run: psql -v ON_ERROR_STOP=1 -q -f src/main/resources/schema.sql
       # gradlew is stored without the executable bit, so run it through sh.
       - name: gradle test
         run: sh ./gradlew test --no-daemon
@@ -102,7 +109,8 @@ jobs:
           python3 - <<'EOF'
           import glob, re
           t = s = f = e = 0
-          for p in glob.glob("build/test-results/test/*.xml"):
+          # The engine (root project) and the Spring Boot service (server/).
+          for p in glob.glob("build/test-results/test/*.xml") + glob.glob("server/build/test-results/test/*.xml"):
               m = re.search(r'tests="(\d+)" skipped="(\d+)" failures="(\d+)" errors="(\d+)"',
                             open(p).read(800))
               a, b, c, d = map(int, m.groups()); t += a; s += b; f += c; e += d
