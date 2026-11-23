@@ -14,7 +14,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from loader.aggregate import aggregate, is_valid_pair
-from loader.cohesion import ChecksFailed, check_import, gate
+from loader.cohesion import check_import, gate
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
@@ -58,10 +58,13 @@ async def post_imports(
     operators who manage W1/M1 with their own CSV imports aren't
     surprised by overwrites.
 
-    A file whose check report has an error is not stored (R12, R65): the answer
-    is 422 `check_failed` with every error. `override_reason` stores it anyway,
-    as one deliberate act: the reason, the error count and the actor go on the
-    import's audit rows. Without a reason there is no override."""
+    A file whose check report has an error is stored like any other (R12, the
+    author 2026-11-22; G75): raw data is never refused. Each bar with an error
+    becomes a flagged row, the answer carries them under `flagged`, and the
+    feature build and training are held until they are accepted or a corrected
+    file is imported. `override_reason` accepts them with the upload, as one
+    deliberate act: the reason, the count and the actor go on the flagged rows
+    and on the import's audit rows."""
 
     if not symbol:
         return _bad("symbol is required")
@@ -103,7 +106,19 @@ async def post_imports(
             loaded = find_loaded_file(conn, file_hash, source_name=source_name,
                                       symbol=symbol, timeframe=timeframe)
         if loaded is not None:
-            return JSONResponse(status_code=200, content={"status": "completed", **loaded})
+            # The same file again with a reason accepts the flagged rows it
+            # left when it first landed (G75); nothing else is read or written.
+            accepted = None
+            if override_reason.strip():
+                from loader import flags
+
+                with pool().connection() as conn:
+                    n = flags.accept(conn, override_reason, symbol, source_name, timeframe)
+                if n:
+                    accepted = {"reason": override_reason.strip(), "errors": n}
+            return JSONResponse(status_code=200, content={
+                "status": "completed", **loaded,
+                **({"checkOverride": accepted} if accepted else {})})
 
         with open(tmp_path, "rb") as stream:
             skipped = SkippedRows()
@@ -112,20 +127,10 @@ async def post_imports(
         if not header or not rows_by_year:
             return _bad("CSV contains no parseable data rows")
 
-        # The hard stop, before anything is planned or written.
+        # The checks. They never refuse the file (G75): it lands, and its
+        # errors become flagged rows that hold the feature build and training.
         report = check_import(header, rows_by_year, timeframe)
-        try:
-            override = gate(report, override_reason)
-        except ChecksFailed as exc:
-            return JSONResponse(status_code=422, content={
-                "status": "check_failed",
-                "error": str(exc),
-                "errors": report.error_lines(),
-                "hint": ("Fix the file and upload it again, or store it as it is by "
-                         "giving a reason (override_reason), which is recorded."),
-                "cohesion": report.to_dict(),
-                "file": {"hash": file_hash, "name": source_file.name},
-            })
+        override = gate(report, override_reason)
 
         with pool().connection() as conn:
             slices = plan_slices(
@@ -227,7 +232,20 @@ async def post_imports(
             payload["aggregated"] = aggregate_results
         # The check report: warnings, and any errors that were overridden.
         payload["cohesion"] = report.to_dict()
-        if override is not None:
+        if override.errors:
+            # What the file left behind: rows flagged, and whether they hold
+            # anything. `checkOverride` keeps its name for an acceptance made
+            # with the upload.
+            payload["flagged"] = {
+                "errors": override.errors, "held": override.held,
+                "lines": report.error_lines(),
+                **(file_rec.get("flagged") or {}),
+                "hint": (None if not override.held else
+                         "The file is stored. Its flagged rows hold the feature build and "
+                         "training until they are accepted (POST /api/checks/accept) or a "
+                         "corrected file is imported."),
+            }
+        if override.reason:
             payload["checkOverride"] = {"reason": override.reason, "errors": override.errors}
         # R6: rows that produced no candle, said rather than silently dropped.
         payload["skipped"] = skipped.to_dict()

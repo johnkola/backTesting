@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-22-3** · 2026-11-22 22:45 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
+> **Revision 2026-11-23-1** · 2026-11-23 00:22 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
 
 This file lists the steps the app takes, from a running stack to the held-out test,
 and says for each one exactly what has to be true before it counts as **done**. It
@@ -152,10 +152,12 @@ Tab: **Pipeline → Data**.
   last and next run.
 - [ ] **review**: any held series has had its diff shown to the author and been
   applied or left held on purpose. A held series stops at its last stored day.
-- [ ] **app**: no input has a check error that was not fixed or overridden. An
+- [ ] **app**: no input has a flagged row that was not corrected or accepted. An
   error (a bar whose prices contradict each other, a duplicate, an out-of-order
-  timestamp) stops the import, and the Data tab reads failed until it is dealt
-  with; an override is shown there with its reason.
+  timestamp) does not stop the import: the bars land and each one with an error
+  is a flagged row (G75). The Data tab reads failed, and the feature build and
+  training refuse, until the row is corrected by a new import or accepted with
+  a reason; an acceptance is shown on the Data tab with its reason.
 - [ ] **review**: the cohesion warnings on the inputs (`gap`, `outlier`, a value
   at or below zero) are read, and each one is either expected or acted on. See
   [Data cohesiveness checks](README.md#data-cohesiveness-checks), the Imports page,
@@ -633,6 +635,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | Step 1: a check error no longer stops the import; it is a flagged row that holds the feature build and training until accepted or corrected (G75) |
 | 2026-11-22-3 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | Working rules: the Google Drive doc set is the source of truth; the author's decisions of 2026-11-22 (C1, C4, C5, R89, R90) and where they are recorded |
 | 2026-11-22-2 | 2026-11-22 11:46 | Claude Code (Claude Fable 5.2) | Step 2: the null condition is decided, not unbuilt (D2, the author 2026-11-19) |
 | 2026-11-22-1 | 2026-11-22 11:22 | Claude Code (Claude Fable 5.2) | Steps 1 and 2: check errors are now stopped by the app (job 8); the warnings stay a review |

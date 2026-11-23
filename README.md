@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-22-11** · 2026-11-22 23:58 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-1** · 2026-11-23 00:22 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -450,6 +450,8 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/nn/walkforward` | `strategyId`, `label` | Starts `python -m nn.walkforward --strategy-id N [--label=…]` in the loader and returns `202` with the job. The strategy is checked first: `400` with `reasons` if it cannot run as saved, `404` if it does not exist, `409` while another run is going (one at a time). Validation folds only; the holdout (`--test`) is terminal-only. The run itself lands in `GET /api/walkforward/runs` as the runner records it |
 | `GET /api/nn/walkforward/split` | `strategyId` | A saved strategy's split as a walk-forward run of it makes it (G37), from the runner's own code: its windows (`blocks`, each with the rows of its feature set inside, after its columns' gaps drop bars) and each fold's training and scored spans and rows (`folds`; with early stopping, `earlyStopping` gives the network's fitted span and the year it stops on). `purgeBars` and `windowEnd` say where training is purged and where scoring stops. The Split tab draws it. `400` with `reasons` when the strategy cannot run as saved, `404` when it does not exist. `window` is `{kind, trainYears, stepYears}`: `expanding`, or `sliding` with its years (C6) |
 | `GET /api/nn/walkforward/jobs` | — | `{items, running}` — jobs started since the loader came up, newest first (last 20): `running`, `exitCode`, `runId` once the runner opens its row, and the last 40 lines of output. In memory only; a restart forgets them, and `walkforward_runs` stays the record. A job that ends with `runId: null` was refused or crashed, and its output says which |
+| `GET /api/checks` | — | Series with flagged rows (bars an import found an error on, G75): `series` with `open` and `accepted` counts, the dates they span and the reason they were accepted with. `GET /api/checks/rows` lists the rows (`symbol`, `source`, `timeframe`, `all=1` for accepted ones too, `limit`) |
+| `POST /api/checks/accept` | JSON: `symbol`, `source`, `timeframe?`, `reason` | Accepts a series' open flagged rows, recording the reason, who and when on each; the feature build and training read the series again. `400` without the series or without a reason |
 | `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `indicatorRules`, the same for the five indicator rules by name, each with the `settings` it is pinned to (G79); `bills`, the T-bill carry dual momentum's cash earns per bar; and `checks`, the 10-month average and 12-month return against an independent copy, and each indicator the five rules read, TA-Lib against the hand-written module (G78). The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
 | `GET /api/nn/models/window` | `strategy`, `versionId` | The bars a model version was trained on (B4): `{status, since, until, symbol, source}`, `status` being `known`, `not recorded` or `version gone`. The engine stores it with an nn result |
 | `POST /api/nn/walkforward/runs/:id/recalculate` | `strategyId`, `dryRun` | Rescores a run from its stored per-bar signals, without retraining, in the request (seconds). Engines are blind to costs, tax and margin (D9), so anything the profit step applies can change this way: cost, tax, park, Strategy 2 and its dials, the thresholds. Without `strategyId` the run is rescored at its own settings and its folds rewritten in place, which is what a change to the profit code needs; on unchanged code it reproduces every fold exactly. With `strategyId`, another version of the strategy that trains the same model (same features, windows, label, loss and hyperparameters), it writes a new run linked by `recalculatedFrom`. `dryRun` returns the figures and writes nothing. Returns `{sourceRunId, runId, mode, dryRun, strategy, settings, folds: [{fold, valYear, before, after}]}`. `400` with `reasons` for a model-side difference or a holdout run under other settings, `404` for an unknown run or strategy, `409` for a run still going or one that stored no signals (run before 2026-11-15: rerun it once). The terminal form is `python -m nn.recalculate --run N [--strategy-id M] [--dry-run]` in the loader |
@@ -513,7 +515,7 @@ Walk-forward runs record the dates they read and a snapshot over just those. Run
 
 ## Data cohesiveness checks
 
-The checks in `python/loader/cohesion.py` read OHLCV candle data and never modify it. Every finding has a severity. An **error** is something that cannot be true, and it is a hard stop: the file is not stored. A **warning** is reported and the data goes in. Five finding categories, produced by four independent check functions (`duplicate` and `order` both come out of `check_timestamps`):
+The checks in `python/loader/cohesion.py` read OHLCV candle data and never modify it. Every finding has a severity. An **error** is something that cannot be true. The file is stored all the same, so raw data is never lost, and each bar with an error becomes a **flagged row** that holds the feature build and training until it is accepted or corrected (see below). A **warning** is reported and holds nothing. Five finding categories, produced by four independent check functions (`duplicate` and `order` both come out of `check_timestamps`):
 
 | Check | What it flags |
 |-------|---------------|
@@ -530,17 +532,34 @@ The checks in `python/loader/cohesion.py` read OHLCV candle data and never modif
 
 Two warnings on one bar are still warnings: a crash day on record volume is true data.
 
-**Storing a file with errors anyway** is one deliberate act with a reason, recorded on the import's audit rows with the number of errors accepted and who did it; the Imports page marks such a row `override`:
+**Flagged rows** (R12, R65). An import never refuses a file for its errors. Every import path (the upload, the drop folder, the feeds) stores the bars and writes one row per bar and error to `data_checks`. While a series has a flagged row nobody accepted:
 
-- upload: `override_reason` on `POST /api/imports`, or the "Store with override" field the upload card shows after a refusal;
-- drop folder: `python -m loader.ingest --override-checks "<reason>"` (it applies to every file in the run). Without it a refused file moves to `failed/` with its report beside it as `<name>.checks.json`;
-- feeds: `python -m loader.feeds refresh --feed SYMBOL/SOURCE --override-checks "<reason>"`. Without it the series fails with its errors, nothing of it is stored, and the Data stage reads failed.
+- `python -m nn.feature_build` refuses (exit 3) if the feature table reads the series;
+- a walk-forward run refuses (exit 2) if it reads the series: its instrument, its feature set's inputs, its park and margin series, SPY and T-bills;
+- the Data stage reads failed and names the series, and every later stage reads failed with it.
 
-The feature build has the same stop for its own checks: one that could not run, or compared nothing, is an error (`[STOP]` under `DATA CHECKS`) and no set is written, the dry run included; a disagreement is a warning (`[LOOK]`). `python -m nn.feature_build --override-checks "<reason>"` builds anyway and records the reason on the set. While Data or Features has an error nobody overrode, every later pipeline stage reads failed.
+There are two ways out. A corrected file imported over the bar clears its flag. Or the rows are **accepted**, which is one deliberate act with a reason, recorded on each row with who and when; an accepted row shows as a note on the Data stage and holds nothing. The same finding found again by a later import keeps its acceptance.
+
+```bash
+docker compose exec loader python -m loader.flags --list            # series with open flagged rows (--all: accepted too)
+docker compose exec loader python -m loader.flags --accept --symbol GOLD --source yahoo --reason "<why>"
+docker compose exec loader python -m loader.flags --scan            # check every stored series; writes nothing
+docker compose exec loader python -m loader.flags --scan --record   # ... and flag what it finds
+```
+
+A reason can also come with the import, which accepts the file's flags as it lands (the Imports page marks such a row `accepted`):
+
+- upload: `override_reason` on `POST /api/imports`; the upload card shows the flagged rows after the file is stored and offers the acceptance there;
+- drop folder: `python -m loader.ingest --override-checks "<reason>"` (it applies to every file in the run). A file that leaves flagged rows moves to `processed/` like any other, with its report beside it as `<name>.checks.json`;
+- feeds: `python -m loader.feeds refresh --feed SYMBOL/SOURCE --override-checks "<reason>"`.
+
+Bars stored before 2026-11-23 were never flagged. `--scan` finds 743 of them that break the rule (GOLD 441, COPPER 300, WBD 2); they hold nothing until `--scan --record` writes them.
+
+The feature build has the same stop for its own checks: one that could not run, or compared nothing, is an error (`[STOP]` under `DATA CHECKS`) and no set is written, the dry run included; a disagreement is a warning (`[LOOK]`). `python -m nn.feature_build --override-checks "<reason>"` builds anyway and records the reason on the set; it does not build over a flagged row, which is accepted on the row. While Data or Features has an error nobody accepted or overrode, every later pipeline stage reads failed.
 
 It runs at three call sites:
 
-- **`POST /api/imports`** — the response carries a `cohesion` object (`{ok, totalIssues, errors, warnings, blocked, counts, errorCounts, examples}`, each example with its `severity`), which the upload card renders. A file with an error answers `422` with `status: "check_failed"`, `errors` (every error as a sentence) and the same `cohesion` object.
+- **`POST /api/imports`** — the response carries a `cohesion` object (`{ok, totalIssues, errors, warnings, blocked, counts, errorCounts, examples}`, each example with its `severity`), which the upload card renders. A file with an error answers `200` like any other, with a `flagged` object: `errors`, `held` (true until the rows are accepted), `lines` (the errors as sentences) and `open`.
 - **The drop-folder ingest** — the same check, printed as a one-line summary plus the first few findings per file.
 - **As a standalone audit** over candles already in the DB:
 
@@ -1381,6 +1400,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | An import always lands and its errors are flagged rows (G75): what they hold, accepting them, `loader.flags`, `/api/checks` |
 | 2026-11-22-11 | 2026-11-22 23:58 | Claude Code (Claude Fable 5.2) | Indicators come from TA-Lib through `nn/ta.py` (G78): where they are used, the cross-check, the dependency; roadmap follows |
 | 2026-11-22-10 | 2026-11-22 23:36 | Claude Code (Claude Fable 5.2) | The indicator rules: stored runs carry them, stored backtest results cannot |
 | 2026-11-22-9 | 2026-11-22 23:25 | Claude Code (Claude Fable 5.2) | The five indicator rules as benchmarks on every run (G79): their pinned settings, `indicatorRules` on `GET /api/nn/rules`, the benchmark fields |

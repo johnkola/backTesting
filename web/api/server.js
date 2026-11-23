@@ -495,6 +495,8 @@ app.post('/api/audit', proxyToLoader);
 app.use('/api/nn', proxyToLoader);
 // Data feeds (G26): refresh series from their providers, the daily run's state.
 app.use('/api/feeds', proxyToLoader);
+// Flagged rows (G75): bars an import found an error on, and their acceptance.
+app.use('/api/checks', proxyToLoader);
 
 // Strategy listing and backtest execution live in Java — nothing else can read
 // StrategyRegistry or drive BacktestEngine.

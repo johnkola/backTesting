@@ -460,7 +460,7 @@ def data_stage(ctx: Context) -> dict[str, Any]:
     feeds, running = _latest_feed_results(ctx.cur)
     cutoff = feeds_core.session_cutoff(ctx.now)
     reasons: list[dict] = []
-    refused: list[str] = []      # series whose newest bars the hard stop refused
+    refused: list[str] = []      # series with a flagged row nobody accepted
     notes: list[str] = []        # overrides in use: said, never a reason to fail
     missing = [(f"{s}/{src}", tf) for s, src in required
                for tf in sorted(read_at.get((s, src), {ctx.timeframe}))
@@ -476,17 +476,6 @@ def data_stage(ctx: Context) -> dict[str, Any]:
             reasons.append(reason("held", f"{key} is held by the feeds: {h.get('days')} stored "
                                   f"day(s) differ ({h.get('from')}..{h.get('to')}); Apply it on "
                                   "the Data stage", series=key))
-        elif r and r.get("status") == "error" and r.get("checkErrors"):
-            # The hard stop (R12, R65): the new bars had errors and were not
-            # stored. The stage fails until they are fixed or overridden.
-            errs = r["checkErrors"]
-            refused.append(key)
-            reasons.append(reason(
-                "check", f"{key}: {len(errs)} check error(s) in its newest bars, so they "
-                f"were not stored: {'; '.join(errs[:3])}"
-                + ("; ..." if len(errs) > 3 else "")
-                + ". Fix the source, or refresh that series with --override-checks and a reason",
-                series=key, severity="error", errors=errs))
         elif r and r.get("status") == "error":
             reasons.append(reason("error", f"{key} failed its last refresh: {r.get('error')}",
                                   series=key))
@@ -502,6 +491,28 @@ def data_stage(ctx: Context) -> dict[str, Any]:
             if behind > allowed:
                 reasons.append(reason("behind", f"{key} ends {last[(sym, src)]}, {behind} sessions "
                                       f"before {cutoff} (allowed {allowed})", series=key))
+    # Flagged rows (R12, R65; G75): a bar an import found an error on holds
+    # everything after Data until it is accepted or corrected. Read from the
+    # table, not from the last feeds run, so a flag from any import path counts
+    # and an acceptance shows at once.
+    from loader import flags
+
+    wanted = [(s, src, tf) for s, src in required
+              for tf in sorted(read_at.get((s, src), {ctx.timeframe}))]
+    for row in flags.summary(ctx.cur):
+        if (row["symbol"], row["source"], row["timeframe"]) not in wanted:
+            continue
+        key = f"{row['symbol']}/{row['source']}"
+        if row["open"]:
+            refused.append(key)
+            reasons.append(reason(
+                "check", f"{key} {row['timeframe']} has {row['open']} flagged row(s) "
+                f"({row['from']} to {row['to']}): bars an import found an error on. Correct "
+                "the source and import it again, or accept them with a reason",
+                series=key, severity="error", open=row["open"]))
+        elif row["accepted"]:
+            notes.append(f"{key} {row['timeframe']}: {row['accepted']} flagged row(s) "
+                         f"accepted: {row['reason']}")
     if missing or refused:
         state = "failed"
     elif running:
@@ -800,7 +811,7 @@ def _upstream_error(data: dict[str, Any], features: dict[str, Any]) -> str | Non
     for name, stage in (("Data", data), ("Features", features)):
         if any(r.get("kind") == "check" and r.get("severity") == "error"
                for r in stage.get("reasons", [])):
-            return (f"{name} has a check error that was not fixed or overridden, so "
+            return (f"{name} has a check error that was not corrected or accepted, so "
                     "nothing after it is done (R12, R65)")
     return None
 

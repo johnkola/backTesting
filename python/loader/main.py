@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from loader.aggregate_api import router as aggregate_router
 from loader.audit_api import router as audit_router
+from loader.checks_api import router as checks_router
 from loader.db import close_pool, pool
 from loader.feeds import runner as feeds_runner
 from loader.feeds import schedule as feeds_schedule
@@ -50,6 +51,7 @@ app.include_router(imports_router)
 app.include_router(feeds_router)
 app.include_router(aggregate_router)
 app.include_router(audit_router)
+app.include_router(checks_router)
 app.include_router(nn_router)
 app.include_router(pipeline_router)
 app.include_router(walkforward_router)

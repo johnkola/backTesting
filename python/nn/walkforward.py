@@ -66,6 +66,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from loader import flags
 from nn import (
     data_checks,
     engines,
@@ -1131,6 +1132,25 @@ def margin_hash(cur, dates: list[date], source: str) -> str:
         (d, (psq.opens.get(d), psq.closes.get(d), rate(d))) for d in dates)
 
 
+def series_read(cur, args, set_id: int | None) -> list[tuple[str, str, str]]:
+    """Every stored series a run reads, as (symbol, source, timeframe): its
+    instrument's bars, the inputs of its feature set's build, the series its
+    parked money and Strategy 2's margin earn from, and SPY and T-bills for
+    the rule benchmarks. What `flags.refusal` is asked about before it trains."""
+    out = {(args.symbol, args.source, args.timeframe), (args.symbol, args.source, "D1"),
+           (rules.SPY, args.source, "D1"), ("DTB3", "fred", "D1")}
+    for members in staleness.store_series(args.symbol, args.source, args.timeframe,
+                                          args.park, getattr(args, "execution", None)).values():
+        out.update(members)
+    build = current_build(cur, set_id) if set_id is not None else None
+    if build is not None:
+        cur.execute("SELECT inputs_json FROM feature_runs WHERE id = %s", (build,))
+        row = cur.fetchone()
+        for e in json.loads(row[0]) if row and row[0] else []:
+            out.add((e["symbol"], e["source"], e["timeframe"]))
+    return sorted(out)
+
+
 def current_build(cur, set_id: int) -> int | None:
     """The `feature_runs` build whose values the set holds now."""
     cur.execute("SELECT current_run_id FROM feature_sets WHERE id = %s", (set_id,))
@@ -1339,6 +1359,12 @@ def main(argv: list[str] | None = None) -> int:
         set_id = args.set_id or feature_store.latest_set_id(
             cur, args.symbol, args.source, args.timeframe
         )
+    # Flagged rows (R12, the author 2026-11-22; G75): training does not run
+    # over a series with a bar an import found an error on and nobody accepted.
+    held = flags.refusal(cur, series_read(cur, args, set_id), "training")
+    if held:
+        print(f"refused: {held}")
+        return 2
     fm = feature_store.read_matrix(
         cur, set_id, columns=setup.columns.kept if setup else None,
     )

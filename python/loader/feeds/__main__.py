@@ -34,9 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("feed", metavar="SYMBOL/SOURCE")
     for cmd in (r, a):
         cmd.add_argument("--override-checks", metavar="REASON", default=None,
-                         help="store bars whose checks found errors anyway (a series with an "
-                              "error is otherwise not stored); the reason is recorded on the "
-                              "import's audit row. Use it with one --feed")
+                         help="accept the flagged rows of bars whose checks found errors, "
+                              "as they are stored; the reason is recorded with the rows. "
+                              "Without it the bars still land, flagged. Use it with one --feed")
     args = p.parse_args(argv)
 
     if args.cmd == "list":

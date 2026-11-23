@@ -17,10 +17,19 @@ import {
 const TIMEFRAMES = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'] as const
 const TYPES = ['STOCK', 'FOREX', 'CRYPTO', 'INDEX', 'COMMODITY'] as const
 
+/** The series a file went into, kept so its flagged rows can be accepted after the form resets. */
+type Series = { symbol: string, source: string, timeframe: string }
+
 type UploadState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
-  | { kind: 'success'; result: UploadImportResponse }
+  | { kind: 'success'; result: UploadImportResponse; series: Series }
+  | { kind: 'error'; message: string }
+
+type AcceptState =
+  | { kind: 'idle' }
+  | { kind: 'sending' }
+  | { kind: 'done'; accepted: number; reason: string }
   | { kind: 'error'; message: string }
 
 /**
@@ -42,27 +51,41 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
   const [timeframe, setTimeframe] = useState<typeof TIMEFRAMES[number]>('D1')
   const [source, setSource] = useState('default')
   const [force, setForce] = useState(false)
-  // R12, R65: why a file with check errors is stored anyway. Empty unless the
-  // loader refused the file and the user types a reason.
-  const [overrideReason, setOverrideReason] = useState('')
+  // R12, R65 (G75): a file with check errors is stored like any other and its
+  // bad bars are flagged. This is why they are accepted as they are, typed
+  // after the upload, once the errors can be read.
+  const [acceptReason, setAcceptReason] = useState('')
+  const [accept, setAccept] = useState<AcceptState>({ kind: 'idle' })
   const [state, setState] = useState<UploadState>({ kind: 'idle' })
 
   function resetAfterSuccess() {
     setFile(null)
     setForce(false)
-    setOverrideReason('')
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  async function acceptFlagged(e: React.FormEvent) {
+    e.preventDefault()
+    if (state.kind !== 'success' || !acceptReason.trim()) return
+    setAccept({ kind: 'sending' })
+    try {
+      const done = await api.acceptChecks({ ...state.series, reason: acceptReason.trim() })
+      setAccept({ kind: 'done', accepted: done.accepted, reason: done.reason })
+      onSuccess()
+    } catch (err) {
+      setAccept({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!file || !symbol) return
     setState({ kind: 'submitting' })
+    setAccept({ kind: 'idle' })
+    setAcceptReason('')
     try {
-      const result = await api.uploadImport({
-        file, symbol, type, timeframe, source, force, overrideReason,
-      })
-      setState({ kind: 'success', result })
+      const result = await api.uploadImport({ file, symbol, type, timeframe, source, force })
+      setState({ kind: 'success', result, series: { symbol, source, timeframe } })
       if (result.status === 'completed') {
         const anyWrite = result.imports.some(
           (s) => s.status === 'created' || s.status === 'extended' || s.status === 'overwritten',
@@ -189,29 +212,39 @@ export default function UploadCard({ onSuccess }: { onSuccess: () => void }) {
         </form>
 
         <UploadFeedback state={state} />
-        {state.kind === 'success' && state.result.status === 'check_failed' && (
-          <form onSubmit={submit} className="mt-2 flex flex-wrap items-end gap-2">
+        {state.kind === 'success' && state.result.status === 'completed'
+          && state.result.flagged?.held && accept.kind !== 'done' && (
+          <form onSubmit={acceptFlagged} className="mt-2 flex flex-wrap items-end gap-2" data-testid="accept-flagged">
             <label className="form-control grow">
               <FieldLabel
-                text="Store it anyway, because"
+                text="Accept them as they are, because"
                 className="text-xs"
-                hint="An override is recorded on the import with this reason, the number of errors accepted and who did it. Leave it empty and fix the file instead."
+                hint="The reason is recorded on each flagged row with who accepted it and when. Leave it empty and upload a corrected file instead: a bar the new file gets right loses its flag."
               />
               <input
                 type="text"
                 className="input input-sm input-bordered"
                 placeholder="e.g. vendor's open is a tick outside the range; closes are right"
-                value={overrideReason}
-                onChange={(e) => setOverrideReason(e.target.value)}
+                value={acceptReason}
+                onChange={(e) => setAcceptReason(e.target.value)}
               />
             </label>
             <button
               type="submit" className="btn btn-sm btn-warning"
-              disabled={!file || overrideReason.trim().length === 0}
+              disabled={acceptReason.trim().length === 0 || accept.kind === 'sending'}
             >
-              Store with override
+              Accept flagged rows
             </button>
+            {accept.kind === 'error' && (
+              <span className="text-error text-xs basis-full">{accept.message}</span>
+            )}
           </form>
+        )}
+        {accept.kind === 'done' && (
+          <div className="alert alert-success mt-2 text-sm" data-testid="flagged-accepted">
+            Accepted {accept.accepted} flagged row{accept.accepted === 1 ? '' : 's'}. The feature
+            build and training can read the series again. Reason recorded: {accept.reason}
+          </div>
         )}
       </div>
     </div>
@@ -230,24 +263,6 @@ function UploadFeedback({ state }: { state: UploadState }) {
         <div>
           <strong>Postgres rejected the upsert.</strong> {result.error}
           <div className="mt-1 opacity-80">{result.hint}</div>
-        </div>
-      </div>
-    )
-  }
-  if (result.status === 'check_failed') {
-    return (
-      <div className="alert alert-error mt-3 text-sm" data-testid="check-failed">
-        <div className="w-full">
-          <div className="font-medium">
-            Not stored: {result.errors.length === 1 ? 'the file has an error'
-              : `the file has ${result.cohesion.errors ?? result.errors.length} errors`}.
-          </div>
-          <ul className="mt-1 list-disc pl-5 font-mono text-xs">
-            {result.errors.map((e) => <li key={e}>{e}</li>)}
-          </ul>
-          <div className="mt-1 text-xs opacity-80">
-            Fix the file and upload it again, or give a reason below to store it as it is.
-          </div>
         </div>
       </div>
     )
@@ -290,11 +305,29 @@ function UploadFeedback({ state }: { state: UploadState }) {
               session (09:30 to 16:00 New York time).
             </div>
           )}
+          {result.flagged?.held && (
+            <div
+              className="mt-2 rounded-box border border-error bg-base-100 p-2 text-xs text-base-content"
+              data-testid="flagged-rows"
+            >
+              <div className="font-medium text-error">
+                Stored, with {result.flagged.errors} flagged row{result.flagged.errors === 1 ? '' : 's'}:
+                {' '}bars the checks found an error on.
+              </div>
+              <ul className="mt-1 list-disc pl-5 font-mono">
+                {result.flagged.lines.map((e) => <li key={e}>{e}</li>)}
+              </ul>
+              <div className="mt-1">
+                The feature build and training will not read this series until the rows are
+                accepted below or a corrected file is uploaded.
+              </div>
+            </div>
+          )}
           {result.checkOverride && (
             <div className="mt-2 rounded-box border border-error bg-base-100 p-2 text-xs text-base-content">
               <span className="font-medium text-error">
-                Stored on an override: {result.checkOverride.errors} check error
-                {result.checkOverride.errors === 1 ? '' : 's'} accepted.
+                {result.checkOverride.errors} flagged row
+                {result.checkOverride.errors === 1 ? '' : 's'} accepted with the upload.
               </span>{' '}
               Reason recorded: {result.checkOverride.reason}
             </div>

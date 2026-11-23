@@ -753,9 +753,10 @@ def commit_file(
     """`commit_slices`, plus the file's version row in the same transaction.
 
     Returns the slice results and the version record. Every written slice's
-    `data_imports.import_file_id` points at that version. `override` is a
-    `cohesion.Override`: the file's check errors were accepted on purpose, and
-    every audit row written says by whom, why and how many.
+    `data_imports.import_file_id` points at that version. `override` is the
+    file's `cohesion.Flagged`: its check errors are recorded as flagged rows in
+    this transaction (`loader/flags.py`, G75), and when they came with a reason
+    every audit row written says by whom, why and how many were accepted.
     """
     results, file_rec = _commit(conn, slices, source_name=source_name, symbol=symbol,
                                 type_=type_, timeframe=timeframe,
@@ -778,8 +779,9 @@ def _commit(
     override: Any = None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     archive_root = resolve_archive_root()
-    reason = override.reason if override is not None else None
-    overridden = override.errors if override is not None else None
+    # A reason is kept on the audit rows only when it accepted something.
+    reason = override.reason if override is not None and override.errors else None
+    overridden = override.errors if reason is not None else None
     results: list[dict[str, object]] = []
 
     with conn.transaction():
@@ -863,6 +865,16 @@ def _commit(
                     },
                 }
             )
+
+        # The file's check errors, as flagged rows of the series (G75): in the
+        # same transaction, so a file that lands and its flags land together.
+        if override is not None and (override.errors or override.bar_times):
+            from loader import flags
+
+            flagged = flags.record(conn, instrument_id, source_id, timeframe, override,
+                                   import_file_id=file_id)
+            if file_rec is not None:
+                file_rec["flagged"] = flagged
 
     return results, file_rec
 

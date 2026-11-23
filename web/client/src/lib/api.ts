@@ -238,7 +238,7 @@ export type CohesionReport = {
   /** Exact counts by severity; `examples` is capped. */
   errors?: number
   warnings?: number
-  /** True when the data is not stored without an override. */
+  /** True when the data has errors: its bars are flagged rows (G75). */
   blocked?: boolean
   counts: Record<CohesionCategory, number>
   /** Sample findings (capped server-side); counts stay exact. */
@@ -255,11 +255,34 @@ export type SkippedRows = {
   outsideSession?: number
 }
 
+/**
+ * What a file's check errors left behind (G75; R12, R65). The file is stored
+ * whatever the checks say; each bar with an error is a flagged row, and while
+ * `held` is true the feature build and training refuse to read the series.
+ */
+export type FlaggedRows = {
+  /** Bars with an error in this file. */
+  errors: number
+  /** True until the rows are accepted or a corrected file is imported. */
+  held: boolean
+  /** The errors as sentences; the first few, then how many more. */
+  lines: string[]
+  /** Flagged rows of this file still not accepted. */
+  open?: number
+  hint?: string | null
+}
+
+/** A series that has flagged rows, from GET /api/checks. */
+export type FlaggedSeries = {
+  symbol: string, source: string, timeframe: string
+  open: number, accepted: number
+  from: string, to: string
+  reason: string | null
+}
+
 /** Discriminated union of POST /api/imports response shapes. */
 export type UploadImportResponse =
-  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; skipped?: SkippedRows; file?: UploadedFile; checkOverride?: CheckOverride }
-  /** 422: the file has check errors and was not stored. */
-  | { status: 'check_failed'; error: string; errors: string[]; hint: string; cohesion: CohesionReport }
+  | { status: 'completed'; imports: SliceOutcome[]; cohesion?: CohesionReport; skipped?: SkippedRows; file?: UploadedFile; checkOverride?: CheckOverride; flagged?: FlaggedRows }
   | { status: 'conflict'; message: string; imports: SlicePreview[]; file?: { hash: string, name: string } }
   | { status: 'compressed_chunk'; error: string; hint: string; detail: string }
 
@@ -270,8 +293,6 @@ export type UploadImportRequest = {
   timeframe: string
   source: string
   force: boolean
-  /** Store a file whose checks found errors anyway; recorded with the import. */
-  overrideReason?: string
 }
 
 /** What one import's undo would touch — shared by the preview and the result. */
@@ -2111,6 +2132,11 @@ export const api = {
   deleteImport: (id: string | number) =>
     sendJson<ImportDeleteResult>(`/api/imports/${encodeURIComponent(String(id))}`, 'DELETE'),
   audit: (req: AuditRequest) => sendJson<AuditResponse>('/api/audit', 'POST', req),
+  /** Series with flagged rows: bars an import found an error on (G75). */
+  checks: (signal?: AbortSignal) => getJson<{ series: FlaggedSeries[], open: number, accepted: number }>('/api/checks', signal),
+  /** Accept a series' open flagged rows. The reason is required and recorded with them. */
+  acceptChecks: (req: { symbol: string, source: string, timeframe?: string, reason: string }) =>
+    sendJson<{ accepted: number, symbol: string, source: string, reason: string }>('/api/checks/accept', 'POST', req),
   aggregate: async (req: AggregateRequest): Promise<AggregateResponse> => {
     const res = await fetch(apiUrl('/api/aggregate'), {
       method: 'POST',
@@ -2141,18 +2167,12 @@ export const api = {
     fd.append('timeframe', req.timeframe)
     fd.append('source', req.source)
     fd.append('force', String(req.force))
-    if (req.overrideReason?.trim()) fd.append('override_reason', req.overrideReason.trim())
     const res = await fetch(apiUrl('/api/imports'), { method: 'POST', body: fd })
     // 200 and 409 both carry a structured body (created/skipped/overwritten/conflict).
     // 4xx other than 409 surface as plain { error } — convert to a throw.
     let body: unknown
     try { body = await res.json() } catch { body = null }
     if (res.status === 200 || res.status === 409) {
-      return body as UploadImportResponse
-    }
-    // 422 check_failed: the file was not stored, and the body lists every error.
-    if (res.status === 422 && body && typeof body === 'object'
-      && (body as { status?: string }).status === 'check_failed') {
       return body as UploadImportResponse
     }
     const msg = (body && typeof body === 'object' && 'error' in body)

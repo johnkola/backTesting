@@ -663,6 +663,149 @@
               }
             }
           ]
+        },
+        {
+          "name": "Flagged rows: series with a bar an import found an error on",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/checks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "checks"
+              ]
+            },
+            "description": "G75 (R12, R65): an import always lands; each bar with a check error is a flagged row. `open` rows hold the feature build and training until accepted or corrected."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('lists series with their open and accepted counts', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.series).to.be.an('array');",
+                  "    pm.expect(d.open).to.be.a('number');",
+                  "    pm.expect(d.accepted).to.be.a('number');",
+                  "    for (const s of d.series) pm.expect(s).to.include.keys('symbol', 'source', 'timeframe', 'open', 'accepted', 'from', 'to');",
+                  "    pm.expect(d.open).to.equal(d.series.reduce((n, s) => n + s.open, 0));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Flagged rows: the rows of one series",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/checks/rows?symbol={{instrument}}&all=1&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "checks",
+                "rows"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "{{instrument}}"
+                },
+                {
+                  "key": "all",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "The rows themselves, newest bar first. `all=1` includes accepted ones."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('each row says what is wrong and whether it was accepted', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.items).to.be.an('array');",
+                  "    pm.expect(d.items.length).to.be.at.most(5);",
+                  "    for (const r of d.items) pm.expect(r).to.include.keys('barTime', 'category', 'detail', 'acceptedAt', 'acceptedReason');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Flagged rows: accepting needs a reason",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/checks/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "checks",
+                "accept"
+              ]
+            },
+            "description": "Accepting is deliberate: the reason is recorded on each row with who and when. Sent here without one, so it is refused and changes nothing.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"{{instrument}}\",\n  \"source\": \"{{source}}\",\n  \"reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400 without a reason', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says the reason is required', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('reason is required');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

@@ -194,11 +194,11 @@ export default function ImportsPage() {
                         {r.checkOverride && (
                           <span
                             className="badge badge-warning badge-xs ml-2 cursor-help"
-                            title={`${r.checkOverride.errors} check error(s) stored on an override`
+                            title={`${r.checkOverride.errors} flagged row(s) accepted with this import`
                               + `${r.checkOverride.by ? ` by ${r.checkOverride.by}` : ''}: `
                               + r.checkOverride.reason}
                           >
-                            override
+                            accepted
                           </span>
                         )}
                       </td>

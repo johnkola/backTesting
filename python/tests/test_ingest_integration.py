@@ -162,28 +162,39 @@ def test_ingest_conflict_then_force(inbox):
     assert float(hi) == 204.5  # overwritten closes
 
 
-def test_a_broken_file_is_refused_then_stored_with_a_recorded_override(inbox):
-    """The hard stop end to end (C2, D11): nothing is stored and the report
-    sits beside the file under failed/; with a reason the same file goes in
-    and its audit row says why, how many errors, and who."""
+def test_a_broken_file_lands_flagged_and_is_accepted_or_corrected(inbox):
+    """An import always lands, end to end (G75; R12, R65): the file is stored,
+    its bad bar is a flagged row that holds whatever reads the series, and the
+    report sits beside the file. Importing it again with a reason accepts the
+    row, with who and why on it and on the audit rows."""
     import json
 
+    from loader import flags
     from loader.db import pool
     from loader.ingest import main
 
     (inbox / FILENAME).write_text(CSV_BROKEN, encoding="utf-8")
-    assert main(["--inbox", str(inbox)]) == 1
-    assert _candle_summary()[0] == 0, "a refused file stores nothing"
-    report = json.loads((inbox / "failed" / (FILENAME + ".checks.json")).read_text())
-    assert report["refused"] is True and report["cohesion"]["errors"] == 1
+    assert main(["--inbox", str(inbox)]) == 0, "a file with an error is imported, not failed"
+    assert _candle_summary()[0] == 2, "raw data is never refused"
+    report = json.loads((inbox / "processed" / (FILENAME + ".checks.json")).read_text())
+    assert report["refused"] is False and report["flagged"] == 1
+    assert report["cohesion"]["errors"] == 1
+    with pool().connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT s.name FROM data_imports di JOIN instruments i ON i.id = "
+                    "di.instrument_id JOIN data_sources s ON s.id = di.source_id "
+                    "WHERE i.symbol = %s LIMIT 1", (SYMBOL,))
+        source = cur.fetchone()[0]
+        series = [(SYMBOL, source, "D1")]
+        held = flags.open_flags(cur, series)
+        assert [h["open"] for h in held] == [1]
+        assert flags.refusal(cur, series, "training").startswith("training is held")
+        row = flags.rows(cur, SYMBOL, source)[0]
+        assert row["category"] == "ohlc" and row["importFileId"] is not None
 
     (inbox / FILENAME).write_text(CSV_BROKEN, encoding="utf-8")
     assert main(["--inbox", str(inbox), "--override-checks", "test: vendor tick"]) == 0
     assert _candle_summary()[0] == 2
     with pool().connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT di.check_override_reason, di.check_override_errors, di.check_override_by "
-            "FROM data_imports di JOIN instruments i ON i.id = di.instrument_id "
-            "WHERE i.symbol = %s", (SYMBOL,))
-        rows = cur.fetchall()
-    assert rows and all(r[0] == "test: vendor tick" and r[1] == 1 and r[2] for r in rows)
+        assert flags.refusal(cur, series, "training") is None
+        row = flags.rows(cur, SYMBOL, source, only_open=False)[0]
+        assert row["acceptedReason"] == "test: vendor tick" and row["acceptedBy"]

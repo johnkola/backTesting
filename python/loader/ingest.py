@@ -55,7 +55,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from loader.cohesion import ChecksFailed, check_import, gate
+from loader.cohesion import check_import, gate
 from loader.csv_import import (
     ALLOWED_TIMEFRAMES,
     ALLOWED_TYPES,
@@ -187,16 +187,18 @@ def parse_filename(name: str) -> tuple[str, str, str, str]:
     return source, symbol, type_, timeframe
 
 
-#: A refused file's report, kept until `main` has moved the file, so the
-#: report can be written beside it under `failed/`.
+#: The report of a file that left flagged rows, kept until `main` has moved
+#: the file, so the report can be written beside it under `processed/`.
 _LAST_REPORT: dict[str, object] = {}
 
 
 def _write_report(dest: Path, report) -> Path:
-    """The check report of a refused file, beside it: `<name>.checks.json`."""
+    """The check report of a file that landed with flagged rows, beside it:
+    `<name>.checks.json`."""
     out = dest.with_name(dest.name + ".checks.json")
     out.write_text(json.dumps(
-        {"file": dest.name, "refused": True, "errors": report.error_lines(),
+        {"file": dest.name, "refused": False, "flagged": report.errors,
+         "errors": report.error_lines(),
          "cohesion": report.to_dict()}, indent=2))
     return out
 
@@ -217,11 +219,11 @@ def _move_aside(path: Path, dest_dir: Path) -> Path:
 def _process_one(path: Path, *, force: bool, dry_run: bool,
                  override_reason: str | None = None) -> str:
     """Import a single file. Returns a status word for the summary tally:
-    'imported' | 'parse-error' | 'empty' | 'conflict' | 'check-failed' | 'error'.
+    'imported' | 'parse-error' | 'empty' | 'conflict' | 'error'.
 
-    'check-failed' is the hard stop (R12, R65): the file's check report has an
-    error and `override_reason` was not given, so nothing is stored and the
-    caller files it under `failed/` with the report beside it."""
+    A file whose checks found errors is 'imported' like any other (G75): it
+    lands, its bad bars are flagged, and the report is written beside it.
+    `override_reason` accepts those flags as the file goes in."""
 
     try:
         source, symbol, type_, timeframe = parse_filename(path.name)
@@ -247,6 +249,16 @@ def _process_one(path: Path, *, force: bool, dry_run: bool,
             f = loaded["file"]
             print(f"  SAME  {path.name}: already loaded {f['importedAt'][:10]} "
                   f"as version {f['id']} ({f['changeKind']}); nothing to do")
+            # The same file again with a reason: nothing to store, but the
+            # reason still accepts the flagged rows the file left (G75).
+            if (override_reason or "").strip():
+                from loader import flags
+
+                with pool().connection() as conn:
+                    n = flags.accept(conn, override_reason, symbol, source, timeframe)
+                if n:
+                    print(f"  NOTE  {path.name}: {n} flagged row(s) accepted: "
+                          f"{override_reason.strip()}")
             return "imported"
 
     with open(path, "rb") as stream:
@@ -270,16 +282,19 @@ def _process_one(path: Path, *, force: bool, dry_run: bool,
     if not report.ok:
         for f in report.examples[:5]:
             print(f"          {f.severity:<7} {f.category} {f.timestamp}: {f.detail}")
-    try:
-        override = gate(report, override_reason)
-    except ChecksFailed:
-        print(f"  FAIL  {path.name}: {report.errors} error(s), not stored. Fix the file, "
-              "or re-run with --override-checks \"<reason>\" to store it as it is")
+    # The file lands whatever the checks say (G75); its errors become flagged
+    # rows, accepted here when a reason came with the run.
+    override = gate(report, override_reason)
+    if override.held:
+        print(f"  FLAG  {path.name}: {override.errors} bar(s) with an error. The file is "
+              "stored; the feature build and training are held until the rows are accepted "
+              "(python -m loader.flags --accept, or --override-checks \"<reason>\" here) "
+              "or a corrected file is imported")
         if not dry_run:
             _LAST_REPORT[path.name] = report
-        return "check-failed"
-    if override is not None:
-        print(f"  NOTE  {path.name}: {override.errors} error(s) overridden: {override.reason}")
+    elif override.errors:
+        print(f"  NOTE  {path.name}: {override.errors} flagged row(s) accepted: "
+              f"{override.reason}")
 
     from loader.db import pool
 
@@ -370,9 +385,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="overwrite conflicting year slices")
     parser.add_argument("--dry-run", action="store_true", help="show the per-file plan; touch nothing")
     parser.add_argument("--override-checks", metavar="REASON", default=None,
-                        help="store files whose checks found errors anyway; the reason is "
-                             "recorded on each import's audit row. Applies to every file in "
-                             "this run, so run it on an inbox holding only the files you mean")
+                        help="accept the flagged rows of files whose checks found errors, "
+                             "as they go in; the reason is recorded with the rows. Without "
+                             "it such a file still lands, and its flagged rows hold the "
+                             "feature build and training. Applies to every file in this run")
     args = parser.parse_args(argv)
 
     inbox = resolve_inbox_dir(args.inbox)

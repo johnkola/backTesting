@@ -3,10 +3,12 @@
 This module only reads: it never mutates data. Every finding carries a
 severity, `error` or `warning`, set here where the finding is made (the
 author's decision of 2026-11-19, Design-Gaps C2 and D11; R12 and R65: an error
-"is a hard stop: the chain does not continue over that data"). The import
-paths refuse a file whose report has an error unless someone overrides it on
-purpose, with a reason that is recorded; a warning is reported and the data
-goes in. The audit over stored bars reports both and changes nothing.
+"is a hard stop: the chain does not continue over that data"). The stop is not
+at the door (the author 2026-11-22, G75): a file always lands, so raw data is
+never lost, and each bar with an error becomes a flagged row (`loader/flags.py`)
+that holds the feature build and training until it is accepted or corrected. A
+warning is reported and holds nothing. The audit over stored bars reports both
+and changes nothing.
 
 WHICH FINDINGS ARE ERRORS (`severity_of`). The author's choice of 2026-11-22,
 made on a scan of all 252 stored series:
@@ -141,6 +143,10 @@ class CohesionReport:
     warnings: int = 0
     #: Errors per category, exact.
     error_counts: dict[str, int] = field(default_factory=dict)
+    #: Every error, uncapped, and every bar time checked: what becomes the
+    #: series' flagged rows (`loader/flags.py`). Not put on the wire.
+    error_findings: list[Finding] = field(default_factory=list)
+    bar_times: list[str] = field(default_factory=list)
 
     @property
     def total_issues(self) -> int:
@@ -152,12 +158,13 @@ class CohesionReport:
 
     @property
     def blocked(self) -> bool:
-        """True when the data must not go in without an override (R12, R65)."""
+        """True when the data has errors: its bars are flagged, and what reads
+        the series is held until they are accepted or corrected (R12, R65)."""
         return self.errors > 0
 
     def error_lines(self) -> list[str]:
-        """The errors as sentences, for a refusal: the examples kept, then how
-        many more there are."""
+        """The errors as sentences: the examples kept, then how many more
+        there are."""
         shown = [f for f in self.examples if f.severity == ERROR]
         lines = [f"{f.category} at {f.timestamp}: {f.detail}" for f in shown]
         if self.errors > len(shown):
@@ -185,42 +192,40 @@ class CohesionReport:
         }
 
 
-class ChecksFailed(Exception):
-    """The data has errors and nobody overrode them, so it is not stored."""
-
-    def __init__(self, report: CohesionReport):
-        self.report = report
-        lines = report.error_lines()
-        super().__init__(
-            f"{report.errors} error(s) in the data, so it was not stored: "
-            + "; ".join(lines[:3]) + ("; ..." if len(lines) > 3 else ""))
-
-
 @dataclass(frozen=True)
-class Override:
-    """Errors someone chose to store anyway. Written on the import's audit
-    rows (`data_imports.check_override_*`), with who from `audit_actor()`."""
+class Flagged:
+    """What a checked file's errors become when it lands: flagged rows.
 
-    reason: str
-    errors: int
+    `findings` are its errors, one per bar and check; `bar_times` every bar
+    the file covers, so a flag on a bar the file no longer finds wrong can be
+    cleared; `reason` is why they are accepted as they are, when whoever
+    imported the file said so, and None while they hold the chain."""
+
+    findings: tuple[Finding, ...] = ()
+    bar_times: tuple[str, ...] = ()
+    reason: str | None = None
+
+    @property
+    def errors(self) -> int:
+        return len(self.findings)
+
+    @property
+    def held(self) -> bool:
+        """True when the file leaves rows that hold the feature build and training."""
+        return bool(self.findings) and self.reason is None
 
 
-def gate(report: CohesionReport, override_reason: str | None = None) -> Override | None:
-    """The hard stop (R12, R65; Design-Gaps C2, D11), the one place every
-    import path asks.
+def gate(report: CohesionReport, accept_reason: str | None = None) -> Flagged:
+    """What every import path does with a check report (R12, R65; G75).
 
-    A report with no error passes: `None`, and an override given anyway is not
-    recorded, since nothing was overridden. A report with errors raises
-    `ChecksFailed` unless `override_reason` says why it goes in regardless; the
-    reason is required, because an override is a deliberate act and never the
-    default.
+    It never refuses: the file lands. The report's errors come back as the
+    rows to flag, accepted on the spot when `accept_reason` says why they are
+    right as they are, and otherwise left to hold whatever reads the series.
+    A reason given for a file with no error accepts nothing and is not kept.
     """
-    if not report.blocked:
-        return None
-    reason = (override_reason or "").strip()
-    if not reason:
-        raise ChecksFailed(report)
-    return Override(reason=reason, errors=report.errors)
+    reason = (accept_reason or "").strip() or None
+    return Flagged(findings=tuple(report.error_findings), bar_times=tuple(report.bar_times),
+                   reason=reason if report.error_findings else None)
 
 
 def _coerce_ts(value: object) -> _dt.datetime:
@@ -404,7 +409,8 @@ def check_candles(
     """Run the selected checks and fold their findings into one report.
     `checks` is any subset of CATEGORIES; unknown names are ignored."""
     selected = set(checks)
-    report = CohesionReport(total_bars=len(candles))
+    report = CohesionReport(total_bars=len(candles),
+                            bar_times=[_ts_str(row[0]) for row in candles])
 
     found: list[Finding] = []
     if "ohlc" in selected:
@@ -431,6 +437,7 @@ def check_candles(
         if f.severity == ERROR:
             report.errors += 1
             report.error_counts[f.category] = report.error_counts.get(f.category, 0) + 1
+            report.error_findings.append(f)
         else:
             report.warnings += 1
         if kept[(f.category, f.severity)] < EXAMPLE_CAP:

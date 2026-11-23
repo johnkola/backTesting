@@ -686,6 +686,19 @@ def main() -> int:
         print(f"\nERROR: {len(empty)} column(s) produced no values: {', '.join(empty)}")
         return 1
 
+    # Flagged rows (R12, the author 2026-11-22; G75): a bar an import found an
+    # error on holds the build until it is accepted or corrected. No reason
+    # given here builds over it: the acceptance is made on the rows.
+    from loader import flags
+    from nn import staleness
+
+    read_at = staleness.series_timeframes(cfg)
+    held = flags.refusal(cur, [(sym, src, tf) for (sym, src), tfs in read_at.items()
+                               for tf in tfs], "the feature build")
+    if held:
+        print(f"\nrefused: {held}")
+        return 3
+
     # The hard stop (R12, R65; Design-Gaps C2, D11), the dry run included: a
     # check that did not happen leaves its column unverified, so no set is
     # written over it unless someone says why, and that is recorded on the set.

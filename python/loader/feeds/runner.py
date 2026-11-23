@@ -42,15 +42,6 @@ VOLUME_WINDOW = 1
 WROTE = {"extended", "fixed", "extended+fixed", "loaded", "applied"}
 
 
-class ChecksRefused(RuntimeError):
-    """A series whose fetched bars failed the hard stop (R12, R65): not stored.
-    Carries the errors so the run record and the Data stage can list them."""
-
-    def __init__(self, message: str, errors: list[str]):
-        super().__init__(message)
-        self.errors = errors
-
-
 class FeedError(RuntimeError):
     """A series cannot be refreshed as things stand; the message says why."""
 
@@ -259,7 +250,7 @@ def _guard(slices, fix_days: list[str]) -> None:
 
 def _import(conn, feed: Feed, ctx: RunContext, rows_by_year: dict[int, list[str]], *,
             force: bool, fix_days: list[str], guarded: bool, out: dict) -> dict:
-    from loader.cohesion import ChecksFailed, check_import, gate
+    from loader.cohesion import check_import, gate
     from loader.csv_import import commit_file, plan_slices, write_archive_files
 
     slices = plan_slices(conn, core.HEADER, rows_by_year, source_name=feed.source,
@@ -269,8 +260,9 @@ def _import(conn, feed: Feed, ctx: RunContext, rows_by_year: dict[int, list[str]
     out["years"] = [{"year": s.year, "plan": s.plan,
                      "diff": s.diff.to_dict() if s.diff is not None else None}
                     for s in slices if s.plan != "skip"]
-    # The hard stop (R12, R65), on the rows about to be written. The dry run
-    # reports it too, so a refusal is seen before anything is tried.
+    # The checks, on the rows about to be written. They never stop the write
+    # (G75): the bars land and the ones with an error are flagged, which holds
+    # the feature build and training. The dry run reports them too.
     report = check_import(core.HEADER, rows_by_year, TIMEFRAME)
     if report.blocked:
         out["checkErrors"] = report.error_lines()
@@ -280,13 +272,11 @@ def _import(conn, feed: Feed, ctx: RunContext, rows_by_year: dict[int, list[str]
         out["status"] = "up-to-date"
         conn.commit()
         return out
-    try:
-        override = gate(report, ctx.override_reason)
-    except ChecksFailed as exc:
-        raise ChecksRefused(f"{exc}. Pass --override-checks \"<reason>\" to store it "
-                            "as it is", report.error_lines()) from exc
-    if override is not None:
+    override = gate(report, ctx.override_reason)
+    if override.reason:
         out["checkOverride"] = {"reason": override.reason, "errors": override.errors}
+    elif override.errors:
+        out["flagged"] = override.errors
     _, file_rec = commit_file(conn, slices, _source_file(feed, rows_by_year, ctx),
                               source_name=feed.source, symbol=feed.symbol,
                               type_=feed.type, timeframe=TIMEFRAME, override=override)
@@ -485,8 +475,6 @@ def run(trigger: str, keys: list[str] | None = None, *, apply_key: str | None = 
                     conn.rollback()
                     res = {"feed": feed.key, "status": "error",
                            "error": f"{type(exc).__name__}: {exc}"[:500]}
-                    if isinstance(exc, ChecksRefused):
-                        res["checkErrors"] = exc.errors
                 results.append(res)
                 log(_line(res))
 

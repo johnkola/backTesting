@@ -79,7 +79,7 @@ export default function StageShell({
             <ul className="text-sm mt-2 list-disc list-inside" data-testid="check-overrides">
               {notes.map((n) => (
                 <li key={n}>
-                  <span className="badge badge-warning badge-xs mr-1">override</span>{n}
+                  <span className="badge badge-warning badge-xs mr-1">accepted</span>{n}
                 </li>
               ))}
             </ul>
