@@ -1,6 +1,6 @@
 # Requirements (consolidated)
 
-> **Revision 2026-11-22-4** · 2026-11-22 12:04 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
+> **Revision 2026-11-22-5** · 2026-11-22 22:45 Toronto time · author: Claude (Claude Fable 5.2), for John · statuses verified against the code at `db6d42f` on 2026-11-22 · in the repo at `docs/readonly-doc/backTesting-05-Requirements-Consolidated.md`
 
 One list of what the system must do, merged from every doc in `johnkola/backTesting` at `499c6e4`. It replaces reading four design docs and three trackers side by side.
 
@@ -35,15 +35,15 @@ A learning project: train engines on daily history to time entries and exits for
 
 ## Decided
 
-Every question this section used to hold was answered by the author on 2026-11-19 (C2's rule on 2026-11-22). Where an answer departs from the design set, the requirement says so; the design set itself is the author's to change.
+Every question this section used to hold was answered by the author on 2026-11-19 (C2's rule on 2026-11-22). Where an answer departs from the design set, the requirement says so; the design set itself is the author's to change. C1, C4 and C5 were answered again on 2026-11-22: the newer answers are shown, replace the 2026-11-19 ones, and are not built yet.
 
 | # | Question | The author's answer | Requirements | State |
 |---|---|---|---|---|
-| C1 | When does the stack move? | After phase two works on real data. Until then new work lands on the current stack (Node API, Java engine, Python loader over HTTP) | R6, R33, R48, R60, R67, R70 | deferred (G16) |
+| C1 | When does the stack move? | Now, before further feature work; the designed stack is the target for high traffic and heavy processing (2026-11-22; replaces "after phase two works on real data") | R6, R33, R48, R60, R67, R70 | open (G16) |
 | C2 | Do data checks stop the chain? | Errors stop, warnings continue. An error is a bar whose prices contradict each other, a duplicate or an out-of-order timestamp; "two or more flags" is not used | R12, R65 | built 2026-11-22 |
 | C3 | Are nulls allowed in feature values? | Keep NULLs, dropped at read | R3 | departure (D2) |
-| C4 | Keep the Deeplearning4j and ONNX check? | Drop it, PyTorch only | R62 | departure (D13) |
-| C5 | TA-Lib or the hand-written indicators? | Keep the hand-written indicators | R66 | departure (D14) |
+| C4 | Keep the Deeplearning4j and ONNX check? | Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check (2026-11-22; replaces "drop it, PyTorch only") | R62 | open (D13) |
+| C5 | TA-Lib or the hand-written indicators? | TA-Lib is the single source; the hand-written indicators stay only as the cross-check (2026-11-22; replaces "keep the hand-written indicators") | R66 | open (D14) |
 | C6 | Walk-forward: expanding or sliding? | Offer both, expanding the default | R25 | built 2026-11-21 (D3) |
 | C7 | Are RSI, MACD and realized volatility model inputs? | Selectable per strategy, off by default | R19, R78 | built 2026-11-21 (D4) |
 | C8 | What happens to the five rule strategies? | Benchmarks only: kept runnable for comparison, not offered as strategies | R21, R22 | built 2026-11-22 |
@@ -52,10 +52,10 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 - **R1** Every number is verifiable: any value traces to its source, code version, time, author or job, and upstream values. · *partial (`candles` has no audit columns or link to its import, G61; a backtest result has no code version or input snapshot, G61; no Verify tab, G10)*
 - **R2** Raw provider data is never lost: every archived CSV version is kept and any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider. [D10, amends "corrections are new rows"] · *partial (G66, G67: a fix overwrites the older slice's archive file, and nothing reloads a version in one action)*
-- **R3** Each feature exists only over its own available range; no trimming to overlap, no null padding. · *departure, by the author's decision 2026-11-19 (C3): NULLs are stored for warm-up and pre-start days and dropped at read; no trimming to overlap is done*
+- **R3** Each feature exists only over its own available range; no trimming to overlap, no null padding. Days the exchange is closed (weekends, holidays, any other closure) have no row at all and are never counted as missing [the author 2026-11-22]. · *departure, by the author's decision 2026-11-19 (C3): NULLs are stored for warm-up and pre-start days and dropped at read; no trimming to overlap is done*
 - **R4** Audit columns (created/updated at/by) on every table holding computed or ingested values. · *partial (G61: not on `candles`, nor on the benchmark, signal and epoch tables)*
 - **R5** Reproducibility: a feature or model run is identified by code version plus input snapshot; the same seed and snapshot give the same result. · *partial (a backtest result has no code version or snapshot, G61)*
-- **R6** Separation: Python computes, Java serves, Next.js shows; the UI never touches the database. · *deferred, by the author's decision 2026-11-19 (C1): the UI calls the API only, today; the designed split waits for the stack move*
+- **R6** Separation: Python computes, Java serves, Next.js shows; the UI never touches the database. · *partial (C1, the author 2026-11-22: the stack moves now; today the UI calls the API only, Java does not serve it and there is no Next.js)*
 - **R77** Anything derivable is recalculated on demand and after a code change; nothing derived is baked in where only a retrain could redo it; what a recalculation needs (e.g. per-bar signals) is stored. [AG working rule, author 2026-11-15] · *partial (profit step done, B10; a Run-tab result keeps its settings, G40, but stores no signals, so it is rerun, not recalculated)*
 
 ## B. Data ingestion
@@ -72,11 +72,12 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## B2. Data verification
 
-- **R12** Cohesion checks on every import and on demand (gaps, duplicates, order, bad prices), as fixed steps: after parse, before candles are written, again after features. Pandera for row rules; exchange_calendars for missing trading days. Findings go to `data_checks`. Warnings continue; errors stop the chain. [C2, the author 2026-11-19 and 2026-11-22: an error is a bar whose prices contradict each other or whose volume is negative, a duplicate, or an out-of-order timestamp; storing one anyway is an override with a recorded reason] · *partial (the stop is built, C2; Pandera, exchange_calendars and a `data_checks` table are not, G51)*
+- **R12** Cohesion checks on every import and on demand (gaps, duplicates, order, bad prices), as fixed steps: after parse, before candles are written, again after features. Pandera for row rules; exchange_calendars for missing trading days. Findings go to `data_checks`. Warnings continue; errors stop the chain. [C2, the author 2026-11-19 and 2026-11-22: an error is a bar whose prices contradict each other or whose volume is negative, a duplicate, or an out-of-order timestamp; storing one anyway is an override with a recorded reason] [the author 2026-11-22, evening: the import itself always lands, so raw data is never lost; features and training refuse to run until the flagged rows are accepted or repaired, R89] · *partial (the stop is built, C2; Pandera, exchange_calendars and a `data_checks` table are not, G51)*
 - **R55** Cross-verification: any value obtainable twice (published copy, another provider, rolled up from a finer timeframe) is compared with ours. Default thresholds: prices 0.5%, volume 10%, indicators 1% after warm-up, yields and spreads 0.02 pp absolute, otherwise 5%. Differences show with both values and the diff, set the row's `cross_check` column, and are never silently fixed. · *partial (one live check, the yield curve; no default thresholds, no second provider, no `cross_check` column)*
 - **R63** Splits: two candle tables of the same shape, raw (as received) and adjusted. An unadjusted split is detected (overnight jump near a split ratio, volume moving the opposite way), checked against imported split history and harmonized. Checks, features, training and backtests read adjusted; every adjustment links to its raw row. · *missing*
 - **R64** Data review: ydata-profiling report per series, viewable in the UI; Evidently flags sudden shifts between periods. Findings go to `data_checks`. · *missing*
 - **R65** Every adjusted row has one verification column per tool (pandera, exchange_calendars, ydata_profiling, evidently, cross_check): pass, flagged or not run. All pass = OK; one flagged = warning, chain continues; two or more = error, hard stop [not used: by the author's decision of 2026-11-22 an error is what cannot be true, and two warnings on a row stay warnings, since the rule refused true history]. A flagged row can be marked accepted with who, when and why; accepted rows no longer stop the chain. · *partial (an error stops and an override is recorded with who, why and how many, per file and per build; no per-row column per tool)*
+- **R89** Data repair: raw rows are never edited; a repair is written to the adjusted table and linked to its raw row. Each wrong or missing value gets up to three candidates, in order: (1) the value from a second source, (2) a calculated value, (3) a hand-entered value. When (1) and (2) agree within the R55 thresholds (0.5% for prices), the second-source value is applied automatically; when they differ, or one of them is unavailable, the row is held for the author to choose by hand. Every repair is logged per field in a repair log: original value, all candidates, the one applied, who, when and why, shown together on one screen. Feature values are never repaired; they are rebuilt from the repaired inputs (R20, R77). [the author 2026-11-22] · *missing*
 
 ## C. Features
 
@@ -85,13 +86,13 @@ Every question this section used to hold was answered by the author on 2026-11-1
 - **R18** Scope flag instrument | market; instrument features switch with the instrument, market features stay. · *partial (G56: hard-coded to QQQ)*
 - **R19** Active features are offered for selection, ticked; selectable ones (RSI, MACD, realized volatility, the VIX term structure, QQQ against SPY) are offered unticked; nothing else is offered. [C7, the author 2026-11-19] · *done*
 - **R20** Feature lineage: `feature_runs` keyed by code version + input snapshot. Old values are not kept; they are rebuilt on demand from stored inputs. [D12, amends "earlier values stay"] · *partial (no rebuild of a named past build; older input versions are not kept, G67)*
-- **R66** Technical indicators come from TA-Lib through one shared module, for features and benchmarks, cross-checked per R55. · *departure, by the author's decision 2026-11-19 (C5): the hand-written `nn/indicators.py`, shared by features and benchmarks*
+- **R66** Technical indicators come from TA-Lib through one shared module, for features and benchmarks, cross-checked per R55; the hand-written `nn/indicators.py` is kept only as the cross-check against it. [C5, the author 2026-11-22, replacing "keep the hand-written indicators" of 2026-11-19] · *missing (D14: the hand-written module still computes them; TA-Lib is not installed)*
 - **R78** The feature set is the table in `backTesting-02-Features.md` / Design Notes: each row has a status of in the model, selectable (built, off by default; this replaces "data only" for the price-derived indicators, C7), undecided, blocked, or later (paid). The VIX term structure and QQQ against SPY are selectable (F1, F2); the high-yield spread is dropped (F3). Free columns are built first; paid columns wait until the free table works. Column 40 sums members' net income, not EPS (D5). The breadth family carries a survivorship-bias caveat. [DN, F] · *partial (design rows 18 to 20, the options series, have no entry)*
 - **R79** Nothing enters the model as a raw value. Each feature is tagged with its data type and the pipeline picks the method: rolling z-score (bounded, mean-reverting), returns or rolling z-score (drifting), ratio to rolling average (volume), rescale (fixed scale), sine/cosine (calendar). Adding a feature = tag its type. [DN] · *partial (nothing enters raw; but each feature names its method by hand, nothing picks it from a type tag)*
 
 ## D. Strategy
 
-- **R21** One strategy covers all engines. Instrument, timeframe, windows, features, prediction target and the shared cost/tax panel are set once; each engine has its own settings section and on/off switch, and may override the feature list. One run trains and tests every enabled engine and computes the three benchmarks. Storage: shared settings on the strategy version, one child row per engine; each run links to the exact strategy version and stores one result per engine and per benchmark. No rule-based strategy types; the five indicator rules are kept runnable as rule benchmarks only [C8, the author 2026-11-19]. · *partial (B9 done; the per-engine feature override is not built, G70)*
+- **R21** One strategy covers all engines. Instrument, timeframe, windows, features, prediction target and the shared cost/tax panel are set once; each engine has its own settings section and on/off switch, and may override the feature list. One run trains and tests every enabled engine and computes the three benchmarks. Storage: shared settings on the strategy version, one child row per engine; each run links to the exact strategy version and stores one result per engine and per benchmark. No rule-based strategy types; the five indicator rules are kept runnable as rule benchmarks only [C8, the author 2026-11-19], each pinned to its standard published settings and recalculated on every run under the same costs and tax [the author 2026-11-22; not built]. · *partial (B9 done; the per-engine feature override is not built, G70)*
 - **R22** Engine types and options come from what the backend registers; the UI cannot offer an unrunnable combination. · *partial (G54 done; label kinds and losses are copied lists held by a test, and two runner refusals are not asked at save)*
 - **R23** Adding an engine type = new code + its settings section + its catalogue entry (R74); existing engines untouched. · *done (B9)*
 - **R24** Every strategy has instrument, timeframe and a start–end data range. · *done*
@@ -109,14 +110,14 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## E. Training, runs and benchmarks
 
-- **R33** Train & Run runs a saved strategy only; no choices on that tab. · *deferred, by the author's decision 2026-11-19 (C1; G58): Pipeline > Training starts a saved strategy with no choices; the Train and Run tabs keep their forms*
+- **R33** Train & Run runs a saved strategy only; no choices on that tab. · *partial (C1 no longer defers it, the author 2026-11-22; G58): Pipeline > Training starts a saved strategy with no choices; the Train and Run tabs keep their forms*
 - **R34** Every run records strategy name and version, instrument, exact feature list with code versions, all four windows, hyperparameters, seed, library versions, input snapshot, outputs, audit. · *partial (the prediction window and the fold models are not recorded, G50; a Run-tab result records its settings, G40, but no code version or input snapshot, G61)*
 - **R35** Re-running creates a new run record. Walk-forward is one run with one record per fold. · *done*
 - **R36** Three benchmarks (buy-and-hold, Faber 10-month MA, dual momentum) recalculated on every run, never cached, before training, under the strategy's costs, tax, superficial loss, dividends and currency, and stored with the run. Same window and settings must give the same figure; a difference is a defect. Dual momentum: at each month's last bar take the better 12-month return of the instrument and SPY; hold it next month if it beats T-bills over the same 12 months, else cash at the T-bill rate (D7). · *partial (B6, B7 done; dividends, currency, superficial loss not built)*
 - **R37** Margin overlay is compared against plain buy-and-hold of the same core, and against always-long at the same leverage with no model; a win that only beats the first is labelled leverage, not timing. [+ G25] · *done (G25)*
 - **R68** The feature scaler is fitted on the training window only, per fold, applied unchanged to validation, test and prediction, and stored with the run. Tree engines need none. · *partial (G50: a walk-forward fold's scaler is not kept)*
 - **R69** A test window is marked seen once a run reports on it; later runs reusing it are flagged "test window reused". · *partial (G48 done for backtests; a walk-forward holdout rerun is not flagged in the UI; reuse is flagged, never refused)*
-- **R70** A queued or running job can be cancelled from the UI; the worker stops at its next heartbeat; partial outputs kept, marked cancelled. · *deferred, by the author's decision 2026-11-19 (C1): waits for the jobs table*
+- **R70** A queued or running job can be cancelled from the UI; the worker stops at its next heartbeat; partial outputs kept, marked cancelled. · *missing (C1, the author 2026-11-22: no longer deferred; needs the jobs table)*
 - **R71** Prediction target per strategy: (a) direction, probability the next bar closes up, with buy and sell thresholds; or (b) return over N bars, with a minimum-return threshold. Target, thresholds and horizon recorded on the run. · *done (G49; walk-forward runs. The single-split Train tab is 3-class only)*
 - **R73** Signal voting (Phase 2): trained engines and benchmark rules each vote per bar; a setup buys when at least a set number agree (e.g. 3 of 4). Votes stored per bar; the vote is backtested like any run. · *gated (G65)*
 - **R75** Engines output buy/sell points only and know nothing about costs, tax or margin. One profit step applies commission, slippage, expenses, tax, superficial loss, dividends, currency and margin to every engine's and benchmark's points; changing a setting recalculates profit without retraining. Per-user settings never change the published signal. [D9; supersedes DN "tax inside the objective"] · *partial (B10; slippage, dividends, currency, superficial loss not in the step yet)*
@@ -152,10 +153,10 @@ Every question this section used to hold was answered by the author on 2026-11-1
 
 ## H. Stack and services
 
-- **R48** Java (Spring Boot) is the single backend serving REST to Next.js. Python computes; Java and Python talk only through the jobs table. The Node API is retired. · *deferred, by the author's decision 2026-11-19 (C1): after phase two works on real data*
+- **R48** Java (Spring Boot) is the single backend serving REST to Next.js. Python computes; Java and Python talk only through the jobs table. The Node API is retired. · *missing (C1, the author 2026-11-22: the move happens now, replacing "after phase two works on real data"; G16)*
 - **R49** PostgreSQL/TimescaleDB is the single store; raw and adjusted candle tables in one-year chunks. Model files on disk, with record, path and hash in the database; hash checked on load. Python aligns features for training; Java serves them at native cadence. · *partial (G51, G52, G62)*
-- **R60** One database, three schemas, each with one writer enforced by roles: `app` (Java web), `data` (Python and the Java compute worker), `jobs` (Java inserts; workers update status, result, timestamps). · *deferred, by the author's decision 2026-11-19 (C1)*
-- **R67** No client overwrites another. (a) Jobs claimed atomically (`FOR UPDATE SKIP LOCKED`) in a short transaction, stamped with worker id and engine; heartbeat about every 30 s; a running job silent for 2 min is re-claimed, attempts + 1; failed and shown after 3. (b) Computed rows are insert-only and tagged with their job. (c) User-edited rows carry a version; a stale save is rejected. · *deferred, by the author's decision 2026-11-19 (C1)*
+- **R60** One database, three schemas, each with one writer enforced by roles: `app` (Java web), `data` (Python and the Java compute worker), `jobs` (Java inserts; workers update status, result, timestamps). · *missing (C1, the author 2026-11-22: no longer deferred)*
+- **R67** No client overwrites another. (a) Jobs claimed atomically (`FOR UPDATE SKIP LOCKED`) in a short transaction, stamped with worker id and engine; heartbeat about every 30 s; a running job silent for 2 min is re-claimed, attempts + 1; failed and shown after 3. (b) Computed rows are insert-only and tagged with their job. (c) User-edited rows carry a version; a stale save is rejected. · *missing (C1, the author 2026-11-22: no longer deferred)*
 
 ## I. Testing
 
@@ -163,7 +164,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 - **R50** Unit tests: pytest, JUnit, Vitest + React Testing Library. · *partial (G60: no React Testing Library, no component test)*
 - **R61** Python tests in three layers: unit (each parser, year slicing, each indicator against published values, alignment never looks ahead); job (through the jobs table against a test database); reproducibility. · *partial (no job layer; indicators are not checked against published values)*
-- **R62** Dual-engine check for NN only: PyTorch vs Deeplearning4j on the same matrix, windows and hyperparameters (one training step from identical weights within a tiny tolerance; trained metrics and predictions within a set tolerance), plus ONNX Runtime for prediction. Every walk-forward fold is compared. Differences are warnings. Runs in a separate Java compute worker. · *departure, by the author's decision 2026-11-19 (C4): PyTorch only*
+- **R62** Prediction check for NN only: the trained network is exported to ONNX and run in ONNX Runtime by a separate Java compute worker; its predictions are compared with PyTorch's on the same inputs, for every walk-forward fold, within a set tolerance. Differences are warnings. Deeplearning4j is not used. [C4, the author 2026-11-22, replacing "PyTorch only" of 2026-11-19] · *missing (D13)*
 - **R51** Postman collection for every endpoint, mirroring every JUnit case, with an environment per target, run in CI via Newman. Every new endpoint ships with its request and its unit test. · *partial (a request per Node route, enforced by a test; not run in CI by Newman)*
 - **R52** One end-to-end path: CSV drop to trained run to result on screen. · *partial (`tools/datagen/pipeline.py`, by hand, not in CI)*
 
@@ -171,6 +172,7 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 - **R87** News and social sentiment is a live monitoring signal watched beside the model's output, never a training feature. [DN] · *gated (G18)*
 - **R88** Intraday: once the daily model is proven, the same form and pipeline run on hourly or finer bars bought once (FirstRate Data). Series that publish daily stay daily and carry forward. [DN] · *partial (G22: run end to end on synthetic H1 and M30 bars; real data not bought, G17)*
+- **R90** Parked by the author on 2026-11-22 until the calculation path gives trusted results against the benchmarks: users, login and roles; load targets (users, concurrent jobs, response time); how the daily signal is published and who is notified. · *gated*
 
 ## Retired numbers
 
@@ -178,12 +180,13 @@ Layers run smallest first, each passing before the next: unit → service → fr
 
 ## Count
 
-88 numbers: 2 retired, 86 live. By the first status on each line, verified 2026-11-22: done 22 · partial 44 · missing 9 · deferred 6 · departure 3 · gated 2.
+90 numbers: 2 retired, 88 live. By the first status on each line: done 22 · partial 46 · missing 16 · departure 1 · gated 3. Verified against the code on 2026-11-22, except the lines changed by the author's answers of that evening (R6, R33, R48, R60, R62, R66, R67, R70, R89, R90), which were not re-verified.
 
 ## Revision history
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-5 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22: C1 the stack moves now (R6, R33, R48, R60, R67, R70 no longer deferred); C4 R62 becomes an ONNX Runtime check, Deeplearning4j stays out; C5 TA-Lib is the single source and the hand-written module the cross-check (R66); R89 data repair and R90 (parked) added; R3, R12 and R21 clarified. Brought from the Google Drive doc set, the source of truth; these lines were not re-verified against the code |
 | 2026-11-22-4 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | G40 done: the reasons on R1, R5, R34, R38 and R77 follow; no status changes |
 | 2026-11-22-3 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | R40 done (G57); R38's reason follows; the count follows |
 | 2026-11-22-2 | 2026-11-22 11:53 | Claude Code (Claude Fable 5.2) | R59 and R82 done (G64, G71); the count follows |

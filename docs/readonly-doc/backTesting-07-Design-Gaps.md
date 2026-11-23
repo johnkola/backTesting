@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-22-9** · 2026-11-22 14:14 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-22-10** · 2026-11-22 22:45 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -51,8 +51,8 @@ chain). The pass waits for the author's go.
 | D10 | Is raw data immutable? **Decided 2026-11-15 by the author: every archived CSV version is kept**, so any version can be reloaded on demand; `candles` holds the current version, rebuildable from the archive or the provider (G66, G67) | R2: "Raw provider data is immutable; corrections are new rows" | Architecture §3.2 itself: "a different hash is conflict unless force, then overwritten". The code overwrites the stored bar and rewrites the archived slice (`csv_import.py`), and the feeds settle the last day in place. 37 fix versions so far; of the old values only counts and 5 example dates remain | `candles`, `../../data/csv-archive` |
 | D11 | Do checks stop the chain? **Decided 2026-11-19 by the author: errors stop, warnings continue. Built 2026-11-22 (job 8), with the narrow rule: a contradicting bar, a duplicate, an out-of-order timestamp** | R12 and R65: an error "is a hard stop: the chain does not continue over that data" | Architecture §3.2: cohesion findings "never block the import"; `cohesion.py` and `data_checks.py` are advisory by design | none until built |
 | D12 | Keep old feature values? **Decided 2026-11-15 by the author: no.** Feature values are rebuilt on demand from the stored inputs, which D10 keeps reloadable, so a rebuild replacing a set's values stays. Architecture §4 and R20 ("earlier values stay") remain a departure until the author updates them | Architecture §4 and R20: "earlier values stay, each tied to its run"; every value row points at its run | G3 progress: "Not done, by decision: keeping old values"; a rebuild replaces a set's values (`feature_build.py`), and `feature_values` has no build id | every feature set |
-| D13 | Deeplearning4j and ONNX check (R62). **Decided 2026-11-19 by the author: drop it, PyTorch only; a departure from R62** | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `../../build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
-| D14 | Indicators from TA-Lib (R66). **Decided 2026-11-19 by the author: keep the hand-written indicators; a departure from R66** | R66: TA-Lib through one shared module, for features and benchmarks | `nn/indicators.py` is hand-written "TA4J-compatible … line up bit-for-bit with the Java side" | every set's RSI, MACD and moving-average columns |
+| D13 | Deeplearning4j and ONNX check (R62). **Decided 2026-11-19 by the author: drop it, PyTorch only; a departure from R62. Changed 2026-11-22: Deeplearning4j stays dropped, the ONNX Runtime check is kept; reopened for that half** | R62: PyTorch and Deeplearning4j on the same matrix, plus an ONNX Runtime check, in a Java compute worker | Deliberately removed: `../../build.gradle` "DL4J/ND4J are gone"; README "the DL4J/ND4J in-process network was deleted" | none |
+| D14 | Indicators from TA-Lib (R66). **Decided 2026-11-19 by the author: keep the hand-written indicators; a departure from R66. Changed 2026-11-22: TA-Lib is the single source, the hand-written module is the cross-check; reopened** | R66: TA-Lib through one shared module, for features and benchmarks | `nn/indicators.py` is hand-written "TA4J-compatible … line up bit-for-bit with the Java side" | every set's RSI, MACD and moving-average columns |
 
 **The author's principle, 2026-11-15.** "Anything that can recalculate should be recalculated by demand or code change", and "any data can be repopulated: if you have the original CSV, or if pulling from an API, it can be done on demand". So a derived figure is never baked in where only a retrain could redo it, and raw data can always be rebuilt from its source. D9 follows from it. It also bears on two open rows:
 - **D12 (keep old feature values):** values that can be rebuilt on demand need not be kept, provided their inputs can be.
@@ -955,11 +955,11 @@ Effort: M.
 | Synthetic M30 and H1 data | Re-import as New York time, rebuild sets 54 and 56, rerun 953 and 978 | part of I7 |
 | Held QQQ `yahoo-adj` | Apply, then rebuild | back up, apply, rebuild the daily set, rerun or recalculate what reads stale |
 | Intraday data | The author buys FirstRate Data | the import is made ready for its files (New York time) |
-| C1, the stack (G16) | After phase two works on real data | no Spring Boot move now; G51, G52, G53, G56, G58, G60 are built on the current stack when their turn comes |
+| C1, the stack (G16) | After phase two works on real data. **Replaced 2026-11-22, see below** | no Spring Boot move now; G51, G52, G53, G56, G58, G60 are built on the current stack when their turn comes |
 | C2, checks (D11) | Errors stop, warnings continue | new work: a finding has a severity, and an error blocks the import or build until fixed or overridden (R12, R65); done 2026-11-22 (job 8), with the narrow rule the author chose on the scan |
 | C3, nulls (D2) | Keep NULLs, dropped at read | no change; D2 closes as a departure from R3 |
-| C4, DL4J and ONNX (D13) | Drop it, PyTorch only | no change; D13 closes as a departure from R62 |
-| C5, TA-Lib (D14) | Keep the hand-written indicators | no change; D14 closes as a departure from R66 |
+| C4, DL4J and ONNX (D13) | Drop it, PyTorch only. **Replaced 2026-11-22, see below** | no change; D13 closes as a departure from R62 |
+| C5, TA-Lib (D14) | Keep the hand-written indicators. **Replaced 2026-11-22, see below** | no change; D14 closes as a departure from R66 |
 | C6, window (D3) | Offer both, expanding the default | new work: a sliding window (length and step) on the strategy; existing strategies unchanged; done 2026-11-21 (job 6): `windows.window`, run 1101 |
 | C7, RSI, MACD, realized volatility | Selectable per strategy, off by default | new work: `data only` becomes selectable; stored runs unchanged; done 2026-11-21 (job 5): status `selectable`, role `select`; run 1077 |
 | C8, the five rule strategies | Benchmarks only | new work: kept runnable for comparison, not offered as strategies; done 2026-11-22 (job 7): the engine's registry gives each a kind, the Run tab lists them as rule benchmarks, and a result of one is labelled a benchmark. They are not added to every run's benchmark set, which stays buy-and-hold, Faber and dual momentum |
@@ -969,6 +969,21 @@ Effort: M.
 | Requirements doc | Approve after re-checking the statuses | re-verify each status against the code, then it stops being a draft |
 
 The readonly design set is the author's to update where an answer departs from it (C3, C4, C5, C1's timing).
+
+**Decisions changed, 2026-11-22.** The author went through C1 to C8 again that evening and confirmed the result. Three answers replace the 2026-11-19 ones; the others stand, with the additions below. The design set in Google Drive (the source of truth) carries them; `backTesting-05-Requirements-Consolidated.md` has the requirement text. None of this is built or planned yet.
+
+| Question | The author's answer, 2026-11-22 | What it means for the code |
+|---|---|---|
+| C1, the stack (G16) | Move now, before further feature work; the designed stack is the target for high traffic and heavy processing | G16 is open, not deferred: Spring Boot single backend, Next.js, three schemas with roles, the jobs table (R6, R48, R60, R67, R70). Group E below is no longer "after phase two" |
+| C4, DL4J and ONNX (D13) | Deeplearning4j stays dropped; ONNX Runtime is kept as the prediction check | new work: export the trained network to ONNX, run it in ONNX Runtime in the Java compute worker, compare with PyTorch on every fold (R62). D13 reopens for the ONNX half |
+| C5, TA-Lib (D14) | TA-Lib is the single source; the hand-written indicators stay only as the cross-check | new work: features and benchmarks take indicators from TA-Lib through the one shared module; `nn/indicators.py` becomes the R55 cross-check (R66). D14 reopens. Stored sets and runs whose indicator columns change follow the stale-records rule |
+| C2, checks (R12) | The import always lands; features and training refuse to run on errors until the flagged rows are accepted or repaired | the stop sits at the feature build and at training, not at the import |
+| Data repair (R89, new) | Raw rows are never edited. Up to three candidates per wrong or missing value: a second source, a calculated value, a hand-entered value. The first two agreeing within the R55 thresholds applies the second-source value automatically; otherwise the author chooses. Every repair is logged per field | new work: the repair log, the candidates on one screen, repairs written to the adjusted table |
+| C3, closed days (R3) | Days the exchange is closed have no row and are never counted as missing | check that no gap or coverage figure counts them |
+| C8, the five rule benchmarks (R21) | Each pinned to its standard published settings and recalculated on every run under the same costs and tax | new work: today they are not part of a run's benchmark set |
+| Users, load targets, signal publishing (R90, new) | Parked until the calculation path gives trusted results against the benchmarks | nothing now |
+
+The author's stated priority the same evening is that the calculation runs through correctly with no gap, so a strategy can be tested against the benchmarks on QQQ or any other instrument. The order between that and the stack move (C1) is his to set before work starts.
 
 **Work order.** One job at a time, each with its own plan and record here, and a stop before any stored data moves:
 
@@ -1016,7 +1031,7 @@ The readonly design set is the author's to update where an answer departs from i
 
 *D. Small and independent, any time.* G64 (Requirements on the Docs tab; *checked*, not in the registry), G63 (catalogue entries for the benchmarks), G62 (models recorded with a file hash), G70 (an engine's own feature subset), G66 (reload a series from its archive in one action), G67 (the archive keeps every version), G55 (coverage grid per window), G59 (tooltips), G14 (*checked*: `ResultDetailPage` and `TradeChart` still use Recharts), G9b (waits for a Twelve Data key).
 
-*E. After phase two works on real data (the author's answer to C1).* G16, the Spring Boot move, and the large pieces that depend on it or on which requirements the author keeps: G51 (data verification as designed), G52 (a raw series table at native cadence), G53 (separate cost items, superficial loss, dividends, currency), G56 (instrument-agnostic), G58 (one Train & Run tab), G60 (the testing layers; *checked*: no React Testing Library, no Newman in CI), G61 (lineage hops), G10 (the Verify tab), G13 (the shared table).
+*E. No longer deferred: the author's answer to C1 of 2026-11-22 is to move now (it was "after phase two works on real data"); the order is his to set.* G16, the Spring Boot move, and the large pieces that depend on it or on which requirements the author keeps: G51 (data verification as designed), G52 (a raw series table at native cadence), G53 (separate cost items, superficial loss, dividends, currency), G56 (instrument-agnostic), G58 (one Train & Run tab), G60 (the testing layers; *checked*: no React Testing Library, no Newman in CI), G61 (lineage hops), G10 (the Verify tab), G13 (the shared table).
 
 *Gated by the design.* G65 (signal voting) and G18 (live sentiment).
 
@@ -1961,6 +1976,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-22-10 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | The author's answers of 2026-11-22 recorded under "Decisions changed, 2026-11-22": C1 move the stack now, C4 keep the ONNX Runtime check, C5 TA-Lib as the single source; R89 data repair and R90 added; D13, D14 and group E follow |
 | 2026-11-22-9 | 2026-11-22 14:14 | Claude Code (Claude Fable 5.2) | G41 done: the backtest staleness check reads through the feature table and finer timeframes |
 | 2026-11-22-8 | 2026-11-22 12:04 | Claude Code (Claude Fable 5.2) | G40 done: a backtest result keeps its run settings |
 | 2026-11-22-7 | 2026-11-22 11:57 | Claude Code (Claude Fable 5.2) | G57 done: walk-forward runs on Results, and the compare page |
