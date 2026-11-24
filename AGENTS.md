@@ -1,6 +1,6 @@
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-23-2** · 2026-11-23 19:20 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
+> **Revision 2026-11-23-3** · 2026-11-23 19:23 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
 
 ## Current orders from John, 2026-11-23
 
@@ -10,7 +10,7 @@ These orders replace anything above that disagrees with them.
 
 1. Follow backTesting-13-Implementation-Plan, one step at a time, in order. Work only on the current step.
 2. On the current step, fix only what John reports as wrong or what stops him running the step himself in the interface. Do not look for other work.
-3. The stack move (Spring Boot, Next.js, schemas) is paused after its step 2. Do not continue it until John says so.
+3. The backend moves to Java, and this comes first, as step 0 of the plan: finish stack steps 4 to 6 (the routes move from Node to the Spring Boot service, the engine becomes the Java compute worker, Node and FastAPI are removed). Next.js and the three schemas (stack steps 7 and 8) stay paused until John says so. [changed by John on 2026-11-23, evening: he wants Java in the backend and no Node]
 4. Do not reopen or re-verify a step John has accepted, and do not close gaps that are outside the current step.
 5. Never edit backTesting-13-Implementation-Plan or the design documents backTesting-01 to -04, on Drive or in the repo. Record your work only in your own tracker, backTesting-07-Design-Gaps.
 6. Only John accepts a step. Do not mark a step done or accepted yourself.
@@ -655,6 +655,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-3 | 2026-11-23 19:23 | Claude (Claude Fable 5.2), for John | Current orders, order 3, from the Google Drive doc set: the backend moves to Java first, as step 0 of the plan (stack steps 4 to 6); Next.js and the three schemas stay paused. The older text below was not rewritten |
 | 2026-11-23-2 | 2026-11-23 19:20 | Claude (Claude Fable 5.2), for John | The author's current orders of 2026-11-23 added at the top, from the Google Drive doc set: follow `backTesting-13-Implementation-Plan`, the stack move is paused, the plan and the design set are never edited, work is recorded only in `backTesting-07-Design-Gaps`. The older text below was not rewritten |
 | 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | Step 1: a check error no longer stops the import; it is a flagged row that holds the feature build and training until accepted or corrected (G75) |
 | 2026-11-22-3 | 2026-11-22 22:45 | Claude (Claude Fable 5.2), for John | Working rules: the Google Drive doc set is the source of truth; the author's decisions of 2026-11-22 (C1, C4, C5, R89, R90) and where they are recorded |

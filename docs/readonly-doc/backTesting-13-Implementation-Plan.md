@@ -1,6 +1,6 @@
 # backTesting: implementation plan
 
-2026-11-23 19:07 Toronto time (step 2: new bars normalized as they arrive; rebuild and replace on demand) · written by Claude (Claude Fable 5.2), for John · from John's direction of 2026-11-23 and `backTesting-00-Where-We-Are`
+2026-11-23 19:21 Toronto time (step 0 added: the backend moves to Java, Node removed; Next.js and the schemas stay paused) · written by Claude (Claude Fable 5.2), for John · from John's direction of 2026-11-23 and `backTesting-00-Where-We-Are`
 
 ## What this application is for
 
@@ -10,7 +10,7 @@ It is not the coding agent's job to find a winning model. It is a sandbox: John 
 
 ## Not in this plan
 
-- The stack move (Spring Boot, Next.js, schemas). Paused after its step 2. Not resumed until John says so.
+- Next.js and the three schemas (stack steps 7 and 8). Paused until John says so. The Java backend is in the plan, as step 0.
 - Running many combinations and comparing them in bulk. That is a different application.
 - Users and login, load targets, publishing the signal, live sentiment, signal voting.
 
@@ -25,7 +25,7 @@ It is not the coding agent's job to find a winning model. It is a sandbox: John 
 
 ## Steps
 
-Steps 1 to 6 are walked on QQQ, daily bars, on the application as it runs today.
+Step 0 comes first: the backend moves to Java (John, 2026-11-23: Java in the backend, no Node). The coding agent finishes moving the routes from Node to the Spring Boot service, the engine becomes the Java compute worker, and Node and FastAPI are removed (stack steps 4 to 6). Python still computes, and Java and Python talk through the jobs table. Done when the application runs with no Node and every page works as before; John accepts it. Steps 1 to 6 are then walked on QQQ, daily bars, with the current web client.
 
 | # | Step | John does | Done when | Accepted |
 | :---- | :---- | :---- | :---- | :---- |
