@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "backTesting API",
-    "description": "Every endpoint the API origin serves, with assertions on status, shape and key values.\n\nARCHITECTURE.md §10 requires this: \"Postman collection for every service endpoint, checked in at postman/ with an environment file per target (local, docker)... Every new endpoint ships with its Postman request and its unit test in the same change.\"\n\n**Safe to run end to end.** Destructive endpoints (DELETE an import, DELETE a result, POST an aggregate, POST a CSV import, POST a training run) are exercised through their *rejection* paths -- a bad id, an unknown instrument, an invalid target -- so the collection proves the endpoint is wired and validating without deleting anything or starting a long job. The two endpoints that do write (POST /api/run and POST /api/strategies/saved) create a backtest result and a strategy version respectively; both are additive and named so they are easy to spot.\n\nOrder matters inside folders: a POST captures the id that the GET after it uses.",
+    "description": "Every endpoint the API (the Spring Boot service) serves, with assertions on status, shape and key values.\n\nARCHITECTURE.md §10 requires this: \"Postman collection for every service endpoint, checked in at postman/ with an environment file per target (local, docker)... Every new endpoint ships with its Postman request and its unit test in the same change.\"\n\n**Safe to run end to end.** Destructive endpoints (DELETE an import, DELETE a result, POST an aggregate, POST a CSV import, POST a training run) are exercised through their *rejection* paths -- a bad id, an unknown instrument, an invalid target -- so the collection proves the endpoint is wired and validating without deleting anything or starting a long job. The two endpoints that do write (POST /api/run and POST /api/strategies/saved) create a backtest result and a strategy version respectively; both are additive and named so they are easy to spot.\n\nOrder matters inside folders: a POST captures the id that the GET after it uses.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -43,11 +43,6 @@
       "type": "string"
     },
     {
-      "key": "serverUrl",
-      "value": "http://localhost:8004",
-      "description": "The Spring Boot service (G16)"
-    },
-    {
       "key": "jobId",
       "value": "1",
       "description": "Set by the jobs list request"
@@ -59,7 +54,7 @@
       "description": "What the client blocks its first paint on.",
       "item": [
         {
-          "name": "Health of all three services",
+          "name": "Health of the database, the Python worker and the Java engine",
           "request": {
             "method": "GET",
             "header": [],
@@ -73,7 +68,7 @@
                 "health"
               ]
             },
-            "description": "Probes the database, loader and engine in parallel and always answers 200."
+            "description": "Always 200 while the service is alive, with the verdict in the body. The worker is asked with a `ping` job, and its answer is kept for 15 seconds."
           },
           "event": [
             {
@@ -85,24 +80,18 @@
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
-                  "pm.test('body is JSON', function () {",
-                  "    pm.response.to.be.json;",
-                  "});",
-                  "",
-                  "pm.test('reports every service', function () {",
+                  "pm.test('reports the database and both compute workers', function () {",
                   "    const d = pm.response.json();",
                   "    pm.expect(d).to.have.property('status');",
-                  "    pm.expect(d.services).to.be.an('array').with.lengthOf(3);",
-                  "    const names = d.services.map(s => s.name).sort();",
-                  "    pm.expect(names).to.eql(['database', 'engine', 'loader']);",
+                  "    pm.expect(d.maintenance).to.be.a('boolean');",
+                  "    const names = d.services.map(s => s.name);",
+                  "    pm.expect(names).to.eql(['database', 'worker', 'engine']);",
+                  "    d.services.forEach(s => { pm.expect(s.ok).to.be.a('boolean'); pm.expect(s.latencyMs).to.be.a('number'); });",
                   "});",
                   "",
-                  "pm.test('always 200, with the verdict in the body', function () {",
-                  "    // A status code would collapse 'the API is down' and 'the API is up",
-                  "    // but the engine is not', which are different problems.",
-                  "    pm.expect(pm.response.code).to.eql(200);",
-                  "    pm.expect(d_ok()).to.be.oneOf([true, false]);",
-                  "    function d_ok() { return pm.response.json().ok; }",
+                  "pm.test('ok exactly when every service is and there is no maintenance', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.ok).to.eql(d.services.every(s => s.ok) && !d.maintenance);",
                   "});"
                 ]
               }
@@ -915,6 +904,106 @@
               }
             }
           ]
+        },
+        {
+          "name": "Repair: candidates need a series",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/repairs/propose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repairs",
+                "propose"
+              ]
+            },
+            "description": "Proposing candidates for a series' flagged bars. Sent here with no symbol, so it is refused and nothing is proposed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"\",\n  \"source\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400 without a symbol', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says what is required', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('symbol and source are required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Repair: a revert names its repair",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/repairs/revert",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repairs",
+                "revert"
+              ]
+            },
+            "description": "Reverting an applied repair puts the stored value back in the view and keeps the repair in the log. Sent here with no id, so it is refused and changes nothing.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400 without an id', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says the id is required', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('id is required');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1138,7 +1227,7 @@
     },
     {
       "name": "Engine (Java)",
-      "description": "What only the Java engine can answer: the strategy registry and running a backtest.",
+      "description": "What only the Java engine can answer: the strategy registry, a backtest, the walk-forward record and the ONNX check. The API hands each to the engine as a `java-compute` job and answers with its result.",
       "item": [
         {
           "name": "List registered strategies",
@@ -3789,6 +3878,120 @@
               }
             }
           ]
+        },
+        {
+          "name": "Walk-forward jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward",
+                "jobs"
+              ]
+            },
+            "description": "The walk-forward runs that are queued, running or just over, each with its job: status, attempts, whether a cancel was asked for."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A walk-forward run needs a strategy that exists",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward"
+              ]
+            },
+            "description": "Starting a run queues a walkforward job and answers 202 with it. Sent here for a strategy that does not exist, so nothing is queued.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategyId\": 999999999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refused: nothing is queued', function () {",
+                  "    pm.expect(pm.response.code).to.be.within(400, 499);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancelling a job that does not exist is 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/walkforward/jobs/999999999/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "walkforward",
+                "jobs",
+                "999999999",
+                "cancel"
+              ]
+            },
+            "description": "Cancel is a request the worker hears at its next heartbeat; the run stops and keeps what it had written. An unknown job is 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -3971,63 +4174,18 @@
       ]
     },
     {
-      "name": "Spring Boot service (G16)",
-      "description": "The Spring Boot service that becomes the one backend (Architecture §6). It runs beside the Node API on its own port, `{{serverUrl}}`, while routes move to it. Every route it has is here; its own test (`PostmanCoverageTest`) fails the build for one that is not.",
+      "name": "Jobs",
+      "description": "The jobs table (R60, R67): what is waiting, running and over for the two compute workers, and the request to stop one (R70).",
       "item": [
-        {
-          "name": "Health of the service, the database and the worker",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{serverUrl}}/api/health",
-              "host": [
-                "{{serverUrl}}"
-              ],
-              "path": [
-                "api",
-                "health"
-              ]
-            },
-            "description": "Always 200 while the service is alive, with the verdict in the body. The worker is asked with a `ping` job, and its answer is kept for 15 seconds."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status is 200', function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "",
-                  "pm.test('reports the database and the worker', function () {",
-                  "    const d = pm.response.json();",
-                  "    pm.expect(d).to.have.property('status');",
-                  "    pm.expect(d.maintenance).to.be.a('boolean');",
-                  "    const names = d.services.map(s => s.name);",
-                  "    pm.expect(names).to.eql(['database', 'worker']);",
-                  "    d.services.forEach(s => { pm.expect(s.ok).to.be.a('boolean'); pm.expect(s.latencyMs).to.be.a('number'); });",
-                  "});",
-                  "",
-                  "pm.test('ok exactly when every service is and there is no maintenance', function () {",
-                  "    const d = pm.response.json();",
-                  "    pm.expect(d.ok).to.eql(d.services.every(s => s.ok) && !d.maintenance);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
         {
           "name": "Jobs, newest first",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{serverUrl}}/api/jobs?limit=5&sort=-id&engine=python",
+              "raw": "{{baseUrl}}/api/jobs?limit=5&sort=-id&engine=python",
               "host": [
-                "{{serverUrl}}"
+                "{{baseUrl}}"
               ],
               "path": [
                 "api",
@@ -4087,9 +4245,9 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{serverUrl}}/api/jobs?sort=inputs",
+              "raw": "{{baseUrl}}/api/jobs?sort=inputs",
               "host": [
-                "{{serverUrl}}"
+                "{{baseUrl}}"
               ],
               "path": [
                 "api",
@@ -4128,9 +4286,9 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{serverUrl}}/api/jobs/{{jobId}}",
+              "raw": "{{baseUrl}}/api/jobs/{{jobId}}",
               "host": [
-                "{{serverUrl}}"
+                "{{baseUrl}}"
               ],
               "path": [
                 "api",
@@ -4169,9 +4327,9 @@
             "method": "POST",
             "header": [],
             "url": {
-              "raw": "{{serverUrl}}/api/jobs/999999999/cancel",
+              "raw": "{{baseUrl}}/api/jobs/999999999/cancel",
               "host": [
-                "{{serverUrl}}"
+                "{{baseUrl}}"
               ],
               "path": [
                 "api",

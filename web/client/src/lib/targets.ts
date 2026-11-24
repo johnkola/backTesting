@@ -5,7 +5,7 @@
  *
  * THE LIST OF KINDS IS THE API'S. The builder offers what
  * GET /api/strategies/saved serves as `labelKinds`, the same registry the
- * validator in `web/api/strategies.js` and the runner (`nn/label_kinds.py`)
+ * validator in the API's `StrategyRules.java` and the runner (`nn/label_kinds.py`)
  * hold, in its order. `KNOWN_KIND_TARGETS` below is a display fallback for a
  * stored record read where that list is not loaded, never an offer.
  *

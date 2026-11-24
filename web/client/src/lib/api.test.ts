@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { engineWindow } from './api'
+import { engineWindow, sorted } from './api'
 
 /**
  * The loader's own row filter, in JavaScript.
@@ -93,5 +93,16 @@ describe('engineWindow', () => {
     const javaSince = new Date(first).toISOString()
     const javaUntil = new Date(new Date(last).getTime() + 1).toISOString()
     expect(engineWindow(first, last)).toEqual({ since: javaSince, until: javaUntil })
+  })
+})
+
+describe('sorted', () => {
+  it('writes a key and a direction as one sort field', () => {
+    expect(sorted({ sort: 'rows', dir: 'asc', limit: 5 })).toEqual({ sort: 'rows', limit: 5 })
+    expect(sorted({ sort: 'rows', dir: 'desc' })).toEqual({ sort: '-rows' })
+  })
+  it('reads a key with no direction as descending, and no key as no sort', () => {
+    expect(sorted({ sort: 'imported' })).toEqual({ sort: '-imported' })
+    expect(sorted({ dir: 'asc', limit: 5 })).toEqual({ limit: 5 })
   })
 })

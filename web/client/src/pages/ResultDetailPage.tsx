@@ -110,7 +110,7 @@ export default function ResultDetailPage() {
   const r = detail.result
   const equity = r?.equityHistory ?? []
   // Buy-and-hold pairs with the equity history by position: the API built it
-  // from the same bars, one for one (web/api/holdCurve.js). A length mismatch
+  // from the same bars, one for one (the API's ResultsController.HoldCurve). A length mismatch
   // can't come from the API, but a missing line beats a shifted one.
   const hold = detail.holdEquity?.length === equity.length ? detail.holdEquity : null
   // Faber and dual momentum, the same way: one value per equity point (B7).

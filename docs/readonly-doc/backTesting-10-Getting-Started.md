@@ -1,6 +1,6 @@
 # Getting Started
 
-> **Revision 2026-11-22-1** · 2026-11-22 05:14 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-1** · 2026-11-23 22:49 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A start-to-finish path through this app for someone who has just cloned it: from an
 empty database to a backtest you can read, then the loop you actually work in day to
@@ -19,14 +19,14 @@ Five services, started by one command. You will use two of them directly:
 | The web client | <http://localhost:3000> | Everything below: importing, running, reading results |
 | The Java CLI | `./gradlew run --args="…"` | Training NN models, batch work, scripting |
 
-Behind those sit the API (`:8001`), the Java engine (internal) and the Python loader
-(`:8003`), plus PostgreSQL/TimescaleDB (`:5432`). See
+Behind those sit the API (`:8001`), the Java engine and the Python worker (neither has
+a port: the API hands them jobs), plus PostgreSQL/TimescaleDB (`:5432`). See
 [Services and ports](/docs/readme#services-and-ports) for who talks to whom.
 
 **Prerequisites.** Docker (or Docker Desktop) is the only hard requirement. For the CLI
 you also want Java 21 — but if `java -version` shows something older, the Gradle
 wrapper provisions a matching JDK for you, so `./gradlew` works regardless. Python is
-needed only if you want to run the loader outside Docker.
+needed only if you want to run the Python worker outside Docker.
 
 ## 1. Start the stack
 
@@ -35,7 +35,7 @@ docker compose up -d
 docker compose ps           # every service should be "running"
 ```
 
-The first run builds four images — api, client, engine and loader; only TimescaleDB is
+The first run builds four images — server, client, engine and worker; only TimescaleDB is
 pulled — and takes a few minutes. Postgres creates its schema on first boot; the other
 services wait for its healthcheck.
 
@@ -232,14 +232,14 @@ returns 409.
 ./gradlew run --args="list-models"      # version ids you can pin on a run
 ```
 
-Training happens in the loader and caches the model on disk under a key that
+Training happens in the Python worker and caches the model on disk under a key that
 fingerprints the data and every hyperparameter, so re-running the same configuration
 reuses it instead of retraining. The **Models** page shows what is cached, with
 validation accuracy and which backtests reused it. See
 [Model cache](/docs/readme#model-cache).
 
-The CLI reaches the loader at `http://localhost:8003` by default, which is where compose
-publishes it. If your loader runs elsewhere, set `LOADER_URL`.
+The CLI asks the Python worker through the jobs table, so it needs the database and the
+`worker` container up, and no URL.
 
 ## 7. The loop you actually work in
 
@@ -266,8 +266,8 @@ writes — gitignored, and safe to delete if you accept losing what's in it.
 |---|---|---|---|
 | `../../test-data` | yes | `./gradlew generateTestData`, the three fetch scripts | Ready-to-import candles. `SYNTH_daily.csv` is the generated fake; `AAPL`, `SPY`, `QQQ`, `VIX` and `VXN` are real Yahoo history; `DGS10`, `T10YIE` and `DCOILWTICO` are FRED macro series; `NDXBREADTH` is computed, and ships with the `.members.txt` naming the constituents it used; the four `NDXERN*` / `NDXNI*` earnings series likewise, beside `NDXEARNINGS_daily.members.txt` |
 | `../../data/csv-inbox` | no | you | Files waiting for the batch importer (`backtest-ingest`), named `SOURCE__SYMBOL__TYPE__TF.csv` |
-| `../../data/csv-archive` | no | the loader | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
-| `../../data/models` | no | the loader | Trained NN models, one directory per cache key. The **Models** page reads this |
+| `../../data/csv-archive` | no | the Python worker | Every imported file, sliced `<source>/<symbol>/<year>/<TF>.csv`. This is what makes an undo reversible |
+| `../../data/models` | no | the Python worker | Trained NN models, one directory per cache key. The **Models** page reads this |
 | `../../data/features` | no | nobody | Vestigial — the Java feature store it belonged to was removed in the Python port |
 | `../../data/ndx-constituents` | no | `../../build_ndx_breadth.py` | One JSON of daily closes per Nasdaq-100 member, so breadth recomputes at another window without re-downloading 101 symbols |
 | `../../data/ndx-earnings` | no | `../../build_ndx_earnings.py` | One JSON per member company of its 8-K dates and net income facts from SEC EDGAR, so `--offline` recomputes without re-downloading |
@@ -295,8 +295,7 @@ by `docker compose down -v`.
 | A dropdown is missing your instrument or timeframe | It isn't imported under that source. Check **Instruments**. |
 | A run returns 409 on `nn-feedforward` | No trained model for that configuration. Train it first (step 6). |
 | A `W1`/`MN1` run ignores daily candles you just imported | The rollup already existed, so nothing rebuilt it. Re-aggregate with `--force` (step 4). |
-| `could not reach the loader` from the CLI | The loader isn't up, or isn't on `:8003`. `docker compose up -d loader`, or set `LOADER_URL`. |
-| The loader collides on `:8001` when run locally | That port belongs to the API. Give the loader another port and set `LOADER_URL` to match. |
+| A CLI command says a job `did not finish` and `no worker took it` | The Python worker isn't up. `docker compose up -d worker`. |
 | An import or undo fails mentioning a compressed chunk | TimescaleDB compressed that range. The error carries the `decompress_chunk(...)` hint you need. |
 
 ## Where to go next
@@ -317,6 +316,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-1 | 2026-11-23 22:49 | Claude Code (Claude Fable 5.2) | The backend is Java: the API is the `server` container on 8001, the engine and the Python worker have no port, and the CLI reaches Python through the jobs table |
 | 2026-11-22-1 | 2026-11-22 05:14 | Claude Code (Claude Fable 5.2) | The Run list's two groups: rule benchmarks and model strategies (C8) |
 | 2026-11-17-1 | 2026-11-17 12:03 | Claude Code (Claude Opus 5.5) | G69: result reading and limitations link to the README; the deleted Architecture guide gives way to the design set |
 | 2026-11-16-1 | 2026-11-16 00:01 | Claude Code (Claude Opus 5.5) | Revision stamp added; fills are at the next bar's open (B1) |

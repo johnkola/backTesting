@@ -36,6 +36,14 @@ Invariants a change must keep:
   worker in another process would not see that; `tests/test_job_calls.py`
   covers the path through the table.
 
+* **A job can carry a request instead of arguments.** The Spring Boot service
+  (G16 step 16.4) does not know a route function's Python parameters, their
+  types or their defaults, and must not: they are this side's. It inserts the
+  job with `{"request": {method, path, query, body}}` and `request()` runs the
+  route in this process, with the same validation, defaults and status codes
+  the route had when it was called over HTTP. Nothing listens on a port for
+  this; the FastAPI app is only the table of routes.
+
 * **Reads are transient.** A job marked so is deleted a few minutes after it
   ends (`queue.sweep`): a status the page asks for every minute is not a record
   worth keeping. Work that changes something is kept.
@@ -43,6 +51,8 @@ Invariants a change must keep:
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import datetime as dt
 import functools
 import inspect
@@ -51,6 +61,7 @@ import os
 import time
 import types
 import typing
+import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
@@ -76,8 +87,87 @@ class JobTimedOut(Exception):
     """No worker finished the job in time."""
 
 
+#: The job type of a route that has none of its own (a stored-row read, the
+#: runner's registries), asked for through `request()`.
+CALL_TYPE = "python-call"
+
+#: True while `request()` is running a route: the work is already in a job, so
+#: the route's function runs in place instead of inserting a second one.
+_IN_JOB: contextvars.ContextVar[bool] = contextvars.ContextVar("jobs_in_job", default=False)
+
+
 def inline() -> bool:
     return os.environ.get("JOBS_INLINE") == "1"
+
+
+def _in_place() -> bool:
+    return inline() or _IN_JOB.get()
+
+
+def _app():
+    from loader.main import app
+
+    return app
+
+
+def request(method: str, path: str, query: dict[str, Any] | None = None,
+            body: Any = None) -> dict[str, Any]:
+    """Run one of the app's routes in this process and return `{status, body}`.
+
+    The request is handed to the FastAPI app as an ASGI call, so the path is
+    matched, the query and the body are validated and defaulted, and the
+    status is chosen exactly as for a request that arrived on a socket. A path
+    no route has is a 404 here too."""
+    app = _app()
+    raw = b"" if body is None else json.dumps(body).encode()
+    headers = []
+    if body is not None:
+        headers = [(b"content-type", b"application/json"),
+                   (b"content-length", str(len(raw)).encode())]
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": method.upper(), "scheme": "http", "path": path, "root_path": "",
+        "raw_path": path.encode(),
+        "query_string": urllib.parse.urlencode(query or {}, doseq=True).encode(),
+        "headers": headers, "client": ("worker", 0), "server": ("worker", 0),
+    }
+    answer: dict[str, Any] = {"status": 500, "chunks": []}
+    delivered = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            answer["status"] = message["status"]
+        elif message["type"] == "http.response.body":
+            answer["chunks"].append(message.get("body", b""))
+
+    token = _IN_JOB.set(True)
+    try:
+        asyncio.run(app(scope, receive, send))
+    finally:
+        _IN_JOB.reset(token)
+    text = b"".join(answer["chunks"])
+    try:
+        parsed = json.loads(text) if text else None
+    except ValueError:
+        parsed = {"error": text.decode("utf-8", "replace")}
+    return {"status": answer["status"], "body": parsed}
+
+
+def _carries_request(inputs: dict[str, Any]) -> bool:
+    return set(inputs) == {"request"} and isinstance(inputs["request"], dict)
+
+
+def _call(ctx: Context) -> dict[str, Any]:
+    if not _carries_request(ctx.inputs):
+        raise ValueError(f"a {CALL_TYPE} job carries one request: method, path, query, body")
+    return request(**ctx.inputs["request"])
 
 
 def _connect():
@@ -167,7 +257,7 @@ def task(job_type: str, *, timeout_s: float = DEFAULT_TIMEOUT_S, transient: bool
 
         @functools.wraps(fn)
         def call(*args, **kwargs):
-            if inline():
+            if _in_place():
                 return fn(*args, **kwargs)
             inputs = {k: _plain(v) for k, v in sig.bind(*args, **kwargs).arguments.items()}
             row = submit_and_wait(job_type, inputs, timeout_s, transient=transient)
@@ -191,6 +281,8 @@ def job_route(job_type: str, *, timeout_s: float = DEFAULT_TIMEOUT_S, status: in
         hints = _hints(fn)
 
         def handler(ctx: Context) -> dict[str, Any]:
+            if _carries_request(ctx.inputs):
+                return request(**ctx.inputs["request"])
             kwargs = {name: _revive(hints.get(name), value)
                       for name, value in ctx.inputs.items()}
             try:
@@ -202,6 +294,11 @@ def job_route(job_type: str, *, timeout_s: float = DEFAULT_TIMEOUT_S, status: in
 
         @functools.wraps(fn)
         def route(*args, **kwargs):
+            if _IN_JOB.get():
+                # Inside `request()`: the answer keeps the status this job
+                # type answers with, whatever the router was declared with.
+                done = _answer(fn(*args, **kwargs), status)
+                return JSONResponse(status_code=done["status"], content=done["body"])
             if inline():
                 return fn(*args, **kwargs)
             inputs = {k: _plain(v) for k, v in sig.bind(*args, **kwargs).arguments.items()}
@@ -221,3 +318,6 @@ def job_route(job_type: str, *, timeout_s: float = DEFAULT_TIMEOUT_S, status: in
         return route
 
     return decorate
+
+
+REGISTRY[CALL_TYPE] = _call

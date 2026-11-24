@@ -22,6 +22,12 @@ WINDOWS = {
     "test": {"from": "2022-01-01", "to": "2026-06-30"},
 }
 
+#: The API's rules for a saved strategy (the Spring Boot service); the tests
+#: below hold the runner's tables and these together.
+STRATEGY_RULES = (Path(__file__).parents[2] / "server" / "src" / "main" / "java" / "com"
+                  / "bazarbozorg" / "backtest" / "server" / "strategies" / "StrategyRules.java")
+
+
 
 def a_strategy(**over) -> ss.Strategy:
     base = ss.Strategy(
@@ -226,9 +232,9 @@ class TestRunnerArgs:
 
     def test_the_defaults_match_the_api_s(self):
         """Old rows run on these; the API fills the same ones on save."""
-        js = (Path(__file__).parents[2] / "web" / "api" / "strategies.js").read_text()
-        block = re.search(r"OBJECTIVE_DEFAULTS = \{(.*?)\n\};", js, re.S).group(1)
-        parsed = dict(re.findall(r"^\s+(\w+): (.+?),$", block, re.M))
+        java = STRATEGY_RULES.read_text()
+        parsed = {k: v.replace('"', "'") for k, v in
+                  re.findall(r'OBJECTIVE_DEFAULTS\.put\("(\w+)", (.+?)\);', java)}
         as_js = {k: json.dumps(v).replace('"', "'") for k, v in ss.OBJECTIVE_DEFAULTS.items()}
         assert parsed == as_js
 
@@ -283,9 +289,7 @@ class TestRunnerArgs:
     def test_every_saved_hyperparameter_is_accounted_for(self):
         """A key added to PARAM_SPEC must be mapped or deliberately left out,
         or a strategy's setting would silently do nothing."""
-        js = Path(__file__).parents[2] / "web" / "api" / "strategies.js"
-        block = re.search(r"PARAM_SPEC = \{(.*?)\n\};", js.read_text(), re.S).group(1)
-        saved = set(re.findall(r"^\s+(\w+): \{ kind", block, re.M))
+        saved = set(re.findall(r'^\s+param\("(\w+)", "', STRATEGY_RULES.read_text(), re.M))
         assert saved == set(ss.RUNNER_ARGS) | {"trainSplitRatio"}
 
 

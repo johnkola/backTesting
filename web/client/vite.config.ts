@@ -18,8 +18,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // One upstream now: the API service fans out to the loader and the
-      // engine itself, so the dev server no longer needs to know that split.
+      // One upstream: the API (the Spring Boot service) hands work to the
+      // compute workers itself, so the dev server knows nothing of them.
       '/api': API_URL,
     },
   },

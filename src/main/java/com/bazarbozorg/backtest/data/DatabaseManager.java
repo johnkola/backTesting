@@ -38,7 +38,12 @@ public class DatabaseManager {
     }
 
     public void initialize() {
-        this.databaseConfig = new DatabaseConfig();
+        // Once per process. A second call (each test class makes one) reuses
+        // the pool: a new one each time left the old open, and the database
+        // allows 25 connections in all.
+        if (this.databaseConfig == null) {
+            this.databaseConfig = new DatabaseConfig();
+        }
         runSchema();
         logger.info("Database initialized successfully");
     }

@@ -36,5 +36,7 @@ COPY python/jobs ./jobs
 RUN --mount=type=bind,from=gitdir,target=/tmp/gitdir \
     python -m nn.lineage --head /tmp/gitdir > /app/GIT_SHA
 
-EXPOSE 8001
-CMD ["uvicorn", "loader.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# The Python compute worker: it takes jobs from the jobs table and opens no
+# port. FastAPI stays in the image as a library: the worker runs a route's
+# function in-process when a job carries a request (jobs/calls.py).
+CMD ["python", "-m", "jobs.worker"]

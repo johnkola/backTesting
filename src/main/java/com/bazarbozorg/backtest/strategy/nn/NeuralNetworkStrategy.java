@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.strategy.nn;
 
 import com.bazarbozorg.backtest.engine.BacktestEngine;
+import com.bazarbozorg.backtest.jobs.PythonCalls;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
@@ -14,11 +15,6 @@ import com.google.gson.JsonObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
@@ -47,7 +43,8 @@ import java.util.Optional;
  *       per-bar predict.</li>
  * </ol>
  *
- * <p>Loader URL comes from {@code $LOADER_URL} with a localhost default.
+ * <p>The calls go through the jobs table ({@code PythonCalls}); the paths name
+ * the loader's routes, and the Python worker answers them.
  * Network errors fail the strategy hard rather than degrading silently —
  * a backtest that's secretly emitting HOLDs because the loader was down
  * is worse than a clean exit with a useful message.
@@ -57,28 +54,10 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
 
     private static final Logger logger = LoggerFactory.getLogger(NeuralNetworkStrategy.class);
 
-    private static final String LOADER_URL = System.getenv()
-            .getOrDefault("LOADER_URL", "http://localhost:8003");
-
     /** Generous timeout so a long train (minutes) doesn't get aborted. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(15);
 
-    // Pin HTTP/1.1 like LoaderClient does. On the default (HTTP/2 with an h2c
-    // upgrade attempt) the request body is lost against uvicorn, which speaks
-    // 1.1 only, and every POST here comes back 422 with an empty-body
-    // complaint. Not caught by the Python tests: they drive FastAPI through
-    // TestClient, so nothing exercises this over the wire.
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
-
     private static final Gson GSON = new Gson();
-
-    /** Visible for testing: guards the HTTP/1.1 pin above. */
-    static HttpClient httpClient() {
-        return HTTP;
-    }
 
     private ModelContext modelContext;
     private ModelCacheOutcome cacheOutcome;
@@ -252,7 +231,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         };
     }
 
-    // ----- HTTP plumbing ----------------------------------------------------
+    // ----- Calls to the Python worker --------------------------------------
 
     private JsonObject buildTrainBody(String since, String until, String mode) {
         JsonObject body = new JsonObject();
@@ -315,55 +294,33 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
     }
 
     /**
-     * Sends a JSON POST and returns the parsed response body. Maps HTTP
+     * Runs a route on the Python worker and returns its parsed body. Maps the
      * status to specific exceptions: 404 on load_only becomes
      * {@link ModelNotCachedException}; everything else surfaces as a
      * RuntimeException with the loader's error payload included.
      */
     private JsonObject postJson(String path, JsonObject body) {
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(LOADER_URL + path))
-                .timeout(REQUEST_TIMEOUT)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)))
-                .build();
-        HttpResponse<String> resp;
-        try {
-            resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            throw new RuntimeException("network error calling " + path + ": " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("interrupted calling " + path, e);
-        }
-        JsonObject parsed = parseOrThrow(resp.body(), path, resp.statusCode());
+        PythonCalls.Answer answer = PythonCalls.call("POST", path, body, REQUEST_TIMEOUT);
+        JsonObject parsed = answer.body() != null && answer.body().isJsonObject()
+                ? answer.body().getAsJsonObject() : null;
 
-        if (resp.statusCode() == 404 && "/api/nn/train".equals(path)) {
+        if (answer.status() == 404 && "/api/nn/train".equals(path)) {
             // load_only mode + no cached model. Translate to the existing
             // pin-not-found exception so engine callers don't need to learn
             // a new failure shape.
             throw new ModelNotCachedException(getName(),
                     stringOrNull(parsed, "cacheKey"), modelContext.pinnedVersionId());
         }
-        if (resp.statusCode() / 100 != 2) {
+        if (answer.status() / 100 != 2) {
             String err = stringOrNull(parsed, "error");
             throw new RuntimeException(
-                    "loader " + path + " returned " + resp.statusCode()
+                    "loader " + path + " returned " + answer.status()
                             + (err != null ? ": " + err : ""));
         }
-        return parsed;
-    }
-
-    private JsonObject parseOrThrow(String body, String path, int status) {
-        try {
-            return GSON.fromJson(body, JsonObject.class);
-        } catch (RuntimeException e) {
-            throw new RuntimeException(
-                    "loader " + path + " returned non-JSON body (status " + status + "): "
-                            + (body != null && body.length() > 200
-                                    ? body.substring(0, 200) + "..." : body),
-                    e);
+        if (parsed == null) {
+            throw new RuntimeException("loader " + path + " returned no JSON object");
         }
+        return parsed;
     }
 
     private static String stringOrNull(JsonObject obj, String key) {

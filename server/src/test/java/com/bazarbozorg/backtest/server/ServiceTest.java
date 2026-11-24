@@ -31,9 +31,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"jobs.table=" + ServiceTest.TABLE,
                 // The test classes' services can be up together; see application.properties.
-                "spring.datasource.hikari.maximum-pool-size=2"})
+                "spring.datasource.hikari.maximum-pool-size=2",
+                // Gradle runs the tests from server/: the docs are one level up.
+                "docs.dir=..", "models.dir=" + ServiceTest.MODELS_DIR})
 public abstract class ServiceTest {
     public static final String TABLE = "jobs.jobs_test_server";
+    /** A models directory of the tests' own; the real one is not read. */
+    public static final String MODELS_DIR = "build/test-models";
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
     @Value("${local.server.port}")

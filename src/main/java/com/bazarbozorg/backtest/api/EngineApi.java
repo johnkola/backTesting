@@ -25,13 +25,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.sql.Connection;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -40,77 +36,107 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.Executors;
 
 import static com.bazarbozorg.backtest.api.HttpSupport.*;
 
 /**
- * HTTP surface for the parts of the system only Java can serve: the strategy
- * registry and the backtest engine. Everything else the web client needs is
- * already answered by Node (reads) or the Python loader (imports, aggregation,
- * NN) — this closes the gap where the UI could display backtest results it had
- * no way to produce.
+ * What the engine answers: the parts of the system only Java can serve, the
+ * strategy registry, the backtest engine and the walk-forward record.
  *
- * <p>Endpoints:
+ * <p>It serves no HTTP. A request reaches it as a {@code java-compute} job
+ * ({@code jobs.JobWorker}), carrying the method, path, query and body the
+ * Spring Boot service received, and {@link #answer} turns it into a status
+ * and a JSON body, which the worker stores as the job's result. The paths:
  * <ul>
- *   <li>{@code GET  /api/strategies} — registered strategies with their default parameters</li>
- *   <li>{@code POST /api/run} — run a backtest, persist it, return the result</li>
- *   <li>{@code DELETE /api/results/{id}} — delete one saved result</li>
- *   <li>{@code GET  /api/health} — liveness, and whether the database answers</li>
+ *   <li>{@code GET  /api/strategies}: registered strategies with their default parameters</li>
+ *   <li>{@code POST /api/run}: run a backtest, store it, return the result</li>
+ *   <li>{@code DELETE /api/results/{id}}: delete one stored result</li>
+ *   <li>{@code GET  /api/walkforward/runs[/{id}]}: the walk-forward record</li>
+ *   <li>{@code POST /api/walkforward/onnx-check?run={id}}: the prediction check (R62)</li>
+ *   <li>{@code GET  /api/health}: the registry's size, and whether the database answers</li>
  * </ul>
  *
- * <p><strong>Runs are synchronous.</strong> A backtest over a few thousand bars
- * is about a second, so the request holds until it finishes and returns the
- * saved result — the same stance {@code nn_api.py} takes on training. If
- * backtests grow to where that's uncomfortable, this is the place to put a job
- * queue: return 202 with an id and let the client poll. The handler pool is
- * bounded so a burst of requests queues rather than spawning unbounded JVM work.
- *
- * <p>No authentication: it binds inside the compose network, and Node proxies
- * it. If this is ever exposed beyond localhost, {@code /api/run} and the delete
- * need a token first — both execute work or destroy data.
+ * <p><strong>A run is answered when it ends.</strong> A backtest over a few
+ * thousand bars is about a second, so the job is waited on and its result is
+ * the stored result. The worker's lanes bound how many run at once.
  */
 public class EngineApi {
 
     private static final Logger logger = LoggerFactory.getLogger(EngineApi.class);
 
-    /** Backtests are CPU-bound; more threads than cores just thrashes. */
-    private static final int HANDLER_THREADS =
-            Math.max(2, Runtime.getRuntime().availableProcessors());
-
     private final DatabaseManager databaseManager;
-    private HttpServer server;
 
     public EngineApi(DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
     }
 
-    public void start(int port) throws IOException {
-        server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.setExecutor(Executors.newFixedThreadPool(HANDLER_THREADS));
+    /** A request as a handler reads it, whether it came over HTTP or out of a job. */
+    public record Request(String method, String path, Map<String, String> query,
+                          JsonObject body) {}
 
-        server.createContext("/api/strategies", ex -> serve(ex, "GET", this::listStrategies));
-        server.createContext("/api/run", ex -> serve(ex, "POST", this::runBacktest));
-        server.createContext("/api/results", ex -> serve(ex, "DELETE", this::deleteResult));
-        // One context for both the list and {id}: the JDK server matches
-        // prefixes, not patterns, so the handler dispatches on whether a
-        // trailing segment is present -- the same shape /api/results uses.
-        server.createContext("/api/walkforward/runs",
-                ex -> serve(ex, "GET", this::walkforwardRuns));
-        // The prediction check (R62, G77). Its own context, since the one above
-        // answers GET only: POST /api/walkforward/onnx-check?run={id}.
-        server.createContext("/api/walkforward/onnx-check",
-                ex -> serve(ex, "POST", this::onnxCheck));
-        server.createContext("/api/health", ex -> serve(ex, "GET", this::health));
+    /** The status and the body, the body already JSON. */
+    public record Answer(int status, JsonElement body) {}
 
-        server.start();
-        logger.info("Engine API listening on :{} ({} handler threads)", port, HANDLER_THREADS);
+    /**
+     * Answers one request. Every outcome is an {@link Answer}: the handler's
+     * object on success, {@code {"error": ...}} with the right status for an
+     * {@link HttpError}, and a 500 with the exception's message for anything
+     * else. The job worker stores this as the job's result, so a refusal is a
+     * finished job, never a failed one.
+     */
+    public Answer answer(Request req) {
+        try {
+            return new Answer(200, GSON.toJsonTree(route(req)));
+        } catch (HttpError e) {
+            return new Answer(e.status, error(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Unhandled error answering {} {}", req.method(), req.path(), e);
+            return new Answer(500, error(e.getMessage() != null ? e.getMessage() : e.toString()));
+        }
     }
 
-    public void stop() {
-        if (server != null) {
-            server.stop(0);
+    private Object route(Request req) {
+        String path = req.path();
+        if (path.equals("/api/strategies")) {
+            return only(req, "GET", this::listStrategies);
         }
+        if (path.equals("/api/run")) {
+            return only(req, "POST", this::runBacktest);
+        }
+        if (under(path, "/api/results")) {
+            return only(req, "DELETE", this::deleteResult);
+        }
+        // The list and {id} share a handler, which looks for a trailing segment.
+        if (under(path, "/api/walkforward/runs")) {
+            return only(req, "GET", this::walkforwardRuns);
+        }
+        // The prediction check (R62, G77): POST /api/walkforward/onnx-check?run={id}.
+        if (path.equals("/api/walkforward/onnx-check")) {
+            return only(req, "POST", this::onnxCheck);
+        }
+        if (path.equals("/api/health")) {
+            return only(req, "GET", this::health);
+        }
+        throw notFound("the engine has no route " + req.method() + " " + path);
+    }
+
+    private static boolean under(String path, String prefix) {
+        return path.equals(prefix) || path.startsWith(prefix + "/");
+    }
+
+    private static Object only(Request req, String method,
+                               java.util.function.Function<Request, Object> handler) {
+        if (!method.equalsIgnoreCase(req.method())) {
+            throw new HttpError(405, method + " only");
+        }
+        return handler.apply(req);
+    }
+
+    private static JsonObject requireBody(Request req) {
+        if (req.body() == null) {
+            throw badRequest("a JSON request body is required");
+        }
+        return req.body();
     }
 
     // ---- GET /api/strategies -------------------------------------------------
@@ -121,7 +147,7 @@ public class EngineApi {
      * parameters with their values. Instantiates each strategy because
      * defaults live on the instance, not the registry.
      */
-    private Object listStrategies(HttpExchange exchange) {
+    private Object listStrategies(Request req) {
         StrategyRegistry registry = StrategyRegistry.getInstance();
         List<Map<String, Object>> items = new ArrayList<>();
 
@@ -157,8 +183,8 @@ public class EngineApi {
      * option for option so the two can't drift: same defaults, same
      * {@link ModelLoadPolicy#LOAD_ONLY} policy, same aggregate-if-missing step.
      */
-    private Object runBacktest(HttpExchange exchange) {
-        JsonObject body = readJson(exchange);
+    private Object runBacktest(Request req) {
+        JsonObject body = requireBody(req);
 
         String strategyName = requireString(body, "strategy");
         String symbol = requireString(body, "instrument");
@@ -265,8 +291,8 @@ public class EngineApi {
 
     // ---- DELETE /api/results/{id} -------------------------------------------
 
-    private Object deleteResult(HttpExchange exchange) {
-        String idSegment = lastPathSegment(exchange, "/api/results")
+    private Object deleteResult(Request req) {
+        String idSegment = lastPathSegment(req.path(), "/api/results")
                 .orElseThrow(() -> badRequest("expected /api/results/{id}"));
 
         long id;
@@ -308,9 +334,9 @@ public class EngineApi {
      * {@code limit}. On the detail route they are ignored &mdash; an id is an
      * id.
      */
-    private Object walkforwardRuns(HttpExchange exchange) {
+    private Object walkforwardRuns(Request req) {
         WalkforwardRepository repo = new WalkforwardRepository(databaseManager);
-        Optional<String> idSegment = lastPathSegment(exchange, "/api/walkforward/runs");
+        Optional<String> idSegment = lastPathSegment(req.path(), "/api/walkforward/runs");
 
         if (idSegment.isPresent()) {
             long id = parseRunId(idSegment.get());
@@ -342,7 +368,7 @@ public class EngineApi {
             return body;
         }
 
-        Map<String, String> params = query(exchange);
+        Map<String, String> params = req.query();
         String timeframe = params.get("timeframe");
         boolean includeTest = "true".equalsIgnoreCase(params.get("includeTest"));
         int limit = parseLimit(params.get("limit"));
@@ -575,8 +601,8 @@ public class EngineApi {
      * and answers with them. A fold that differs is a warning in the answer,
      * never an error status: the check reports, it does not stop anything.
      */
-    private Object onnxCheck(HttpExchange exchange) {
-        String raw = query(exchange).get("run");
+    private Object onnxCheck(Request req) {
+        String raw = req.query().get("run");
         if (raw == null || raw.isBlank()) {
             throw badRequest("expected ?run={id}");
         }
@@ -623,14 +649,12 @@ public class EngineApi {
 
     // ---- GET /api/health -----------------------------------------------------
 
-    private Object health(HttpExchange exchange) {
+    private Object health(Request req) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "ok");
         body.put("strategies", StrategyRegistry.getInstance().getAvailableStrategies().size());
         // try-with-resources matters more here than anywhere else in this class:
-        // this endpoint is polled — the API's /api/health probes it on every
-        // client page load — and the connection was previously never returned to
-        // the pool, so the pool drained and the endpoint hung once it was.
+        // health is polled, and a connection not returned each time drains the pool.
         try (Connection conn = databaseManager.getConnection()) {
             body.put("database", conn.isValid(2) ? "up" : "down");
         } catch (Exception e) {

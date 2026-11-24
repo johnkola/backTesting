@@ -1,6 +1,7 @@
 package com.bazarbozorg.backtest.strategy.nn;
 
 import com.bazarbozorg.backtest.engine.BacktestEngine;
+import com.bazarbozorg.backtest.jobs.PythonCalls;
 import com.bazarbozorg.backtest.model.StrategyContext;
 import com.bazarbozorg.backtest.model.enums.StrategySignal;
 import com.bazarbozorg.backtest.strategy.AbstractTa4jStrategy;
@@ -14,11 +15,6 @@ import com.google.gson.JsonObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
@@ -58,28 +54,12 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
     private static final Logger logger =
             LoggerFactory.getLogger(FeatureStoreNeuralNetworkStrategy.class);
 
-    private static final String LOADER_URL = System.getenv()
-            .getOrDefault("LOADER_URL", "http://localhost:8003");
-
     /** The cache namespace these models live in. Never {@code nn-feedforward}. */
     static final String MODEL_NAMESPACE = "nn-feedforward-v2";
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
 
-    // HTTP/1.1 pinned for the same reason as NeuralNetworkStrategy: on the JDK
-    // default, the h2c upgrade drops the request body against uvicorn and every
-    // POST comes back 422 complaining the body is missing.
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
-
     private static final Gson GSON = new Gson();
-
-    /** Visible for testing: guards the HTTP/1.1 pin above. */
-    static HttpClient httpClient() {
-        return HTTP;
-    }
 
     private ModelContext modelContext;
     private ModelCacheOutcome cacheOutcome;
@@ -275,60 +255,35 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
         };
     }
 
-    // ----- HTTP plumbing ----------------------------------------------------
+    // ----- Calls to the Python worker, through the jobs table ----------------
 
     private JsonObject postJson(String path, JsonObject body) {
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(LOADER_URL + path))
-                .timeout(REQUEST_TIMEOUT)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)))
-                .build();
-        return send(req, path);
+        return send("POST", path, body);
     }
 
     private JsonObject getJson(String path) {
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(LOADER_URL + path))
-                .timeout(REQUEST_TIMEOUT)
-                .GET()
-                .build();
-        return send(req, path);
+        return send("GET", path, null);
     }
 
-    private JsonObject send(HttpRequest req, String path) {
-        HttpResponse<String> resp;
-        try {
-            resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            throw new RuntimeException("network error calling " + path + ": " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("interrupted calling " + path, e);
-        }
+    private JsonObject send(String method, String path, JsonObject body) {
+        PythonCalls.Answer answer = PythonCalls.call(method, path, body, REQUEST_TIMEOUT);
+        JsonObject parsed = answer.body() != null && answer.body().isJsonObject()
+                ? answer.body().getAsJsonObject() : null;
 
-        JsonObject parsed;
-        try {
-            parsed = GSON.fromJson(resp.body(), JsonObject.class);
-        } catch (RuntimeException e) {
-            String body = resp.body();
-            throw new RuntimeException("loader " + path + " returned non-JSON body (status "
-                    + resp.statusCode() + "): "
-                    + (body != null && body.length() > 200 ? body.substring(0, 200) + "..." : body),
-                    e);
-        }
-
-        if (resp.statusCode() == 404) {
+        if (answer.status() == 404) {
             // No model under the key. This strategy cannot train its way out of
             // that, so surface the exception the CLI already knows how to
-            // explain rather than a generic HTTP failure.
+            // explain rather than a generic failure.
             throw new ModelNotCachedException(getName(), stringOrNull(parsed, "cacheKey"),
                     modelContext == null ? null : modelContext.pinnedVersionId());
         }
-        if (resp.statusCode() / 100 != 2) {
+        if (answer.status() / 100 != 2) {
             String err = stringOrNull(parsed, "error");
-            throw new RuntimeException("loader " + path + " returned " + resp.statusCode()
+            throw new RuntimeException("loader " + path + " returned " + answer.status()
                     + (err != null ? ": " + err : ""));
+        }
+        if (parsed == null) {
+            throw new RuntimeException("loader " + path + " returned no JSON object");
         }
         return parsed;
     }

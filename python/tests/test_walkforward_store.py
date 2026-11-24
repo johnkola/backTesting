@@ -842,8 +842,8 @@ def test_a_look_at_a_test_window_is_recorded_and_a_second_is_a_reuse(db):
     conn = db
     symbol, name = "ZZG48PY", "zz-g48-py"
     with conn.cursor() as cur:
-        # The web layer creates `strategies` (web/api/strategies.js), not
-        # schema.sql, so CI's empty database has none. A session-only table with
+        # schema.sql creates `strategies`; a database that has not had it
+        # applied since it did has none. A session-only table with
         # the columns this test writes stands in: the SQL function finds it
         # through the search path, and it goes when the connection closes.
         cur.execute("SELECT to_regclass('strategies') IS NOT NULL")

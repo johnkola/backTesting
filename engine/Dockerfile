@@ -30,7 +30,7 @@ COPY --from=build /build/build/install/BackTesting/ ./
 # Matches the jvmRuntimeArgs in build.gradle: JDK 21 warns (and JDK 22 errors)
 # on unrestricted native access without this.
 ENV JAVA_OPTS="--enable-native-access=ALL-UNNAMED"
-ENV ENGINE_PORT=8002
 
-EXPOSE 8002
-CMD ["./bin/BackTesting", "serve"]
+# The Java compute worker: it takes java-compute jobs from the jobs table and
+# opens no port.
+CMD ["./bin/BackTesting", "worker"]

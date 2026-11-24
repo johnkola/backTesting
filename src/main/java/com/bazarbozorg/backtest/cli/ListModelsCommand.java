@@ -38,11 +38,13 @@ public class ListModelsCommand implements Runnable {
 
         JsonObject response;
         try {
+            // The call is a job in the jobs table, so the database comes first.
+            com.bazarbozorg.backtest.data.DatabaseManager.getInstance().initialize();
             response = LoaderClient.get(path);
         } catch (LoaderClient.LoaderUnavailableException e) {
             System.err.println("Cannot list models: " + e.getMessage());
-            System.err.println("The loader owns the model registry — start it with "
-                    + "`docker compose up -d loader`, or set LOADER_URL if it runs elsewhere.");
+            System.err.println("The Python worker owns the model registry: start it with "
+                    + "`docker compose up -d worker`.");
             return;
         } catch (RuntimeException e) {
             System.err.println("Failed to list models: " + e.getMessage());

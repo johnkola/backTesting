@@ -68,23 +68,10 @@ async def post_imports(
     deliberate act: the reason, the count and the actor go on the flagged rows
     and on the import's audit rows."""
 
-    if not symbol:
-        return _bad("symbol is required")
-    if timeframe not in ALLOWED_TIMEFRAMES:
-        return _bad(f"timeframe must be one of {', '.join(sorted(ALLOWED_TIMEFRAMES))}")
-    if type not in ALLOWED_TYPES:
-        return _bad(f"type must be one of {', '.join(sorted(ALLOWED_TYPES))}")
-
-    fanout: list[str] = [t.strip() for t in aggregate_to.split(",") if t.strip()]
-    invalid_fanout = [t for t in fanout if not is_valid_pair(timeframe, t)]
-    if invalid_fanout:
-        return _bad(
-            f"aggregate_to has invalid target(s) for source {timeframe}: "
-            f"{', '.join(invalid_fanout)}"
-        )
-
-    force_flag = str(force).strip().lower() == "true"
-    source_name = source or "default"
+    checked = _check_form(symbol, type, timeframe, source, force, aggregate_to)
+    if isinstance(checked, JSONResponse):
+        return checked
+    source_name, force_flag, fanout = checked
 
     # Spool the upload to a file the worker can read too (`UPLOAD_SPOOL_DIR`,
     # a directory both containers mount), so scan_and_bucket can stream over
@@ -277,6 +264,48 @@ def import_spooled(path: str, filename: str, symbol: str, type: str,  # noqa: A0
     # R6: rows that produced no candle, said rather than silently dropped.
     payload["skipped"] = skipped.to_dict()
     return JSONResponse(status_code=200, content=payload)
+
+
+def _check_form(symbol: str, type: str, timeframe: str, source: str,  # noqa: A002
+                force: str, aggregate_to: str):
+    """The upload form's own checks: a refusal, or `(source, force, fanout)`."""
+    if not symbol:
+        return _bad("symbol is required")
+    if timeframe not in ALLOWED_TIMEFRAMES:
+        return _bad(f"timeframe must be one of {', '.join(sorted(ALLOWED_TIMEFRAMES))}")
+    if type not in ALLOWED_TYPES:
+        return _bad(f"type must be one of {', '.join(sorted(ALLOWED_TYPES))}")
+
+    fanout: list[str] = [t.strip() for t in aggregate_to.split(",") if t.strip()]
+    invalid_fanout = [t for t in fanout if not is_valid_pair(timeframe, t)]
+    if invalid_fanout:
+        return _bad(
+            f"aggregate_to has invalid target(s) for source {timeframe}: "
+            f"{', '.join(invalid_fanout)}"
+        )
+
+    force_flag = str(force).strip().lower() == "true"
+    source_name = source or "default"
+    return source_name, force_flag, fanout
+
+
+@job_route("import-upload", timeout_s=900)
+def import_upload(path: str, filename: str = "upload.csv", symbol: str = "",
+                  type: str = "", timeframe: str = "",  # noqa: A002
+                  source: str = "default", force: str = "false", aggregate_to: str = "",
+                  override_reason: str = "") -> JSONResponse:
+    """An upload the Spring Boot service spooled to `path` (G16 step 16.4),
+    with the form as it was typed. The form is checked here, by the same
+    function the route used, so the service holds none of the import's rules.
+    The service removes the spooled file once the job has ended."""
+    checked = _check_form(symbol, type, timeframe, source, force, aggregate_to)
+    if isinstance(checked, JSONResponse):
+        return checked
+    source_name, force_flag, fanout = checked
+    return import_spooled.__wrapped__(
+        path=path, filename=filename or "upload.csv", symbol=symbol, type=type,
+        timeframe=timeframe, source_name=source_name, force_flag=force_flag, fanout=fanout,
+        override_reason=override_reason)
 
 
 @router.delete("/api/imports/{import_id}")

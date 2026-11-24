@@ -47,14 +47,29 @@ public final class ListQuery {
         private final Map<String, Filter> filters = new LinkedHashMap<>();
         private final String defaultSort;
         private final String tiebreak;
+        private boolean nullsLast;
 
         /**
          * @param defaultSort the order when none is asked for, e.g. {@code "-id"}
-         * @param tiebreak    the API field that makes the order total, e.g. {@code "id"}
+         * @param tiebreak    the API field that makes the order total, e.g. {@code "id"},
+         *                    or {@code "-id"} for the newest of equals first
          */
         public Spec(String defaultSort, String tiebreak) {
             this.defaultSort = defaultSort;
             this.tiebreak = tiebreak;
+        }
+
+        /**
+         * Rows with no value sort last in either direction: on a list of
+         * results "unknown" is not "best", so it must not top a descending sort.
+         */
+        public Spec nullsLast() {
+            this.nullsLast = true;
+            return this;
+        }
+
+        String tiebreakField() {
+            return tiebreak.startsWith("-") ? tiebreak.substring(1) : tiebreak;
         }
 
         public Spec sort(String field, String column) {
@@ -117,11 +132,12 @@ public final class ListQuery {
                 throw ApiException.badRequest("cannot sort by '" + field + "'; sort by one of "
                         + String.join(", ", spec.sorts.keySet()) + " (a leading - is descending)");
             }
-            order.add(column + (desc ? " DESC" : " ASC"));
-            tied |= field.equals(spec.tiebreak);
+            order.add(column + (desc ? " DESC" : " ASC") + (spec.nullsLast ? " NULLS LAST" : ""));
+            tied |= field.equals(spec.tiebreakField());
         }
         if (!tied) {
-            order.add(spec.sorts.get(spec.tiebreak) + " ASC");
+            order.add(spec.sorts.get(spec.tiebreakField())
+                    + (spec.tiebreak.startsWith("-") ? " DESC" : " ASC"));
         }
         return new ListQuery(clauses.isEmpty() ? "" : " WHERE " + String.join(" AND ", clauses),
                 " ORDER BY " + String.join(", ", order), sort, limit, offset, params);

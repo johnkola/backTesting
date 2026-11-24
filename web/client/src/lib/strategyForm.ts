@@ -5,7 +5,7 @@ import type { ObjectiveSpec, SavedStrategy, StrategyObjective } from './api'
  *
  * Kept out of the component so it can be tested without rendering anything,
  * and so the browser refuses the same strategies the server refuses. The
- * server's `validateStrategy` in `web/api/strategies.js` is still the
+ * API's `StrategyRules.validate` (`server/.../strategies/StrategyRules.java`) is still the
  * authority — this is the copy that lets the form explain itself before a
  * round trip, not a substitute for it. Where the two could drift, the tests
  * pin the rules the doc states rather than the implementation either side

@@ -157,6 +157,38 @@ def test_an_optional_body_and_the_routes_own_status(lane):
     assert r.status_code == 202 and r.json() == {"given": True, "a": 9}
 
 
+def test_a_job_can_carry_a_request_and_the_route_binds_it(lane, monkeypatch):
+    """What the Spring Boot service inserts (G16 step 16.4): the request as it
+    arrived, strings and all. The route's own types, defaults and statuses
+    apply, and the work is one job, not a job that inserts another."""
+    monkeypatch.setattr(calls, "_app", lambda: app)
+    row = calls.submit_and_wait("t-sum", {"request": {
+        "method": "POST", "path": "/t/sum/3", "query": {"note": "hi"},
+        "body": {"a": "2", "b": 5}}}, 10)
+    assert row["status"] == "done"
+    assert row["result"] == {"status": 200, "body": {"total": 21, "note": "hi"}}
+    assert seen["thread"] != "MainThread" and isinstance(seen["req"], Sum)
+    assert seen["actor"].endswith(f":job-{row['id']}"), "rows written name the job"
+    assert len(_jobs(lane)) == 1, "the route ran in place: no second job"
+
+    refused = calls.submit_and_wait("t-sum", {"request": {
+        "method": "POST", "path": "/t/sum/3", "body": {"b": 1}}}, 10)
+    assert refused["status"] == "done" and refused["result"]["status"] == 422
+    assert refused["result"]["body"]["detail"][0]["loc"] == ["body", "a"]
+
+    own = calls.submit_and_wait("t-optional", {"request": {
+        "method": "POST", "path": "/t/optional"}}, 10)
+    assert own["result"] == {"status": 202, "body": {"given": False, "a": None}}
+
+
+def test_a_request_for_a_path_no_route_has_is_a_404(table, monkeypatch):
+    monkeypatch.setattr(calls, "_app", lambda: app)
+    assert calls.request("GET", "/t/nothing") == {"status": 404, "body": {"detail": "Not Found"}}
+    assert calls.request("GET", "/t/sum/3")["status"] == 405
+    with pytest.raises(ValueError, match="carries one request"):
+        calls._call(worker.Context({"inputs": {"method": "GET"}}, "w", lambda: None))
+
+
 def test_a_task_returns_its_value_and_is_transient(lane):
     assert double(21) == {"twice": 42}
     (job,) = _jobs(lane)

@@ -25,7 +25,7 @@ Three kinds are registered, one per target (G49, R71):
 * `forward_return`        -- the return over `horizonBars`. The model forecasts
   it; the label's `minReturn` turns a forecast into a call.
 
-`strategy_spec.LABEL_KINDS` is this registry's keys, and `web/api/strategies.js`
+`strategy_spec.LABEL_KINDS` is this registry's keys, and the API's `StrategyRules.java`
 holds the same list (`test_strategy_spec` checks).
 
 A run's score against its baseline points the way its target says: accuracy

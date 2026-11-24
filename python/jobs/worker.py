@@ -247,6 +247,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(line, flush=True)
 
     if not args.once:
+        # A feeds run still marked running died with the previous worker: this
+        # is the only process that runs one.
+        try:
+            from loader.feeds import runner as feeds_runner
+
+            with connect() as conn:
+                feeds_runner.mark_interrupted(conn)
+        except Exception as exc:  # noqa: BLE001 - feed_runs may not exist until schema.sql is applied
+            log(f"feeds: could not tidy feed_runs: {exc}")
         # The daily feeds refresh (`FEEDS_SCHEDULE`): the timer lives here and
         # inserts a `feeds-run` job, which one of this worker's lanes takes.
         from loader.feeds import schedule as feeds_schedule

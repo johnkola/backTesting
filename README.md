@@ -1,24 +1,22 @@
 # BackTesting
 
-> **Revision 2026-11-23-6** · 2026-11-23 18:12 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-23-8** · 2026-11-23 22:48 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
-A stock/forex backtesting system: **Java 21** for the backtest engine and CLI, a **Python loader** for data and machine learning, a **Node API** the two sit behind, and a **standalone React client**. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
+A stock/forex backtesting system: **Java 21** for the API (a Spring Boot service) and for the backtest engine and CLI, a **Python worker** for data and machine learning, and a **standalone React client**. The API hands work to the engine and the Python worker through a jobs table; neither has a port. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
 **New here?** [Getting Started](/docs/getting-started) walks the whole path in the order you will actually do it — start the stack, get candles in, run a backtest, read the result. This README is the reference behind it.
 
 ## Services and ports
 
-Four processes, each doing one job. The browser only ever talks to two of them.
-A fifth, `pgadmin`, is an optional tool rather than part of the system.
+Four processes, each doing one job, and the database. The browser talks to two of them.
+A sixth, `pgadmin`, is an optional tool rather than part of the system.
 
 | Port | Service | What it is |
 |------|---------|------------|
-| **3000** | `client` | The React SPA, static files behind nginx. No backend of its own — it calls the API by URL. |
-| **8001** | `api` | The single API origin. Reads Postgres directly; proxies writes to the loader and strategy/run calls to the engine. Also serves the project docs as rendered HTML for the client to display. |
-| *internal* | `engine` | Java. The strategy registry and the backtest engine — the only component that can run a backtest. Reached through the API, not published. |
-| **8003** | `loader` | Python/FastAPI. Receives the calls for CSV import, aggregation, cohesion checks and NN train/predict, and hands the work to `worker`. Published only so the host-run CLI can reach it; in-network callers use `http://loader:8001`. |
-| **8004** | `server` | Java, Spring Boot. The backend the design gives the client; it will replace `api`. It reads the database and hands work to the workers through the jobs table, and calls no other service. Today it serves health and the jobs table. See [The Spring Boot service](#the-spring-boot-service). |
-| *none* | `worker` | Python, the loader's image started as `python -m jobs.worker`. Claims jobs from the jobs table (`jobs.jobs`) and runs them; serves no HTTP. All of the loader's work runs here, and the daily feeds timer. See [The jobs table](#the-jobs-table). |
+| **3000** | `client` | The React SPA, static files behind nginx. No backend of its own: it calls the API by URL. |
+| **8001** | `server` | The API: Java, Spring Boot. The one backend the client calls. It reads the database, serves the project docs as rendered HTML, and hands work to the two workers through the jobs table; it calls no other service. See [The API service](#the-api-service). |
+| *none* | `engine` | The Java compute worker: the strategy registry and the backtest engine, the only component that can run a backtest. It takes `java-compute` jobs from the jobs table and opens no port. The same image runs the CLI. |
+| *none* | `worker` | The Python compute worker (`python -m jobs.worker`): CSV import, aggregation, cohesion checks, features, training, predictions and walk-forward runs, each a job it takes from the jobs table; and the daily feeds timer. It opens no port. See [The jobs table](#the-jobs-table). |
 | **5432** | `timescaledb` | PostgreSQL + TimescaleDB. |
 | **5050** | `pgadmin` | pgAdmin 4, a browser UI on the database. Not in the default stack — see [Database UI](#database-ui). |
 
@@ -27,10 +25,10 @@ The client is deliberately independent: it has no server-side dependency and rea
 ## Quick start
 
 ```bash
-docker compose up -d                          # all five services
+docker compose up -d                          # the five containers
 ./gradlew generateTestData                    # write test-data/SYNTH_daily.csv (fake, not AAPL)
 
-# Import a CSV (the API proxies this to the loader)
+# Import a CSV (the API hands it to the Python worker)
 curl -F file=@test-data/SYNTH_daily.csv -F symbol=SYNTH -F type=STOCK \
      -F timeframe=D1 -F source=synthetic http://localhost:8001/api/imports
 
@@ -86,12 +84,12 @@ the window a model trains on is chosen per run. Two commands, two decisions:
 # Build. No --since: writes every calendar day (QQQ: 1999-03-10 on, 6,930 rows
 # per column). The head where the macro series do not exist yet is stored as
 # NULL rather than skipped.
-docker compose exec loader python -m nn.feature_build
-docker compose exec loader python -m nn.feature_build --dry-run   # resolve, write nothing
+docker compose exec worker python -m nn.feature_build
+docker compose exec worker python -m nn.feature_build --dry-run   # resolve, write nothing
 
 # Train on a slice of it. --from and --to are both INCLUSIVE.
-docker compose exec loader python -m nn.train_features --from 2003-01-01 --to 2017-12-31
-docker compose exec loader python -m nn.train_features            # whole set
+docker compose exec worker python -m nn.train_features --from 2003-01-01 --to 2017-12-31
+docker compose exec worker python -m nn.train_features            # whole set
 ```
 
 `--since` on the builder still exists, but it is an output filter for trimming
@@ -118,8 +116,8 @@ intraday data is bought. The commands are the same for M30, with its file and
 `--timeframe M30`.
 
 ```bash
-docker compose exec loader python -m nn.feature_build --config nn/calendars/QQQ-synthetic-H1.toml
-docker compose exec loader python -m nn.walkforward --source synthetic --timeframe H1 \
+docker compose exec worker python -m nn.feature_build --config nn/calendars/QQQ-synthetic-H1.toml
+docker compose exec worker python -m nn.walkforward --source synthetic --timeframe H1 \
   --set-id <the set it wrote> --first-val 2020 --last-val 2021
 ```
 
@@ -214,7 +212,7 @@ is the reference each of its steps links into:
 
 | Step | Reference |
 |---|---|
-| Get candles in | [Data feeds](#data-feeds) · [Bulk CSV import](#bulk-csv-import-drop-folder) · [`POST /api/imports`](#loader--python-proxied) · [Data cohesiveness checks](#data-cohesiveness-checks) |
+| Get candles in | [Data feeds](#data-feeds) · [Bulk CSV import](#bulk-csv-import-drop-folder) · [`POST /api/imports`](#python-worker--as-python-jobs) · [Data cohesiveness checks](#data-cohesiveness-checks) |
 | Check what you have | [`backtest` — inspect](#backtest--inspect) · [`backtest-audit`](#backtest-audit--cohesion-audit) |
 | Build higher timeframes | [Multi-timeframe aggregation](#multi-timeframe-aggregation) |
 | Train a model | [Model cache](#model-cache) |
@@ -311,43 +309,35 @@ inside an error boundary so a bad row cannot blank the app.
 cd python && .venv/bin/python -m pytest    # Python tests (needs the dev extra installed)
 
 cd web/client && npm test        # client unit tests (vitest)
-cd web/api    && npm test        # API unit tests (node:test)
 cd web/client && npm run lint    # client: correctness + formatting + imports
-cd web/api    && npm run lint    # same, for the Node API
 
 # Every endpoint, asserted against the running stack. See postman/README.md.
 postman collection run postman/backtest.postman_collection.json \
   -e postman/local.postman_environment.json
 ```
 
-**CI.** `.github/workflows/ci.yml` runs the same suites on every push and pull request, as four jobs: `python` (pytest against a TimescaleDB service, with `schema.sql` applied by `psql`), `java` (`gradle test` against its own TimescaleDB), `api` (lint + `node --test`) and `client` (lint, `tsc` + `vite build`, Vitest). The database starts empty and every test seeds its own data. Three feature-set tests in `test_walkforward_store.py` still skip there, for want of D1 candles. Not covered: the Postman suite, which needs the whole stack running, and `ruff`, which has errors that predate CI.
+**CI.** `.github/workflows/ci.yml` runs the same suites on every push and pull request, as three jobs: `python` (pytest against a TimescaleDB service, with `schema.sql` applied by `psql`), `java` (`gradle test`, the engine and the API service, against its own TimescaleDB) and `client` (lint, `tsc` + `vite build`, Vitest). The database starts empty and every test seeds its own data. Three feature-set tests in `test_walkforward_store.py` still skip there, for want of D1 candles. Not covered: the Postman suite, which needs the whole stack running, and `ruff`, which has errors that predate CI.
 
-Both `web/client/` and `web/api/` have the same gate: `npm run lint` fails on
-warnings too (`--max-warnings 0`), and `npm run lint:fix` applies what is fixable —
-which is nearly all of it. Beyond correctness rules each enforces the formatting its
-own code already used, rejects stray whitespace (double blank lines, trailing spaces,
-a missing final newline), and keeps imports grouped packages-first then local with
-nothing unused. There is no separate formatter to disagree with either of them.
-
-The two configs differ on purpose: the client is ESM without semicolons, the API is
-CommonJS with them, and neither is bent to match the other. One thing to know about
-the API's: `import-x/order` does read `require()` calls, but `no-duplicates` only
-inspects `import` statements, so a module required twice is not reported.
+`web/client/` has one gate: `npm run lint` fails on warnings too (`--max-warnings 0`),
+and `npm run lint:fix` applies what is fixable, which is nearly all of it. Beyond
+correctness rules it enforces the formatting the code already used, rejects stray
+whitespace (double blank lines, trailing spaces, a missing final newline), and keeps
+imports grouped packages-first then local with nothing unused. There is no separate
+formatter to disagree with it.
 
 Java 21 is required; the toolchain block in `build.gradle` lets Gradle provision a matching JDK if `JAVA_HOME` points elsewhere.
 
 Running the pieces outside Docker:
 
 ```bash
-# Loader (CSV import, aggregation, audit, NN)
-cd python && pip install -e ".[dev]" && uvicorn loader.main:app --port 8001
+# The API, on port 8001
+./gradlew :server:bootRun
 
-# Engine (strategies, run)
-./gradlew run --args="serve --port 8002"
+# The Java compute worker (strategies, run, the walk-forward record)
+./gradlew run --args="worker"
 
-# API
-cd web/api && npm install && PORT=8001 LOADER_URL=http://localhost:8001 \
-  ENGINE_URL=http://localhost:8002 npm start
+# The Python compute worker (CSV import, aggregation, audit, NN)
+cd python && pip install -e ".[dev]" && python -m jobs.worker
 
 # Client with hot reload
 cd web/client && npm install && npm run dev        # http://localhost:5173
@@ -355,9 +345,9 @@ cd web/client && npm install && npm run dev        # http://localhost:5173
 
 The Vite dev server proxies `/api` to `$API_URL` (default `http://localhost:8001`), so the dev client makes same-origin requests and needs no CORS. Set `VITE_API_URL` instead to point it straight at a running API — that works too, since the API sends CORS headers.
 
-Note that when running the loader locally on `:8001` you'll collide with the API service; either stop the API container or give the loader another port and set `LOADER_URL` to match. In compose the loader is published on **8003** for exactly this reason, and the Java CLI defaults to it.
+The three backend processes find each other through the database alone (the `PG*` variables), so they can run in any mix of host and container: a job put in the jobs table is taken by whichever worker of its kind is up. Stop the `server` container before running the API on the host, since both want port 8001.
 
-**Which commit a run came from.** Every walk-forward run and feature build records `git_sha`, the commit the loader image was built from, beside `code_hash`, the hash of the code it actually ran. `docker compose build loader` reads it from the repo's `.git` on its own, so commit first and rebuild after, or the image keeps naming the commit before. A build from uncommitted changes records the commit it started from, and only `code_hash` tells the two apart. A plain `docker build -f python/Dockerfile .` records no commit, and `GIT_SHA=<sha>` in the loader's environment overrides what was baked in. Runs and builds recorded before 2026-11-16 have none.
+**Which commit a run came from.** Every walk-forward run and feature build records `git_sha`, the commit the worker image was built from, beside `code_hash`, the hash of the code it actually ran. `docker compose build worker` reads it from the repo's `.git` on its own, so commit first and rebuild after, or the image keeps naming the commit before. A build from uncommitted changes records the commit it started from, and only `code_hash` tells the two apart. A plain `docker build -f python/Dockerfile .` records no commit, and `GIT_SHA=<sha>` in the worker's environment overrides what was baked in. Runs and builds recorded before 2026-11-16 have none.
 
 ## CLI reference
 
@@ -381,9 +371,9 @@ Three binaries. `backtest` is the Java CLI (`./gradlew run --args="<command>"`, 
 | Command | Options | What it does |
 |---|---|---|
 | `aggregate` | `-i SYMBOL` `[-f D1]` `-t W1,MN1` `[--source]` `[--force]` `[--since]` `[--until]` | Builds higher-timeframe candles from a finer series via the loader. Without `--force`, a target that already has rows is left alone — use `--force` to refresh a rollup after new source candles land |
-| `train` | `-s STRATEGY` `-i SYMBOL` `[-t TF]` `[--source]` `[--from]` `[--to]` `[-p k=v]` `[--force]` | Trains a `PersistableModelStrategy` and caches it. Required before `run` for NN strategies; delegates to the loader's `/api/nn/train` |
+| `train` | `-s STRATEGY` `-i SYMBOL` `[-t TF]` `[--source]` `[--from]` `[--to]` `[-p k=v]` `[--force]` | Trains a `PersistableModelStrategy` and caches it. Required before `run` for NN strategies; the Python worker does the training, asked with a `train` job |
 | `run` | `-s STRATEGY` `-i SYMBOL` `[-t TF]` `[--source]` `[--from]` `[--to]` `[--capital]` `[-p k=v]` `[--model-version ID]` `[--no-aggregate]` `[--tax-rate PCT]` | Runs a backtest and saves the result. `--tax-rate` scores it after tax (G20). Builds the requested timeframe from a finer one first if it has no candles (`--no-aggregate` opts out); fails if a model-backed strategy has no cached model |
-| `serve` | `[-p/--port]` | Serves the engine HTTP API (`$ENGINE_PORT`, default 8002). This is what the `engine` container runs |
+| `worker` | — | Runs the Java compute worker: takes `java-compute` jobs from the jobs table and answers them (the strategy list, a backtest, deleting a result, the walk-forward record, the ONNX check). Opens no port. This is what the `engine` container runs; `serve` is its old name and still works |
 
 `--to` is inclusive. A bare date covers its whole day on every timeframe, so `--to 2025-12-31` keeps that day's M30 bars as well as its D1 bar; a value with a time (`2025-12-31 12:00:00`) is used exactly. `POST /api/run` and `GET /api/candles` read `to` the same way. Annualised figures (return, Sharpe, Sortino, Calmar) use 252 trading days, 52 weeks or 12 months a year, and on intraday 252 times the bars each day holds.
 
@@ -395,28 +385,28 @@ Three binaries. `backtest` is the Java CLI (`./gradlew run --args="<command>"`, 
 
 `-i SYMBOL` · `--source NAME` · `-t TF` · `--checks ohlc,gap,...` · `-v`. Read-only pass over candles already in the database. Exit `0` when clean, `1` when any series has findings, so it works as a CI gate.
 
-There is no `import` subcommand — CSV import belongs to the loader. See [Bulk CSV import (drop folder)](#bulk-csv-import-drop-folder), [Data cohesiveness checks](#data-cohesiveness-checks), [Model cache](#model-cache), and [Multi-timeframe aggregation](#multi-timeframe-aggregation).
+There is no `import` subcommand — CSV import belongs to the Python worker. See [Bulk CSV import (drop folder)](#bulk-csv-import-drop-folder), [Data cohesiveness checks](#data-cohesiveness-checks), [Model cache](#model-cache), and [Multi-timeframe aggregation](#multi-timeframe-aggregation).
 
 ## API reference
 
-Everything below is reachable at **`http://localhost:8001`**, the single origin the client uses. Node answers the older reads itself and proxies the rest: `/api/strategies`, `/api/run`, `DELETE /api/results/:id` and `/api/walkforward/*` go to the Java engine &mdash; new reads are written in Java now, and Node only carries them; imports, aggregation, audit and `/api/nn/*` go to the Python loader. CORS is open by default (`CORS_ALLOW_ORIGIN`) because the client is on a different origin.
+Everything below is reachable at **`http://localhost:8001`**, the one address the client uses: the Spring Boot service (see [The API service](#the-api-service)). It answers reads of the database itself. Work that is the Java engine's (`/api/strategies`, `/api/run`, `DELETE /api/results/:id`, `/api/walkforward/*`) or the Python worker's (imports, aggregation, audit, checks, repairs, feeds, `/api/nn/*`) it stores as a job; the worker runs it and the job's result is the answer. No worker has a URL. CORS is open by default (`CORS_ALLOW_ORIGIN`) because the client is on a different origin.
 
-### Reads — served by Node from Postgres
+### Reads — from Postgres
 
 | Endpoint | Query parameters | Returns |
 |---|---|---|
-| `GET /api/health` | — | `{status, ok, maintenance, db, services[]}` — a probe of the database, the loader and the engine, not just this process. Always HTTP 200 while the API is alive; the verdict is in the body. The client gates its first paint on it (see [Maintenance mode](#maintenance-mode)) |
+| `GET /api/health` | — | `{status, ok, maintenance, db, services[]}` — a probe of the database, the Python worker and the Java engine, not just this process; each worker is asked with a job and its answer kept for 15 seconds. Always HTTP 200 while the API is alive; the verdict is in the body. The client gates its first paint on it (see [Maintenance mode](#maintenance-mode)) |
 | `GET /api/sources` | — | `{items: [...]}` — data sources |
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
-| `GET /api/imports` | `limit` `offset` `source` `instrument` `sort` `dir` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows` (whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable. Each row carries `checkOverride` (`{reason, errors, by}`) when its check errors were stored on an override, else `null` |
-| `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` | Paginated backtest summaries. Each carries `taxRate`, the percent it was scored after on realized gains (`null` before tax, G20), and `testWindows`, the saved test windows it scores as `{from, to, looksBefore, firstLookAt}` (empty when none), and `testWindowReused`, true when one was looked at before it (G48, R69); the result page has the same. Each carries `strategyKind`, the engine's kind for the strategy it ran (`model` or `benchmark`; `null` when the engine does not answer or no longer registers the name) |
+| `GET /api/imports` | `limit` `offset` `source` `instrument` `timeframe` `sort` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows`, with a leading `-` for descending (`sort=-rows`; whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable. Each row carries `checkOverride` (`{reason, errors, by}`) when its check errors were stored on an override, else `null` |
+| `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` `timeframe` `sort` | Paginated backtest summaries, newest first. `sort` is one of `created`, `instrument`, `strategy`, `timeframe`, `source`, `return`, `hold`, `excess`, `sharpe`, `drawdown`, `trades`, `winrate`, with a leading `-` for descending; a result with no figure sorts last either way. Each carries `taxRate`, the percent it was scored after on realized gains (`null` before tax, G20), and `testWindows`, the saved test windows it scores as `{from, to, looksBefore, firstLookAt}` (empty when none), and `testWindowReused`, true when one was looked at before it (G48, R69); the result page has the same. Each carries `strategyKind`, the engine's kind for the strategy it ran (`model` or `benchmark`; `null` when the engine does not answer or no longer registers the name) |
 | `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}`. It carries `strategyKind` as the list does. `settings` is what the run was asked to do (G40): `requestedFrom` and `requestedTo` (the dates asked for; `startDate` is the first bar after the warm-up), `parameters` as passed and `effectiveParameters` with the defaults filled in, `initialCapital`, `commission` and `slippage` (`{type, value, description}`, the value exact), `taxRatePct` and `pinnedModelVersion`; `null` on a result stored before 2026-11-22 |
 | `GET /api/models` | — | Cached NN models on disk, with a "used in N backtests" count per cache key |
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
 | `GET /api/docs/:slug` | `rev` | One doc as rendered HTML, headings anchored. Every fetch snapshots the file if its hash changed; `rev=N` returns a captured revision instead |
 | `GET /api/docs/:slug/history` | — | That doc's captured revisions, newest first |
 
-### Engine — Java, proxied
+### Engine — Java, as `java-compute` jobs
 
 | Endpoint | Body / params | Does |
 |---|---|---|
@@ -427,7 +417,7 @@ Everything below is reachable at **`http://localhost:8001`**, the single origin 
 | `POST /api/run` | `strategy`, `instrument`, `timeframe`, `source`, `from`, `to`, `capital`, `parameters`, `modelVersion`, `aggregateMissing`, `taxRate` | Runs a backtest, saves it, returns the full result. `taxRate` (a percent above 0 and below 100) scores it after tax (G20); `400` outside that range. **Synchronous** — a run over a few thousand bars is about a second. `409` when a model-backed strategy has no cached model; `400` for an unknown strategy, instrument or empty range. For a model strategy the answer also carries `inSample` (true when the tested window overlaps the model's training window, `null` when that window is unknown) and `inSampleNote`, the sentence naming both windows (R82) |
 | `DELETE /api/results/:id` | — | Deletes one saved result. `404` if it doesn't exist |
 
-### Loader — Python, proxied
+### Python worker — as `python` jobs
 
 | Endpoint | Body / params | Does |
 |---|---|---|
@@ -479,15 +469,26 @@ cd python && python -m loader.ingest            # --dry-run to preview, --force 
 
 Each file runs through the **same pipeline as `POST /api/imports`** — sliced into one archive entry per calendar year under `data/csv-archive/<source>/<symbol>/<year>/<TF>.csv`, deduped by hash (create / skip / extend / overwrite / conflict), and upserted into `candles` in one transaction. Every distinct file is recorded as a version in `import_files` and labelled `new`, `update` (later days only), `fix` (past bars changed or dropped) or `update+fix`. An identical file prints `SAME` and is not parsed, and a changed year prints its diff with the first changed dates. The filename supplies the metadata: the **last `__`-segment is the timeframe** (validated), any segment matching a type (`STOCK`/`FOREX`/`CRYPTO`/`INDEX`/`COMMODITY`) is the type (default `STOCK`), and what's left is `SYMBOL` or `SOURCE__SYMBOL` (source defaults to `default`). **FirstRate Data files keep their own names:** `QQQ_full_30min_adjsplitdiv.txt` is filed as `firstrate-adj/QQQ` at M30, `..._adjsplit.txt` as `firstrate-split`, `..._UNADJUSTED.txt` as `firstrate-raw`, and the free sample (`QQQ_30min_sample.csv`) as `firstrate`. The three adjustments are three price series, so each has its own source and none can overwrite another. Their 1-hour file is refused, because its bars start on the clock hour and the 09:00 bar mixes pre-market trading into the session; import the 30-minute file. **An intraday stock file keeps only its regular-session bars** (those starting from 09:30 up to, not including, 16:00 New York time, or 13:00 on a half day), on this path and on `POST /api/imports` alike; the number left out is printed. Forex and crypto files are stored whole. After import each file moves to `data/csv-inbox/processed/`; files that fail to parse, conflict (without `--force`), or error move to `data/csv-inbox/failed/`. The inbox defaults to `data/csv-inbox` (override with `$CSV_INBOX_DIR` or `--inbox`) and needs the loader's `PG*` env vars to reach Postgres; it talks to the DB directly, so the FastAPI server need not be running.
 
-## The Spring Boot service
+## The API service
 
-The design has one backend: a Spring Boot service that serves REST to the client, reads the database, and reaches the compute workers only through the jobs table. It is being built beside the Node API and takes over its routes area by area; until then the client still calls `api` on 8001. The code is the Gradle project `server/`.
+The design has one backend: a Spring Boot service that serves REST to the client, reads the database, and reaches the compute workers only through the jobs table. It is the Gradle project `server/` and the `server` container, on `http://localhost:8001`. The routes are in the [API reference](#api-reference); this section is how it answers them.
 
-It is on `http://localhost:8004`. What it serves today:
+| Kind of route | How it is answered |
+|---|---|
+| Reads of the database: sources, instruments, candles, the import log and file history, results, saved strategies, the feature catalogue and coverage, the docs, the jobs table | SQL in the service |
+| `GET /api/models` | The service reads `metadata.json` under `MODELS_DIR` and joins the database for names and use counts |
+| `POST /api/imports` | The upload is written to `UPLOAD_SPOOL_DIR` (`data/uploads`, mounted by the Python worker too) and imported by the worker as an `import-upload` job |
+| Python's work: `DELETE /api/imports/:id`, `POST /api/aggregate`, `POST /api/audit`, `/api/checks/*`, `/api/repairs/*`, `/api/feeds/*`, `/api/nn/*` | The service stores the request in a job (`{"request": {method, path, query, body}}`, engine `python`); the Python worker runs the route's function and the job's result (`{status, body}`) is the answer. A read is a `python-call` job, deleted ten minutes after it ends; work keeps its own type (`audit`, `train`, `repair-choose`) |
+| The engine's work: `GET /api/strategies`, `POST /api/run`, `DELETE /api/results/:id`, `/api/walkforward/*` | The same, as a `java-compute` job the Java engine takes: `strategies`, `backtest`, `result-delete`, `walkforward-runs`, `onnx-check` |
+| `POST /api/strategies/saved` | Checked by the service (shape and bounds), then by the Python worker (a `strategy-check` job), then stored |
+| `GET /api/health` | The database is asked directly; each worker is asked with a job (`ping`, `engine-health`) and its answer kept for 15 seconds |
+
+A job that raised is a `500` with the worker's reason and the job id; one no worker finished in time is a `504` that says whether a worker ever took it. A refusal (a `400`, a `404`, a `409`) is a finished job whose result carries it.
+
+The jobs table itself:
 
 | Route | Params | Returns |
 |---|---|---|
-| `GET /api/health` | — | Always `200` while the service is alive, verdict in the body, in the Node API's shape: `status` (`ok`, `degraded`, `maintenance`), `ok`, `maintenance`, `db`, `services`. It answers for the database and for the Python worker, which it asks with a `ping` job; the worker's answer is kept for 15 seconds |
 | `GET /api/jobs` | `limit`, `offset`, `sort`, and the filters `type`, `status`, `engine`, `transient`, `cancelRequested` | A page of the jobs table, newest first: `{items, total, limit, offset, sort}` |
 | `GET /api/jobs/:id` | — | One job, with its `inputs` and `result` as stored. `404` for an unknown id |
 | `POST /api/jobs/:id/cancel` | — | Asks a queued or running job of any type to stop: `202` with the job, `cancelRequested: true`. The worker ends it at its next heartbeat. `404` for an unknown id, `409` for a job already over |
@@ -499,17 +500,17 @@ Every list this service serves follows the same rules, for the shared table:
 - **Filters:** one query parameter per field; comma-separated values mean any of them (`status=queued,running`). A value of the wrong type is a `400`.
 - **Errors:** every failure is `{"error": "..."}` with the status that fits, the shape the client already reads.
 
-Settings (environment variables): the `PG*` variables as everywhere else, `PORT` (8004), `DB_ACTOR` (`server`, written to the audit columns), `DB_POOL_MAX` (5), `CORS_ALLOW_ORIGIN` (`*`), `MAINTENANCE` and `MAINTENANCE_MESSAGE` as on the Node API.
+Settings (environment variables): the `PG*` variables as everywhere else, `PORT` (8001), `DB_ACTOR` (`server`, written to the audit columns), `DB_POOL_MAX` (5), `CORS_ALLOW_ORIGIN` (`*`), `MAINTENANCE` and `MAINTENANCE_MESSAGE` ([Maintenance mode](#maintenance-mode)), `UPLOAD_SPOOL_DIR` (`data/uploads`), `MODELS_DIR` (`data/models`), `DOCS_DIR` (the repo root; `/app/docs` in the image), `CLIENT_URL` (`http://localhost:3000`, where `/` and the old doc URLs redirect) and `JOBS_TABLE` (`jobs.jobs`).
 
 The database allows 25 connections in all, shared by every service, so this one keeps a small pool and opens connections only as it needs them.
 
 ```bash
 ./gradlew :server:test           # its tests; they need Postgres up, and are skipped without it
-./gradlew :server:bootRun        # run it on the host, port 8004
+./gradlew :server:bootRun        # run it on the host, port 8001
 docker compose up -d --build server
 ```
 
-Its tests start the service on a free port and call it over HTTP, on a copy of the jobs table. One of them fails the build when a route has no request in the Postman collection.
+Its tests start the service on a free port and call it over HTTP, on a copy of the jobs table, with the workers played in SQL. One of them fails the build when a route has no request in the Postman collection, or a request has no route; another checks the docs the Docs tab serves and every link the project docs make into it.
 
 ## The jobs table
 
@@ -557,7 +558,7 @@ The series the feature table reads, plus SPY, PSQ, and three Toronto-listed ETFs
 
 **What a run may change on its own.** It asks each provider for the two weeks before the newest stored day onward, and drops any session not finished yet (before 18:00 New York). New days are added. The newest stored day may be replaced, because that bar is often preliminary when first fetched (a settling volume). Anything further back is **held**: nothing is written for that series, and the Data stage shows what differs, naming a uniform rescale as the dividend re-adjustment or split it almost always is. **Apply** re-downloads the full history and imports it with `force`, but rewrites only the days that are different data: a day whose prices are within rounding of the stored bar (1e-5, relative) and whose volume is the same stays byte for byte as stored, since Yahoo's adjusted history comes back with noise in the seventh digit and rewriting it would change every hash a stored run was made on. A dividend re-adjustment moves every day by far more and is written in full. Expect QQQ, SPY and PSQ adjusted to hold once a quarter, on each ex-dividend date. Every write goes through the CSV importer's slices, hashes and archive, so each refresh is a version on the Imports page with its diff.
 
-**From the command line**, in the loader container:
+**From the command line**, in the worker container:
 
 ```bash
 docker exec backtest-loader python -m loader.feeds refresh --dry-run      # fetch and compare, write nothing
@@ -617,10 +618,10 @@ Two warnings on one bar are still warnings: a crash day on record volume is true
 There are two ways out. A corrected file imported over the bar clears its flag. Or the rows are **accepted**, which is one deliberate act with a reason, recorded on each row with who and when; an accepted row shows as a note on the Data stage and holds nothing. The same finding found again by a later import keeps its acceptance.
 
 ```bash
-docker compose exec loader python -m loader.flags --list            # series with open flagged rows (--all: accepted too)
-docker compose exec loader python -m loader.flags --accept --symbol GOLD --source yahoo --reason "<why>"
-docker compose exec loader python -m loader.flags --scan            # check every stored series; writes nothing
-docker compose exec loader python -m loader.flags --scan --record   # ... and flag what it finds
+docker compose exec worker python -m loader.flags --list            # series with open flagged rows (--all: accepted too)
+docker compose exec worker python -m loader.flags --accept --symbol GOLD --source yahoo --reason "<why>"
+docker compose exec worker python -m loader.flags --scan            # check every stored series; writes nothing
+docker compose exec worker python -m loader.flags --scan --record   # ... and flag what it finds
 ```
 
 A reason can also come with the import, which accepts the file's flags as it lands (the Imports page marks such a row `accepted`):
@@ -636,11 +637,11 @@ Each wrong value has up to three candidates, in this order: a **second source** 
 The **Repairs** page shows the log on one screen: the original, each candidate, the value applied, and who, when and why, with the choices beside each held row and one button to apply the calculated value to every held row of a series.
 
 ```bash
-docker compose exec loader python -m loader.repair --propose --symbol GOLD --source yahoo   # write repair rows for its flagged bars
-docker compose exec loader python -m loader.repair --list [--symbol GOLD] [--all]
-docker compose exec loader python -m loader.repair --choose calculated --symbol GOLD --source yahoo --reason "<why>"
-docker compose exec loader python -m loader.repair --choose hand --id 12 --value 30.95 --reason "<why>"
-docker compose exec loader python -m loader.repair --revert --id 12 --reason "<why>"
+docker compose exec worker python -m loader.repair --propose --symbol GOLD --source yahoo   # write repair rows for its flagged bars
+docker compose exec worker python -m loader.repair --list [--symbol GOLD] [--all]
+docker compose exec worker python -m loader.repair --choose calculated --symbol GOLD --source yahoo --reason "<why>"
+docker compose exec worker python -m loader.repair --choose hand --id 12 --value 30.95 --reason "<why>"
+docker compose exec worker python -m loader.repair --revert --id 12 --reason "<why>"
 ```
 
 A repair is a change to stored inputs. Features reads stale when a field it read was repaired after its build (a repair to GOLD's high is no reason: the table reads GOLD's close), and a backtest result when a bar in its window was. Feature values are never repaired; the set is rebuilt. Not built: repairing a missing bar, a second vendor to compare with (none is stored), and roll-ups, which are still made from the raw bars.
@@ -718,8 +719,8 @@ CLI (picocli) → DatabaseManager (HikariCP/PG) → BacktestEngine
                                                                               ├─ ConsoleReportFormatter
                                                                               └─ BacktestResultRepository (JSON in TEXT column)
 
-Python loader (FastAPI) → CSV import · multi-timeframe aggregation · NN train/predict
-                          (Postgres via psycopg; the API proxies its routes. Host :8003, in-network :8001)
+Python worker (jobs) → CSV import · multi-timeframe aggregation · NN train/predict
+                       (Postgres via psycopg; the API hands it jobs through the jobs table. No port)
 ```
 
 Storage: PostgreSQL with the TimescaleDB extension. Five tables: `instruments`, `data_sources`, `candles` (hypertable, PK `(instrument_id, timeframe, source_id, timestamp)`), `data_imports` (audit log of CSV imports — archive path, file hash, name, row count, one row per imported year slice), and `backtest_results`. Schema lives in `src/main/resources/schema.sql` and is bootstrapped (with idempotent migration for pre-source DBs) on every `DatabaseManager.initialize()`.
@@ -1071,10 +1072,10 @@ Two ways to put the UI into that state deliberately:
 
 ```bash
 # Server-side switch — a restart, no rebuild. Every service stays up.
-MAINTENANCE=1 MAINTENANCE_MESSAGE="Back at 14:00 UTC" docker compose up -d api
+MAINTENANCE=1 MAINTENANCE_MESSAGE="Back at 14:00 UTC" docker compose up -d server
 
 # Back to normal
-docker compose up -d api
+docker compose up -d server
 ```
 
 ```bash
@@ -1108,7 +1109,7 @@ data/models/<strategy>/<sha256-cache-key>/<versionId>/
 
 The id is forwarded to the loader's `/api/nn/train`, which returns that exact version under the resolved cache key, or **404** if it isn't on disk — in which case `run` exits non-zero with a hint pointing at `/api/models`. A pin only matches a version stored under the cache key the run *computes*, so changing the data range or hyperparameters (which change the key) reports the pin as missing. The pin is `run`-only; `train` always writes a fresh version.
 
-**Docker deployment note.** Models are written by the **loader** container, which mounts `./data/models -> /data/models` read-write (`MODELS_DIR=/data/models`). The `web` container mounts the same host dir **read-only** so its `/api/models` walker reflects loader-trained models without rebuilding the image. Both the loader's `/api/nn/models` and Node's `/api/models` read this tree.
+**Docker deployment note.** Models are written by the **worker** container, which mounts `./data/models -> /data/models` read-write (`MODELS_DIR=/data/models`). The `server` container mounts the same host dir **read-only** so its `/api/models` walker reflects newly trained models without rebuilding the image. Both the worker's `/api/nn/models` and the API's `/api/models` read this tree.
 
 The cache key is a SHA-256 of: strategy name, `FEATURE_SCHEMA_VERSION` (so editing a feature formula and bumping the version invalidates existing models), `instrument_id`, `source_id`, `timeframe`, the training-data fingerprint (first / last close + bar count), and every hyperparameter. (The old DL4J-version contributor is gone — a PyTorch model simply lives in a different key space.) Any of those changing produces a new key and forces fresh training under a new key.
 
@@ -1151,9 +1152,9 @@ a model whose files no longer match is refused on load. The loader mounts
 `./data/fold-models -> /data/fold-models`.
 
 ```bash
-docker compose exec loader python -m nn.fold_models --list RUN_ID
-docker compose exec loader python -m nn.fold_models --check RUN_ID    # exit 0 same, 1 different, 2 not checkable
-docker compose exec loader python -m nn.fold_models --prune --dry-run
+docker compose exec worker python -m nn.fold_models --list RUN_ID
+docker compose exec worker python -m nn.fold_models --check RUN_ID    # exit 0 same, 1 different, 2 not checkable
+docker compose exec worker python -m nn.fold_models --prune --dry-run
 ```
 
 `--check` loads every kept model, predicts its fold's scored bars again from the feature
@@ -1177,11 +1178,11 @@ curl -X POST "http://localhost:8001/api/walkforward/onnx-check?run=RUN_ID"   # c
 docker compose exec engine ./bin/BackTesting onnx-check --run RUN_ID
 ```
 
-The loader needs `ENGINE_URL` to ask (compose sets `http://engine:8002`); without it the
-run says the check was not asked for. The engine mounts `./data/fold-models` read-only.
-Only the network is exported: the tree engines are their libraries' own models. Runs from
-before 2026-11-23 kept no ONNX copy and read "not checked". The design puts this check in
-a separate Java compute worker; until the stack move (G16) the engine is that Java side.
+The run asks with an `onnx-check` job for the Java engine, and waits for it. If no engine
+takes the job within 20 seconds the run says the check was not made and how to ask again.
+The engine mounts `./data/fold-models` read-only. Only the network is exported: the tree
+engines are their libraries' own models. Runs from before 2026-11-23 kept no ONNX copy and
+read "not checked". The engine is the design's Java compute worker.
 
 ## Storage compression
 
@@ -1280,7 +1281,7 @@ The import fan-out is off by default (so operators who import their own W1/MN1 C
 | `default.slippage.type`          | `percentage`                               | `percentage` or `fixed`                |
 | `default.slippage.value`         | `0.0005`                                   | 5 bps per fill                         |
 
-The Python loader is configured via environment variables (set in `docker-compose.yml` for the `loader` service):
+The Python worker is configured via environment variables (set in `docker-compose.yml` for the `worker` service):
 
 | Env var             | Default                | Notes                                                        |
 |---------------------|------------------------|--------------------------------------------------------------|
@@ -1288,14 +1289,13 @@ The Python loader is configured via environment variables (set in `docker-compos
 | `CSV_ARCHIVE_DIR`   | `data/csv-archive`     | Root for archived CSV slices                                 |
 | `MODELS_DIR`        | `data/models`          | Root for the on-disk model registry                          |
 | `MODEL_KEEP_LAST_N` | `0`                    | NN model retention; `0` disables pruning                     |
-| `ENGINE_URL`        | unset (compose: `http://engine:8002`) | Where a finished walk-forward run asks for [the prediction check](#the-prediction-check) |
 | `FOLD_MODELS_DIR`   | `fold-models` beside `MODELS_DIR` | Root for the models walk-forward folds keep ([Walk-forward fold models](#walk-forward-fold-models)) |
 | `FEEDS_SCHEDULE`    | unset (compose: `18:30`) | New York times of the daily [data feeds](#data-feeds) run, Monday to Friday, comma-separated; unset or `off` for none |
 | `FRED_API_KEY`      | unset                  | FRED API key for the feeds and `fetch_fred_series.py`; compose passes it from `.env`. Without one the keyless graph CSV is used |
-| `NDX_CONSTITUENTS_DIR` | `data/ndx-constituents` | The breadth members' cached closes (mounted into the loader) |
-| `NDX_EARNINGS_DIR` | `data/ndx-earnings` | The members' cached SEC filings for the earnings series (mounted into the loader) |
+| `NDX_CONSTITUENTS_DIR` | `data/ndx-constituents` | The breadth members' cached closes (mounted into the worker) |
+| `NDX_EARNINGS_DIR` | `data/ndx-earnings` | The members' cached SEC filings for the earnings series (mounted into the worker) |
 | `SEC_USER_AGENT`    | unset                  | How the feeds and `build_ndx_earnings.py` name themselves to SEC, e.g. a name and contact address; compose passes it from `.env`. Unset, a generic tool name is sent |
-| `LOADER_URL`        | `http://localhost:8003`| Where the Java CLI reaches the loader — the host-published port, since the CLI runs on your machine. Callers inside compose set `http://loader:8001` explicitly; host `:8001` belongs to the API |
+| `JOBS_TABLE`        | `jobs.jobs`            | The jobs table the worker claims from; the Java engine and the API read the same variable. A test points it at a copy |
 
 ## Strategies
 
@@ -1517,6 +1517,8 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-23-8 | 2026-11-23 22:48 | Claude Code (Claude Fable 5.2) | The backend is Java: the Spring Boot service is the API on port 8001, the engine and the Python worker take jobs and have no port, and the Node API and the loader's port are gone |
+| 2026-11-23-7 | 2026-11-23 20:14 | Claude Code (Claude Fable 5.2) | The Spring Boot service now answers sources, instruments, candles, imports and every route whose work Python does; Node forwards them |
 | 2026-11-23-6 | 2026-11-23 18:12 | Claude Code (Claude Fable 5.2) | G16 step 16.3: the Spring Boot service (`server`, port 8004): health, the jobs API, the list rules; who writes what on a job row |
 | 2026-11-23-5 | 2026-11-23 17:41 | Claude Code (Claude Fable 5.2) | G16 step 16.2: the loader hands all its work to the worker through the jobs table; what happens with the worker down, transient jobs, `UPLOAD_SPOOL_DIR`, `JOBS_INLINE` |
 | 2026-11-23-4 | 2026-11-23 09:56 | Claude Code (Claude Fable 5.2) | The jobs table and the `worker` service (G16 step 16.1): a walk-forward start is a queued job, with cancel; the import row no longer says a file with a check error is refused (G75) |

@@ -123,7 +123,7 @@ python pipeline.py -s AAPL -t M30 --seed 7 --load --force
 ```
 
 Defaults: every `*_daily.csv` in `../../test-data`, at M30 and H1, imported
-under source `synthetic`, API on `:8001`, loader on `:8003`. Standard library
+under source `synthetic`, API on `:8001`. Standard library
 only — it reaches the app over HTTP and never imports its code.
 
 ### What a second run does differently

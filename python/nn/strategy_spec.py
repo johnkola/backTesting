@@ -80,7 +80,7 @@ from nn.feature_store import UNBUILDABLE_TIMEFRAMES, session_of
 from nn.profit import D9_REASON
 
 #: Saved hyperparameter -> walk-forward argument. Mirrors PARAM_SPEC in
-#: web/api/strategies.js; `test_strategy_spec` holds the two together.
+#: the API's StrategyRules.java; `test_strategy_spec` holds the two together.
 RUNNER_ARGS = {
     "lookbackWindow": "lookback",
     "forwardBars": "forward",
@@ -118,7 +118,7 @@ OBJECTIVE_ARGS = {
 TRAINING_SWITCHES = {"taxTrain": "train with tax", "marginTrain": "train with margin"}
 
 #: What a row saved before `objective_json` existed ran with: walkforward.py's
-#: own flag defaults. Mirrors OBJECTIVE_DEFAULTS in web/api/strategies.js;
+#: own flag defaults. Mirrors OBJECTIVE_DEFAULTS in the API's StrategyRules.java;
 #: `test_strategy_spec` holds the two together. Every save since stores every
 #: value, so these only ever speak for old rows. Tax is off for an old row,
 #: which is what it was scored with.
@@ -139,7 +139,7 @@ OBJECTIVE_DEFAULTS: Mapping[str, Any] = MappingProxyType({
     "longThreshold": None,
 })
 
-#: The design's hard rule for Strategy 2 (G5), as web/api/strategies.js holds it.
+#: The design's hard rule for Strategy 2 (G5), as the API's StrategyRules.java holds it.
 MARGIN_CEILING_PCT = 50.0
 
 #: What the runner can execute. MODEL_TYPES is the network's architecture,

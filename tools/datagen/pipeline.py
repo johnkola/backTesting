@@ -313,8 +313,6 @@ def main(argv: list[str] | None = None) -> int:
                    help="backtest each series with this strategy after loading")
 
     p.add_argument("--api", default="http://localhost:8001", help="API origin (default: :8001)")
-    p.add_argument("--loader", default="http://localhost:8003",
-                   help="loader origin, for training (default: :8003)")
     args = p.parse_args(argv)
 
     if not args.input_dir.is_dir():
@@ -366,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
 
             threshold = None
             if args.train:
-                label, detail, threshold = step_train(args.loader, out, symbol, tf, args)
+                label, detail, threshold = step_train(args.api, out, symbol, tf, args)
                 print(f"  train     {label:<7} {detail}")
                 if label != "ok":
                     failures += 1

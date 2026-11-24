@@ -80,7 +80,7 @@ export function vsBuyAndHold(
   return ret - bh
 }
 
-/** Sort keys /api/results accepts. Anything else falls back to `created`. */
+/** Sort keys /api/results accepts. Any other key is refused with a 400. */
 export type ResultSortKey =
   | 'created' | 'instrument' | 'strategy' | 'timeframe' | 'source'
   | 'return' | 'hold' | 'excess' | 'sharpe' | 'drawdown' | 'trades' | 'winrate'
@@ -2020,7 +2020,7 @@ export const api = {
       dir?: 'asc' | 'desc';
     } = {},
     signal?: AbortSignal,
-  ) => getJson<Paginated<ImportRecord>>(`/api/imports?${qs(params)}`, signal),
+  ) => getJson<Paginated<ImportRecord>>(`/api/imports?${qs(sorted(params))}`, signal),
   /** Version history of input files; `available` is false before the schema exists. */
   importFiles: (
     params: { limit?: number, offset?: number, source?: string, instrument?: string,
@@ -2036,7 +2036,7 @@ export const api = {
       sort?: ResultSortKey; dir?: 'asc' | 'desc';
     } = {},
     signal?: AbortSignal,
-  ) => getJson<Paginated<ResultSummary>>(`/api/results?${qs(params)}`, signal),
+  ) => getJson<Paginated<ResultSummary>>(`/api/results?${qs(sorted(params))}`, signal),
   result: (id: string, signal?: AbortSignal) =>
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
   candles: (
@@ -2280,6 +2280,19 @@ export const api = {
       : `${res.status} ${res.statusText}`
     throw new Error(msg)
   },
+}
+
+/**
+ * A list's sort as the Spring Boot service reads it: one `sort` field, with a
+ * leading `-` for descending. The pages keep a key and a direction; a key with
+ * no direction is descending, as the lists have always opened.
+ */
+export function sorted<T extends { sort?: string, dir?: 'asc' | 'desc' }>(
+  params: T,
+): Omit<T, 'dir'> {
+  const { dir, ...rest } = params
+  if (!rest.sort) return rest
+  return { ...rest, sort: `${dir === 'asc' ? '' : '-'}${rest.sort}` }
 }
 
 function qs(params: Record<string, unknown>): string {

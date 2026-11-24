@@ -94,8 +94,8 @@ public class AggregateCommand implements Runnable {
 
         } catch (LoaderClient.LoaderUnavailableException e) {
             System.err.println("Aggregation failed: " + e.getMessage());
-            System.err.println("The loader owns the rollup — start it with "
-                    + "`docker compose up -d loader`, or set LOADER_URL if it runs elsewhere.");
+            System.err.println("The Python worker owns the rollup: start it with "
+                    + "`docker compose up -d worker`.");
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
         } catch (Exception e) {

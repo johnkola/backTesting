@@ -23,6 +23,17 @@ WORKDIR /app
 
 COPY --from=build /build/server/build/libs/backtest-server.jar ./
 
-ENV PORT=8004
-EXPOSE 8004
+# The Markdown the Docs tab shows, at the paths docs/DocRegistry names them by.
+# In compose these are bind-mounted over, so an edit shows without a rebuild.
+COPY README.md docs/README.md
+COPY docs/readonly-doc/backTesting-10-Getting-Started.md docs/docs/readonly-doc/backTesting-10-Getting-Started.md
+COPY docs/readonly-doc/backTesting-01-Requirements.md docs/docs/readonly-doc/backTesting-01-Requirements.md
+COPY docs/readonly-doc/backTesting-02-Features.md docs/docs/readonly-doc/backTesting-02-Features.md
+COPY docs/readonly-doc/backTesting-03-Design-Notes.md docs/docs/readonly-doc/backTesting-03-Design-Notes.md
+COPY docs/readonly-doc/backTesting-04-Architecture.md docs/docs/readonly-doc/backTesting-04-Architecture.md
+ENV DOCS_DIR=/app/docs
+ENV MODELS_DIR=/data/models
+
+ENV PORT=8001
+EXPOSE 8001
 CMD ["java", "-jar", "backtest-server.jar"]

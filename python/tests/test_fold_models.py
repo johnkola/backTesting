@@ -206,23 +206,19 @@ def test_a_failed_export_is_said_and_the_fold_still_keeps_its_model(tmp_path, mo
 
 
 class _Engine:
-    """A stand-in for the engine's onnx-check route."""
+    """A stand-in for the engine answering the onnx-check job."""
 
     def __init__(self, body=None, fail=None):
         self.body, self.fail, self.asked = body, fail, []
 
-    def __call__(self, req, timeout=None):
-        import io
-        import json
-        import urllib.error
-        self.asked.append((req.get_method(), req.full_url))
+    def __call__(self, run_id):
+        self.asked.append(run_id)
         if self.fail:
-            raise urllib.error.URLError(self.fail)
-        return io.BytesIO(json.dumps(self.body).encode())
+            raise RuntimeError(self.fail)
+        return self.body
 
 
-def test_a_finished_run_asks_the_engine_and_prints_what_it_found(monkeypatch):
-    import urllib.request
+def test_a_finished_run_asks_the_engine_and_prints_what_it_found():
     engine = _Engine({"runId": 9, "runtime": "onnxruntime 1.32.0", "checked": 2, "agreed": 1,
                       "folds": [
                           {"fold": 1, "bars": 250, "maxDiff": 3e-7, "tolerance": 1e-5,
@@ -231,9 +227,8 @@ def test_a_finished_run_asks_the_engine_and_prints_what_it_found(monkeypatch):
                            "agreed": False, "problem": None},
                           {"fold": 3, "bars": 0, "maxDiff": None, "tolerance": 0,
                            "agreed": False, "problem": "the fold was not exported to ONNX"}]})
-    monkeypatch.setattr(urllib.request, "urlopen", engine)
-    lines = wf.onnx_check_lines(9, "http://engine:8002/")
-    assert engine.asked == [("POST", "http://engine:8002/api/walkforward/onnx-check?run=9")]
+    lines = wf.onnx_check_lines(9, engine)
+    assert engine.asked == [9]
     assert lines == [
         "onnx check   fold 2: WARNING, ONNX Runtime differs from PyTorch by 0.02 on 250 bars "
         "(tolerance 1e-05)",
@@ -243,12 +238,52 @@ def test_a_finished_run_asks_the_engine_and_prints_what_it_found(monkeypatch):
     ]
 
 
-def test_an_engine_that_cannot_be_reached_is_said_and_never_fails_the_run(monkeypatch):
-    import urllib.request
-    monkeypatch.setattr(urllib.request, "urlopen", _Engine(fail="connection refused"))
-    [line] = wf.onnx_check_lines(9, "http://engine:8002")
-    assert line.startswith("onnx check   NOT CHECKED: the engine did not answer")
+def test_an_engine_that_does_not_answer_is_said_and_never_fails_the_run():
+    [line] = wf.onnx_check_lines(9, _Engine(fail="no engine took job 4 in 20 s"))
+    assert line.startswith("onnx check   NOT CHECKED: the engine did not answer "
+                           "(no engine took job 4 in 20 s)")
     assert "POST /api/walkforward/onnx-check?run=9" in line
-    monkeypatch.delenv("ENGINE_URL", raising=False)
+    # Where jobs run in place there is no engine to ask, and nothing is queued.
     [line] = wf.onnx_check_lines(9)
-    assert line.startswith("onnx check   not asked: ENGINE_URL is not set")
+    assert line.startswith("onnx check   not asked: jobs run in place here")
+
+
+def test_the_engine_is_asked_with_a_java_compute_job_and_its_refusal_is_the_reason(monkeypatch):
+    from jobs import calls, queue
+
+    rows = iter([{"status": "queued"}, {"status": "running"},
+                 {"status": "done", "error": None,
+                  "result": {"status": 200, "body": {"folds": [], "agreed": 0}}}])
+    asked = []
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(calls, "_connect", _Conn)
+    monkeypatch.setattr(queue, "enqueue", lambda conn, job_type, inputs, engine: (
+        asked.append((job_type, engine, inputs)) or {"id": 4}))
+    monkeypatch.setattr(queue, "get", lambda conn, job_id: next(rows))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    assert wf.ask_engine_for_onnx_check(9) == {"folds": [], "agreed": 0}
+    assert asked == [("onnx-check", "java-compute", {"request": {
+        "method": "POST", "path": "/api/walkforward/onnx-check",
+        "query": {"run": "9"}, "body": None}})]
+
+    # A job nobody takes is cancelled and said, not waited on for the whole timeout.
+    cancelled = []
+    monkeypatch.setattr(queue, "get", lambda conn, job_id: {"status": "queued"})
+    monkeypatch.setattr(queue, "request_cancel", lambda conn, job_id: cancelled.append(job_id))
+    with pytest.raises(RuntimeError, match="no engine took job 4"):
+        wf.ask_engine_for_onnx_check(9, claim_s=0)
+    assert cancelled == [4]
+
+    monkeypatch.setattr(queue, "get", lambda conn, job_id: {
+        "status": "done", "error": None,
+        "result": {"status": 404, "body": {"error": "no walk-forward run with id 9"}}})
+    with pytest.raises(RuntimeError, match="404: no walk-forward run with id 9"):
+        wf.ask_engine_for_onnx_check(9)
+

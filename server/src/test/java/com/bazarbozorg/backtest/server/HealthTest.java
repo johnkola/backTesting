@@ -43,14 +43,20 @@ class HealthTest extends ServiceTest {
         assertFalse(worker.get("ok").getAsBoolean());
         assertTrue(worker.get("detail").getAsString().contains("no worker took it"),
                 worker.get("detail").getAsString());
+        assertFalse(service(r, "engine").get("ok").getAsBoolean());
         assertEquals("ping|true|true", scalar("SELECT type || '|' || transient || '|' || cancel_requested FROM "
-                + TABLE), "asked with a transient job, cancelled when nobody answered");
+                + TABLE + " WHERE type = 'ping'"), "asked with a transient job, cancelled when nobody answered");
+        assertEquals("java-compute", scalar("SELECT engine FROM " + TABLE + " WHERE type = 'engine-health'"));
     }
 
     @Test
     @Order(2)
     void withAWorkerAnsweringItIsOkAndTheAnswerIsKeptForAWhile() throws Exception {
-        var w = JobCallsTest.worker("done", "{\"pong\": true}", null);
+        // One answer serves both: the Python worker's pong and the engine's 200.
+        String answer = "{\"pong\": true, \"status\": 200, \"body\": {\"status\": \"ok\"}}";
+        // One after the other: two at once could both take the same job.
+        var w = JobCallsTest.worker("done", answer, null)
+                .thenCompose(first -> JobCallsTest.worker("done", answer, null));
         Reply r = get("/api/health");
         w.join();
         assertEquals("ok", r.at("status").getAsString());
@@ -59,6 +65,7 @@ class HealthTest extends ServiceTest {
         assertEquals("answered as test-worker", service(r, "worker").get("detail").getAsString());
 
         assertTrue(get("/api/health").at("ok").getAsBoolean());
-        assertEquals("1", scalar("SELECT count(*) FROM " + TABLE), "the second call asked nobody");
+        assertEquals("answered as test-worker", service(r, "engine").get("detail").getAsString());
+        assertEquals("2", scalar("SELECT count(*) FROM " + TABLE), "the second call asked nobody");
     }
 }

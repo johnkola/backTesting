@@ -1,10 +1,10 @@
 # Every test suite in the repo, on every push and pull request (DESIGN-GAPS G15).
 #
-# Four jobs, one per stack, so a failure names the stack that broke:
-#   python  loader + nn, against a real TimescaleDB (the round-trip tests are
-#           the ones a fake cursor cannot check)
-#   java    the engine, against its own TimescaleDB
-#   api     the Node layer: node --test and ESLint
+# Three jobs, one per stack, so a failure names the stack that broke:
+#   python  the Python worker (loader + nn + jobs), against a real TimescaleDB
+#           (the round-trip tests are the ones a fake cursor cannot check)
+#   java    the engine and the API (the Spring Boot service), against their
+#           own TimescaleDB
 #   client  the React client: ESLint, tsc + vite build, Vitest
 #
 # The database starts empty. schema.sql is applied with psql for the Python
@@ -116,25 +116,6 @@ jobs:
               a, b, c, d = map(int, m.groups()); t += a; s += b; f += c; e += d
           print(f"tests {t}  skipped {s}  failures {f}  errors {e}")
           EOF
-
-  api:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web/api
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/api/package.json
-      - run: npm install --no-audit --no-fund
-      - run: npm run lint
-      # Some tests read files elsewhere in the checkout (the docs registry
-      # against the Dockerfile, the Postman collection), so run from web/api
-      # inside the full checkout.
-      - run: npm test
 
   client:
     runs-on: ubuntu-latest

@@ -24,6 +24,13 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     runtimeOnly 'org.postgresql:postgresql'
+    // The docs are served as rendered HTML (docs/DocsController): Markdown as
+    // GitHub reads it, with tables, strikethrough, task lists and bare links.
+    implementation 'org.commonmark:commonmark:0.24.0'
+    implementation 'org.commonmark:commonmark-ext-gfm-tables:0.24.0'
+    implementation 'org.commonmark:commonmark-ext-gfm-strikethrough:0.24.0'
+    implementation 'org.commonmark:commonmark-ext-task-list-items:0.24.0'
+    implementation 'org.commonmark:commonmark-ext-autolink:0.24.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     // The tests read the service's JSON, and the Postman collection, as a

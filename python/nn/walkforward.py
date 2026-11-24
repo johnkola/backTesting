@@ -1136,29 +1136,74 @@ def margin_hash(cur, dates: list[date], source: str) -> str:
         (d, (psq.opens.get(d), psq.closes.get(d), rate(d))) for d in dates)
 
 
-def onnx_check_lines(run_id: int, engine_url: str | None = None, timeout: float = 300.0,
-                     ) -> list[str]:
+#: How long the engine has to take the prediction-check job before the run
+#: stops waiting for it: an engine that is not running would hold a finished
+#: run for the whole timeout otherwise.
+ONNX_CLAIM_S = 20.0
+
+
+def ask_engine_for_onnx_check(run_id: int, timeout: float = 300.0,
+                              claim_s: float = ONNX_CLAIM_S) -> dict:
+    """The engine's answer to `POST /api/walkforward/onnx-check?run=N`, asked
+    the only way the Java worker is reached: a `java-compute` job (Architecture
+    §6). Raises with the reason when the engine does not take it, does not
+    finish it, or refuses it."""
+    import time
+
+    from jobs import calls, queue
+
+    inputs = {"request": {"method": "POST", "path": "/api/walkforward/onnx-check",
+                          "query": {"run": str(run_id)}, "body": None}}
+    with calls._connect() as conn:
+        job = queue.enqueue(conn, "onnx-check", inputs, engine="java-compute")
+    started = time.monotonic()
+    while True:
+        with calls._connect() as conn:
+            row = queue.get(conn, job["id"])
+        if row is None:
+            raise RuntimeError(f"job {job['id']} is gone from the jobs table")
+        if row["status"] in ("done", "failed", "cancelled"):
+            break
+        waited = time.monotonic() - started
+        if (row["status"] == "queued" and waited >= claim_s) or waited >= timeout:
+            with calls._connect() as conn:
+                queue.request_cancel(conn, job["id"])
+            raise RuntimeError(
+                f"no engine took job {job['id']} in {claim_s:g} s" if row["status"] == "queued"
+                else f"job {job['id']} did not finish in {timeout:g} s")
+        time.sleep(0.25)
+    result = row["result"] or {}
+    if row["status"] != "done":
+        raise RuntimeError(f"job {job['id']} {row['status']}: {row['error']}")
+    if result.get("status") != 200:
+        raise RuntimeError(f"{result.get('status')}: {(result.get('body') or {}).get('error')}")
+    return result.get("body") or {}
+
+
+def onnx_check_lines(run_id: int, ask=None) -> list[str]:
     """Ask the Java side for the prediction check of a finished run (R62, G77)
     and return what to print.
 
     Each fold's network was exported to ONNX as it was kept; the engine runs
     it in ONNX Runtime on the fold's scored inputs and compares with the output
     stored here. A fold that differs is a WARNING line. Nothing this function
-    meets fails the run: an engine that cannot be reached is said, and the
-    check can be asked for again (`POST /api/walkforward/onnx-check?run=N`)."""
-    import urllib.error
-    import urllib.request
+    meets fails the run: an engine that does not answer is said, and the
+    check can be asked for again (`POST /api/walkforward/onnx-check?run=N`).
 
-    base = (engine_url if engine_url is not None else os.environ.get("ENGINE_URL", "")).rstrip("/")
+    `ask` is how the engine is asked (`ask_engine_for_onnx_check`, a job).
+    Where jobs run in place (`JOBS_INLINE=1`, the tests) there is no engine to
+    ask, and the line says so."""
     again = f"POST /api/walkforward/onnx-check?run={run_id}"
-    if not base:
-        return [f"onnx check   not asked: ENGINE_URL is not set. Ask the engine with {again}"]
+    if ask is None:
+        from jobs import calls
+
+        if calls.inline():
+            return [f"onnx check   not asked: jobs run in place here (JOBS_INLINE). "
+                    f"Ask the engine with {again}"]
+        ask = ask_engine_for_onnx_check
     try:
-        req = urllib.request.Request(f"{base}/api/walkforward/onnx-check?run={run_id}",
-                                     data=b"", method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - our own engine
-            body = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+        body = ask(run_id)
+    except Exception as exc:  # noqa: BLE001 - whatever went wrong, the run stands
         return [f"onnx check   NOT CHECKED: the engine did not answer ({exc}). "
                 f"Ask again with {again}"]
     folds = body.get("folds") or []
