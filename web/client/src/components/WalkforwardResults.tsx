@@ -52,7 +52,7 @@ export default function WalkforwardResults({ timeframe }: { timeframe: string })
       {!data && !error && <span className="loading loading-spinner" />}
       {data && (
         <div className="overflow-x-auto bg-base-200 rounded-box">
-          <table className="table table-sm">
+          <table className="table table-sm [&_td]:px-2 [&_th]:px-2">
             <thead>
               <tr>
                 <th></th>
@@ -61,8 +61,8 @@ export default function WalkforwardResults({ timeframe }: { timeframe: string })
                 <th>Series</th>
                 <th>Training window</th>
                 <th className="text-right">Features</th>
-                <th className="text-right">Folds ahead</th>
-                <th className="text-right">Excess a fold</th>
+                <th className="text-right">Ahead</th>
+                <th className="text-right" title="Mean excess over holding, a fold">Excess</th>
                 <th className="text-right">Return</th>
                 <th className="text-right">Buy &amp; hold</th>
                 <th className="text-right">Sharpe</th>
@@ -111,21 +111,24 @@ export default function WalkforwardResults({ timeframe }: { timeframe: string })
                     <td className="text-right tabular-nums">{num(r.meanStratSharpe)}</td>
                     <td className="text-right tabular-nums">{num(r.worstStratDrawdown)}</td>
                     <td>
-                      <span className={tipClass} data-tip={verdict.detail}>
-                        <span className={`badge badge-sm cursor-help ${
-                          verdict.state === 'passed' ? 'badge-success'
-                            : verdict.state === 'failed' ? 'badge-warning' : 'badge-ghost'}`}
-                        >
-                          {verdict.state === 'passed' ? 'beat hold'
-                            : verdict.state === 'failed' ? 'did not beat hold' : 'undecided'}
+                      {/* One mark a line, none wrapped: a badge broken over two lines is clipped. */}
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={tipClass} data-tip={verdict.detail}>
+                          <span className={`badge badge-sm whitespace-nowrap cursor-help ${
+                            verdict.state === 'passed' ? 'badge-success'
+                              : verdict.state === 'failed' ? 'badge-warning' : 'badge-ghost'}`}
+                          >
+                            {verdict.state === 'passed' ? 'beat hold'
+                              : verdict.state === 'failed' ? 'did not beat hold' : 'undecided'}
+                          </span>
                         </span>
-                      </span>
-                      {naive && (
-                        <span className={`${tipClass} ml-1`} data-tip={naive}>
-                          <span className="badge badge-sm badge-error cursor-help">below naive</span>
-                        </span>
-                      )}
-                      {r.inProgress && <span className="badge badge-sm badge-info ml-1">running</span>}
+                        {naive && (
+                          <span className={tipClass} data-tip={naive}>
+                            <span className="badge badge-sm badge-error whitespace-nowrap cursor-help">below naive</span>
+                          </span>
+                        )}
+                        {r.inProgress && <span className="badge badge-sm badge-info">running</span>}
+                      </div>
                     </td>
                   </tr>
                 )

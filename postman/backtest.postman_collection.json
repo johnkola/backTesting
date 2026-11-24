@@ -511,13 +511,11 @@
                   "    pm.response.to.have.status(422);",
                   "});",
                   "",
-                  "pm.test('names every missing field', function () {",
-                  "    // The loader's own schema validation, reached through the proxy,",
-                  "    // which is what this request really proves is wired.",
+                  "pm.test('says the file is missing', function () {",
+                  "    // The API refuses an upload with no file itself; the rest of the form",
+                  "    // is checked by the Python worker once there is a file to import.",
                   "    const d = pm.response.json();",
-                  "    pm.expect(d).to.have.property('detail');",
-                  "    const missing = d.detail.map(e => e.loc[e.loc.length - 1]);",
-                  "    pm.expect(missing).to.include.members(['file', 'type', 'timeframe']);",
+                  "    pm.expect(d.error).to.include('file is required');",
                   "});"
                 ]
               }
@@ -1566,7 +1564,9 @@
                   "    for (const r of pm.response.json().items) {",
                   "        pm.expect(r).to.include.keys('meanAccuracy', 'meanBaselineAcc', 'beatsNaive');",
                   "        if (r.meanAccuracy !== null && r.meanBaselineAcc !== null) {",
-                  "            pm.expect(r.beatsNaive).to.eql(r.meanAccuracy > r.meanBaselineAcc);",
+                  "            // A return forecast is scored by its error, so lower beats the baseline (G49).",
+                  "            pm.expect(r.beatsNaive).to.eql(r.target === 'return'",
+                  "                ? r.meanAccuracy < r.meanBaselineAcc : r.meanAccuracy > r.meanBaselineAcc);",
                   "        }",
                   "    }",
                   "});",
@@ -1580,7 +1580,12 @@
                   "});",
                   "",
                   "pm.test('each run says what it predicted (G49)', function () {",
-                  "    for (const r of pm.response.json().items) {\n        pm.expect(['class', 'direction', 'return']).to.include(r.target);\n        // `label` is the run's name; the target's label has its own key.\n        pm.expect(r.label).to.be.a('string');\n        pm.expect(r).to.have.property('labelSpec');\n    }",
+                  "    for (const r of pm.response.json().items) {",
+                  "        pm.expect(['class', 'direction', 'return']).to.include(r.target);",
+                  "        // `label` is the run's name; the target's label has its own key.",
+                  "        pm.expect(r.label).to.be.a('string');",
+                  "        pm.expect(r).to.have.property('labelSpec');",
+                  "    }",
                   "});"
                 ]
               }
@@ -2730,7 +2735,7 @@
                   "    pm.expect(d).to.include.keys(",
                   "        'paramSpec', 'modelTypes', 'validationSchemes', 'windows',",
                   "        'requiredWindows', 'unrunnableTimeframes');",
-                  "    pm.expect(Object.keys(d.paramSpec)).to.have.lengthOf(12);",
+                  "    pm.expect(Object.keys(d.paramSpec)).to.have.lengthOf(13);",
                   "    pm.expect(d.requiredWindows).to.eql(['train', 'validation', 'test']);",
                   "    // G54: the runner's own lists, read from the loader, never kept in Node.",
                   "    pm.expect(d.validationSchemes).to.eql(['walkforward']);",
@@ -3121,7 +3126,7 @@
                   "            'name', 'source', 'cadence', 'scope', 'status', 'cost', 'units',",
                   "            'codeVersion', 'method', 'width', 'rangeStart', 'rangeEnd');",
                   "        pm.expect(f.scope).to.be.oneOf(['instrument', 'market']);",
-                  "        pm.expect(f.status).to.be.oneOf(['active', 'undecided', 'blocked']);",
+                  "        pm.expect(f.status).to.be.oneOf(['active', 'selectable', 'data-only', 'undecided', 'blocked']);",
                   "        pm.expect(f.cost).to.be.oneOf(['free', 'paid']);",
                   "        pm.expect(f.units).to.be.oneOf(['percent', 'level', 'count', 'ratio']);",
                   "    }",
@@ -3865,7 +3870,8 @@
                   "    for (const k of ['data', 'features', 'normalization', 'split', 'training', 'backtest']) {",
                   "        pm.expect(d).to.have.property(k);",
                   "        pm.expect(states).to.include(d[k].state);",
-                  "        pm.expect(d[k].reasons).to.be.an('array');",
+                  "        // The backtest stage lists its results, each with its own reasons.",
+                  "        if (k !== 'backtest') pm.expect(d[k].reasons).to.be.an('array');",
                   "    }",
                   "});",
                   "",
@@ -4355,6 +4361,932 @@
                   "});"
                 ]
               }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Life cycles",
+      "description": "Each thing the API can create, taken through its whole life on the running stack: made, read back, removed, and checked gone. Everything here is this folder's own (a result with capital 12345, the strategy `postman-lifecycle`, the series `ZZPOSTMAN` from source `postman`) and is removed by the folder. Run from the repository root, so the upload finds its file.",
+      "item": [
+        {
+          "name": "A backtest result",
+          "item": [
+            {
+              "name": "Run a backtest to delete",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/run",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "run"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"strategy\": \"sma-crossover\",\n  \"instrument\": \"{{instrument}}\",\n  \"timeframe\": \"{{timeframe}}\",\n  \"source\": \"{{source}}\",\n  \"capital\": 12345\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Creates the result this folder then deletes."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('the run is the one asked for', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.strategyName).to.eql('sma-crossover');",
+                      "    pm.expect(d.initialCapital).to.eql(12345);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Find the result it stored",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/results?limit=1&sort=-id&strategy=sma-crossover&instrument={{instrument}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "results"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "sort",
+                      "value": "-id"
+                    },
+                    {
+                      "key": "strategy",
+                      "value": "sma-crossover"
+                    },
+                    {
+                      "key": "instrument",
+                      "value": "{{instrument}}"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('the newest result is that run', function () {",
+                      "    const r = pm.response.json().items[0];",
+                      "    pm.expect(r.initialCapital).to.eql(12345);",
+                      "    pm.expect(r.strategyKind).to.eql('benchmark');",
+                      "    pm.collectionVariables.set('lifeResultId', String(r.id));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Read the stored result",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/results/{{lifeResultId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "results",
+                    "{{lifeResultId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('it carries its trades, its curve and its settings', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.id).to.eql(pm.collectionVariables.get('lifeResultId'));",
+                      "    pm.expect(d.result.equityHistory).to.be.an('array').that.is.not.empty;",
+                      "    pm.expect(d.holdEquity).to.have.lengthOf(d.result.equityHistory.length);",
+                      "    pm.expect(d.settings).to.be.an('object');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete the result",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/results/{{lifeResultId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "results",
+                    "{{lifeResultId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('says it is deleted', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.status).to.eql('deleted');",
+                      "    pm.expect(String(d.id)).to.eql(pm.collectionVariables.get('lifeResultId'));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The deleted result is gone",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/results/{{lifeResultId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "results",
+                    "{{lifeResultId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 404', function () {",
+                      "    pm.response.to.have.status(404);",
+                      "});",
+                      "",
+                      "pm.test('the error shape is {error}', function () {",
+                      "    pm.expect(pm.response.json().error).to.include('not found');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The delete is in the jobs list",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/jobs?limit=1&sort=-id&type=result-delete",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "jobs"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    },
+                    {
+                      "key": "sort",
+                      "value": "-id"
+                    },
+                    {
+                      "key": "type",
+                      "value": "result-delete"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('a done java-compute job asked for by the API', function () {",
+                      "    const j = pm.response.json().items[0];",
+                      "    pm.expect(j.engine).to.eql('java-compute');",
+                      "    pm.expect(j.status).to.eql('done');",
+                      "    pm.expect(j.requestedBy).to.eql('server');",
+                      "    pm.collectionVariables.set('lifeJobId', String(j.id));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A job that is over cannot be cancelled",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/jobs/{{lifeJobId}}/cancel",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "jobs",
+                    "{{lifeJobId}}",
+                    "cancel"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 409', function () {",
+                      "    pm.response.to.have.status(409);",
+                      "});",
+                      "",
+                      "pm.test('says why', function () {",
+                      "    pm.expect(pm.response.json().error).to.be.a('string');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "A saved strategy",
+          "item": [
+            {
+              "name": "Save a strategy to remove",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/strategies/saved",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "strategies",
+                    "saved"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"postman-lifecycle\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [\n    \"price_close\",\n    \"vxn_close\"\n  ],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2016-01-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 201', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "pm.test('a first version', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.name).to.eql('postman-lifecycle');",
+                      "    pm.collectionVariables.set('lifeStrategyId', String(d.id));",
+                      "    pm.collectionVariables.set('lifeStrategyVersion', String(d.version));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Read it back",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/strategies/saved/{{lifeStrategyId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "strategies",
+                    "saved",
+                    "{{lifeStrategyId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('what was saved, with every objective default and its engines', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.features).to.eql(['price_close', 'vxn_close']);",
+                      "    pm.expect(d.objective.loss).to.eql('ce');",
+                      "    pm.expect(d.engines.mlp.enabled).to.be.true;",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Save it again: a new version, nothing overwritten",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/strategies/saved",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "strategies",
+                    "saved"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"postman-lifecycle\",\n  \"instrument\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"modelType\": \"mlp\",\n  \"validationScheme\": \"walkforward\",\n  \"features\": [\n    \"price_close\",\n    \"vxn_close\"\n  ],\n  \"windows\": {\n    \"train\": {\n      \"from\": \"2003-01-01\",\n      \"to\": \"2015-12-31\"\n    },\n    \"validation\": {\n      \"from\": \"2016-01-01\",\n      \"to\": \"2021-12-31\"\n    },\n    \"test\": {\n      \"from\": \"2022-01-01\",\n      \"to\": \"2026-06-30\"\n    }\n  },\n  \"label\": {\n    \"kind\": \"forward_return_3class\",\n    \"horizonBars\": 5\n  },\n  \"hyperparams\": {\n    \"lookbackWindow\": 20,\n    \"numEpochs\": 50\n  },\n  \"notes\": \"written by the Postman collection\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 201', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "pm.test('the version went up by one', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.version).to.eql(Number(pm.collectionVariables.get('lifeStrategyVersion')) + 1);",
+                      "    pm.expect(String(d.id)).to.not.eql(pm.collectionVariables.get('lifeStrategyId'));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Both versions are listed, newest first",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/strategies/saved?name=postman-lifecycle",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "strategies",
+                    "saved"
+                  ],
+                  "query": [
+                    {
+                      "key": "name",
+                      "value": "postman-lifecycle"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('two versions', function () {",
+                      "    const items = pm.response.json().items;",
+                      "    pm.expect(items).to.have.lengthOf(2);",
+                      "    pm.expect(items[0].version).to.be.above(items[1].version);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Remove every version of it",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/strategies/saved/{{lifeStrategyId}}?all=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "strategies",
+                    "saved",
+                    "{{lifeStrategyId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "all",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('both versions went', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.status).to.eql('deleted');",
+                      "    pm.expect(d.versionsDeleted).to.eql(2);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The removed strategy is gone",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/strategies/saved/{{lifeStrategyId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "strategies",
+                    "saved",
+                    "{{lifeStrategyId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 404', function () {",
+                      "    pm.response.to.have.status(404);",
+                      "});",
+                      "",
+                      "pm.test('the error shape is {error}', function () {",
+                      "    pm.expect(pm.response.json().error).to.include('no strategy');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "An import",
+          "item": [
+            {
+              "name": "Upload a three-bar CSV",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/imports",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "imports"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": "postman/fixtures/ZZPOSTMAN_daily.csv"
+                    },
+                    {
+                      "key": "symbol",
+                      "value": "ZZPOSTMAN",
+                      "type": "text"
+                    },
+                    {
+                      "key": "type",
+                      "value": "STOCK",
+                      "type": "text"
+                    },
+                    {
+                      "key": "timeframe",
+                      "value": "D1",
+                      "type": "text"
+                    },
+                    {
+                      "key": "source",
+                      "value": "postman",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "description": "Run from the repository root: the file is postman/fixtures/ZZPOSTMAN_daily.csv. Its own symbol and source, removed again below."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('three bars went in', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.status).to.eql('completed');",
+                      "    pm.expect(JSON.stringify(d)).to.include('ZZPOSTMAN');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The import is in the log",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/imports?instrument=ZZPOSTMAN&source=postman&limit=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "imports"
+                  ],
+                  "query": [
+                    {
+                      "key": "instrument",
+                      "value": "ZZPOSTMAN"
+                    },
+                    {
+                      "key": "source",
+                      "value": "postman"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('one slice of three rows', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.total).to.eql(1);",
+                      "    pm.expect(d.items[0].rowCount).to.eql(3);",
+                      "    pm.collectionVariables.set('lifeImportId', String(d.items[0].id));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Its bars are stored",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/candles?instrument=ZZPOSTMAN&source=postman&timeframe=D1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "candles"
+                  ],
+                  "query": [
+                    {
+                      "key": "instrument",
+                      "value": "ZZPOSTMAN"
+                    },
+                    {
+                      "key": "source",
+                      "value": "postman"
+                    },
+                    {
+                      "key": "timeframe",
+                      "value": "D1"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('three candles', function () {",
+                      "    pm.expect(pm.response.json().items).to.have.lengthOf(3);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ask what an undo would remove",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/imports/{{lifeImportId}}?dry_run=true",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "imports",
+                    "{{lifeImportId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "dry_run",
+                      "value": "true"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('a dry run: three candles, nothing written', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.status).to.eql('dry_run');",
+                      "    pm.expect(d.candlesWouldDelete).to.eql(3);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Undo the import",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/imports/{{lifeImportId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "imports",
+                    "{{lifeImportId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('the bars and the log row went', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.status).to.not.eql('dry_run');",
+                      "    pm.expect(JSON.stringify(d)).to.include('3');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The import is gone from the log",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/imports?instrument=ZZPOSTMAN&source=postman",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "imports"
+                  ],
+                  "query": [
+                    {
+                      "key": "instrument",
+                      "value": "ZZPOSTMAN"
+                    },
+                    {
+                      "key": "source",
+                      "value": "postman"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('no slice left', function () {",
+                      "    pm.expect(pm.response.json().total).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Its bars are gone",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/candles?instrument=ZZPOSTMAN&source=postman&timeframe=D1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "candles"
+                  ],
+                  "query": [
+                    {
+                      "key": "instrument",
+                      "value": "ZZPOSTMAN"
+                    },
+                    {
+                      "key": "source",
+                      "value": "postman"
+                    },
+                    {
+                      "key": "timeframe",
+                      "value": "D1"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('no candles left', function () {",
+                      "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                      "    if (pm.response.code === 200) pm.expect(pm.response.json().items).to.have.lengthOf(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
             }
           ]
         }

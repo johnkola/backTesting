@@ -90,7 +90,12 @@ public final class PythonCalls {
         JsonObject result = ended.result() == null
                 ? new JsonObject() : GSON.fromJson(ended.result(), JsonObject.class);
         int status = result.has("status") ? result.get("status").getAsInt() : 200;
-        return new Answer(status, result.get("body"));
+        JsonElement answer = result.get("body");
+        // A body stored as text keeps its key order through jsonb (`encoded`).
+        if (result.has("encoded") && answer != null && answer.isJsonPrimitive()) {
+            answer = GSON.fromJson(answer.getAsString(), JsonElement.class);
+        }
+        return new Answer(status, answer);
     }
 
     private static JobQueue.Job await(JobQueue queue, JobQueue.Job job, String type,

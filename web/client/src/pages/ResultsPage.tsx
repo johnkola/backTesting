@@ -12,13 +12,11 @@ import WalkforwardResults from '../components/WalkforwardResults'
 import { tipClass } from '../components/FieldLabel'
 import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 import { useTimeframe } from '../lib/useTimeframe'
+import { grouped, percent } from '../lib/numbers'
 
 const LIMIT = 25
 
-function pct(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return '—'
-  return `${n.toFixed(2)}%`
-}
+const pct = percent
 
 /**
  * Filters live in the URL, not in component state.
@@ -112,13 +110,15 @@ export default function ResultsPage() {
       {data && (
         <>
           <div className="overflow-x-auto bg-base-200 rounded-box">
-            <table className="table table-sm">
+            {/* Fourteen columns in the page's width: tighter cells, a short
+                date, and the marks under the return, not beside it. */}
+            <table className="table table-sm [&_td]:px-2 [&_th]:px-2">
               <thead>
                 <tr>
                   <th>Created</th>
                   <th>Strategy</th>
                   <th>Instrument</th>
-                  <th>Timeframe</th>
+                  <th title="Timeframe">TF</th>
                   <th>Source</th>
                   <th className="text-right">Return</th>
                   <th className="text-right">Buy &amp; hold</th>
@@ -137,12 +137,14 @@ export default function ResultsPage() {
                   const retClass = ret > 0 ? 'text-success' : ret < 0 ? 'text-error' : ''
                   return (
                     <tr key={r.id} className="hover:bg-base-300">
-                      <td className="whitespace-nowrap">{new Date(r.createdAt).toLocaleString()}</td>
-                      <td className="font-mono">
+                      <td className="whitespace-nowrap tabular-nums" title={new Date(r.createdAt).toLocaleString()}>
+                        {shortDateTime(r.createdAt)}
+                      </td>
+                      <td className="font-mono whitespace-nowrap">
                         {r.strategyName}
                         {isBenchmark(r.strategyKind) && (
                           <span
-                            className={`${tipClass} ml-2`}
+                            className={`${tipClass} block`}
                             data-tip="A fixed indicator rule kept for comparison, not a strategy under test."
                           >
                             <span className="badge badge-neutral badge-sm font-sans cursor-help">
@@ -156,34 +158,36 @@ export default function ResultsPage() {
                       <td className="font-mono">{r.dataSource}</td>
                       <td className={`text-right tabular-nums ${retClass}`}>
                         {pct(r.totalReturnPct)}
-                        {sampleOf(r) === 'in' && (
-                          <span
-                            className={`badge badge-xs badge-error ml-1 ${tipClass}`}
-                            data-tip={sampleNote(r) ?? ''}
-                          >
-                            in-sample
-                          </span>
-                        )}
-                        {taxBadge(r.taxRate) && (
-                          <span className="badge badge-xs badge-ghost ml-1">{taxBadge(r.taxRate)}</span>
-                        )}
-                        {testWindowMark(r) && (
-                          <span
-                            className={`badge badge-xs ml-1 ${testWindowMark(r) === 'reused'
-                              ? 'badge-error' : 'badge-warning'} ${tipClass}`}
-                            data-tip={testWindowNote(r) ?? ''}
-                          >
-                            {testWindowMark(r) === 'reused' ? 'test window reused' : 'test window'}
-                          </span>
-                        )}
-                        {sampleOf(r) === 'unknown' && (
-                          <span
-                            className={`badge badge-xs badge-ghost ml-1 ${tipClass}`}
-                            data-tip={sampleNote(r) ?? ''}
-                          >
-                            sample?
-                          </span>
-                        )}
+                        <div className="flex flex-wrap justify-end gap-1 empty:hidden">
+                          {sampleOf(r) === 'in' && (
+                            <span
+                              className={`badge badge-xs whitespace-nowrap badge-error ${tipClass}`}
+                              data-tip={sampleNote(r) ?? ''}
+                            >
+                              in-sample
+                            </span>
+                          )}
+                          {taxBadge(r.taxRate) && (
+                            <span className="badge badge-xs whitespace-nowrap badge-ghost">{taxBadge(r.taxRate)}</span>
+                          )}
+                          {testWindowMark(r) && (
+                            <span
+                              className={`badge badge-xs whitespace-nowrap ${testWindowMark(r) === 'reused'
+                                ? 'badge-error' : 'badge-warning'} ${tipClass}`}
+                              data-tip={testWindowNote(r) ?? ''}
+                            >
+                              {testWindowMark(r) === 'reused' ? 'test window reused' : 'test window'}
+                            </span>
+                          )}
+                          {sampleOf(r) === 'unknown' && (
+                            <span
+                              className={`badge badge-xs whitespace-nowrap badge-ghost ${tipClass}`}
+                              data-tip={sampleNote(r) ?? ''}
+                            >
+                              sample?
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="text-right tabular-nums text-base-content/70">
                         {pct(r.buyAndHoldReturnPct)}
@@ -207,7 +211,7 @@ export default function ResultsPage() {
                         )}
                       </td>
                       <td>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 whitespace-nowrap">
                           <Link to={`/results/${r.id}`} className="btn btn-xs btn-outline">open</Link>
                           <DeleteResultRowButton
                             id={String(r.id)}
@@ -219,7 +223,7 @@ export default function ResultsPage() {
                   )
                 })}
                 {data.items.length === 0 && (
-                  <tr><td colSpan={12} className="text-center text-base-content/60">No results match.</td></tr>
+                  <tr><td colSpan={14} className="text-center text-base-content/60">No results match.</td></tr>
                 )}
               </tbody>
             </table>
@@ -231,6 +235,14 @@ export default function ResultsPage() {
       <WalkforwardResults timeframe={tf} />
     </section>
   )
+}
+
+/** A stored instant as `2026-11-24 14:03`, local time: short enough for a table cell. */
+function shortDateTime(iso: string): string {
+  const d = new Date(iso)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} `
+    + `${two(d.getHours())}:${two(d.getMinutes())}`
 }
 
 /**
@@ -248,12 +260,14 @@ function VsHold({ result }: { result: ResultSummary }) {
   if (beat === null || diff === null) {
     return <span className="text-base-content/40">—</span>
   }
-  // C8: a rule benchmark's gap is a reference number, shown without a verdict colour.
+  // A rule benchmark's gap is a reference number (C8), so its words stay the
+  // benchmark's; the colour is the same as a model's (the author, 2026-11-24):
+  // green ahead of holding, yellow behind, so the column reads at a glance.
   if (isBenchmark(result.strategyKind)) {
     return (
       <span className={tipClass} data-tip={benchmarkReading(diff)}>
-        <span className="badge badge-sm badge-ghost cursor-help">
-          {diff >= 0 ? '+' : ''}{diff.toFixed(1)}
+        <span className={`badge badge-sm cursor-help ${beat ? 'badge-success' : 'badge-warning'}`}>
+          {diff >= 0 ? '+' : ''}{grouped(diff, 1)}
         </span>
       </span>
     )
@@ -262,11 +276,11 @@ function VsHold({ result }: { result: ResultSummary }) {
     <span
       className={tipClass}
       data-tip={beat
-        ? `Beat buy-and-hold by ${diff.toFixed(1)} points over the same bars.`
-        : `Lost to buy-and-hold by ${Math.abs(diff).toFixed(1)} points. Holding the instrument over the same bars, paying the same costs, would have returned more.`}
+        ? `Beat buy-and-hold by ${grouped(diff, 1)} points over the same bars.`
+        : `Lost to buy-and-hold by ${grouped(Math.abs(diff), 1)} points. Holding the instrument over the same bars, paying the same costs, would have returned more.`}
     >
       <span className={`badge badge-sm cursor-help ${beat ? 'badge-success' : 'badge-warning'}`}>
-        {diff >= 0 ? '+' : ''}{diff.toFixed(1)}
+        {diff >= 0 ? '+' : ''}{grouped(diff, 1)}
       </span>
     </span>
   )

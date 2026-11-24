@@ -164,10 +164,27 @@ def _carries_request(inputs: dict[str, Any]) -> bool:
     return set(inputs) == {"request"} and isinstance(inputs["request"], dict)
 
 
+def stored(answer: dict[str, Any]) -> dict[str, Any]:
+    """A request job's answer as it is stored: the body as JSON text.
+
+    The result column is `jsonb`, which keeps an object's values and not the
+    order of its keys (it sorts them, shortest first). A page lists settings
+    and rules in the order the answer gives them, so the body travels as text
+    and `encoded` says so; the reader parses it (`RequestJobs`, `PythonCalls`)."""
+    return {"status": answer["status"], "body": json.dumps(answer["body"]), "encoded": "json"}
+
+
+def body_of(result: dict[str, Any] | None) -> Any:
+    """The body of a request job's stored result, decoded when it is text."""
+    result = result or {}
+    body = result.get("body")
+    return json.loads(body) if result.get("encoded") == "json" and isinstance(body, str) else body
+
+
 def _call(ctx: Context) -> dict[str, Any]:
     if not _carries_request(ctx.inputs):
         raise ValueError(f"a {CALL_TYPE} job carries one request: method, path, query, body")
-    return request(**ctx.inputs["request"])
+    return stored(request(**ctx.inputs["request"]))
 
 
 def _connect():
@@ -282,7 +299,7 @@ def job_route(job_type: str, *, timeout_s: float = DEFAULT_TIMEOUT_S, status: in
 
         def handler(ctx: Context) -> dict[str, Any]:
             if _carries_request(ctx.inputs):
-                return request(**ctx.inputs["request"])
+                return stored(request(**ctx.inputs["request"]))
             kwargs = {name: _revive(hints.get(name), value)
                       for name, value in ctx.inputs.items()}
             try:

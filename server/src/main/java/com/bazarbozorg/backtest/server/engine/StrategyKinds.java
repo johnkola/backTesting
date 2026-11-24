@@ -2,6 +2,7 @@ package com.bazarbozorg.backtest.server.engine;
 
 import com.bazarbozorg.backtest.server.jobs.Job;
 import com.bazarbozorg.backtest.server.jobs.JobCalls;
+import com.bazarbozorg.backtest.server.jobs.RequestJobs;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -57,7 +58,8 @@ public class StrategyKinds {
             if (!job.status().equals("done")) {
                 throw new IllegalStateException("the job was " + job.status());
             }
-            kinds = kindsFrom(json.readTree(job.result()).path("body").path("items"));
+            JsonNode body = RequestJobs.body(json, json.readTree(job.result()));
+            kinds = kindsFrom(body == null ? json.createArrayNode() : body.path("items"));
             nextAskAt = System.nanoTime() + TTL.toNanos();
         } catch (RuntimeException e) {
             // Keep what was known; ask again after a short while.

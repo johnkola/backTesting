@@ -76,7 +76,21 @@ public class RequestJobs {
         }
         JsonNode result = json.readTree(job.result() == null ? "{}" : job.result());
         int status = result.path("status").asInt(200);
-        JsonNode answer = result.get("body");
+        JsonNode answer = body(json, result);
         return ResponseEntity.status(status).body(answer == null || answer.isNull() ? null : answer);
+    }
+
+    /**
+     * A request job's body. The workers store it as JSON text
+     * ({@code "encoded": "json"}): the result column is jsonb, which sorts an
+     * object's keys, and the pages list settings and rules in the order the
+     * answer gives them.
+     */
+    public static JsonNode body(ObjectMapper json, JsonNode result) {
+        JsonNode body = result.get("body");
+        if (body != null && body.isString() && result.path("encoded").asString("").equals("json")) {
+            return json.readTree(body.asString());
+        }
+        return body;
     }
 }

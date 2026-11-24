@@ -166,7 +166,11 @@ def test_a_job_can_carry_a_request_and_the_route_binds_it(lane, monkeypatch):
         "method": "POST", "path": "/t/sum/3", "query": {"note": "hi"},
         "body": {"a": "2", "b": 5}}}, 10)
     assert row["status"] == "done"
-    assert row["result"] == {"status": 200, "body": {"total": 21, "note": "hi"}}
+    # The body is stored as text: jsonb would sort its keys, and a page lists
+    # an answer's settings in the order it gives them.
+    assert row["result"] == {"status": 200, "encoded": "json",
+                             "body": '{"total": 21, "note": "hi"}'}
+    assert list(calls.body_of(row["result"])) == ["total", "note"]
     assert seen["thread"] != "MainThread" and isinstance(seen["req"], Sum)
     assert seen["actor"].endswith(f":job-{row['id']}"), "rows written name the job"
     assert len(_jobs(lane)) == 1, "the route ran in place: no second job"
@@ -174,11 +178,12 @@ def test_a_job_can_carry_a_request_and_the_route_binds_it(lane, monkeypatch):
     refused = calls.submit_and_wait("t-sum", {"request": {
         "method": "POST", "path": "/t/sum/3", "body": {"b": 1}}}, 10)
     assert refused["status"] == "done" and refused["result"]["status"] == 422
-    assert refused["result"]["body"]["detail"][0]["loc"] == ["body", "a"]
+    assert calls.body_of(refused["result"])["detail"][0]["loc"] == ["body", "a"]
 
     own = calls.submit_and_wait("t-optional", {"request": {
         "method": "POST", "path": "/t/optional"}}, 10)
-    assert own["result"] == {"status": 202, "body": {"given": False, "a": None}}
+    assert own["result"]["status"] == 202
+    assert calls.body_of(own["result"]) == {"given": False, "a": None}
 
 
 def test_a_request_for_a_path_no_route_has_is_a_404(table, monkeypatch):

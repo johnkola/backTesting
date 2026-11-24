@@ -1175,9 +1175,10 @@ def ask_engine_for_onnx_check(run_id: int, timeout: float = 300.0,
     result = row["result"] or {}
     if row["status"] != "done":
         raise RuntimeError(f"job {job['id']} {row['status']}: {row['error']}")
+    body = calls.body_of(result) or {}
     if result.get("status") != 200:
-        raise RuntimeError(f"{result.get('status')}: {(result.get('body') or {}).get('error')}")
-    return result.get("body") or {}
+        raise RuntimeError(f"{result.get('status')}: {body.get('error')}")
+    return body
 
 
 def onnx_check_lines(run_id: int, ask=None) -> list[str]:

@@ -138,7 +138,11 @@ public final class JobWorker {
             EngineApi.Answer answer = api.answer(request(job));
             JsonObject out = new JsonObject();
             out.addProperty("status", answer.status());
-            out.add("body", answer.body());
+            // As text: the result column is jsonb, which sorts an object's
+            // keys, and a page lists a strategy's parameters in the order
+            // the engine gives them. The reader parses it (`encoded`).
+            out.addProperty("body", GSON.toJson(answer.body()));
+            out.addProperty("encoded", "json");
             result = GSON.toJson(out);
         } catch (RuntimeException e) {
             logger.error("Job {} ({}) failed", job.id(), job.type(), e);

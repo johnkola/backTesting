@@ -11,6 +11,7 @@ import { usePipelineStatus } from '../../lib/pipelineStatusContext'
 import { mergeState } from '../../lib/stageStatus'
 import StageShell, { NotWired, type StageState } from './StageShell'
 import { sampleNote, sampleOf } from '../../lib/inSample'
+import { percent } from '../../lib/numbers'
 
 const LIMIT = 25
 
@@ -30,9 +31,7 @@ const COLUMNS: { key: ResultSortKey, label: string, numeric: boolean }[] = [
   { key: 'created', label: 'Run at', numeric: false },
 ]
 
-function pct(v: number | null | undefined) {
-  return v === null || v === undefined ? '—' : `${v.toFixed(2)}%`
-}
+const pct = percent
 
 /**
  * Stage 6 — backtest and scoring.

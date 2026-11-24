@@ -1,6 +1,6 @@
 # Postman collection
 
-> **Revision 2026-11-23-2** · 2026-11-23 22:49 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-24-1** · 2026-11-24 01:32 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 Every endpoint the API origin serves, with assertions on status, shape and key
 values. Required by `docs/reference/qqq-backtesting-model/backTesting-OLD-Architecture.md` §10:
@@ -13,7 +13,8 @@ values. Required by `docs/reference/qqq-backtesting-model/backTesting-OLD-Archit
 
 | File | What it is |
 |------|------------|
-| `backtest.postman_collection.json` | 84 requests in 10 folders, 237 assertions |
+| `backtest.postman_collection.json` | 105 requests in 11 folders, 275 assertions |
+| `fixtures/ZZPOSTMAN_daily.csv` | The three-bar file the import life cycle uploads |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://server:8001` — from inside the compose network |
 
@@ -36,6 +37,23 @@ publishing results to the Postman cloud and exits successfully without it.
 
 Newman (`npx newman run …`) takes the same two files; it is not installed here,
 so the commands above use the Postman CLI.
+
+## Life cycles
+
+The last folder, "Life cycles", takes each thing the API can create through its whole
+life on the running stack: made, read back, removed, and checked gone.
+
+| Life cycle | Steps |
+|---|---|
+| A backtest result | run `sma-crossover` with capital 12345, find the stored result, read it, delete it, read it again (404), find the delete in the jobs list, try to cancel that finished job (409) |
+| A saved strategy | save `postman-lifecycle`, read it, save again (a new version), list both, remove every version, read it again (404) |
+| An import | upload three bars as `ZZPOSTMAN` from source `postman`, find it in the log, read its bars, dry-run the undo, undo it, check the log and the bars are empty |
+
+Run the collection from the repository root, so the upload finds its file. What stays
+behind after a run, by the application's own rules: the instrument `ZZPOSTMAN` and the
+source `postman` (nothing deletes an instrument or a source), and the file's row in the
+file history with its archived slice (an undo keeps both, so it can be reversed). A
+second run finds them and passes the same way.
 
 ## Safe to run end to end
 
@@ -88,6 +106,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-24-1 | 2026-11-24 01:32 | Claude Code (Claude Fable 5.2) | The "Life cycles" folder (a result, a saved strategy, an import: created, read, removed, checked gone); six assertions brought up to date; counts (105 requests, 275 assertions) |
 | 2026-11-23-2 | 2026-11-23 22:49 | Claude Code (Claude Fable 5.2) | One address: `baseUrl` is the Spring Boot service; `serverUrl` and the Node check are gone; counts (84 requests, 237 assertions) |
 | 2026-11-23-1 | 2026-11-23 18:12 | Claude Code (Claude Fable 5.2) | `serverUrl` and the "Spring Boot service (G16)" folder: five requests for the new service's four routes |
 | 2026-11-16-9 | 2026-11-16 16:26 | Claude Code (Claude Opus 5.5) | Counts (64 requests, 201 assertions): the targets, a money loss with one refused, a run's name kept (G49) |

@@ -57,6 +57,10 @@ class JobWorkerTest {
         }
     }
 
+    private static JsonObject body(JsonObject result) {
+        return JsonParser.parseString(result.get("body").getAsString()).getAsJsonObject();
+    }
+
     private static JobQueue.Job run(String type, String inputs) {
         JobQueue.Job job = queue.insert(type, JobQueue.ENGINE, inputs, true);
         JobQueue.Job claimed = queue.claim("test-worker").orElseThrow();
@@ -74,7 +78,11 @@ class JobWorkerTest {
         assertEquals("done", done.status());
         JsonObject result = JsonParser.parseString(done.result()).getAsJsonObject();
         assertEquals(200, result.get("status").getAsInt());
-        assertFalse(result.getAsJsonObject("body").getAsJsonArray("items").isEmpty());
+        assertFalse(body(result).getAsJsonArray("items").isEmpty());
+        // The body is stored as text: jsonb would sort a strategy's parameters
+        // by name, and the Run page lists them in the order given here.
+        assertEquals("json", result.get("encoded").getAsString());
+        assertTrue(result.get("body").isJsonPrimitive());
     }
 
     @Test
@@ -87,7 +95,7 @@ class JobWorkerTest {
         JsonObject result = JsonParser.parseString(done.result()).getAsJsonObject();
         assertEquals(400, result.get("status").getAsInt());
         assertEquals("'strategy' is required",
-                result.getAsJsonObject("body").get("error").getAsString());
+                body(result).get("error").getAsString());
     }
 
     @Test
@@ -132,5 +140,109 @@ class JobWorkerTest {
         assertFalse(queue.beat(job.id(), "someone-else"));
         assertTrue(queue.beat(job.id(), "holder"));
         assertTrue(queue.finish(job.id(), "holder", "done", "{\"status\": 200}", null));
+    }
+
+    // --- Full life cycles ---------------------------------------------------------
+
+    private static final String SYMBOL = "ZZJOBLIFE";
+    private static final String SOURCE = "zzjoblife";
+
+    private static String scalar(String sql) throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement();
+             java.sql.ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getString(1) : null;
+        }
+    }
+
+    private static void exec(String sql) throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute(sql);
+        }
+    }
+
+    private static void purgeSeries() throws Exception {
+        exec("DELETE FROM backtest_results WHERE instrument_symbol = '" + SYMBOL + "'");
+        // By id and by date: a delete that has to look through the compressed
+        // years is refused by TimescaleDB.
+        String instrument = scalar("SELECT id FROM instruments WHERE symbol = '" + SYMBOL + "'");
+        if (instrument != null) {
+            exec("DELETE FROM candles WHERE instrument_id = " + instrument
+                    + " AND timeframe = 'D1' AND timestamp > now() - interval '250 days'");
+        }
+        exec("DELETE FROM instruments WHERE symbol = '" + SYMBOL + "'");
+        exec("DELETE FROM data_sources WHERE name = '" + SOURCE + "'");
+    }
+
+    @Test
+    @DisplayName("a backtest's life: run as a job, stored, read back, deleted as a job, gone")
+    void aBacktestIsRunStoredAndDeletedThroughJobs() throws Exception {
+        purgeSeries();
+        try {
+            String instrument = scalar("INSERT INTO instruments (symbol, name, type) VALUES ('"
+                    + SYMBOL + "', '" + SYMBOL + "', 'STOCK') RETURNING id");
+            String source = scalar("INSERT INTO data_sources (name) VALUES ('" + SOURCE
+                    + "') RETURNING id");
+            // 200 daily bars on a slow wave, so the moving averages cross. The
+            // last 200 days: older years may be compressed, and take no inserts.
+            exec("INSERT INTO candles (instrument_id, timeframe, source_id, timestamp, open, high, "
+                    + "low, close, volume) SELECT " + instrument + ", 'D1', " + source
+                    + ", now()::date - ((200 - n) || ' days')::interval, "
+                    + "100 + 20 * sin(n / 12.0), 101 + 20 * sin(n / 12.0), 99 + 20 * sin(n / 12.0), "
+                    + "100 + 20 * sin(n / 12.0), 1000 FROM generate_series(0, 199) n");
+
+            JobQueue.Job ran = run("backtest", "{\"request\": {\"method\": \"POST\", "
+                    + "\"path\": \"/api/run\", \"query\": {}, \"body\": {\"strategy\": "
+                    + "\"sma-crossover\", \"instrument\": \"" + SYMBOL + "\", \"timeframe\": \"D1\", "
+                    + "\"source\": \"" + SOURCE + "\", \"aggregateMissing\": false}}}");
+            assertEquals("done", ran.status());
+            JsonObject result = JsonParser.parseString(ran.result()).getAsJsonObject();
+            assertEquals(200, result.get("status").getAsInt(), ran.result());
+            JsonObject stored = body(result);
+            assertEquals(SYMBOL, stored.get("instrumentSymbol").getAsString());
+            assertFalse(stored.getAsJsonArray("equityHistory").isEmpty());
+
+            String id = scalar("SELECT id FROM backtest_results WHERE instrument_symbol = '"
+                    + SYMBOL + "'");
+            assertTrue(id != null, "the run is stored");
+
+            JobQueue.Job deleted = run("result-delete", "{\"request\": {\"method\": \"DELETE\", "
+                    + "\"path\": \"/api/results/" + id + "\"}}");
+            JsonObject gone = JsonParser.parseString(deleted.result()).getAsJsonObject();
+            assertEquals(200, gone.get("status").getAsInt(), deleted.result());
+            assertEquals("deleted", body(gone).get("status").getAsString());
+            assertEquals("0", scalar("SELECT count(*) FROM backtest_results WHERE id = " + id));
+
+            JobQueue.Job again = run("result-delete", "{\"request\": {\"method\": \"DELETE\", "
+                    + "\"path\": \"/api/results/" + id + "\"}}");
+            assertEquals(404, JsonParser.parseString(again.result()).getAsJsonObject()
+                    .get("status").getAsInt(), "a second delete finds nothing");
+        } finally {
+            purgeSeries();
+        }
+    }
+
+    @Test
+    @DisplayName("a job's life with the worker running: inserted, woken, claimed, answered, done")
+    void theRunningWorkerTakesAJobAndFinishesIt() throws Exception {
+        JobWorker live = new JobWorker(db, queue, new EngineApi(db));
+        live.start();
+        try {
+            JobQueue.Job job = queue.insert("strategies", JobQueue.ENGINE,
+                    "{\"request\": {\"method\": \"GET\", \"path\": \"/api/strategies\"}}", true);
+            assertEquals("queued", job.status());
+            JobQueue.Job ended = job;
+            long deadline = System.nanoTime() + 10_000_000_000L;
+            while (!ended.ended() && System.nanoTime() < deadline) {
+                Thread.sleep(25);
+                ended = queue.find(job.id()).orElseThrow();
+            }
+            assertEquals("done", ended.status());
+            assertEquals(1, ended.attempts());
+            assertTrue(ended.workerId().startsWith(live.id()), ended.workerId());
+            assertEquals(200, JsonParser.parseString(ended.result()).getAsJsonObject()
+                    .get("status").getAsInt());
+        } finally {
+            live.stop();
+        }
     }
 }

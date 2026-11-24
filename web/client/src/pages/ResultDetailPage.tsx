@@ -24,11 +24,9 @@ import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { barStamp } from '../lib/marketTime'
+import { percent } from '../lib/numbers'
 
-function pct(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return '—'
-  return `${n.toFixed(2)}%`
-}
+const pct = percent
 
 function money(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
