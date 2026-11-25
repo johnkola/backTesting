@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-24-2** · 2026-11-24 14:32 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-24-3** · 2026-11-24 21:29 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1166,6 +1166,8 @@ The order, each phase leaving a stack that works end to end, with the four suite
   - Left by a Postman run, by the application's own rules: the instrument `ZZPOSTMAN`, the source `postman`, and the uploaded file's row in the file history with its archived slice (an undo keeps both).
   - **Reported by the author on the Results page, 2026-11-24, and fixed:** both tables were wider than the page (the last column cut off, marks overlapping or clipped): tighter cells, a short date, the marks under the return and one a line in the walk-forward table, "TF", "Ahead" and "Excess" as headings with the full words on hover. Percent figures group their thousands (`377,309.69%`; `lib/numbers.ts`, also on a result's page and the pipeline's backtest stage). A rule benchmark's "vs hold" is coloured like a model's, green ahead and yellow behind (it was uncoloured under C8; the author's word today); its hover text is unchanged, and the Run page's copy of the figure is not changed. Checked by screenshot at 1440 px; client 266 tests.
   - **Reported and not a fault:** a saved strategy cannot be removed on the Strategy page. Every strategy stored today has a walk-forward run trained from it, and such a strategy is refused (409) by the rule that keeps a run explainable. Whether removing a strategy should remove its runs is the author's to decide.
+  - **Every page checked for tables wider than the page, 2026-11-24** (the author: "some of the tables"), by screenshot at 1440 px. Fixed: the Models table (tighter cells, the short date, "TF"); the Instruments cards and the Models table scrolled sideways for a closed hover-tip near the right edge, so a closed tip now takes no room anywhere (`index.css`); the Features summary strip's stray scrollbar. Already fitting: Imports, Repairs, Strategy, Train, Pipeline. Not looked at: Sources, Run, Docs; and no narrower window. Client 267 tests.
+  - **Step 0 accepted by the author, 2026-11-24** ("all 1 2 3", to: commit and push; the saved-strategy decision; step 0 accepted). The plan's own record of it is the author's and Claude (chat)'s to write, in `backTesting-13-Implementation-Plan`. CI passed on the pushed stack (python, java, client).
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
 - [ ] 16.7 **STOP. Three schemas and three logins.** Tables move to `app`, `data` and `jobs` (a move of names, not of rows), each login writes only its own schema, and a test proves a wrong-schema write is refused. This changes the stored database: full backup first, and it needs the author's go
 - [ ] 16.8 **Next.js.** The 17 pages move to the Next.js app router with the same components, tests and DaisyUI theme; Recharts charts are redrawn in Lightweight Charts; the Vite client and its nginx container go
@@ -2243,6 +2245,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-24-3 | 2026-11-24 21:29 | Claude Code (Claude Fable 5.2) | Step 0 accepted by the author; every page checked for tables wider than the page (Models, Instruments, Features fixed) |
 | 2026-11-24-2 | 2026-11-24 14:32 | Claude Code (Claude Fable 5.2) | The Results page as the author reported it: both tables fit the page, percent figures group their thousands, a benchmark's vs-hold is coloured; a strategy with runs cannot be removed, by rule |
 | 2026-11-24-1 | 2026-11-24 01:32 | Claude Code (Claude Fable 5.2) | Postman run on the new stack and full life cycles added (the author's request): an answer's key order is kept through the jobs table; 105 requests, 275 assertions, none failing |
 | 2026-11-23-13 | 2026-11-23 22:58 | Claude Code (Claude Fable 5.2) | Step 0 of the implementation plan built, waiting for the author: G16 steps 16.4 to 16.6. Every route is in the Spring Boot service on port 8001; the engine and Python are workers with no port; Node is deleted. Recorded: the stale-save refusal is not built, and a fault in the feature gaps query was moved as it was |

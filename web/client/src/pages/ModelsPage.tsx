@@ -4,6 +4,7 @@ import { api, type TrainedModel } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { tipClass } from '../components/FieldLabel'
 import { useTimeframe } from '../lib/useTimeframe'
+import { shortDateTime } from '../lib/numbers'
 
 function pct(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -88,13 +89,13 @@ export default function ModelsPage() {
 
       {data && data.items.length > 0 && (
         <div className="overflow-x-auto bg-base-200 rounded-box">
-          <table className="table table-sm">
+          <table className="table table-sm [&_td]:px-2 [&_th]:px-2">
             <thead>
               <tr>
                 <th>Strategy</th>
                 <th>Instrument</th>
                 <th>Source</th>
-                <th>Timeframe</th>
+                <th title="Timeframe">TF</th>
                 <th>Training range</th>
                 <th className="text-right">Bars</th>
                 <th className="text-right">Val. acc.</th>
@@ -125,8 +126,11 @@ export default function ModelsPage() {
                       </td>
                       <td className="text-right tabular-nums">{pct(m.validationAccuracyPct)}</td>
                       <td className="text-right tabular-nums">{ms(m.trainingDurationMs)}</td>
-                      <td className="whitespace-nowrap">
-                        {m.createdAt ? new Date(m.createdAt).toLocaleString() : '—'}
+                      <td
+                        className="whitespace-nowrap tabular-nums"
+                        title={m.createdAt ? new Date(m.createdAt).toLocaleString() : undefined}
+                      >
+                        {m.createdAt ? shortDateTime(m.createdAt) : '—'}
                       </td>
                       <td className="whitespace-nowrap font-mono text-xs" title={m.versionId ?? 'pre-versioning entry'}>
                         {m.versionId ? formatVersion(m.versionId) : <span className="text-base-content/40">legacy</span>}

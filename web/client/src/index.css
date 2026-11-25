@@ -36,3 +36,18 @@
     white-space: normal;
   }
 }
+
+/*
+ * A closed tooltip takes no room.
+ *
+ * daisyUI keeps a tip's bubble in the page while it is closed, only invisible.
+ * Near the right edge of a table that sits in a scrolling box, the invisible
+ * bubble reaches past the edge, and the box grows a scrollbar for something
+ * nobody can see (the Instruments cards and the Models table both did). Until
+ * the tip is opened, by the pointer or by focus inside it, the bubble and its
+ * arrow are not laid out at all.
+ */
+.tooltip:not(:hover):not(:has(:focus-visible)):not(.tooltip-open)::before,
+.tooltip:not(:hover):not(:has(:focus-visible)):not(.tooltip-open)::after {
+  display: none;
+}

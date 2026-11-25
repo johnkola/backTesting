@@ -107,7 +107,7 @@ export default function FeaturesPage() {
         decision, not an absence.
       </p>
 
-      <div className="stats stats-horizontal shadow mb-5 text-sm">
+      <div className="stats stats-horizontal shadow mb-5 text-sm overflow-hidden">
         <Stat label="Catalogue" value={counts.total} hint="features.catalogueCount" />
         <Stat label="Active" value={counts.active} hint="features.active" />
         <Stat label="Selectable" value={counts.selectable} hint="features.selectable" />

@@ -12,7 +12,7 @@ import WalkforwardResults from '../components/WalkforwardResults'
 import { tipClass } from '../components/FieldLabel'
 import { beatBuyAndHold, vsBuyAndHold } from '../lib/api'
 import { useTimeframe } from '../lib/useTimeframe'
-import { grouped, percent } from '../lib/numbers'
+import { grouped, percent, shortDateTime } from '../lib/numbers'
 
 const LIMIT = 25
 
@@ -235,14 +235,6 @@ export default function ResultsPage() {
       <WalkforwardResults timeframe={tf} />
     </section>
   )
-}
-
-/** A stored instant as `2026-11-24 14:03`, local time: short enough for a table cell. */
-function shortDateTime(iso: string): string {
-  const d = new Date(iso)
-  const two = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} `
-    + `${two(d.getHours())}:${two(d.getMinutes())}`
 }
 
 /**

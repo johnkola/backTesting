@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { grouped, percent } from './numbers'
+import { grouped, percent, shortDateTime } from './numbers'
 
 describe('grouped', () => {
   it('groups thousands and keeps the decimals asked for', () => {
@@ -17,5 +17,12 @@ describe('percent', () => {
     expect(percent(null)).toBe('—')
     expect(percent(undefined)).toBe('—')
     expect(percent(Number.NaN)).toBe('—')
+  })
+})
+
+describe('shortDateTime', () => {
+  it('prints a local date and time to the minute', () => {
+    const local = new Date(2026, 10, 4, 9, 5, 59)
+    expect(shortDateTime(local.toISOString())).toBe('2026-11-04 09:05')
   })
 })

@@ -16,3 +16,11 @@ export function percent(n: number | null | undefined, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return '—'
   return `${grouped(n, digits)}%`
 }
+
+/** A stored instant as `2026-11-24 14:03`, local time: short enough for a table cell. */
+export function shortDateTime(iso: string): string {
+  const d = new Date(iso)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} `
+    + `${two(d.getHours())}:${two(d.getMinutes())}`
+}
