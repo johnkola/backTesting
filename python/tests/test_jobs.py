@@ -352,6 +352,9 @@ def a_run(conn):
         "'return', 'ce', 2003, 2016, 2021 FROM feature_sets c LIMIT 1 RETURNING id"
     ).fetchone()
     conn.commit()
+    if row is None:
+        # CI's database starts empty: no feature set to borrow a series from.
+        pytest.skip("needs one stored feature set")
     try:
         yield row[0]
     finally:
