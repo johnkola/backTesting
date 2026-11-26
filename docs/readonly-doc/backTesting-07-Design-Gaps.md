@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-26-8** · 2026-11-26 18:52 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-26-9** · 2026-11-26 18:53 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1242,7 +1242,7 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - [x] 7.6 **The Data and Features tabs described QQQ's config on SPY.** `GET /api/features` asked the worker for `features.toml` itself, so on SPY the Features tab showed `price_close` reading QQQ and the Data tab required QQQ's series. The service now forwards the instrument (`PythonGateway.ask` takes a query) and `GET /api/nn/features/config` answers with that instrument's config (`symbol`, `source`, `timeframe`; one without the other is 400). Live: on SPY the calendar is SPY and 21 series are required, without QQQ; without an instrument it is QQQ's, 22. Both tabs now wait for the pipeline status only until it answers or fails (`stageInstrument`): before, a failed status left the Features tab loading for good.
     - Tests: Python (`test_calendar_configs.py`, 2 new: the preview reads a set on another instrument from its name, and the config is the instrument's; the full suite, 1,152, passes), service (`FeaturesApiTest`: the config is asked for on the instrument named; the whole `server` suite passes), client 288 (`stageInstrument`), ESLint and `tsc` clean. Containers `server`, `worker` and `client` rebuilt. The pages were not opened in a browser.
     - Found, not changed (outside what stops the walk): `qqq_spy_relative` (selectable, off by default) is SPY over SPY on SPY's set, stored as 0 on every bar. The Training and Backtest tabs list every instrument's runs and results, not only the picked one's. Strategy 2 stays QQQ only by design (its hedge is PSQ).
-    - Left in this step: John walks steps 1 to 6 on the symbol he chooses. The test strategy 289, run 1659 and the SPY backtest result (1474) were deleted on the author's word, 2026-11-26. The earlier SPY run, 1640 ("step7-spy", from part 1, 18 fold rows), and the XGBoost model trained on SPY (version `20261126T223833.339Z`) were deleted on the author's word too. The two runs' fold models stay on disk until `nn.fold_models --prune`; SPY's feature set 230 is kept.
+    - Left in this step: John walks steps 1 to 6 on the symbol he chooses. The test strategy 289, run 1659 and the SPY backtest result (1474) were deleted on the author's word, 2026-11-26. The earlier SPY run, 1640 ("step7-spy", from part 1, 18 fold rows), and the XGBoost model trained on SPY (version `20261126T223833.339Z`) were deleted on the author's word too. The two runs' fold models were pruned (`nn.fold_models --prune`: `run-1640` and `run-1659`, nothing else). SPY's feature set 230 is kept.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
 - [ ] 16.7 **STOP. Three schemas and three logins.** Tables move to `app`, `data` and `jobs` (a move of names, not of rows), each login writes only its own schema, and a test proves a wrong-schema write is refused. This changes the stored database: full backup first, and it needs the author's go
 - [ ] 16.8 **Next.js.** The 17 pages move to the Next.js app router with the same components, tests and DaisyUI theme; Recharts charts are redrawn in Lightweight Charts; the Vite client and its nginx container go
@@ -2320,6 +2320,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-9 | 2026-11-26 18:53 | Claude Code (Claude Opus 5.5) | Step 7: the fold models of SPY runs 1640 and 1659 pruned |
 | 2026-11-26-8 | 2026-11-26 18:52 | Claude Code (Claude Opus 5.5) | Step 7: SPY run 1640 and the SPY XGBoost model deleted on the author's word |
 | 2026-11-26-7 | 2026-11-26 17:40 | Claude Code (Claude Opus 5.5) | Step 7 (Any symbol), part 2: steps 3 to 6 walked on SPY; the Normalization preview and the Data and Features tabs read the instrument's own config; the walk's test strategy, run and result deleted |
 | 2026-11-26-6 | 2026-11-26 17:23 | Claude Code (Claude Opus 5.5) | Step 7 (Any symbol), part 1: features on any instrument (a config name with an instrument; the build, the features stage and the pipeline status per instrument; the instrument picker) |
