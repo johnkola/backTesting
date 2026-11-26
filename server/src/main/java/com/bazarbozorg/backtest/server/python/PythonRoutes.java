@@ -145,6 +145,12 @@ public class PythonRoutes {
     }
 
 
+    /** Removes one trained model version: the registry is Python's, on a disk this service only reads. */
+    @DeleteMapping("/api/nn/models/{strategy}/{cacheKey}/{versionId}")
+    public ResponseEntity<Object> deleteModel(HttpServletRequest request) {
+        return python.forward(PythonGateway.CALL, 60, KEPT, request, null);
+    }
+
     @GetMapping("/api/nn/engines")
     public ResponseEntity<Object> engines(HttpServletRequest request) {
         return read(request);

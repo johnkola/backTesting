@@ -166,6 +166,15 @@ class StrategiesApiTest extends ServiceTest {
         Reply gone = call("DELETE", "/api/strategies/saved/" + spare);
         assertEquals(200, gone.status());
         assertEquals(1, gone.at("versionsDeleted").getAsInt());
+        assertEquals(0, gone.at("runsDeleted").getAsInt());
+
+        // Asked to, the run goes with the strategy, and neither is left behind.
+        Reply both = call("DELETE", "/api/strategies/saved/" + kept + "?all=1&runs=1");
+        assertEquals(200, both.status(), both.text());
+        assertEquals(1, both.at("versionsDeleted").getAsInt());
+        assertEquals(1, both.at("runsDeleted").getAsInt());
+        assertEquals("0", scalar("SELECT count(*) FROM strategies WHERE name = ?", NAME));
+        assertEquals("0", scalar("SELECT count(*) FROM walkforward_runs WHERE strategy_name = ?", NAME));
     }
 
     @Test

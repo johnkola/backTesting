@@ -6,6 +6,7 @@ import {
 import FieldLabel, { tipClass } from '../components/FieldLabel'
 import { hintFor } from '../lib/fieldHints'
 import { useApiData } from '../lib/useApiData'
+import DeleteRowButton from '../components/DeleteRowButton'
 
 /**
  * The Features tab — the catalogue and the coverage view (backTesting-04-Architecture.md §8.1a).
@@ -33,8 +34,9 @@ import { useApiData } from '../lib/useApiData'
  * tab has to be able to say *why* a feature is unavailable.
  */
 export default function FeaturesPage() {
+  const [reload, setReload] = useState(0)
   const { data, error, loading } = useApiData(
-    (signal) => api.featureCatalogue(signal), [],
+    (signal) => api.featureCatalogue(signal), [reload],
   )
 
   const [setId, setSetId] = useState('')
@@ -156,6 +158,20 @@ export default function FeaturesPage() {
             Whole set
           </button>
         </div>
+        {activeSet && (
+          <div className="md:col-span-5 flex items-center gap-2 text-xs text-base-content/70">
+            <span>
+              Set #{activeSet.id} holds the built values the coverage below is read from.
+            </span>
+            <DeleteRowButton
+              label={`feature set ${activeSet.id}`}
+              what={'Permanently removes this built set and all its stored values. It can be '
+                + 'built again from the same config; runs trained on it stay, with no set to show.'}
+              onDelete={() => api.deleteFeatureSet(activeSet.id)}
+              onDeleted={() => { setSetId(''); setReload((n) => n + 1) }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3 items-end mb-3">

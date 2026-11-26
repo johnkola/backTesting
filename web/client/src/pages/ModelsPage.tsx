@@ -5,6 +5,7 @@ import { useApiData } from '../lib/useApiData'
 import { tipClass } from '../components/FieldLabel'
 import { useTimeframe } from '../lib/useTimeframe'
 import { shortDateTime } from '../lib/numbers'
+import DeleteRowButton from '../components/DeleteRowButton'
 
 function pct(n: number | null): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -54,11 +55,12 @@ function shortKey(cacheKey: string | null): string {
 
 export default function ModelsPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
   const [tf] = useTimeframe()
 
   const { data, error } = useApiData<{ items: TrainedModel[]; modelsDir: string }>(
     (signal) => api.models(tf, signal),
-    [tf],
+    [tf, reload],
   )
 
   return (
@@ -104,6 +106,7 @@ export default function ModelsPage() {
                 <th>Version</th>
                 <th className="text-right">Used in</th>
                 <th>Cache key</th>
+                <th></th>
                 <th></th>
               </tr>
             </thead>
@@ -169,10 +172,22 @@ export default function ModelsPage() {
                           </button>
                         </span>
                       </td>
+                      <td>
+                        {/* A version-less entry from before versions has no folder of its own to name. */}
+                        {m.versionId && m.strategyName && m.cacheKey && (
+                          <DeleteRowButton
+                            label={`model ${m.strategyName} ${m.versionId}`}
+                            what={'Permanently removes this version\'s files. Results that used it '
+                              + 'keep their figures; a backtest that needs it must train it again.'}
+                            onDelete={() => api.deleteModel(m.strategyName ?? '', m.cacheKey ?? '', m.versionId ?? '')}
+                            onDeleted={() => setReload((n) => n + 1)}
+                          />
+                        )}
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr className="bg-base-300/40">
-                        <td colSpan={13}>
+                        <td colSpan={14}>
                           <div className="p-3 space-y-3">
                             <div className="flex flex-wrap gap-2">
                               <span className="badge badge-outline font-mono">

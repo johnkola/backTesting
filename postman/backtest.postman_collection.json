@@ -322,6 +322,78 @@
               }
             }
           ]
+        },
+        {
+          "name": "Delete an instrument that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/instruments/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "instruments",
+                "999999999"
+              ]
+            },
+            "description": "The rejection path: nothing is deleted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which', function () {",
+                  "    pm.expect(pm.response.json().error).to.eql('no instrument with id 999999999');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a source that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sources/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sources",
+                "999999999"
+              ]
+            },
+            "description": "The rejection path: nothing is deleted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which', function () {",
+                  "    pm.expect(pm.response.json().error).to.eql('no source with id 999999999');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1946,6 +2018,43 @@
                 "exec": [
                   "pm.test('status is 404 for a run that does not exist', function () {",
                   "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a walk-forward run that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/walkforward/runs/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "walkforward",
+                "runs",
+                "999999999"
+              ]
+            },
+            "description": "The rejection path: nothing is deleted. A real delete needs a run, a model or a set to spend."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which run', function () {",
+                  "    pm.expect(pm.response.json().error).to.eql('no walk-forward run with id 999999999');",
                   "});"
                 ]
               }
@@ -3993,6 +4102,82 @@
                 "exec": [
                   "pm.test('status is 404', function () {",
                   "    pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a model version that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/models/no-such-strategy/nokey/20000101T000000.000Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "models",
+                "no-such-strategy",
+                "nokey",
+                "20000101T000000.000Z"
+              ]
+            },
+            "description": "The rejection path: nothing is deleted. A real delete needs a run, a model or a set to spend."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which version', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('no model version');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a feature set that does not exist",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/sets/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "sets",
+                "999999999"
+              ]
+            },
+            "description": "The rejection path: nothing is deleted. A real delete needs a run, a model or a set to spend."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('says which set', function () {",
+                  "    pm.expect(pm.response.json().error).to.eql('no feature set with id 999999999');",
                   "});"
                 ]
               }

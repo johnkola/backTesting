@@ -686,6 +686,20 @@ def get_models(strategy: str | None = None) -> JSONResponse:
     )
 
 
+@router.delete("/api/nn/models/{strategy}/{cache_key}/{version_id}")
+def delete_model(strategy: str, cache_key: str, version_id: str) -> JSONResponse:
+    """Remove one trained model version from the registry (the author,
+    2026-11-24: anything listed on a screen can be deleted). The files go; a
+    backtest result that used the version keeps its figures and reads
+    "version gone" where it showed the training window."""
+    if not _registry().delete_version(strategy, cache_key, version_id):
+        return JSONResponse(status_code=404, content={
+            "error": f"no model version {strategy}/{cache_key[:12]}/{version_id}"})
+    return JSONResponse(status_code=200, content={
+        "status": "deleted", "strategy": strategy, "cacheKey": cache_key,
+        "versionId": version_id})
+
+
 @router.get("/api/nn/engines")
 def get_engines() -> dict:
     """The engines the runner registers (B9, R22): each one's catalogue entry,

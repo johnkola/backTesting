@@ -381,7 +381,7 @@ export default function StrategyPage() {
     const ok = window.confirm(
       `Remove "${s.name}"? This deletes every saved version of it `
       + `(currently showing v${s.version}).\n\n`
-      + 'Trained models and past runs are not touched.',
+      + 'Trained models are not touched. If runs were trained from it, you are asked again.',
     )
     if (!ok) return
     setSubmitError(null)
@@ -391,7 +391,27 @@ export default function StrategyPage() {
       setResult(null)
       setRemoved(`Removed ${gone.name ?? s.name} — ${gone.versionsDeleted} version(s).`)
     } catch (err) {
-      setSubmitError((err as Error).message)
+      const why = (err as Error).message
+      // Refused because runs were trained from it: say how many, and remove
+      // them with it only on a second, separate yes.
+      if (!/walk-forward runs? trained from this strategy/.test(why)) {
+        setSubmitError(why)
+        return
+      }
+      const withRuns = window.confirm(
+        `${why}.\n\nRemove "${s.name}" AND delete those walk-forward runs, `
+        + 'with their folds and curves? This cannot be undone.',
+      )
+      if (!withRuns) return
+      try {
+        const gone = await api.deleteStrategy(s.id, true, true)
+        setListVersion((n) => n + 1)
+        setResult(null)
+        setRemoved(`Removed ${gone.name ?? s.name} — ${gone.versionsDeleted} version(s) `
+          + `and ${gone.runsDeleted ?? 0} walk-forward run(s).`)
+      } catch (again) {
+        setSubmitError((again as Error).message)
+      }
     }
   }
 

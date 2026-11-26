@@ -6,6 +6,7 @@ import { isTradeable } from '../lib/api'
 import { categoryHint } from '../lib/cohesionHints'
 import { useTimeframe } from '../lib/useTimeframe'
 import { barStamp } from '../lib/marketTime'
+import RemoveSeriesButton from '../components/RemoveSeriesButton'
 
 // Rollups we offer to build from a D1 series (matches the old
 // candles_weekly / candles_monthly continuous aggregates).
@@ -246,7 +247,16 @@ function InstrumentCard({ instrument: i, onAggregated }: { instrument: Instrumen
           </table>
         </div>
       )}
-      {i.sources.length > 0 && <AuditButton symbol={i.symbol} />}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>{i.sources.length > 0 && <AuditButton symbol={i.symbol} />}</div>
+        <RemoveSeriesButton
+          label="Delete instrument"
+          name={i.symbol}
+          preview={() => api.deleteInstrument(String(i.id), true)}
+          remove={() => api.deleteInstrument(String(i.id))}
+          onDeleted={onAggregated}
+        />
+      </div>
     </div>
   )
 }

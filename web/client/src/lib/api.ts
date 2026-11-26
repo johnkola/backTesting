@@ -1,3 +1,5 @@
+import type { RemovalCounts } from './removal'
+
 // Tiny fetch wrapper + typed response shapes for the Express API on :3000.
 // Vite proxies /api/* there in dev (vite.config.ts).
 
@@ -2171,11 +2173,13 @@ export const api = {
    *
    * Not in tension with "editing creates a new version, never overwrites": that
    * rule protects a run's provenance, and a version nothing was trained from
-   * has none to protect.
+   * has none to protect. A version with runs is refused unless `withRuns`
+   * says to delete those walk-forward runs with it.
    */
-  deleteStrategy: (id: string, all = false) =>
-    sendJson<{ status: string, name?: string, versionsDeleted: number }>(
-      `/api/strategies/saved/${id}${all ? '?all=1' : ''}`, 'DELETE',
+  deleteStrategy: (id: string, all = false, withRuns = false) =>
+    sendJson<{ status: string, name?: string, versionsDeleted: number, runsDeleted?: number }>(
+      `/api/strategies/saved/${id}?${qs({ all: all ? 1 : undefined, runs: withRuns ? 1 : undefined })}`,
+      'DELETE',
     ),
   docs: (signal?: AbortSignal) => getJson<{ items: DocSummary[] }>('/api/docs', signal),
   doc: (slug: string, rev?: string | null, signal?: AbortSignal) =>
@@ -2209,6 +2213,34 @@ export const api = {
     }
     return sendJson<TrainResponse>('/api/nn/train', 'POST', body)
   },
+  /**
+   * Removes an instrument, or a source, with everything stored under it.
+   * `dryRun` only counts what would go.
+   */
+  deleteInstrument: (id: string, dryRun = false) =>
+    sendJson<{ status: string, counts: RemovalCounts }>(
+      `/api/instruments/${encodeURIComponent(id)}${dryRun ? '?dry_run=1' : ''}`, 'DELETE',
+    ),
+  deleteSource: (id: string, dryRun = false) =>
+    sendJson<{ status: string, counts: RemovalCounts }>(
+      `/api/sources/${encodeURIComponent(id)}${dryRun ? '?dry_run=1' : ''}`, 'DELETE',
+    ),
+  /** Removes a walk-forward run with its folds, curves and signals. Refused while its job is going. */
+  deleteWalkforwardRun: (id: string | number) =>
+    sendJson<{ status: string, id: number, foldsDeleted: number }>(
+      `/api/walkforward/runs/${encodeURIComponent(String(id))}`, 'DELETE',
+    ),
+  /** Removes one trained model version's files from the registry. */
+  deleteModel: (strategy: string, cacheKey: string, versionId: string) =>
+    sendJson<{ status: string }>(
+      `/api/nn/models/${encodeURIComponent(strategy)}/${encodeURIComponent(cacheKey)}/`
+      + encodeURIComponent(versionId), 'DELETE',
+    ),
+  /** Removes a built feature set with its stored values; it can be built again. */
+  deleteFeatureSet: (id: string) =>
+    sendJson<{ status: string, series: string, runsLeftWithoutASet: number }>(
+      `/api/features/sets/${encodeURIComponent(id)}`, 'DELETE',
+    ),
   deleteResult: (id: string | number) =>
     sendJson<{ status: string; id: number }>(`/api/results/${encodeURIComponent(String(id))}`, 'DELETE'),
   /** Preview an import undo: returns the candle count without deleting anything. */

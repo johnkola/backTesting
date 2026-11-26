@@ -287,6 +287,28 @@ class ModelRegistry:
         out.sort(key=lambda m: m.created_at, reverse=True)
         return out
 
+    def delete_version(self, strategy: str, cache_key: str, version_id: str) -> bool:
+        """Remove one stored version's directory. False when there is none.
+
+        The three names are checked against what the registry itself writes
+        before anything is removed: they come from a request, and a name that
+        is not a plain directory name could point outside the registry."""
+        if not _VERSION_RE.fullmatch(version_id):
+            return False
+        if any(part in ("", ".", "..") or "/" in part or "\\" in part
+               for part in (strategy, cache_key)):
+            return False
+        ver_dir = self.entry_dir(strategy, cache_key) / version_id
+        if not ver_dir.is_dir():
+            return False
+        shutil.rmtree(ver_dir)
+        entry = ver_dir.parent
+        # The key's directory goes with its last version, so the listing does
+        # not read an empty one as a version-less entry from before versions.
+        if entry.is_dir() and not any(entry.iterdir()):
+            entry.rmdir()
+        return True
+
     def prune_to(self, strategy: str, cache_key: str, keep_last_n: int) -> list[str]:
         if keep_last_n <= 0:
             return []

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-24-3** · 2026-11-24 21:29 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-24-4** · 2026-11-24 21:47 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1168,6 +1168,14 @@ The order, each phase leaving a stack that works end to end, with the four suite
   - **Reported and not a fault:** a saved strategy cannot be removed on the Strategy page. Every strategy stored today has a walk-forward run trained from it, and such a strategy is refused (409) by the rule that keeps a run explainable. Whether removing a strategy should remove its runs is the author's to decide.
   - **Every page checked for tables wider than the page, 2026-11-24** (the author: "some of the tables"), by screenshot at 1440 px. Fixed: the Models table (tighter cells, the short date, "TF"); the Instruments cards and the Models table scrolled sideways for a closed hover-tip near the right edge, so a closed tip now takes no room anywhere (`index.css`); the Features summary strip's stray scrollbar. Already fitting: Imports, Repairs, Strategy, Train, Pipeline. Not looked at: Sources, Run, Docs; and no narrower window. Client 267 tests.
   - **Step 0 accepted by the author, 2026-11-24** ("all 1 2 3", to: commit and push; the saved-strategy decision; step 0 accepted). The plan's own record of it is the author's and Claude (chat)'s to write, in `backTesting-13-Implementation-Plan`. CI passed on the pushed stack (python, java, client).
+  - **"Any item on any screen should be deletable" (the author, 2026-11-24).** Built, each with a confirm that says what goes:
+    - [x] A saved strategy with runs: refused as before, then on a second yes removed with the walk-forward runs trained from it (`?runs=1`).
+    - [x] A walk-forward run (Results): `DELETE /api/walkforward/runs/:id`, with its folds, curves and signals; refused while its job is waiting or running. Its fold models on disk stay until `nn.fold_models --prune`.
+    - [x] A trained model version (Models): `DELETE /api/nn/models/:strategy/:cacheKey/:versionId`, done by the Python worker, whose disk it is.
+    - [x] A built feature set (Features): `DELETE /api/features/sets/:id`, with its values; runs trained on it stay, with no set.
+    - [x] An instrument (Instruments) and a source (Sources): `DELETE /api/instruments/:id`, `DELETE /api/sources/:id`. `?dry_run=1` counts what would go (bars, imports, file versions, feature sets, walk-forward runs, results) and the page shows the counts before the delete; one transaction; refused while any job is waiting or running. Archived CSV slices, model files and saved strategies naming the series are not removed, and a series the daily feeds keep comes back at the next refresh.
+    - [ ] Not built, left as history unless the author asks: repair log rows (a repair can be reverted), feed runs, jobs, import file-history rows, doc revisions.
+    - Tests: service 93 (a run, a set, an instrument and a source each created, deleted and checked gone on series of the tests' own), Python 3 new for the model version, client 269. Postman 110 requests, 285 assertions, none failing; the five new deletes are there by their refusal paths only, since a real one needs a run, a model or a series to spend. **Not done:** none of the new buttons was pressed in a browser, and no real instrument, source, set, run or model was deleted on the live database.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
 - [ ] 16.7 **STOP. Three schemas and three logins.** Tables move to `app`, `data` and `jobs` (a move of names, not of rows), each login writes only its own schema, and a test proves a wrong-schema write is refused. This changes the stored database: full backup first, and it needs the author's go
 - [ ] 16.8 **Next.js.** The 17 pages move to the Next.js app router with the same components, tests and DaisyUI theme; Recharts charts are redrawn in Lightweight Charts; the Vite client and its nginx container go
@@ -2245,6 +2253,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-24-4 | 2026-11-24 21:47 | Claude Code (Claude Fable 5.2) | "Any item on any screen should be deletable": a strategy with its runs, a walk-forward run, a model version, a feature set, an instrument, a source |
 | 2026-11-24-3 | 2026-11-24 21:29 | Claude Code (Claude Fable 5.2) | Step 0 accepted by the author; every page checked for tables wider than the page (Models, Instruments, Features fixed) |
 | 2026-11-24-2 | 2026-11-24 14:32 | Claude Code (Claude Fable 5.2) | The Results page as the author reported it: both tables fit the page, percent figures group their thousands, a benchmark's vs-hold is coloured; a strategy with runs cannot be removed, by rule |
 | 2026-11-24-1 | 2026-11-24 01:32 | Claude Code (Claude Fable 5.2) | Postman run on the new stack and full life cycles added (the author's request): an answer's key order is kept through the jobs table; 105 requests, 275 assertions, none failing |

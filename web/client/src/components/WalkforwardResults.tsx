@@ -5,6 +5,7 @@ import { MAX_COMPARED, runName, windowText } from '../lib/compareRuns'
 import { useApiData } from '../lib/useApiData'
 import { naiveFlag, num, pp, verdictOf } from '../lib/walkforwardView'
 import { tipClass } from './FieldLabel'
+import DeleteRowButton from './DeleteRowButton'
 
 /**
  * Walk-forward runs on Results (R38 to R40, G57).
@@ -19,8 +20,9 @@ import { tipClass } from './FieldLabel'
  */
 export default function WalkforwardResults({ timeframe }: { timeframe: string }) {
   const [picked, setPicked] = useState<number[]>([])
+  const [reload, setReload] = useState(0)
   const { data, error } = useApiData<WalkforwardRuns>(
-    (signal) => api.walkforwardRuns({ timeframe, limit: 100 }, signal), [timeframe],
+    (signal) => api.walkforwardRuns({ timeframe, limit: 100 }, signal), [timeframe, reload],
   )
 
   function toggle(id: number) {
@@ -68,6 +70,7 @@ export default function WalkforwardResults({ timeframe }: { timeframe: string })
                 <th className="text-right">Sharpe</th>
                 <th className="text-right">Worst DD</th>
                 <th>Reading</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -130,12 +133,24 @@ export default function WalkforwardResults({ timeframe }: { timeframe: string })
                         {r.inProgress && <span className="badge badge-sm badge-info">running</span>}
                       </div>
                     </td>
+                    <td>
+                      <DeleteRowButton
+                        label={`walk-forward run ${r.id}`}
+                        what={'Permanently removes this run with its folds, loss curves and '
+                          + 'signals. It cannot be undone; the run would have to be trained again.'}
+                        onDelete={() => api.deleteWalkforwardRun(r.id)}
+                        onDeleted={() => {
+                          setPicked((p) => p.filter((x) => x !== r.id))
+                          setReload((n) => n + 1)
+                        }}
+                      />
+                    </td>
                   </tr>
                 )
               })}
               {runs.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="text-center text-base-content/60">
+                  <td colSpan={14} className="text-center text-base-content/60">
                     No walk-forward run on {timeframe} yet. Start one on Pipeline, Training.
                   </td>
                 </tr>

@@ -38,10 +38,12 @@ import tools.jackson.databind.ObjectMapper;
  *       from. There is no update here, on purpose. The version is chosen
  *       inside the INSERT, so two saves at once cannot pick the same
  *       number.</li>
- *   <li><b>A version a run was trained from cannot be removed</b> (409):
- *       {@code walkforward_runs.strategy_id} points at it, and the windows,
- *       features and objective live only in this row. Removing every version
- *       of a name is all or nothing.</li>
+ *   <li><b>A run never outlives the strategy it was trained from.</b>
+ *       {@code walkforward_runs.strategy_id} points at the version, and the
+ *       windows, features and objective live only in this row, so a version
+ *       with runs is refused (409) unless the caller asks for its runs to go
+ *       with it ({@code runs=1}; the author, 2026-11-24). Removing every
+ *       version of a name is all or nothing.</li>
  *   <li><b>What can run is the runner's answer.</b> The engines, model types
  *       and validation schemes are read from the Python worker, and a save
  *       asks it whether it would run the strategy; when it does not answer
@@ -201,39 +203,68 @@ public class StrategiesController {
 
     /**
      * Removes one version, or with {@code ?all=1} every version of the name
-     * the id belongs to (what the page's remove button sends).
+     * the id belongs to (what the page's remove button sends). A version a run
+     * was trained from is refused with 409 and the count, unless
+     * {@code ?runs=1} says to delete those runs with it.
      */
     @DeleteMapping("/api/strategies/saved/{id}")
     public ResponseEntity<Object> remove(@PathVariable String id,
-            @RequestParam(required = false) String all) {
+            @RequestParam(required = false) String all,
+            @RequestParam(required = false) String runs) {
         long key = numeric(id);
+        boolean withRuns = yes(runs);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "deleted");
         if (!yes(all)) {
-            ResponseEntity<Object> held = inUse(List.of(key));
-            if (held != null) {
-                return held;
+            if (!withRuns) {
+                ResponseEntity<Object> held = inUse(List.of(key));
+                if (held != null) {
+                    return held;
+                }
             }
-            if (db.sql("DELETE FROM strategies WHERE id = ?").param(key).update() == 0) {
-                throw ApiException.notFound("no strategy with id " + id);
-            }
-            body.put("id", id);
-            body.put("versionsDeleted", 1);
-            return ResponseEntity.ok(body);
+            return tx.execute(status -> {
+                int runsGone = withRuns ? deleteRuns(List.of(key)) : 0;
+                if (db.sql("DELETE FROM strategies WHERE id = ?").param(key).update() == 0) {
+                    throw ApiException.notFound("no strategy with id " + id);
+                }
+                body.put("id", id);
+                body.put("versionsDeleted", 1);
+                body.put("runsDeleted", runsGone);
+                return ResponseEntity.<Object>ok(body);
+            });
         }
         String name = db.sql("SELECT name FROM strategies WHERE id = ?").param(key)
                 .query(String.class).optional()
                 .orElseThrow(() -> ApiException.notFound("no strategy with id " + id));
         List<Long> ids = db.sql("SELECT id FROM strategies WHERE name = ? ORDER BY id").param(name)
                 .query(Long.class).list();
-        ResponseEntity<Object> held = inUse(ids);
-        if (held != null) {
-            return held;
+        if (!withRuns) {
+            ResponseEntity<Object> held = inUse(ids);
+            if (held != null) {
+                return held;
+            }
         }
-        body.put("name", name);
-        body.put("versionsDeleted",
-                db.sql("DELETE FROM strategies WHERE name = ?").param(name).update());
-        return ResponseEntity.ok(body);
+        return tx.execute(status -> {
+            int runsGone = withRuns ? deleteRuns(ids) : 0;
+            body.put("name", name);
+            body.put("versionsDeleted",
+                    db.sql("DELETE FROM strategies WHERE name = ?").param(name).update());
+            body.put("runsDeleted", runsGone);
+            return ResponseEntity.<Object>ok(body);
+        });
+    }
+
+    /**
+     * Deletes the walk-forward runs trained from {@code ids}, with their folds,
+     * curves, signals and checks (each cascades from the run). Only on the
+     * caller's explicit {@code runs=1}: the author's decision of 2026-11-24
+     * that the application is a sandbox, where removing a strategy may take
+     * its runs with it. The strategy and its runs go in one transaction.
+     */
+    private int deleteRuns(List<Long> ids) {
+        String marks = String.join(", ", ids.stream().map(i -> "?").toList());
+        return db.sql("DELETE FROM walkforward_runs WHERE strategy_id IN (" + marks + ")")
+                .params(new ArrayList<Object>(ids)).update();
     }
 
     /** A 409 when a walk-forward run was trained from any of {@code ids}; null when none was. */

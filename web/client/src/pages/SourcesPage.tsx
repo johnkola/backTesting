@@ -1,10 +1,13 @@
+import { useState } from 'react'
+import RemoveSeriesButton from '../components/RemoveSeriesButton'
 import { api, type Source } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 
 export default function SourcesPage() {
+  const [reload, setReload] = useState(0)
   const { data: sources, error } = useApiData<Source[]>(
     (signal) => api.sources(signal).then((r) => r.items),
-    [],
+    [reload],
   )
 
   return (
@@ -21,6 +24,7 @@ export default function SourcesPage() {
                 <th>Description</th>
                 <th>Created</th>
                 <th className="text-right">ID</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -30,10 +34,19 @@ export default function SourcesPage() {
                   <td className="text-base-content/70">{s.description ?? '—'}</td>
                   <td>{new Date(s.created_at).toLocaleString()}</td>
                   <td className="text-right text-base-content/50">{s.id}</td>
+                  <td>
+                    <RemoveSeriesButton
+                      label="delete"
+                      name={s.name}
+                      preview={() => api.deleteSource(String(s.id), true)}
+                      remove={() => api.deleteSource(String(s.id))}
+                      onDeleted={() => setReload((n) => n + 1)}
+                    />
+                  </td>
                 </tr>
               ))}
               {sources.length === 0 && (
-                <tr><td colSpan={4} className="text-center text-base-content/60">No sources yet.</td></tr>
+                <tr><td colSpan={5} className="text-center text-base-content/60">No sources yet.</td></tr>
               )}
             </tbody>
           </table>

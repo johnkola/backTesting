@@ -10,7 +10,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.core.JacksonException;
@@ -54,8 +57,11 @@ public class FeaturesController {
     private final JdbcClient db;
     private final PythonGateway python;
     private final ObjectMapper json;
+    private final TransactionTemplate tx;
 
-    public FeaturesController(JdbcClient db, PythonGateway python, ObjectMapper json) {
+    public FeaturesController(JdbcClient db, PythonGateway python, ObjectMapper json,
+            TransactionTemplate tx) {
+        this.tx = tx;
         this.db = db;
         this.python = python;
         this.json = json;
@@ -252,6 +258,38 @@ public class FeaturesController {
                     return s;
                 }).list());
         return body;
+    }
+
+    /**
+     * Removes a built feature set with its stored values (the author,
+     * 2026-11-24: anything listed on a screen can be deleted). It can be built
+     * again from the same config. A walk-forward run trained on it stays, and
+     * reads as having no set: its folds and figures are its own.
+     *
+     * <p>{@code feature_values} is a compressed hypertable, and TimescaleDB
+     * limits how many compressed rows one statement may rewrite; the limit is
+     * lifted for this transaction alone, because a set is deleted whole.
+     */
+    @DeleteMapping("/api/features/sets/{id}")
+    public Map<String, Object> deleteSet(@PathVariable String id) {
+        long key = setId(id);
+        return tx.execute(status -> {
+            String series = db.sql("SELECT i.symbol || ' ' || ds.name || ' ' || fs.timeframe "
+                            + "FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
+                            + "JOIN data_sources ds ON ds.id = fs.source_id WHERE fs.id = ?")
+                    .param(key).query(String.class).optional()
+                    .orElseThrow(() -> ApiException.notFound("no feature set with id " + id));
+            int runs = db.sql("SELECT COUNT(*)::int FROM walkforward_runs WHERE feature_set_id = ?")
+                    .param(key).query(Integer.class).single();
+            db.sql("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0").update();
+            db.sql("DELETE FROM feature_sets WHERE id = ?").param(key).update();
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("status", "deleted");
+            body.put("id", String.valueOf(key));
+            body.put("series", series);
+            body.put("runsLeftWithoutASet", runs);
+            return body;
+        });
     }
 
     /** Per-feature coverage of one set over a date window. Every catalogue row gets a line. */

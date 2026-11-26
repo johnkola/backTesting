@@ -152,4 +152,17 @@ class FeaturesApiTest extends ServiceTest {
                 .get("missingBars").getAsInt());
         assertEquals(400, get("/api/features/gaps?set=" + setId).status());
     }
+
+    @Test
+    void aSetIsDeletedWithItsValuesAndASecondDeleteFindsNothing() throws Exception {
+        Reply gone = call("DELETE", "/api/features/sets/" + setId);
+        assertEquals(200, gone.status(), gone.text());
+        assertEquals("deleted", gone.at("status").getAsString());
+        assertEquals(SYMBOL + " " + SOURCE + " " + TF, gone.at("series").getAsString());
+        assertEquals("0", scalar("SELECT count(*) FROM feature_sets WHERE id = ?", setId));
+        assertEquals("0", scalar("SELECT count(*) FROM feature_values WHERE feature_set_id = ?", setId));
+        assertEquals("0", scalar("SELECT count(*) FROM feature_spec WHERE feature_set_id = ?", setId));
+        assertEquals(404, call("DELETE", "/api/features/sets/" + setId).status());
+        assertEquals(400, call("DELETE", "/api/features/sets/abc").status());
+    }
 }

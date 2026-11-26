@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-23-8** · 2026-11-23 22:48 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-24-1** · 2026-11-24 21:47 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the API (a Spring Boot service) and for the backtest engine and CLI, a **Python worker** for data and machine learning, and a **standalone React client**. The API hands work to the engine and the Python worker through a jobs table; neither has a port. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -405,6 +405,20 @@ Everything below is reachable at **`http://localhost:8001`**, the one address th
 | `GET /api/docs` | — | The doc registry: `{name, label, slug}` per doc |
 | `GET /api/docs/:slug` | `rev` | One doc as rendered HTML, headings anchored. Every fetch snapshots the file if its hash changed; `rev=N` returns a captured revision instead |
 | `GET /api/docs/:slug/history` | — | That doc's captured revisions, newest first |
+
+### Deleting what is listed
+
+Anything a screen lists can be deleted from it. Each asks for a confirm that says what goes; none can be undone.
+
+| Endpoint | Removes |
+|---|---|
+| `DELETE /api/results/:id` | One backtest result |
+| `DELETE /api/imports/:id` | One import (undo); `?dry_run=true` counts first |
+| `DELETE /api/strategies/saved/:id` | One version; `?all=1` every version of its name. A version a walk-forward run was trained from is a `409` with the count, unless `?runs=1` says to delete those runs with it |
+| `DELETE /api/walkforward/runs/:id` | One walk-forward run with its folds, curves and signals. `409` while its job is waiting or running. The fold models on disk stay until `nn.fold_models --prune` |
+| `DELETE /api/nn/models/:strategy/:cacheKey/:versionId` | One trained model version's files |
+| `DELETE /api/features/sets/:id` | One built feature set with its values; it can be built again |
+| `DELETE /api/instruments/:id`, `DELETE /api/sources/:id` | The instrument, or the source, with everything stored under it: bars, imports, file history, checks and repairs, feature sets, walk-forward runs and backtest results. `?dry_run=1` answers with the counts and deletes nothing. `409` while any job is waiting or running. Archived CSV slices and model files are left, and a series the daily feeds keep comes back at the next refresh |
 
 ### Engine — Java, as `java-compute` jobs
 
@@ -1517,6 +1531,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-24-1 | 2026-11-24 21:47 | Claude Code (Claude Fable 5.2) | Deleting what is listed: a walk-forward run, a model version, a feature set, an instrument, a source; a strategy with its runs |
 | 2026-11-23-8 | 2026-11-23 22:48 | Claude Code (Claude Fable 5.2) | The backend is Java: the Spring Boot service is the API on port 8001, the engine and the Python worker take jobs and have no port, and the Node API and the loader's port are gone |
 | 2026-11-23-7 | 2026-11-23 20:14 | Claude Code (Claude Fable 5.2) | The Spring Boot service now answers sources, instruments, candles, imports and every route whose work Python does; Node forwards them |
 | 2026-11-23-6 | 2026-11-23 18:12 | Claude Code (Claude Fable 5.2) | G16 step 16.3: the Spring Boot service (`server`, port 8004): health, the jobs API, the list rules; who writes what on a job row |
