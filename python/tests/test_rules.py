@@ -188,6 +188,39 @@ class TestServedToTheEngine:
         assert body["dualMomentum"]["available"] and len(body["dualMomentum"]["calls"]) == n
         assert len(body["bills"]) == n and all(c["ok"] for c in body["checks"])
 
+    def test_the_month_ends_behind_the_calls_carry_what_each_decision_read(self):
+        """Step 4: every Faber and dual momentum call can be checked by hand."""
+        from nn import rules_api
+        monthly = [100.0] * 9 + [110.0, 90.0, 120.0, 125.0, 130.0]
+        px, spy = history(monthly), history([100.0] * 13 + [101.0])
+        dtb3 = {d: 2.0 for d in px.closes}
+        dec = rules.decide("QQQ", px, spy, dtb3)
+        # A window starting mid-month: its first bar reads the 12th month end.
+        start = min(d for d in px.closes if d > dec.month_ends[12])
+        months = rules_api.rule_payload("QQQ", px, spy, dtb3, start, max(px.closes))["months"]
+        # From 12 month ends before the first one read, so its average and
+        # return can be recomputed from the rows; the unfinished month has none.
+        assert [m["date"] for m in months] == [d.isoformat() for d in dec.month_ends[0:14]]
+        assert [m["used"] for m in months] == [False] * 12 + [True, True]
+        first = months[12]
+        closes = [m["close"] for m in months]
+        assert closes == monthly
+        assert first["average10"] == pytest.approx(sum(closes[3:13]) / 10)
+        assert first["return12"] == pytest.approx(closes[12] / closes[0] - 1)
+        assert first["faber"] == "QQQ" and first["average10"] < first["close"]
+        assert first["spyClose"] == 100.0 and first["spyReturn12"] == pytest.approx(0.0)
+        assert first["bills12"] == pytest.approx(dec.tbill12[12])
+        assert first["dualMomentum"] == "QQQ"
+        assert months[0]["average10"] is None and months[0]["faber"] is None
+        json.dumps(months)
+
+    def test_spy_has_no_alternative_to_list(self):
+        px = history([100.0] * 12 + [110.0])
+        dec = rules.decide("SPY", px, None, {d: 2.0 for d in px.closes})
+        rows = rules.month_table(dec, None, dec.month_ends[12], max(px.closes))
+        assert rows[-1]["spyClose"] is None and rows[-1]["dualMomentum"] == "SPY"
+        assert rules.month_table(dec, None, date(1990, 1, 1), date(1990, 6, 1)) == []
+
     def test_too_early_a_window_is_not_available_with_the_reason(self):
         from nn import rules_api
         px = history([100.0] * 12)
@@ -222,13 +255,16 @@ def test_the_five_rules_are_pinned_to_these_settings():
     settings. A change here changes every run's benchmark, so it is a decision."""
     assert rules.INDICATOR_SETTINGS == {
         "sma-crossover": {"shortPeriod": 50, "longPeriod": 200},
+        # The author, 2026-11-25: the crossover at 10/50 as well, its own benchmark.
+        "sma-crossover-10-50": {"shortPeriod": 10, "longPeriod": 50},
         "ema-triple": {"fastPeriod": 5, "mediumPeriod": 13, "slowPeriod": 34},
         "macd": {"shortPeriod": 12, "longPeriod": 26, "signalPeriod": 9},
         "rsi": {"period": 14, "overbought": 70, "oversold": 30},
         "bollinger": {"period": 20, "deviations": 2.0},
     }
-    assert rules.ALL_RULES == ("faber", "dual_momentum", "sma-crossover", "ema-triple",
-                               "macd", "rsi", "bollinger")
+    assert rules.ALL_RULES == ("faber", "dual_momentum", "sma-crossover",
+                               "sma-crossover-10-50", "ema-triple", "macd", "rsi", "bollinger")
+    assert rules.INDICATOR_KIND["sma-crossover-10-50"] == "sma-crossover"
 
 
 def test_a_crossover_enters_on_the_cross_and_leaves_on_the_cross_back():
@@ -325,7 +361,17 @@ def test_python_and_the_engine_agree_on_every_entry_and_exit():
         # The two built on plain moving averages are compared from the first
         # bar; the three on an EMA or Wilder average from where TA-Lib's start
         # and ta4j's have decayed (`ta.SETTLE_BARS`).
-        assert start == (0 if name in ("sma-crossover", "bollinger") else 400)
+        assert start == (0 if rules.INDICATOR_KIND[name] in ("sma-crossover", "bollinger")
+                         else 400)
         # Not a vacuous check: several of each on the bars the engine is held to.
         assert sum(i >= start for i in r["entries"]) >= 2, name
         assert sum(i >= start for i in r["exits"]) >= 2, name
+
+
+def test_the_10_50_crossover_is_the_same_rule_on_other_settings():
+    """The author's answer of 2026-11-25: both crossovers, as two benchmarks."""
+    closes = [100.0 + i % 37 - (i // 90) * 3 for i in range(600)]
+    fast = rules.indicator_signals("sma-crossover-10-50", closes)
+    same = rules.indicator_signals("sma-crossover", closes, {"shortPeriod": 10, "longPeriod": 50})
+    assert fast == same and fast[0] == 51
+    assert fast != rules.indicator_signals("sma-crossover", closes)

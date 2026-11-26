@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,10 +21,18 @@ class StrategyRegistryTest {
     private final StrategyRegistry registry = StrategyRegistry.getInstance();
 
     @Test
-    @DisplayName("the five indicator rules are benchmarks, in registration order")
-    void theFiveRulesAreBenchmarks() {
-        assertEquals(List.of("sma-crossover", "rsi", "macd", "bollinger", "ema-triple"),
+    @DisplayName("the indicator rules are benchmarks, in registration order, the crossover twice")
+    void theRulesAreBenchmarks() {
+        assertEquals(List.of("sma-crossover", "sma-crossover-10-50", "rsi", "macd", "bollinger",
+                        "ema-triple"),
                 registry.namesOf(Kind.BENCHMARK));
+        // Each name runs at the settings it is scored at beside every result.
+        assertEquals(Map.of("shortPeriod", "50", "longPeriod", "200"),
+                registry.getStrategy("sma-crossover").orElseThrow().getDefaultParameters());
+        assertEquals(Map.of("shortPeriod", "10", "longPeriod", "50"),
+                registry.getStrategy("sma-crossover-10-50").orElseThrow().getDefaultParameters());
+        assertEquals("sma-crossover-10-50",
+                registry.getStrategy("sma-crossover-10-50").orElseThrow().getName());
     }
 
     @Test

@@ -9,14 +9,18 @@ the way it trades a strategy's signals, so both sides of the stack score the
 same decisions and nobody keeps a second copy of the rules.
 
   200 {symbol, dates, faber: {available, reason, calls}, dualMomentum: {...},
-       indicatorRules: {name: {available, reason, calls, settings}}, bills, checks}
+       indicatorRules: {name: {available, reason, calls, settings}}, bills, months,
+       checks}
   400 a bad date or a timeframe other than D1; 404 no candles for the series.
 
 A call is the symbol to hold from the next open, "SPY", or null for cash. A rule
 without enough history before `from` is `available: false` with the reason and
-no calls. `checks` are the data checks of the 10-month average and the 12-month
+no calls. `months` are the month ends the two monthly rules decided at, each
+with the close, 10-month average, 12-month returns and T-bill return it read
+(`rules.month_table`): the result page lists them so a call can be checked by
+hand. `checks` are the data checks of the 10-month average and the 12-month
 return against an independent copy (`data_checks.rule_checks`), and of every
-indicator the five rules read, TA-Lib against the hand-written module
+indicator the indicator rules read, TA-Lib against the hand-written module
 (`data_checks.indicator_checks`, G78).
 """
 
@@ -52,10 +56,12 @@ def rule_payload(symbol: str, px: profit.Prices, spy: profit.Prices | None,
         "dates": [d.isoformat() for d in dates],
         "faber": rule(faber),
         "dualMomentum": rule(momentum),
-        # The five indicator rules (G79), by name, with the settings they are pinned to.
+        # The indicator rules (G79), by name, with the settings they are pinned to.
         "indicatorRules": {c.name: {**rule(c), "settings": rules.INDICATOR_SETTINGS[c.name]}
                            for c in indicator},
         "bills": None if bills is None else [float(v) for v in bills],
+        # The month ends Faber and dual momentum decided at, with what each read.
+        "months": rules.month_table(dec, spy, start, end),
         "checks": [{"name": c.name, "ok": c.ok, "summary": c.summary()}
                    for c in (*data_checks.rule_checks(dec, px.closes),
                              *data_checks.indicator_checks(px.closes))],

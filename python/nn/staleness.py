@@ -78,7 +78,8 @@ SERIES_LAG = {"DCOILWTICO/fred": 8, "NDXERN5D/computed": 5, "NDXERNSEASON/comput
 #: `tests/test_staleness.py` fails if one of these strategies' sources mentions
 #: volume. A strategy missing here is checked against every change, which is
 #: the safe side.
-PRICE_ONLY_STRATEGIES = frozenset({"sma-crossover", "rsi", "macd", "bollinger", "ema-triple"})
+PRICE_ONLY_STRATEGIES = frozenset({"sma-crossover", "sma-crossover-10-50", "rsi", "macd",
+                                   "bollinger", "ema-triple"})
 
 #: Backtest strategies that score a model against the stored feature table and
 #: so read every series features.toml names, not only the bars they trade

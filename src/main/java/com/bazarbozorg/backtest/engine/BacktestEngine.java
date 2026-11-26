@@ -365,7 +365,7 @@ public class BacktestEngine {
     }
 
     /**
-     * Faber, dual momentum (B7) and the five indicator rules (G79) over the
+     * Faber, dual momentum (B7) and the indicator rules (G79) over the
      * result's window. The decisions come
      * from the loader; SPY's bars from the store. Anything that stops a rule
      * from being scored makes it not available with the reason, never a zero.
@@ -413,14 +413,16 @@ public class BacktestEngine {
     static final String FABER = "faber";
     static final String DUAL_MOMENTUM = "dual_momentum";
     /**
-     * The five indicator rules, scored beside every result as benchmarks at the
-     * settings the loader pins them to (G79; python/nn/rules.py). The same
-     * names as the strategies in {@code strategy/impl}, which are the engine's
-     * own copy of each rule; {@code IndicatorRulesCrossCheckTest} holds the two
-     * to the same entries and exits.
+     * The indicator rules, scored beside every result as benchmarks at the
+     * settings the loader pins them to (G79; python/nn/rules.py): the SMA
+     * crossover twice, 50/200 and 10/50 (the author, 2026-11-25). Each is a
+     * strategy in {@code strategy/impl}, the engine's own copy of the rule, the
+     * 10/50 one being the SMA crossover's; {@code IndicatorRulesCrossCheckTest}
+     * holds the two sides to the same entries and exits.
      */
     static final List<String> INDICATOR_RULES =
-            List.of("sma-crossover", "ema-triple", "macd", "rsi", "bollinger");
+            List.of("sma-crossover", "sma-crossover-10-50", "ema-triple", "macd", "rsi",
+                    "bollinger");
 
     /** Every rule benchmark as not available, for one shared reason. */
     static List<RuleBenchmark> unavailableRules(String why) {
@@ -435,7 +437,7 @@ public class BacktestEngine {
 
     /**
      * Every rule benchmark from the loader's decisions: Faber, dual momentum and
-     * the five indicator rules. An indicator rule's cash earns nothing here, as
+     * the indicator rules. An indicator rule's cash earns nothing here, as
      * Faber's does; only dual momentum's earns T-bills. Package-private for the
      * tests.
      */
@@ -510,8 +512,9 @@ public class BacktestEngine {
         double lastMark = 0.0;
         for (int i = warmupBars; i < series.getBarCount(); i++) {
             Bar bar = series.getBar(i);
-            java.time.LocalDate day = barDate(bar).toLocalDate();
-            ZonedDateTime time = ZonedDateTime.ofInstant(bar.getEndTime(), ZoneOffset.UTC);
+            // Stamped with the bar's own date, as trade() stamps a fill (below).
+            ZonedDateTime time = barDate(bar);
+            java.time.LocalDate day = time.toLocalDate();
             if (called && !java.util.Objects.equals(pending, held)) {
                 if (held != null) {
                     Bar from = held.equals(symbol) ? bar : spy.get(day);
@@ -687,7 +690,12 @@ public class BacktestEngine {
 
         for (int i = warmupBars; i < series.getBarCount(); i++) {
             Bar currentBar = series.getBar(i);
-            ZonedDateTime barTime = ZonedDateTime.ofInstant(currentBar.getEndTime(), ZoneOffset.UTC);
+            // A fill and an equity mark carry the bar's OWN date (barDate), the
+            // one its prices are stored and shown under: a fill at the 15th's
+            // open is dated the 15th, and the close it is marked at is the
+            // 15th's. The end instant is the 16th, a date with no such prices,
+            // and on a Friday a Saturday: a trade could not be looked up.
+            ZonedDateTime barTime = barDate(currentBar);
 
             // What the previous bar's close decided, filled at this bar's open.
             if (pending != null) {
@@ -709,7 +717,7 @@ public class BacktestEngine {
         if (portfolioManager.hasOpenPositions() && series.getBarCount() > 0) {
             Bar lastBar = series.getBar(series.getBarCount() - 1);
             double lastClose = lastBar.getClosePrice().doubleValue();
-            ZonedDateTime lastTime = ZonedDateTime.ofInstant(lastBar.getEndTime(), ZoneOffset.UTC);
+            ZonedDateTime lastTime = barDate(lastBar);
 
             logger.info("Force-closing {} remaining position(s) at last bar close",
                     portfolioManager.getOpenPositions().size());

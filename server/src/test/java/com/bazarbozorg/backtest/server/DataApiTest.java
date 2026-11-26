@@ -159,6 +159,25 @@ class DataApiTest extends ServiceTest {
     }
 
     @Test
+    void theBarsAtGivenInstantsComeExactlyAndNeverThinned() throws Exception {
+        String base = "/api/candles?instrument=" + SYMBOL + "&source=" + SOURCE;
+        Reply r = get(base + "&timeframe=D1&at=2026-11-05T00:00:00Z,2026-11-03T00:00:00.000Z,"
+                + "2026-11-07T00:00:00Z");
+        assertEquals(200, r.status());
+        JsonArray items = r.at("items").getAsJsonArray();
+        // The two that exist, in time order; the Saturday has no bar.
+        assertEquals(2, items.size());
+        assertEquals("2026-11-03T00:00:00.000Z", items.get(0).getAsJsonObject().get("timestamp").getAsString());
+        assertEquals(105.0, items.get(1).getAsJsonObject().get("close").getAsDouble());
+        assertEquals(1, r.at("stride").getAsInt());
+        // An instant is exact: 15:00 is one half-hour bar, not the day's three.
+        assertEquals(1, get(base + "&timeframe=M30&at=2026-11-06T15:00:00Z").at("total").getAsInt());
+        Reply bad = get(base + "&timeframe=D1&at=2026-11-05");
+        assertEquals(400, bad.status());
+        assertEquals("at: not an instant: 2026-11-05", bad.at("error").getAsString());
+    }
+
+    @Test
     void candlesNeedAnInstrumentAndATimeframeAndADateThatIsOne() throws Exception {
         Reply r = get("/api/candles?instrument=" + SYMBOL);
         assertEquals(400, r.status());

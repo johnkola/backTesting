@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-26-1** · 2026-11-26 10:03 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-26-2** · 2026-11-26 10:36 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the API (a Spring Boot service) and for the backtest engine and CLI, a **Python worker** for data and machine learning, and a **standalone React client**. The API hands work to the engine and the Python worker through a jobs table; neither has a port. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -408,6 +408,7 @@ Everything below is reachable at **`http://localhost:8001`**, the one address th
 | `GET /api/health` | — | `{status, ok, maintenance, db, services[]}` — a probe of the database, the Python worker and the Java engine, not just this process; each worker is asked with a job and its answer kept for 15 seconds. Always HTTP 200 while the API is alive; the verdict is in the body. The client gates its first paint on it (see [Maintenance mode](#maintenance-mode)) |
 | `GET /api/sources` | — | `{items: [...]}` — data sources |
 | `GET /api/instruments` | — | `{items: [...]}` — instruments, each with a per-`(source, timeframe)` breakdown: candle count and date range |
+| `GET /api/candles` | `instrument` `timeframe` (both required) `source` `from` `to` `at` | `{items, total, returned, stride}` — the adjusted bars, in time order. A range is thinned to 4,000 bars by taking every n-th (`stride`), never by averaging. `at` is a comma-separated list of instants (`2016-03-18T00:00:00Z,...`, at most 2,000) and answers exactly the bars stored under them, never thinned: a result's trades are dated by their bar's own timestamp, so this is how a fill is lined up with the bar it took its price from. `400` for an `at` that is not an instant |
 | `GET /api/imports` | `limit` `offset` `source` `instrument` `timeframe` `sort` | Paginated import audit log. `sort` is one of `imported`, `source`, `instrument`, `timeframe`, `archive`, `file`, `rows`, with a leading `-` for descending (`sort=-rows`; whitelisted, never interpolated into SQL); every ordering breaks ties on `id DESC` so pagination is stable. Each row carries `checkOverride` (`{reason, errors, by}`) when its check errors were stored on an override, else `null` |
 | `GET /api/results` | `limit` `offset` `strategy` `instrument` `source` `timeframe` `sort` | Paginated backtest summaries, newest first. `sort` is one of `created`, `instrument`, `strategy`, `timeframe`, `source`, `return`, `hold`, `excess`, `sharpe`, `drawdown`, `trades`, `winrate`, with a leading `-` for descending; a result with no figure sorts last either way. Each carries `taxRate`, the percent it was scored after on realized gains (`null` before tax, G20), and `testWindows`, the saved test windows it scores as `{from, to, looksBefore, firstLookAt}` (empty when none), and `testWindowReused`, true when one was looked at before it (G48, R69); the result page has the same. Each carries `strategyKind`, the engine's kind for the strategy it ran (`model` or `benchmark`; `null` when the engine does not answer or no longer registers the name) |
 | `GET /api/results/:id` | — | One result with its full metrics, trades and equity curve. `result.buyAndHold` is buy-and-hold scored with this run under the same costs (B6): its `metrics`, `finalEquity`, its one trade and `equity`, one value per equity point. `holdEquity` is that curve, ready to draw; it is `null`, with `holdEquityNote` saying why, on a result stored before B6. A model result carries `modelWindow`, `modelTrainFrom`, `modelTrainTo`, `modelTrainSymbol` and `inSample` (B4), as the list does. `result.benchmarks` holds Faber and dual momentum, each `{name, available, reason, metrics, finalEquity, trades, equity}`. It carries `strategyKind` as the list does. `settings` is what the run was asked to do (G40): `requestedFrom` and `requestedTo` (the dates asked for; `startDate` is the first bar after the warm-up), `parameters` as passed and `effectiveParameters` with the defaults filled in, `initialCapital`, `commission` and `slippage` (`{type, value, description}`, the value exact), `taxRatePct` and `pinnedModelVersion`; `null` on a result stored before 2026-11-22 |
@@ -474,7 +475,7 @@ Anything a screen lists can be deleted from it. Each asks for a confirm that say
 | `POST /api/repairs/propose` | JSON: `symbol`, `source`, `timeframe?` | Writes repair rows with their candidates for the series' flagged bars and applies the ones the rule allows. Answers `{bars, proposed, applied, held}`. `404` for a series that is not stored |
 | `POST /api/repairs/choose` | JSON: `which` (`second_source`, `calculated`, `hand`), `reason`, and `ids` or `symbol` + `source`; `value` with `hand` | Applies a candidate to the named rows, or to every held row of a series. A row without that candidate stays held. `400` without a reason |
 | `POST /api/repairs/revert` | JSON: `id`, `reason` | Takes a repair back: the raw value shows through and the flag re-opens. `404` when the repair is not applied |
-| `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `indicatorRules`, the same for the five indicator rules by name, each with the `settings` it is pinned to (G79); `bills`, the T-bill carry dual momentum's cash earns per bar; and `checks`, the 10-month average and 12-month return against an independent copy, and each indicator the five rules read, TA-Lib against the hand-written module (G78). The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
+| `GET /api/nn/rules` | `symbol`, `source`, `from`, `to` | The rule benchmarks' decisions (B7): Faber's and dual momentum's call for every daily bar of the instrument in the window (the symbol, `SPY`, or `null` for cash), each `available` or not with a `reason`; `indicatorRules`, the same for the indicator rules by name, each with the `settings` it is pinned to (G79); `bills`, the T-bill carry dual momentum's cash earns per bar; `months`, each month end Faber and dual momentum decided at, with the close, the 10-month average, the 12-month returns of the instrument and SPY, the T-bill return and both decisions, from 12 month ends before the window's first (`used` marks those a bar of the window trades on), so a call can be checked by hand; and `checks`, the 10-month average and 12-month return against an independent copy, and each indicator the rules read, TA-Lib against the hand-written module (G78). The engine trades these with its own costs. `400` for a bad date or a timeframe other than D1, `404` for a series with no candles |
 | `GET /api/nn/models/window` | `strategy`, `versionId` | The bars a model version was trained on (B4): `{status, since, until, symbol, source}`, `status` being `known`, `not recorded` or `version gone`. The engine stores it with an nn result |
 | `POST /api/nn/walkforward/runs/:id/recalculate` | `strategyId`, `dryRun` | Rescores a run from its stored per-bar signals, without retraining, in the request (seconds). Engines are blind to costs, tax and margin (D9), so anything the profit step applies can change this way: cost, tax, park, Strategy 2 and its dials, the thresholds. Without `strategyId` the run is rescored at its own settings and its folds rewritten in place, which is what a change to the profit code needs; on unchanged code it reproduces every fold exactly. With `strategyId`, another version of the strategy that trains the same model (same features, windows, label, loss and hyperparameters), it writes a new run linked by `recalculatedFrom`. `dryRun` returns the figures and writes nothing. Returns `{sourceRunId, runId, mode, dryRun, strategy, settings, folds: [{fold, valYear, before, after}]}`. `400` with `reasons` for a model-side difference or a holdout run under other settings, `404` for an unknown run or strategy, `409` for a run still going or one that stored no signals (run before 2026-11-15: rerun it once). The terminal form is `python -m nn.recalculate --run N [--strategy-id M] [--dry-run]` in the loader |
 
@@ -895,14 +896,15 @@ series differently and agree once that start has decayed. The TA-Lib version is 
 with each feature build and run (`talib` in the library versions). The loader image needs
 nothing extra: the `TA-Lib` wheel carries the C library.
 
-**The five indicator rules beside every run** (R21, G79). The SMA crossover, the triple
-EMA, MACD, RSI and Bollinger bands are scored with every run too, as benchmarks, under
-the same costs and tax. Their settings are pinned in `python/nn/rules.py` and nothing on
+**The indicator rules beside every run** (R21, G79). The SMA crossover (twice, at 50/200
+and at 10/50: the author, 2026-11-25), the triple EMA, MACD, RSI and Bollinger bands are
+scored with every run too, as benchmarks, under the same costs and tax. Their settings are pinned in `python/nn/rules.py` and nothing on
 any tab changes them:
 
 | Rule | Pinned to | It holds the instrument |
 |---|---|---|
 | `sma-crossover` | 50 and 200 days | from the 50-day average crossing above the 200-day until it crosses back |
+| `sma-crossover-10-50` | 10 and 50 days | from the 10-day average crossing above the 50-day until it crosses back |
 | `ema-triple` | 5, 13 and 34 days | from the day the three line up fast over medium over slow, as the fast one crosses the medium, until the fast is under the medium |
 | `macd` | 12, 26, signal 9 | from MACD crossing above its signal line until it crosses back |
 | `rsi` | 14 days, 30 and 70 | from RSI falling to 30 or under until it rises to 70 or over |
@@ -1333,7 +1335,7 @@ The Python worker is configured via environment variables (set in `docker-compos
 
 ## Strategies
 
-Nine are registered in `StrategyRegistry`, each with a kind. The five indicator rules
+Ten are registered in `StrategyRegistry`, each with a kind. The six indicator rules
 in the table are **rule benchmarks**: kept runnable for comparison, and not offered as
 strategies (the author's decision, 2026-11-19). The Run tab lists them under their own
 heading, `list-strategies` prints the kind, and a result of one is labelled a benchmark
@@ -1350,7 +1352,8 @@ form, which generates its inputs from each strategy's declared defaults.
 
 | Name | In one line | Warmup |
 |---|---|---|
-| [`sma-crossover`](#sma-crossover) | Fast average crosses slow average | `longPeriod + 1` |
+| [`sma-crossover`](#sma-crossover) | Fast average crosses slow average, 50/200 | `longPeriod + 1` |
+| [`sma-crossover-10-50`](#sma-crossover) | The same rule, 10/50 | `longPeriod + 1` |
 | [`ema-triple`](#ema-triple) | Three averages line up | `slowPeriod + 1` |
 | [`macd`](#macd) | Momentum crosses its own smoothed self | `longPeriod + signalPeriod + 1` |
 | [`rsi`](#rsi) | Buy exhaustion, sell euphoria | `period + 1` |
@@ -1375,11 +1378,13 @@ one most people mean by "a crossover strategy".
 
 | Parameter | Default | What it does |
 |---|---|---|
-| `shortPeriod` | 10 | Bars in the fast average. Lower reacts sooner and whipsaws more. |
-| `longPeriod` | 50 | Bars in the slow average. This also sets the warmup. |
+| `shortPeriod` | 50 | Bars in the fast average. Lower reacts sooner and whipsaws more. |
+| `longPeriod` | 200 | Bars in the slow average. This also sets the warmup. |
 
-`shortPeriod=50, longPeriod=200` is the **golden cross**, the most-watched version
-of this rule.
+The defaults, 50 and 200, are the **golden cross**, the most-watched version of this
+rule. `sma-crossover-10-50` is the same rule registered again with 10 and 50 as its
+defaults (the author, 2026-11-25): each name's defaults are the settings its benchmark
+is pinned to, so a name runs on the Run tab exactly as it is scored beside every result.
 
 **Where it fails.** It is insurance against slow declines, paid for in rallies. It
 exits every dip and re-enters late, so a sustained uptrend costs it real money —
@@ -1551,6 +1556,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-2 | 2026-11-26 10:36 | Claude Code (Claude Opus 5.5) | Step 4: the SMA crossover twice (50/200 and 10/50); `at` on `GET /api/candles`; `months` on `GET /api/nn/rules` |
 | 2026-11-26-1 | 2026-11-26 10:03 | Claude Code (Claude Opus 5.5) | Step 3: the split shows the holdout fold and says the prediction window is not used |
 | 2026-11-25-2 | 2026-11-25 23:00 | Claude Code (Claude Opus 5.5) | Step 2: every feature stored normalized by the bars before it; no scaler fitted on a training window; five stages; the build button |
 | 2026-11-25-1 | 2026-11-25 22:14 | Claude Code (Claude Opus 5.5) | Filling a missing bar (step 1): the scan, the three methods, the routes and the commands |

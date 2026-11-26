@@ -16,8 +16,9 @@ its own window from the stored history.
   12 months, otherwise hold cash at the T-bill rate. When the instrument is SPY
   there is no alternative and only the T-bill test applies.
 
-* **The five indicator rules (R21, the author 2026-11-22; G79).** The SMA
-  crossover, the triple EMA, MACD, RSI and Bollinger bands, each pinned to
+* **The indicator rules (R21, the author 2026-11-22; G79).** The SMA
+  crossover (twice: 50/200, and 10/50 since the author's answer of
+  2026-11-25), the triple EMA, MACD, RSI and Bollinger bands, each pinned to
   the settings in `INDICATOR_SETTINGS` and decided at every daily close of the
   instrument's history. They were strategy types once; they are benchmarks
   now, and nobody sets them up: a run cannot change a period or a threshold,
@@ -72,6 +73,9 @@ FABER, DUAL_MOMENTUM = "faber", "dual_momentum"
 
 SMA_CROSSOVER, EMA_TRIPLE, MACD, RSI, BOLLINGER = (
     "sma-crossover", "ema-triple", "macd", "rsi", "bollinger")
+#: The SMA crossover at 10 and 50 days, a benchmark of its own beside the
+#: 50/200 one (the author, 2026-11-25): the same rule, other settings.
+SMA_CROSSOVER_FAST = "sma-crossover-10-50"
 #: The five indicator rules' settings, pinned (G79). Named as the engine's
 #: strategies name their parameters, so the same numbers can be handed to it.
 #: 50 and 200 days are the golden cross and death cross; 12, 26 and 9 are
@@ -80,12 +84,19 @@ SMA_CROSSOVER, EMA_TRIPLE, MACD, RSI, BOLLINGER = (
 #: standard: 5, 13 and 34 are the engine's own.
 INDICATOR_SETTINGS: dict[str, dict[str, float]] = {
     SMA_CROSSOVER: {"shortPeriod": 50, "longPeriod": 200},
+    SMA_CROSSOVER_FAST: {"shortPeriod": 10, "longPeriod": 50},
     EMA_TRIPLE: {"fastPeriod": 5, "mediumPeriod": 13, "slowPeriod": 34},
     MACD: {"shortPeriod": 12, "longPeriod": 26, "signalPeriod": 9},
     RSI: {"period": 14, "overbought": 70, "oversold": 30},
     BOLLINGER: {"period": 20, "deviations": 2.0},
 }
 INDICATOR_RULES = tuple(INDICATOR_SETTINGS)
+#: Which rule each benchmark is decided by: its own, except a second setting of
+#: a rule, which is that rule's code at other settings. The engine registers it
+#: under its own name with these settings as its defaults
+#: (`SmaCrossoverStrategy.fast`), and the cross-check holds both sides to it.
+INDICATOR_KIND: dict[str, str] = {name: name for name in INDICATOR_SETTINGS}
+INDICATOR_KIND[SMA_CROSSOVER_FAST] = SMA_CROSSOVER
 #: Every rule benchmark, in the order they are scored, stored and shown.
 ALL_RULES = (FABER, DUAL_MOMENTUM, *INDICATOR_RULES)
 
@@ -103,14 +114,15 @@ def indicator_signals(name: str, closes: list[float],
     p = settings or INDICATOR_SETTINGS[name]
     n = len(closes)
     entry, exit_ = [False] * n, [False] * n
-    if name == SMA_CROSSOVER:
+    kind = INDICATOR_KIND.get(name, name)
+    if kind == SMA_CROSSOVER:
         short = ta.sma(closes, int(p["shortPeriod"]))
         long_ = ta.sma(closes, int(p["longPeriod"]))
         warm = int(p["longPeriod"]) + 1
         for i in range(warm, n):
             now, was = short[i] > long_[i], short[i - 1] > long_[i - 1]
             entry[i], exit_[i] = now and not was, was and not now
-    elif name == EMA_TRIPLE:
+    elif kind == EMA_TRIPLE:
         fast = ta.ema(closes, int(p["fastPeriod"]))
         medium = ta.ema(closes, int(p["mediumPeriod"]))
         slow = ta.ema(closes, int(p["slowPeriod"]))
@@ -119,21 +131,21 @@ def indicator_signals(name: str, closes: list[float],
             aligned = fast[i] > medium[i] > slow[i]
             entry[i] = aligned and not fast[i - 1] > medium[i - 1]
             exit_[i] = not entry[i] and fast[i] < medium[i]
-    elif name == MACD:
+    elif kind == MACD:
         line, signal = ta.macd(closes, int(p["shortPeriod"]), int(p["longPeriod"]),
                                int(p["signalPeriod"]))
         warm = int(p["longPeriod"]) + int(p["signalPeriod"]) + 1
         for i in range(warm, n):
             now, was = line[i] > signal[i], line[i - 1] > signal[i - 1]
             entry[i], exit_[i] = now and not was, was and not now
-    elif name == RSI:
+    elif kind == RSI:
         r = ta.rsi(closes, int(p["period"]))
         low, high = p["oversold"], p["overbought"]
         warm = int(p["period"]) + 1
         for i in range(warm, n):
             entry[i] = r[i - 1] > low and r[i] <= low
             exit_[i] = not entry[i] and r[i - 1] < high and r[i] >= high
-    elif name == BOLLINGER:
+    elif kind == BOLLINGER:
         period, k = int(p["period"]), float(p["deviations"])
         lower, middle, _ = ta.bollinger(closes, period, k)
         warm = period + 1
@@ -257,6 +269,42 @@ def decide(symbol: str, px: profit.Prices, spy: profit.Prices | None,
              for name in INDICATOR_RULES}
     return Decisions(symbol, ends, closes, sma, faber, inst_r12, spy_r12, tbill12, momentum,
                      tuple(days), daily)
+
+
+def month_table(dec: Decisions, spy: profit.Prices | None, start: date,
+                end: date) -> list[dict]:
+    """The month ends behind a window's Faber and dual momentum calls, each with
+    the figures its decision read, so every call can be checked by hand against
+    the prices (step 4).
+
+    From 12 month ends before the first one the window reads, so the first
+    10-month average and 12-month return can be recomputed from the closes
+    listed, to the last month end in the window. `used` marks the month ends
+    whose decision a bar of the window trades on: the latest on or before its
+    first bar, and every one after it. A decision of None is one made on too
+    few months, which is never made."""
+    ends = dec.month_ends
+    first = bisect_right(ends, start) - 1
+    last = bisect_right(ends, end) - 1
+    if last < 0:
+        return []
+    is_spy = dec.symbol.upper() == SPY
+    rows = []
+    for k in range(max(0, max(first, 0) - MOMENTUM_MONTHS), last + 1):
+        d, f = ends[k], dec.faber[k]
+        rows.append({
+            "date": d.isoformat(),
+            "used": k >= first,
+            "close": dec.closes[k],
+            "average10": dec.sma[k],
+            "faber": None if f is None else (dec.symbol if f else CASH),
+            "return12": dec.r12[k],
+            "spyClose": None if is_spy or spy is None else _close_on_or_before(spy, d),
+            "spyReturn12": dec.spy_r12[k],
+            "bills12": dec.tbill12[k],
+            "dualMomentum": dec.momentum[k],
+        })
+    return rows
 
 
 @dataclass(frozen=True)

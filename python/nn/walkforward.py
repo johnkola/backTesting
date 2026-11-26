@@ -962,7 +962,7 @@ def report(results: list[FoldResult], args, strategy2_on: bool) -> None:
     for name in rules.ALL_RULES:
         figs = [f for r in results for f in r.rules if f.name == name]
         if name == rules.INDICATOR_RULES[0]:
-            print("\n             the five indicator rules, pinned settings:", end="")
+            print("\n             the indicator rules, pinned settings:", end="")
         if figs and all(f.available for f in figs):
             print(f"  {name} {np.mean([f.return_pct for f in figs]):+.2f}%", end="")
         elif figs:

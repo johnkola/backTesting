@@ -31,10 +31,17 @@ import org.springframework.web.bind.annotation.RestController;
  * bar would put a trade marker beside a price that never traded. The last bar
  * is always kept so the series ends where the data does, and the answer says
  * the stride so a page can say "1 in 3 bars shown".
+ *
+ * <p>{@code at} asks for the bars at given instants instead, never thinned:
+ * the bar each fill of a result took its price from, so a trade can be checked
+ * against the price it names (step 4). A trade is stamped with its bar's own
+ * timestamp ({@code BacktestEngine.barDate}), the one the bar is stored under.
  */
 @RestController
 public class DataController {
     static final int MAX_CANDLES = 4000;
+    /** The most instants one {@code at} asks for: two a trade, for 1,000 trades. */
+    static final int MAX_AT = 2000;
 
     private final JdbcClient db;
 
@@ -123,7 +130,8 @@ public class DataController {
             @RequestParam(required = false) String timeframe,
             @RequestParam(required = false) String source,
             @RequestParam(required = false) String from,
-            @RequestParam(required = false) String to) {
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) String at) {
         if (blank(instrument) || blank(timeframe)) {
             throw ApiException.badRequest("instrument and timeframe are required");
         }
@@ -142,6 +150,24 @@ public class DataController {
             DateRange.Bound b = DateRange.to(to);
             where.append(" AND c.timestamp ").append(b.op()).append(" ?");
             params.add(b.value());
+        }
+        boolean exact = !blank(at);
+        if (exact) {
+            List<String> instants = new ArrayList<>();
+            for (String raw : at.split(",")) {
+                if (raw.isBlank()) continue;
+                try {
+                    instants.add(java.time.OffsetDateTime.parse(raw.trim()).toInstant().toString());
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw ApiException.badRequest("at: not an instant: " + raw.trim());
+                }
+            }
+            if (instants.size() > MAX_AT) {
+                throw ApiException.badRequest("at: at most " + MAX_AT + " instants, not "
+                        + instants.size());
+            }
+            where.append(" AND c.timestamp = ANY(CAST(? AS timestamptz[]))");
+            params.add("{" + String.join(",", instants) + "}");
         }
         // The adjusted candles (G76): what the features and the backtests read.
         List<Map<String, Object>> rows = db.sql(
@@ -163,7 +189,7 @@ public class DataController {
                 }).list();
 
         int total = rows.size();
-        int stride = Math.max(1, (int) Math.ceil(total / (double) MAX_CANDLES));
+        int stride = exact ? 1 : Math.max(1, (int) Math.ceil(total / (double) MAX_CANDLES));
         List<Map<String, Object>> items = rows;
         if (stride > 1) {
             items = new ArrayList<>();

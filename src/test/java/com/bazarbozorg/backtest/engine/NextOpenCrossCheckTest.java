@@ -108,11 +108,11 @@ class NextOpenCrossCheckTest {
         for (int i = 0; i < trades.size(); i++) {
             JsonObject want = expected.get(i).getAsJsonObject();
             Trade got = trades.get(i);
-            // Stamped with the bar's end instant, one day after the bar's own date.
+            // Stamped with the bar's own date, the one its prices are stored under.
             assertEquals(want.get("entry").getAsString(),
-                    got.entryTime().minusDays(1).toLocalDate().toString(), "entry date of trade " + i);
+                    got.entryTime().toLocalDate().toString(), "entry date of trade " + i);
             assertEquals(want.get("exit").getAsString(),
-                    got.exitTime().minusDays(1).toLocalDate().toString(), "exit date of trade " + i);
+                    got.exitTime().toLocalDate().toString(), "exit date of trade " + i);
             assertEquals(want.get("entryPrice").getAsDouble(), got.entryPrice(), 1e-12);
             assertEquals(want.get("exitPrice").getAsDouble(), got.exitPrice(), 1e-12);
         }

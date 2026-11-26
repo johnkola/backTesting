@@ -194,9 +194,13 @@ def test_the_price_only_strategies_never_read_volume():
     """PRICE_ONLY_STRATEGIES is a claim about Java code; hold it to the source."""
     by_name = {}
     for f in (JAVA / "strategy").rglob("*.java"):
-        m = re.search(r'getName\(\)\s*\{\s*return\s+"([^"]+)"', f.read_text())
-        if m:
-            by_name[m.group(1)] = f
+        text = f.read_text()
+        # A name returned as a literal, or one a class registered twice is built
+        # with (the SMA crossover's 50/200 and 10/50: `this("...")`, `NAME = "..."`).
+        for pattern in (r'getName\(\)\s*\{\s*return\s+"([^"]+)"', r'this\("([^"]+)"',
+                        r'static final String \w*NAME = "([^"]+)"'):
+            for m in re.finditer(pattern, text):
+                by_name[m.group(1)] = f
     for name in sorted(staleness.PRICE_ONLY_STRATEGIES):
         assert name in by_name, f"no strategy named {name!r} under {JAVA / 'strategy'}"
         assert "volume" not in by_name[name].read_text().lower(), by_name[name]

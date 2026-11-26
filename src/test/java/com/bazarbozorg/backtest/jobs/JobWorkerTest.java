@@ -192,7 +192,7 @@ class JobWorkerTest {
 
             JobQueue.Job ran = run("backtest", "{\"request\": {\"method\": \"POST\", "
                     + "\"path\": \"/api/run\", \"query\": {}, \"body\": {\"strategy\": "
-                    + "\"sma-crossover\", \"instrument\": \"" + SYMBOL + "\", \"timeframe\": \"D1\", "
+                    + "\"sma-crossover-10-50\", \"instrument\": \"" + SYMBOL + "\", \"timeframe\": \"D1\", "
                     + "\"source\": \"" + SOURCE + "\", \"aggregateMissing\": false}}}");
             assertEquals("done", ran.status());
             JsonObject result = JsonParser.parseString(ran.result()).getAsJsonObject();

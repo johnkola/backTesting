@@ -70,7 +70,8 @@ class IndicatorRulesCrossCheckTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"sma-crossover", "ema-triple", "macd", "rsi", "bollinger"})
+    @ValueSource(strings = {"sma-crossover", "sma-crossover-10-50", "ema-triple", "macd", "rsi",
+            "bollinger"})
     @DisplayName("the engine's rule enters and exits on the bars the Python rule does")
     void sameEntriesAndExits(String name) throws IOException {
         JsonObject fixture = fixture();
@@ -80,6 +81,11 @@ class IndicatorRulesCrossCheckTest {
                 .forEach(e -> params.put(e.getKey(), e.getValue().getAsString()));
 
         TradingStrategy strategy = StrategyRegistry.getInstance().getStrategy(name).orElseThrow();
+        // The rule the Run tab runs by this name is the one scored beside every
+        // result: its defaults are the pinned settings.
+        Map<String, String> defaults = strategy.getDefaultParameters();
+        params.forEach((key, value) -> assertEquals(Double.parseDouble(value),
+                Double.parseDouble(defaults.get(key)), name + " default " + key));
         assertTrue(strategy.getDefaultParameters().keySet().containsAll(params.keySet()),
                 "the pinned settings name parameters the strategy has: " + params.keySet());
         BarSeries series = series(fixture);
@@ -93,7 +99,7 @@ class IndicatorRulesCrossCheckTest {
         // or Wilder average can differ by a signal in a series' first bars and
         // are compared from bar 400, where both starts have decayed.
         int from = rule.get("compareFrom").getAsInt();
-        boolean plainAverages = name.equals("sma-crossover") || name.equals("bollinger");
+        boolean plainAverages = name.startsWith("sma-crossover") || name.equals("bollinger");
         assertEquals(plainAverages ? 0 : 400, from, "compared from");
         List<Integer> entries = new ArrayList<>();
         List<Integer> exits = new ArrayList<>();

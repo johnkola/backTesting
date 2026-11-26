@@ -127,7 +127,7 @@ def test_every_run_checks_the_indicators_its_rules_read():
     closes = {date(2015, 1, 1) + timedelta(days=i): v for i, v in enumerate(c)}
     checks = data_checks.indicator_checks(closes)
     assert [k.name.split(":")[0] for k in checks] == [
-        "SMA 50", "SMA 200", "EMA 5", "EMA 13", "EMA 34", "MACD line", "MACD signal",
+        "SMA 10", "SMA 50", "SMA 200", "EMA 5", "EMA 13", "EMA 34", "MACD line", "MACD signal",
         "RSI 14", "Bollinger middle", "Bollinger lower"]
     for k in checks:
         assert k.ok, k.summary()
@@ -150,6 +150,7 @@ def test_a_rule_s_warm_up_is_past_every_bar_ta_lib_has_no_value_on(name):
     s = rules.INDICATOR_SETTINGS[name]
     read = {
         "sma-crossover": [ta.sma(c, 50), ta.sma(c, 200)],
+        "sma-crossover-10-50": [ta.sma(c, 10), ta.sma(c, 50)],
         "ema-triple": [ta.ema(c, 5), ta.ema(c, 13), ta.ema(c, 34)],
         "macd": list(ta.macd(c, 12, 26, 9)),
         "rsi": [ta.rsi(c, 14)],

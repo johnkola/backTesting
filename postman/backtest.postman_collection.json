@@ -287,6 +287,52 @@
           ]
         },
         {
+          "name": "Candles at given instants (a trade's bars)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/candles?instrument={{instrument}}&source={{source}}&timeframe={{timeframe}}&at=2024-01-03T00:00:00Z,2024-01-02T00:00:00.000Z,2024-01-06T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "candles?instrument={{instrument}}&source={{source}}&timeframe={{timeframe}}&at=2024-01-03T00:00:00Z,2024-01-02T00:00:00.000Z,2024-01-06T00:00:00Z"
+              ]
+            },
+            "description": "The bars at exactly these instants, never thinned: what the result page reads to line each benchmark fill up with the bar it took its price from (step 4). The Saturday has no bar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('only the bars at the instants asked for, in time order, unthinned', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.stride).to.eql(1);",
+                  "    pm.expect(d.items.map((c) => c.timestamp.slice(0, 10))).to.eql(['2024-01-02', '2024-01-03']);",
+                  "});",
+                  "",
+                  "pm.test('an instant that is not one is refused with the value', function () {",
+                  "    const url = pm.environment.get('baseUrl') + '/api/candles?instrument=' + pm.environment.get('instrument') + '&timeframe=D1&at=2024-01-02';",
+                  "    pm.sendRequest(url, function (err, res) {",
+                  "        pm.expect(err).to.be.null;",
+                  "        pm.expect(res.code).to.eql(400);",
+                  "        pm.expect(res.json().error).to.eql('at: not an instant: 2024-01-02');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Candles without an instrument are rejected",
           "request": {
             "method": "GET",
@@ -1770,12 +1816,13 @@
                   "    pm.expect(run.hyperparams).to.include.keys('seed', 'epochs', 'lookback');",
                   "});",
                   "",
-                  "pm.test('each fold carries Faber and dual momentum (B7), and the five indicator rules since G79', function () {",
+                  "pm.test('each fold carries Faber and dual momentum (B7), and the indicator rules since G79', function () {",
                   "    const two = ['dual_momentum', 'faber'];",
-                  "    const seven = ['bollinger', 'dual_momentum', 'ema-triple', 'faber', 'macd', 'rsi', 'sma-crossover'];",
+                  "    // The SMA crossover twice since 2026-11-25: 50/200 and 10/50.",
+                  "    const eight = ['bollinger', 'dual_momentum', 'ema-triple', 'faber', 'macd', 'rsi', 'sma-crossover', 'sma-crossover-10-50'];",
                   "    for (const f of pm.response.json().folds) {",
                   "        const names = f.benchmarks.map((b) => b.name).sort();",
-                  "        pm.expect(names).to.eql(names.length > 2 ? seven : two);",
+                  "        pm.expect(names).to.eql(names.length > 2 ? eight : two);",
                   "    }",
                   "});",
                   "",
@@ -2233,9 +2280,9 @@
                   "    // B7: the published rules beside every result, traded with its costs.",
                   "    const d = pm.response.json();",
                   "    const names = d.result.benchmarks.map((b) => b.name);",
-                  "    // The five indicator rules follow the two on a result scored since G79.",
-                  "    const seven = ['faber', 'dual_momentum', 'sma-crossover', 'ema-triple', 'macd', 'rsi', 'bollinger'];",
-                  "    pm.expect(names).to.eql(names.length > 2 ? seven : seven.slice(0, 2));",
+                  "    // The indicator rules follow the two on a result scored since G79, the SMA crossover twice.",
+                  "    const eight = ['faber', 'dual_momentum', 'sma-crossover', 'sma-crossover-10-50', 'ema-triple', 'macd', 'rsi', 'bollinger'];",
+                  "    pm.expect(names).to.eql(names.length > 2 ? eight : eight.slice(0, 2));",
                   "    for (const b of d.result.benchmarks) {",
                   "        if (b.available) pm.expect(b.equity).to.have.lengthOf(d.result.equityHistory.length);",
                   "        else pm.expect(b.reason).to.be.a('string').and.not.empty;",
@@ -3902,8 +3949,17 @@
                   "    }",
                   "    pm.expect(d.bills).to.have.lengthOf(d.dates.length);",
                   "    pm.expect(d.checks.every((c) => c.ok)).to.be.true;",
-                  "    // G79: the five indicator rules, each with the settings it is pinned to.",
-                  "    pm.expect(Object.keys(d.indicatorRules)).to.eql(['sma-crossover', 'ema-triple', 'macd', 'rsi', 'bollinger']);",
+                  "    // G79: the indicator rules, each with the settings it is pinned to; the crossover twice.",
+                  "    pm.expect(Object.keys(d.indicatorRules)).to.eql(['sma-crossover', 'sma-crossover-10-50', 'ema-triple', 'macd', 'rsi', 'bollinger']);",
+                  "    pm.expect(d.indicatorRules['sma-crossover-10-50'].settings).to.eql({ shortPeriod: 10, longPeriod: 50 });",
+                  "    // Step 4: the month ends behind Faber and dual momentum, with what each decision read.",
+                  "    pm.expect(d.months).to.be.an('array').and.not.empty;",
+                  "    const used = d.months.filter((m) => m.used);",
+                  "    pm.expect(used).to.not.be.empty;",
+                  "    for (const m of used) {",
+                  "        pm.expect(m).to.include.keys('date', 'close', 'average10', 'faber', 'return12', 'spyClose', 'spyReturn12', 'bills12', 'dualMomentum');",
+                  "        pm.expect(m.faber === null || m.faber === 'cash' || m.faber === d.symbol).to.be.true;",
+                  "    }",
                   "    for (const r of Object.values(d.indicatorRules)) {",
                   "        pm.expect(r.settings).to.be.an('object');",
                   "        if (r.available) pm.expect(r.calls).to.have.lengthOf(d.dates.length);",

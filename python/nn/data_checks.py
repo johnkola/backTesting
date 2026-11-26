@@ -368,7 +368,8 @@ def indicator_checks(closes: dict[date, float]) -> list[CheckResult]:
     hand_dev = hand.population_stdev(c, int(boll["period"]))
     pairs: list[tuple[str, list[float], list[float], list[float] | float | None]] = [
         (f"SMA {int(p)}", ta.sma(c, int(p)), hand.sma(c, int(p)), None)
-        for p in (s[rules.SMA_CROSSOVER]["shortPeriod"], s[rules.SMA_CROSSOVER]["longPeriod"])
+        for p in sorted({int(s[r][k]) for r in (rules.SMA_CROSSOVER, rules.SMA_CROSSOVER_FAST)
+                         for k in ("shortPeriod", "longPeriod")})
     ] + [
         (f"EMA {int(p)}", ta.ema(c, int(p)), hand.ema(c, int(p)), None)
         for p in s[rules.EMA_TRIPLE].values()

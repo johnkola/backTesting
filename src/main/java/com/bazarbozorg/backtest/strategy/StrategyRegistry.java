@@ -65,6 +65,7 @@ public final class StrategyRegistry {
     private StrategyRegistry() {
         // The rule benchmarks (C8): runnable, never offered as strategies.
         registerStrategy("sma-crossover", Kind.BENCHMARK, SmaCrossoverStrategy::new);
+        registerStrategy(SmaCrossoverStrategy.FAST_NAME, Kind.BENCHMARK, SmaCrossoverStrategy::fast);
         registerStrategy("rsi", Kind.BENCHMARK, RsiStrategy::new);
         registerStrategy("macd", Kind.BENCHMARK, MacdStrategy::new);
         registerStrategy("bollinger", Kind.BENCHMARK, BollingerBandStrategy::new);

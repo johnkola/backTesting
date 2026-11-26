@@ -1,12 +1,13 @@
 /**
  * The strategy beside its benchmarks (B7, R39): buy-and-hold, Faber's 10-month
- * average and dual momentum, then the five indicator rules at their pinned
- * settings (G79, R21), with the same six figures each — return, trades, trades
- * a year, average holding time, max drawdown and Sharpe.
+ * average and dual momentum, then the indicator rules at their pinned settings
+ * (G79, R21; the SMA crossover twice, 50/200 and 10/50, the author 2026-11-25),
+ * with the same six figures each — return, trades, trades a year, average
+ * holding time, max drawdown and Sharpe.
  *
- * The five are listed only for a run or result that scored at least one of
- * them: everything stored before G79 has none, and five rows saying so would
- * bury the three it does have.
+ * The indicator rules are listed only for a run or result that scored at least
+ * one of them: everything stored before G79 has none, and six rows saying so
+ * would bury the three it does have.
  *
  * Trades a year and the holding time are not stored anywhere; they are derived
  * here from what is (the project stores nothing derivable). A benchmark that is
@@ -30,8 +31,10 @@ export type BenchmarkRow = {
 
 /** The two published monthly rules, scored with every run since B7. */
 const MONTHLY_RULES = ['faber', 'dual_momentum'] as const
-/** The five indicator rules, in the order the loader scores them (`nn/rules.py`). */
-export const INDICATOR_RULES = ['sma-crossover', 'ema-triple', 'macd', 'rsi', 'bollinger'] as const
+/** The indicator rules, in the order the loader scores them (`nn/rules.py`). */
+export const INDICATOR_RULES = [
+  'sma-crossover', 'sma-crossover-10-50', 'ema-triple', 'macd', 'rsi', 'bollinger',
+] as const
 export type RuleName = (typeof MONTHLY_RULES)[number] | (typeof INDICATOR_RULES)[number]
 
 /** Each with its pinned settings in the name: a reader cannot change them, so they are part of what the rule is. */
@@ -39,18 +42,19 @@ export const RULE_LABELS: Record<RuleName, string> = {
   faber: 'Faber 10-month',
   dual_momentum: 'Dual momentum',
   'sma-crossover': 'SMA crossover 50/200',
+  'sma-crossover-10-50': 'SMA crossover 10/50',
   'ema-triple': 'Triple EMA 5/13/34',
   macd: 'MACD 12/26/9',
   rsi: 'RSI 14, 30/70',
   bollinger: 'Bollinger 20, 2σ',
 }
 
-/** The rules to list: the two always, the five when any of them was scored. */
+/** The rules to list: the two always, the indicator rules when any of them was scored. */
 function rulesToShow(scored: (name: string) => boolean): RuleName[] {
   return [...MONTHLY_RULES, ...(INDICATOR_RULES.some(scored) ? INDICATOR_RULES : [])]
 }
 
-const isMonthly = (name: RuleName) => (MONTHLY_RULES as readonly string[]).includes(name)
+export const isMonthly = (name: string) => (MONTHLY_RULES as readonly string[]).includes(name)
 
 const DAYS_A_YEAR = 252
 
@@ -168,7 +172,11 @@ export function resultBenchmarkRows(result: ResultDetail['result']): BenchmarkRo
   for (const name of rulesToShow((n) => !!result.benchmarks?.some((x) => x.name === n))) {
     const label = RULE_LABELS[name]
     const b = result.benchmarks?.find((x) => x.name === name)
-    if (!b) rows.push(unavailable(name, label, 'Stored before the rule benchmarks (B7).'))
+    if (!b) {
+      rows.push(unavailable(name, label, isMonthly(name)
+        ? 'Stored before the rule benchmarks (B7).'
+        : 'Not scored: this result was stored before this rule was added.'))
+    }
     else if (!b.available || !b.metrics) rows.push(unavailable(name, label, b.reason ?? 'not available'))
     else rows.push(fromMetrics(name, label, b.metrics, b.trades))
   }

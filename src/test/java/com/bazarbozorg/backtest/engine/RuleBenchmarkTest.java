@@ -86,6 +86,20 @@ class RuleBenchmarkTest {
     }
 
     @Test
+    @DisplayName("a fill is dated by the bar whose price it took, so it can be looked up")
+    void fillsCarryTheBarsOwnDate() {
+        String faber = "{\"available\":true,\"calls\":[\"QQQ\",\"QQQ\",null,\"QQQ\",\"QQQ\"]}";
+        List<Trade> t = score(body(faber, "{\"available\":false,\"reason\":\"x\"}", "null"), 0.0)
+                .get(0).trades();
+        // Bought at the open of 2024-01-30 (101), sold at the open of 2024-02-01
+        // (102), bought at the open of 2024-02-02 (104) and closed at its close.
+        assertEquals("2024-01-30", t.get(0).entryTime().toLocalDate().toString());
+        assertEquals("2024-02-01", t.get(0).exitTime().toLocalDate().toString());
+        assertEquals("2024-02-02", t.get(1).entryTime().toLocalDate().toString());
+        assertEquals("2024-02-02", t.get(1).exitTime().toLocalDate().toString());
+    }
+
+    @Test
     @DisplayName("dual momentum switches to SPY at the next open, paying commission both ways")
     void dualMomentumSwitches() {
         String momentum = "{\"available\":true,\"calls\":[\"QQQ\",\"SPY\",\"SPY\",\"SPY\",\"SPY\"]}";
@@ -124,7 +138,7 @@ class RuleBenchmarkTest {
     }
 
     @Test
-    @DisplayName("the five indicator rules are scored beside the two, in order, from the same payload")
+    @DisplayName("the indicator rules are scored beside the two, in order, from the same payload")
     void indicatorRulesAreScoredToo() {
         String no = "{\"available\":false,\"reason\":\"x\"}";
         String held = "{\"available\":true,\"calls\":[\"QQQ\",\"QQQ\",null,\"QQQ\",\"QQQ\"],"
@@ -134,9 +148,9 @@ class RuleBenchmarkTest {
         json = json.substring(0, json.length() - 1) + ",\"indicatorRules\":{\"rsi\":" + held
                 + ",\"sma-crossover\":" + early + "}}";
         List<RuleBenchmark> all = score(json, 0.0);
-        assertEquals(List.of("faber", "dual_momentum", "sma-crossover", "ema-triple", "macd",
-                "rsi", "bollinger"), all.stream().map(RuleBenchmark::name).toList());
-        RuleBenchmark rsi = all.get(5);
+        assertEquals(List.of("faber", "dual_momentum", "sma-crossover", "sma-crossover-10-50",
+                "ema-triple", "macd", "rsi", "bollinger"), all.stream().map(RuleBenchmark::name).toList());
+        RuleBenchmark rsi = all.get(6);
         assertTrue(rsi.available());
         // Traded exactly as Faber is on the same calls, and its cash earns nothing.
         assertEquals(CAPITAL * 102 / 101 * 106 / 104, rsi.finalEquity(), 1e-9);
@@ -153,9 +167,9 @@ class RuleBenchmarkTest {
     void anOlderPayloadStillScoresTheTwo() {
         String faber = "{\"available\":true,\"calls\":[\"QQQ\",\"QQQ\",null,\"QQQ\",\"QQQ\"]}";
         List<RuleBenchmark> all = score(body(faber, "{\"available\":false,\"reason\":\"x\"}", "null"), 0.0);
-        assertEquals(7, all.size());
+        assertEquals(8, all.size());
         assertTrue(all.get(0).available());
-        assertTrue(all.subList(2, 7).stream().noneMatch(RuleBenchmark::available));
+        assertTrue(all.subList(2, 8).stream().noneMatch(RuleBenchmark::available));
     }
 
     @Test
@@ -164,9 +178,9 @@ class RuleBenchmarkTest {
         BacktestEngine engine = new BacktestEngine(null, new FixedCommission(0.0),
                 new PercentageSlippage(0.0), CAPITAL);
         List<RuleBenchmark> r = engine.ruleBenchmarks(QQQ, Timeframe.H1, 0, null, null);
-        assertEquals(7, r.size());
+        assertEquals(8, r.size());
         assertTrue(r.stream().noneMatch(RuleBenchmark::available));
         assertTrue(r.get(1).reason().contains("daily bars"));
-        assertTrue(r.get(6).reason().contains("daily bars"));
+        assertTrue(r.get(7).reason().contains("daily bars"));
     }
 }
