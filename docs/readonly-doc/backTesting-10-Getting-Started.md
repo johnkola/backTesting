@@ -1,6 +1,6 @@
 # Getting Started
 
-> **Revision 2026-11-23-1** · 2026-11-23 22:49 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-26-1** · 2026-11-26 11:08 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A start-to-finish path through this app for someone who has just cloned it: from an
 empty database to a backtest you can read, then the loop you actually work in day to
@@ -185,8 +185,8 @@ The CLI equivalent:
 ./gradlew run --args="run -s sma-crossover -i AAPL -t D1 --source yahoo"
 ```
 
-The Run list has two groups. `sma-crossover`, `rsi`, `macd`, `bollinger` and
-`ema-triple` are rule benchmarks: fixed indicator rules kept for comparison, which is
+The Run list has two groups. `sma-crossover` (50/200), `sma-crossover-10-50`, `rsi`,
+`macd`, `bollinger` and `ema-triple` are rule benchmarks: fixed indicator rules kept for comparison, which is
 why one makes a good first run. The model strategies (`nn-feedforward` and the others,
 step 6) need a trained model. Each takes its own parameters, exposed in the Run form
 and as CLI options.
@@ -208,6 +208,11 @@ See [Multi-timeframe aggregation](/docs/readme#multi-timeframe-aggregation).
 The run renders its headline metrics immediately, and every run is persisted — open
 **Results** for the list, and any row for the equity curve, the trade table and the full
 metrics. From the CLI, `report --last` or `report --id N`.
+
+Every result carries its benchmarks beside it: buy-and-hold, Faber, dual momentum and
+the indicator rules, under the run's own costs. Open one (▸) to check its figures by hand:
+how each is made, its trades beside the bars they filled at, and for Faber and dual
+momentum the month ends they decided at; its trades and daily equity download as CSV.
 
 Read the numbers in a deliberate order, starting with trade count: under roughly 20
 trades, nothing else on the page is reliable.
@@ -316,6 +321,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-1 | 2026-11-26 11:08 | Claude Code (Claude Opus 5.5) | Step 4: the 10/50 crossover in the Run list; a result's benchmarks open to check their figures by hand |
 | 2026-11-23-1 | 2026-11-23 22:49 | Claude Code (Claude Fable 5.2) | The backend is Java: the API is the `server` container on 8001, the engine and the Python worker have no port, and the CLI reaches Python through the jobs table |
 | 2026-11-22-1 | 2026-11-22 05:14 | Claude Code (Claude Fable 5.2) | The Run list's two groups: rule benchmarks and model strategies (C8) |
 | 2026-11-17-1 | 2026-11-17 12:03 | Claude Code (Claude Opus 5.5) | G69: result reading and limitations link to the README; the deleted Architecture guide gives way to the design set |

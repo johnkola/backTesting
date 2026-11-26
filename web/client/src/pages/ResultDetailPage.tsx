@@ -24,6 +24,7 @@ import { metricHint } from '../lib/metricHints'
 import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { barStamp } from '../lib/marketTime'
+import BenchmarkWorking from '../components/BenchmarkWorking'
 import { percent } from '../lib/numbers'
 
 const pct = percent
@@ -278,9 +279,16 @@ export default function ResultDetailPage() {
 
       <div className="bg-base-200 rounded-box p-4">
         <h2 className="font-semibold mb-1">Beside the benchmarks</h2>
+        <p className="text-xs text-base-content/60 mb-1">
+          Open a benchmark (▸) to see how its figures are made and its trades beside the prices
+          they filled at.
+        </p>
         <BenchmarkTable
           rows={resultBenchmarkRows(r)} unit="calendar days"
           tradesNote="Round trips, every row alike: a buy and its sale, the last at the end of the window."
+          detail={(row) => (row.key === 'strategy'
+            ? null
+            : () => <BenchmarkWorking detail={detail} name={row.key} label={row.label} />)}
         />
         <h2 className="font-semibold mb-1">Equity curve</h2>
         {hold ? (

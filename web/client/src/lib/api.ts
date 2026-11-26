@@ -604,6 +604,33 @@ export type RuleBenchmark = {
   equity: number[] | null
 }
 
+/**
+ * One month end Faber and dual momentum decided at (`rules.month_table`), with
+ * what each decision read. A decision of null was not made: too few months.
+ * `used` is false on the rows before the window, listed so the first average
+ * and 12-month return can be recomputed from them.
+ */
+export type RuleMonth = {
+  date: string
+  used: boolean
+  close: number
+  average10: number | null
+  /** The symbol to hold, `cash`, or null. */
+  faber: string | null
+  return12: number | null
+  spyClose: number | null
+  spyReturn12: number | null
+  bills12: number | null
+  /** The symbol, `SPY`, `cash`, or null. */
+  dualMomentum: string | null
+}
+
+/** What `GET /api/nn/rules` answers that a page reads; the per-bar calls are the engine's. */
+export type RuleDecisions = {
+  symbol: string
+  months?: RuleMonth[]
+}
+
 export type BuyAndHold = {
   metrics: PerformanceMetrics
   finalEquity: number
@@ -2073,9 +2100,16 @@ export const api = {
   result: (id: string, signal?: AbortSignal) =>
     getJson<ResultDetail>(`/api/results/${encodeURIComponent(id)}`, signal),
   candles: (
-    params: { instrument: string; source?: string; timeframe: string; from?: string; to?: string },
+    params: { instrument: string; source?: string; timeframe: string; from?: string; to?: string;
+      /** Comma-separated instants: exactly the bars stored under them, never thinned. */
+      at?: string },
     signal?: AbortSignal,
   ) => getJson<CandleSeries>(`/api/candles?${qs(params)}`, signal),
+  /** The month ends behind Faber and dual momentum over a window, with what each decision read. */
+  ruleMonths: (
+    params: { symbol: string; source: string; from: string; to: string },
+    signal?: AbortSignal,
+  ) => getJson<RuleDecisions>(`/api/nn/rules?${qs(params)}`, signal),
   models: (timeframe?: string, signal?: AbortSignal) =>
     getJson<{ items: TrainedModel[], modelsDir: string }>(
       `/api/models${timeframe ? `?${qs({ timeframe })}` : ''}`, signal,
