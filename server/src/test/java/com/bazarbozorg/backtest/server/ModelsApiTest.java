@@ -106,6 +106,29 @@ class ModelsApiTest extends ServiceTest {
     }
 
     @Test
+    void theParamsShowTheNetworksShapeAndATreesOwnSettings() throws Exception {
+        String window = "\"symbol\": \"QQQ\", \"timeframe\": \"D1\"";
+        write("nn-feedforward", "knet", "20261126T161748.721Z",
+                loader(window, "2026-11-26", "").replace("\"cache_key\": \"" + KEY + "\", ",
+                        "\"cache_key\": \"knet\", \"hidden_size\": 32, \"num_hidden\": 2, "));
+        write("xgboost", "ktree", "20261126T161752.636Z",
+                loader(window, "2026-11-25", "\"engine\": \"xgboost\", \"engine_settings\": "
+                        + "{\"maxDepth\": 3, \"nEstimators\": 200}, ")
+                        .replace("\"cache_key\": \"" + KEY + "\", ",
+                                "\"cache_key\": \"ktree\", \"hidden_size\": 0, \"num_hidden\": 0, "));
+        JsonArray items = items("");
+        JsonObject net = items.get(0).getAsJsonObject().getAsJsonObject("hyperparams");
+        JsonObject tree = items.get(1).getAsJsonObject().getAsJsonObject("hyperparams");
+        assertEquals("32", net.get("hidden_size").getAsString());
+        assertEquals("2", net.get("num_hidden").getAsString());
+        assertEquals("20", net.get("lookback_window").getAsString());
+        assertEquals("xgboost", tree.get("engine").getAsString());
+        assertEquals("3", tree.get("maxDepth").getAsString());
+        assertEquals("200", tree.get("nEstimators").getAsString());
+        assertTrue(!tree.has("hidden_size"), "a tree has no hidden layer to show");
+    }
+
+    @Test
     void aTimeframeFiltersButKeepsModelsThatRecordedNone() throws Exception {
         write("a", "k1", "20261018T015956.820Z", loader("\"timeframe\": \"D1\"", "2026-01-03", ""));
         write("a", "k2", "20261018T015956.820Z", loader("\"timeframe\": \"H1\"", "2026-01-02", ""));

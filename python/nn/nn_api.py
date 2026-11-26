@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from jobs.calls import job_route
 from nn.data import (
@@ -73,6 +73,11 @@ def _registry() -> ModelRegistry:
 
 
 class TrainRequest(BaseModel):
+    # A field this request does not know is refused (422), not dropped: the
+    # Train page once sent `hidden_layer_size` for `hidden_size`, and a changed
+    # setting trained at the default without a word (step 5).
+    model_config = ConfigDict(extra="forbid")
+
     symbol: str = Field(..., description="Instrument symbol, must already exist")
     source: str = Field("default", description="Data-source name")
     timeframe: str = Field(..., description="Source timeframe to train against")

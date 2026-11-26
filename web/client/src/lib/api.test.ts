@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { engineWindow, sorted } from './api'
+import { engineWindow, sorted, trainBody } from './api'
 
 /**
  * The loader's own row filter, in JavaScript.
@@ -104,5 +104,40 @@ describe('sorted', () => {
   it('reads a key with no direction as descending, and no key as no sort', () => {
     expect(sorted({ sort: 'imported' })).toEqual({ sort: '-imported' })
     expect(sorted({ dir: 'asc', limit: 5 })).toEqual({ limit: 5 })
+  })
+})
+
+describe('trainBody (step 5)', () => {
+  const network = { engine: 'mlp', fields: { lookbackWindow: 'lookback_window',
+    hiddenLayerSize: 'hidden_size', numHiddenLayers: 'num_hidden', learningRate: 'learning_rate' } }
+  const tree = { engine: 'xgboost', fields: { lookbackWindow: 'lookback_window' },
+    otherParameters: 'engine_settings' }
+  const req = {
+    symbol: 'QQQ', source: 'yahoo-adj', timeframe: 'D1', firstCandle: '2003-01-02',
+    lastCandle: '2015-12-31', mode: 'force' as const,
+  }
+
+  it('names each parameter as the engine does, never by converting its case', () => {
+    const body = trainBody({ ...req, training: network,
+      parameters: { lookbackWindow: '20', hiddenLayerSize: '128', numHiddenLayers: '3', learningRate: '0.01' } })
+    expect(body.engine).toBe('mlp')
+    expect(body).toMatchObject({ lookback_window: 20, hidden_size: 128, num_hidden: 3, learning_rate: 0.01 })
+    expect(body).not.toHaveProperty('hidden_layer_size')
+    expect(body).not.toHaveProperty('num_hidden_layers')
+    expect(body).not.toHaveProperty('engine_settings')
+  })
+
+  it('trains a tree engine as itself, its own settings as engine_settings', () => {
+    const body = trainBody({ ...req, training: tree,
+      parameters: { lookbackWindow: '20', maxDepth: '4', nEstimators: '' } })
+    expect(body.engine).toBe('xgboost')
+    expect(body.lookback_window).toBe(20)
+    expect(body.engine_settings).toEqual({ maxDepth: 4 })
+  })
+
+  it('leaves out what the table does not place, as the engine does', () => {
+    const body = trainBody({ ...req, training: network, parameters: { cacheKey: 'abc', other: '3' } })
+    expect(Object.keys(body).sort()).toEqual(['engine', 'mode', 'since', 'source', 'symbol',
+      'timeframe', 'until'])
   })
 })

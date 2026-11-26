@@ -699,6 +699,21 @@ export type Strategy = {
   /** `benchmark` for an indicator rule kept for comparison only (C8). Absent
    *  from an engine older than the kinds, which is read as `model`. */
   kind?: 'model' | 'benchmark'
+  /**
+   * How it trains through `POST /api/nn/train` (step 5), from the engine's own
+   * table (`NeuralNetworkStrategy.trainFields`): the engine, each parameter's
+   * field there, and where the rest go. Absent for a strategy that does not
+   * train there (`nn-feature-store` is trained offline).
+   */
+  train?: StrategyTraining
+}
+
+export type StrategyTraining = {
+  engine: string
+  /** camelCase parameter -> the loader's field. */
+  fields: Record<string, string>
+  /** Where parameters outside `fields` go: `engine_settings` for a tree engine. */
+  otherParameters?: string
 }
 
 /**
@@ -719,6 +734,8 @@ export type TrainRequest = {
   mode: 'auto' | 'force'
   /** camelCase hyperparameter overrides, as the strategy form spells them. */
   parameters: Record<string, string>
+  /** The strategy's training table, from `GET /api/strategies`. */
+  training: StrategyTraining
 }
 
 export type TrainResponse = {
@@ -767,9 +784,32 @@ export function engineWindow(
   return { since: since.toISOString(), until: until.toISOString() }
 }
 
-/** camelCase (the Java strategy's vocabulary) -> snake_case (the loader's). */
-function toSnake(key: string): string {
-  return key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+/**
+ * The body of `POST /api/nn/train`, as the engine's own request is built
+ * (`NeuralNetworkStrategy.buildTrainBody`): the engine, each parameter under
+ * its field from the engine's table, a tree engine's other parameters as
+ * `engine_settings`. Names are never derived here: converting the case sent
+ * `hidden_layer_size` for `hidden_size`, which the loader dropped, and no
+ * engine, so XGBoost and LightGBM trained the network (step 5). A parameter the
+ * table does not place is left out, as the engine leaves it out.
+ */
+export function trainBody(req: TrainRequest): Record<string, unknown> {
+  const { since, until } = engineWindow(req.firstCandle, req.lastCandle)
+  const body: Record<string, unknown> = {
+    symbol: req.symbol, source: req.source, timeframe: req.timeframe,
+    since, until, mode: req.mode, engine: req.training.engine,
+  }
+  const other: Record<string, number> = {}
+  for (const [k, v] of Object.entries(req.parameters)) {
+    if (v === '' || v === undefined) continue
+    const n = Number(v)
+    if (!Number.isFinite(n)) continue
+    const field = req.training.fields[k]
+    if (field) body[field] = n
+    else if (req.training.otherParameters) other[k] = n
+  }
+  if (req.training.otherParameters) body[req.training.otherParameters] = other
+  return body
 }
 
 export type RunRequest = {
@@ -2274,19 +2314,7 @@ export const api = {
    * Numeric hyperparameters are sent as numbers, since the loader's schema
    * types them and would reject strings.
    */
-  train: (req: TrainRequest) => {
-    const { since, until } = engineWindow(req.firstCandle, req.lastCandle)
-    const body: Record<string, unknown> = {
-      symbol: req.symbol, source: req.source, timeframe: req.timeframe,
-      since, until, mode: req.mode,
-    }
-    for (const [k, v] of Object.entries(req.parameters)) {
-      if (v === '' || v === undefined) continue
-      const n = Number(v)
-      body[toSnake(k)] = Number.isFinite(n) ? n : v
-    }
-    return sendJson<TrainResponse>('/api/nn/train', 'POST', body)
-  },
+  train: (req: TrainRequest) => sendJson<TrainResponse>('/api/nn/train', 'POST', trainBody(req)),
   /**
    * Removes an instrument, or a source, with everything stored under it.
    * `dryRun` only counts what would go.

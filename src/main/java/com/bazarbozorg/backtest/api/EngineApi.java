@@ -168,6 +168,19 @@ public class EngineApi {
             // whether a run can fail for want of a cached model.
             item.put("requiresTrainedModel", strategy.get()
                     instanceof com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy);
+            // How the Train page trains it through the loader's train route
+            // (step 5): the engine, and each parameter's field there. Absent
+            // for a strategy that does not train there (nn-feature-store is
+            // trained offline by nn.train_features).
+            if (strategy.get() instanceof com.bazarbozorg.backtest.strategy.nn.NeuralNetworkStrategy nn) {
+                Map<String, Object> train = new LinkedHashMap<>();
+                train.put("engine", nn.trainingEngine());
+                train.put("fields", nn.trainFields());
+                if (nn.otherParametersField() != null) {
+                    train.put("otherParameters", nn.otherParametersField());
+                }
+                item.put("train", train);
+            }
             items.add(item);
         }
 

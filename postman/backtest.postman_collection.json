@@ -1392,6 +1392,21 @@
                   "    const d = pm.response.json();",
                   "    const items = Array.isArray(d) ? d : d.items;",
                   "    pm.expect(items.map(s => s.name)).to.include('sma-crossover');",
+                  "});",
+                  "",
+                  "pm.test('each engine says how it trains, by the loader\\'s names (step 5)', function () {",
+                  "    const d = pm.response.json();",
+                  "    const by = Object.fromEntries((Array.isArray(d) ? d : d.items).map((s) => [s.name, s]));",
+                  "    pm.expect(by['nn-feedforward'].train.engine).to.eql('mlp');",
+                  "    pm.expect(by['nn-feedforward'].train.fields.hiddenLayerSize).to.eql('hidden_size');",
+                  "    pm.expect(by['nn-feedforward'].train.fields.numHiddenLayers).to.eql('num_hidden');",
+                  "    for (const tree of ['xgboost', 'lightgbm']) {",
+                  "        pm.expect(by[tree].train.engine).to.eql(tree);",
+                  "        pm.expect(by[tree].train.otherParameters).to.eql('engine_settings');",
+                  "    }",
+                  "    // Trained offline, never through the train route.",
+                  "    pm.expect(by['nn-feature-store']).to.not.have.property('train');",
+                  "    pm.expect(by['sma-crossover']).to.not.have.property('train');",
                   "});"
                 ]
               }
@@ -1755,12 +1770,18 @@
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
+                  "// The run's summary is its first engine's folds (B9), or the network's for a",
+                  "// run from before engines were recorded; the fold rows are every engine's.",
+                  "const summaryEngine = (d) => (d.run.engines && d.run.engines.length ? d.run.engines[0].engine : 'mlp');",
+                  "",
                   "pm.test('returns the run and its folds', function () {",
                   "    const d = pm.response.json();",
                   "    pm.expect(d).to.include.keys('run', 'folds');",
                   "    pm.expect(d.folds).to.be.an('array').that.is.not.empty;",
-                  "    pm.expect(d.run.folds).to.eql(d.folds.length,",
-                  "        'the aggregated count must match the folds returned');",
+                  "    const engines = new Set(d.folds.map(f => f.engine));",
+                  "    pm.expect(d.run.folds).to.eql(d.folds.filter(f => f.engine === summaryEngine(d)).length,",
+                  "        'the aggregated count must match its engine\\'s folds returned');",
+                  "    pm.expect(d.folds.length).to.eql(d.run.folds * engines.size, 'one row per engine per fold');",
                   "});",
                   "",
                   "pm.test('folds come back in sequence', function () {",
@@ -1800,7 +1821,7 @@
                   "pm.test('the summary recomputes from the folds returned', function () {",
                   "    // The claim the whole design rests on: nothing derivable is stored.",
                   "    const d = pm.response.json();",
-                  "    const folds = d.folds;",
+                  "    const folds = d.folds.filter(f => f.engine === summaryEngine(d));",
                   "    const mean = folds.reduce((a, f) => a + (f.stratReturn - f.holdReturn), 0)",
                   "        / folds.length;",
                   "    pm.expect(d.run.meanExcess).to.be.closeTo(mean, 1e-6);",
@@ -4022,6 +4043,60 @@
                   "pm.test('rejects before doing any work', function () {",
                   "    // Asserted instead of a real train: training is synchronous and",
                   "    // writes a model to disk, which a smoke run should not do.",
+                  "    pm.expect(pm.response.responseTime).to.be.below(10000);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Training with a field the route does not know is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/train",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "train"
+              ]
+            },
+            "description": "Step 5: the Train page once sent hidden_layer_size for hidden_size, and the route dropped it, so a changed setting trained at the default. A field the route does not know is now a 422 naming it, before any work.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"{{instrument}}\",\n  \"source\": \"{{source}}\",\n  \"timeframe\": \"{{timeframe}}\",\n  \"mode\": \"force\",\n  \"hidden_layer_size\": 128\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('names the field it does not know', function () {",
+                  "    pm.expect(pm.response.text()).to.include('hidden_layer_size');",
+                  "});",
+                  "",
+                  "pm.test('refused before any training', function () {",
                   "    pm.expect(pm.response.responseTime).to.be.below(10000);",
                   "});"
                 ]

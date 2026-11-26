@@ -408,7 +408,7 @@ def train_money(
                     args.loss, money_loss.positions_from_logits(model(xs_stop)),
                     gap_stop, intra_stop)
             held = float(held)
-        report_epoch(on_epoch, epoch, float(loss), held)
+        report_epoch(on_epoch, epoch, loss.item(), held)
         if stopper is not None and stopper.step(epoch, held, model):
             break
     if stopper is not None:
@@ -475,7 +475,7 @@ def train_one(
             loss = loss_fn(model(xb), yb)
             loss.backward()
             opt.step()
-            total += float(loss) * len(yb)
+            total += loss.item() * len(yb)
             rows += len(yb)
         held = None
         if stopper is not None:

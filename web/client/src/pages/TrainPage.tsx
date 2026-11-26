@@ -89,9 +89,10 @@ export default function TrainPage() {
     ])
       .then(([s, i, savedResp]) => {
         setSaved(savedResp?.items ?? [])
-        // Only strategies that actually cache a model are trainable; the Ta4j
-        // ones have nothing to learn and `train` would be a no-op on them.
-        const trainable = s.items.filter((x) => x.requiresTrainedModel)
+        // Only strategies that train through the loader's train route, with
+        // the engine's table of how (step 5): the indicator rules have nothing
+        // to learn, and nn-feature-store is trained offline.
+        const trainable = s.items.filter((x) => x.requiresTrainedModel && x.train)
         setStrategies(trainable)
         // Same rule as the Run page: the NN trades the instrument it learns
         // from, so a model trained on an index could never be run.
@@ -257,7 +258,7 @@ export default function TrainPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!slice || !strategy) return
+    if (!slice || !strategy?.train) return
     setBusy(true); setError(null); setResult(null)
     try {
       // Honour the strategy's train window when there is one.
@@ -277,7 +278,7 @@ export default function TrainPage() {
       setResult(await api.train({
         symbol, source, timeframe,
         firstCandle: first, lastCandle: last,
-        mode, parameters: params,
+        mode, parameters: params, training: strategy.train,
       }))
       setResultKey(seriesKey)
     } catch (err) {
@@ -369,7 +370,7 @@ export default function TrainPage() {
                   <label className="form-control">
                     <FieldLabel
                       text="Strategy"
-                      hint="Only strategies that cache a trained model are listed. The indicator strategies have nothing to learn, so they never need this page."
+                      hint="Each engine that trains here: the network, XGBoost and LightGBM, each trained as itself. The indicator strategies have nothing to learn, and nn-feature-store is trained offline (python -m nn.train_features --save)."
                     />
                     <select
                       className="select select-bordered" value={strategyName}

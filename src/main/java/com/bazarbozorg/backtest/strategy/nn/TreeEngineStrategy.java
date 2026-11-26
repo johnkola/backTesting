@@ -62,6 +62,16 @@ public class TreeEngineStrategy extends NeuralNetworkStrategy {
     }
 
     @Override
+    protected Map<String, String> modelFields() {
+        return Map.of();
+    }
+
+    @Override
+    public String otherParametersField() {
+        return "engine_settings";
+    }
+
+    @Override
     protected void addModelParams(JsonObject body) {
         body.add("engine_settings", engineSettings(engine, parameters));
     }

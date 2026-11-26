@@ -267,8 +267,24 @@ public class ModelsController {
         row.put("validationAccuracyPct", extra.path("final_val_acc").isNumber()
                 ? extra.get("final_val_acc").asDouble() * 100 : null);
         // The page renders hyperparameters as text, which is what Java wrote.
+        // Everything the model was trained with (step 5): the shared config;
+        // the network's shape, which the loader writes beside it rather than
+        // in it (a tree model writes 0 for both); and a tree engine's own
+        // settings. Each is part of what makes the model, and the page said
+        // "the hyperparameters this model was trained with" while leaving
+        // these out.
         Map<String, Object> hyperparams = new LinkedHashMap<>();
+        if (extra.path("engine").isTextual()) {
+            hyperparams.put("engine", extra.get("engine").asText());
+        }
         extra.path("config").properties().forEach(e -> hyperparams.put(e.getKey(), text(e.getValue())));
+        for (String shape : List.of("hidden_size", "num_hidden")) {
+            if (raw.path(shape).isNumber() && raw.get(shape).asDouble() > 0) {
+                hyperparams.put(shape, text(raw.get(shape)));
+            }
+        }
+        extra.path("engine_settings").properties()
+                .forEach(e -> hyperparams.put(e.getKey(), text(e.getValue())));
         row.put("hyperparams", hyperparams);
         row.put("dl4jVersion", null);
         row.put("trainingDurationMs", null);

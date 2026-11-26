@@ -81,6 +81,42 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
         return "mlp";
     }
 
+    /** The engine the loader trains for this strategy: what the Train page sends as {@code engine}. */
+    public String trainingEngine() {
+        return engine();
+    }
+
+    /**
+     * Each parameter's field in the loader's train request ({@code TrainRequest}
+     * in {@code python/nn/nn_api.py}), camelCase to snake_case: the inputs,
+     * label and split every engine shares, then this engine's own.
+     *
+     * <p>The one table the train request is built from, here
+     * ({@link #addTrainFields}) and on the Train page, which reads it from
+     * {@code GET /api/strategies}. The page used to derive the names by
+     * converting the case, so {@code hiddenLayerSize} went out as
+     * {@code hidden_layer_size}, which the loader does not know, and a changed
+     * hidden size trained at the default without a word (step 5).
+     */
+    public Map<String, String> trainFields() {
+        Map<String, String> out = new LinkedHashMap<>(SHARED_FIELDS);
+        out.putAll(modelFields());
+        return out;
+    }
+
+    /** This engine's own fields; the network's. A tree engine sends its own as {@code engine_settings}. */
+    protected Map<String, String> modelFields() {
+        return NETWORK_FIELDS;
+    }
+
+    /**
+     * Where the parameters outside {@link #trainFields} go: nowhere for the
+     * network, which has none; {@code engine_settings} for a tree engine.
+     */
+    public String otherParametersField() {
+        return null;
+    }
+
     @Override
     public String getDescription() {
         return "Neural Network Feedforward (Python loader)";
@@ -249,48 +285,67 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
             body.addProperty("version_id", modelContext.pinnedVersionId());
         }
 
-        // Pass through every known hyperparam override. Names match the
-        // Python TrainRequest schema (snake_case). The inputs, label and split
-        // are every engine's; the rest are the model's own.
+        // Every known hyperparameter, by the loader's names (trainFields).
         body.addProperty("engine", engine());
-        addIntParam(body, "lookback_window", "lookbackWindow");
-        addIntParam(body, "forward_bars", "forwardBars");
-        addDoubleParam(body, "buy_threshold", "buyThreshold");
-        addDoubleParam(body, "sell_threshold", "sellThreshold");
-        addDoubleParam(body, "train_split_ratio", "trainSplitRatio");
+        addTrainFields(body, trainFields(), parameters);
         addModelParams(body);
         return body;
     }
 
+    /** The inputs, label and split every engine shares, by the loader's names. */
+    static final Map<String, String> SHARED_FIELDS = orderedPairs(
+            "lookbackWindow", "lookback_window",
+            "forwardBars", "forward_bars",
+            "buyThreshold", "buy_threshold",
+            "sellThreshold", "sell_threshold",
+            "trainSplitRatio", "train_split_ratio");
+
+    /** The network's own hyperparameters, by the loader's names. */
+    static final Map<String, String> NETWORK_FIELDS = orderedPairs(
+            "hiddenLayerSize", "hidden_size",
+            "numHiddenLayers", "num_hidden",
+            "dropoutRate", "dropout_rate",
+            "learningRate", "learning_rate",
+            "numEpochs", "num_epochs",
+            "batchSize", "batch_size",
+            "seed", "seed");
+
     /** The parameter names every engine shares: inputs, label and split. */
-    protected static final java.util.Set<String> SHARED_PARAMETERS = java.util.Set.of(
-            "lookbackWindow", "forwardBars", "buyThreshold", "sellThreshold", "trainSplitRatio");
+    protected static final java.util.Set<String> SHARED_PARAMETERS = SHARED_FIELDS.keySet();
 
-    /** The network's own hyperparameters, in the loader's names. */
+    /** The loader's fields that are whole numbers; the rest are decimals. */
+    private static final java.util.Set<String> INT_FIELDS = java.util.Set.of(
+            "lookback_window", "forward_bars", "hidden_size", "num_hidden", "num_epochs",
+            "batch_size", "seed");
+
+    private static Map<String, String> orderedPairs(String... kv) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) out.put(kv[i], kv[i + 1]);
+        return java.util.Collections.unmodifiableMap(out);
+    }
+
+    /** Anything this engine sends beyond {@link #trainFields}; nothing for the network. */
     protected void addModelParams(JsonObject body) {
-        addIntParam(body, "hidden_size", "hiddenLayerSize");
-        addIntParam(body, "num_hidden", "numHiddenLayers");
-        addDoubleParam(body, "dropout_rate", "dropoutRate");
-        addDoubleParam(body, "learning_rate", "learningRate");
-        addIntParam(body, "num_epochs", "numEpochs");
-        addIntParam(body, "batch_size", "batchSize");
-        addIntParam(body, "seed", "seed");
     }
 
-    private void addIntParam(JsonObject body, String pyName, String javaKey) {
-        String v = parameters.get(javaKey);
-        if (v == null) return;
-        try {
-            body.addProperty(pyName, Integer.parseInt(v));
-        } catch (NumberFormatException ignored) { /* fall through to default */ }
-    }
-
-    private void addDoubleParam(JsonObject body, String pyName, String javaKey) {
-        String v = parameters.get(javaKey);
-        if (v == null) return;
-        try {
-            body.addProperty(pyName, Double.parseDouble(v));
-        } catch (NumberFormatException ignored) { /* fall through to default */ }
+    /**
+     * Each parameter set in {@code parameters} under its field in {@code fields},
+     * as a whole number or a decimal as the loader's field is. One that does not
+     * parse is left out, so the loader's default applies, as before.
+     */
+    static void addTrainFields(JsonObject body, Map<String, String> fields,
+                               Map<String, String> parameters) {
+        for (Map.Entry<String, String> f : fields.entrySet()) {
+            String v = parameters.get(f.getKey());
+            if (v == null) continue;
+            try {
+                if (INT_FIELDS.contains(f.getValue())) {
+                    body.addProperty(f.getValue(), Integer.parseInt(v));
+                } else {
+                    body.addProperty(f.getValue(), Double.parseDouble(v));
+                }
+            } catch (NumberFormatException ignored) { /* the loader's default applies */ }
+        }
     }
 
     /**

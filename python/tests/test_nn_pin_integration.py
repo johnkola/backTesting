@@ -201,3 +201,11 @@ def test_an_unknown_engine_or_a_bad_setting_is_refused(client):
     assert _train(client, mode="force", engine="svm").status_code == 400
     bad = _train(client, mode="force", engine="xgboost", engine_settings={"maxDepth": 99})
     assert bad.status_code == 400 and "outside" in bad.json()["error"]
+
+
+def test_a_field_the_request_does_not_know_is_refused_not_dropped(client):
+    """Step 5: the Train page sent `hidden_layer_size` for `hidden_size`, and the
+    request dropped it, so a changed setting trained at the default."""
+    r = _train(client, mode="force", hidden_layer_size=128)
+    assert r.status_code == 422
+    assert "hidden_layer_size" in r.text
