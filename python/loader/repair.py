@@ -34,8 +34,8 @@ never gone.
 Feature values are never repaired: a repaired input makes the Features stage
 stale and the set is rebuilt (`nn/staleness.py`).
 
-Not here: a missing bar. The view lays values over rows that exist; adding one
-needs a physical adjusted table.
+A missing bar is `loader/missing.py`: its repair rows have no original, and
+the view adds the bar once its four prices are applied.
 
   python -m loader.repair --propose --symbol GOLD --source yahoo
   python -m loader.repair --list [--symbol ... --source ...] [--all]
@@ -248,9 +248,23 @@ def _settle_flags(cur, instrument_id: int, source_id: int, timeframe: str) -> in
             accept.append(kid)
         elif by_repair and not (repaired and consistent):
             reopen.append(kid)
+    # A missing bar (`loader/missing.py`): its flag is settled once the
+    # adjusted view has the bar, which needs its four prices applied.
+    cur.execute(
+        "SELECT k.id, k.accepted_at IS NOT NULL, k.accepted_reason, EXISTS (SELECT 1 FROM "
+        "candles_adjusted a WHERE a.instrument_id = k.instrument_id AND a.source_id = k.source_id "
+        "AND a.timeframe = k.timeframe AND a.timestamp = k.bar_time) FROM data_checks k "
+        "WHERE k.instrument_id = %s AND k.source_id = %s AND k.timeframe = %s "
+        "AND k.category = 'missing'", (instrument_id, source_id, timeframe))
+    for kid, accepted, why, filled in cur.fetchall():
+        by_repair = accepted and (why or "").startswith(REPAIRED)
+        if filled and not accepted:
+            accept.append(kid)
+        elif by_repair and not filled:
+            reopen.append(kid)
     if accept:
         cur.execute("UPDATE data_checks SET accepted_at = now(), accepted_by = audit_actor(), "
-                    "accepted_reason = %s WHERE id = ANY(%s)",
+                    "accepted_reason = %s WHERE id = ANY(%s) AND accepted_at IS NULL",
                     (f"{REPAIRED}: see the repair log", accept))
     if reopen:
         cur.execute("UPDATE data_checks SET accepted_at = NULL, accepted_by = NULL, "
@@ -467,8 +481,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                           f"{r['heldWithSecondSource']} with a second source), "
                           f"{r['applied']} applied")
             for r in rows[:40]:
+                original = "none" if r["original"] is None else f"{r['original']:g}"
                 print(f"  #{r['id']} {r['symbol']}/{r['source']} {r['barTime'][:10]} {r['field']}: "
-                      f"{r['original']:g}, {r['problem']}; second source "
+                      f"{original}, {r['problem']}; second source "
                       f"{r['secondSource']}, calculated {r['calculated']}; {r['status']}"
                       + (f" = {r['applied']:g} from {r['appliedFrom']}" if r["applied"] is not None
                          else ""))

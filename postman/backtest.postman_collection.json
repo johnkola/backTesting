@@ -1599,7 +1599,10 @@
                   "    // stale the moment a fold was corrected.",
                   "    const d = pm.response.json();",
                   "    if (d.items.length === 0) {",
-                  "        pm.expect.fail('no runs stored; run python -m nn.walkforward first');",
+                  "        // None stored (they were all deleted on 2026-11-25, to be rerun): the",
+                  "        // requests that read one are skipped.",
+                  "        pm.collectionVariables.unset('wfRunId');",
+                  "        return;",
                   "    }",
                   "    for (const r of d.items) {",
                   "        pm.expect(r).to.include.keys(",
@@ -1684,6 +1687,19 @@
             "description": "The run plus every fold, including the cost attribution that says whether a loss was the model's own timing or the structural cost of being out."
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A run takes minutes to train, so this collection reads one that is",
+                  "// stored rather than making one. With none stored there is nothing to read.",
+                  "if (!pm.collectionVariables.get('wfRunId')) {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1900,6 +1916,19 @@
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A run takes minutes to train, so this collection reads one that is",
+                  "// stored rather than making one. With none stored there is nothing to read.",
+                  "if (!pm.collectionVariables.get('wfRunId')) {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -5180,6 +5209,12 @@
                       "key": "source",
                       "value": "postman",
                       "type": "text"
+                    },
+                    {
+                      "key": "force",
+                      "value": "true",
+                      "type": "text",
+                      "description": "A run before may have archived a different file for this series: the upload replaces it."
                     }
                   ]
                 },
@@ -5305,6 +5340,256 @@
               ]
             },
             {
+              "name": "Find its missing bar",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/repairs/missing",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "repairs",
+                    "missing"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"symbol\": \"ZZPOSTMAN\",\n  \"source\": \"postman\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('one trading day with no bar, the 4th, held for a choice', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.missing).to.eql(1);",
+                      "    pm.expect(d.held).to.eql(1);",
+                      "    pm.expect(d.applied).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Pick the method: the previous close carried forward",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/repairs/recalculate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "repairs",
+                    "recalculate"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"symbol\": \"ZZPOSTMAN\",\n  \"source\": \"postman\",\n  \"method\": \"carry\",\n  \"day\": \"2026-11-04\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('the bar is recalculated', function () {",
+                      "    pm.expect(pm.response.json().recalculated).to.eql(1);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The held bar is in the repair log",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/repairs?symbol=ZZPOSTMAN&status=held",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "repairs"
+                  ],
+                  "query": [
+                    {
+                      "key": "symbol",
+                      "value": "ZZPOSTMAN"
+                    },
+                    {
+                      "key": "status",
+                      "value": "held"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('five fields, no original, the previous close as the calculated value', function () {",
+                      "    const rows = pm.response.json().items;",
+                      "    pm.expect(rows).to.have.lengthOf(5);",
+                      "    rows.forEach(r => pm.expect(r.original).to.eql(null));",
+                      "    pm.expect(rows.find(r => r.field === 'close').calculated).to.eql(11);",
+                      "    pm.collectionVariables.set('lifeRepairIds', JSON.stringify(rows.map(r => r.id)));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Fill the bar from the calculated value",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/repairs/choose",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "repairs",
+                    "choose"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"which\": \"calculated\",\n  \"reason\": \"Postman life cycle\",\n  \"ids\": {{lifeRepairIds}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('all five fields applied', function () {",
+                      "    pm.expect(pm.response.json().applied).to.eql(5);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The filled bar is served with the others",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/candles?instrument=ZZPOSTMAN&source=postman&timeframe=D1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "candles"
+                  ],
+                  "query": [
+                    {
+                      "key": "instrument",
+                      "value": "ZZPOSTMAN"
+                    },
+                    {
+                      "key": "source",
+                      "value": "postman"
+                    },
+                    {
+                      "key": "timeframe",
+                      "value": "D1"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('four bars, the 4th carried from the 3rd', function () {",
+                      "    const items = pm.response.json().items;",
+                      "    pm.expect(items).to.have.lengthOf(4);",
+                      "    const filled = items.find(b => b.timestamp.startsWith('2026-11-04'));",
+                      "    pm.expect(filled.close).to.eql(11);",
+                      "    pm.expect(filled.volume).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
               "name": "Ask what an undo would remove",
               "request": {
                 "method": "DELETE",
@@ -5422,6 +5707,120 @@
                       "",
                       "pm.test('no slice left', function () {",
                       "    pm.expect(pm.response.json().total).to.eql(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Find the test instrument",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/instruments",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "instruments"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('ZZPOSTMAN is listed', function () {",
+                      "    const i = pm.response.json().items.find(x => x.symbol === 'ZZPOSTMAN');",
+                      "    pm.expect(i).to.be.an('object');",
+                      "    pm.collectionVariables.set('lifeInstrumentId', String(i.id));",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ask what deleting it would remove",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/instruments/{{lifeInstrumentId}}?dry_run=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "instruments",
+                    "{{lifeInstrumentId}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "dry_run",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('a dry run: counts, nothing deleted', function () {",
+                      "    const d = pm.response.json();",
+                      "    pm.expect(d.status).to.eql('dry_run');",
+                      "    pm.expect(d.counts).to.include.keys('candles', 'imports', 'featureSets', 'results');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete the test instrument",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/instruments/{{lifeInstrumentId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "instruments",
+                    "{{lifeInstrumentId}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('deleted', function () {",
+                      "    pm.expect(pm.response.json().status).to.eql('deleted');",
                       "});"
                     ]
                   }

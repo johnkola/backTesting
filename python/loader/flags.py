@@ -98,10 +98,11 @@ def record(conn, instrument_id: int, source_id: int, timeframe: str, flagged: Fl
 
 _SUMMARY = """
 SELECT i.symbol, s.name, c.timeframe,
-       count(*) FILTER (WHERE c.accepted_at IS NULL),
+       count(*) FILTER (WHERE c.accepted_at IS NULL AND c.severity = 'error'),
        count(*) FILTER (WHERE c.accepted_at IS NOT NULL),
        (min(c.bar_time) AT TIME ZONE 'UTC')::date, (max(c.bar_time) AT TIME ZONE 'UTC')::date,
-       max(c.accepted_reason)
+       max(c.accepted_reason),
+       count(*) FILTER (WHERE c.accepted_at IS NULL AND c.category = 'missing')
   FROM data_checks c
   JOIN instruments i ON i.id = c.instrument_id
   JOIN data_sources s ON s.id = c.source_id
@@ -118,9 +119,12 @@ def summary(cur) -> list[dict[str, Any]]:
             raise
         cur.connection.rollback()
         return []
+    # `open` counts errors only: they hold the chain (R12). A missing bar is a
+    # warning (`loader/missing.py`) and is counted on its own.
     return [{"symbol": sym, "source": src, "timeframe": tf, "open": int(o), "accepted": int(a),
-             "from": first.isoformat(), "to": last.isoformat(), "reason": reason}
-            for sym, src, tf, o, a, first, last, reason in cur.fetchall()]
+             "from": first.isoformat(), "to": last.isoformat(), "reason": reason,
+             "missing": int(m)}
+            for sym, src, tf, o, a, first, last, reason, m in cur.fetchall()]
 
 
 def open_flags(cur, series: Iterable[Series]) -> list[dict[str, Any]]:

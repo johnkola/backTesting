@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Repair } from './api'
-import { choicesOf, fmt, gap, seriesLine, whyHeld } from './repairs'
+import { choicesOf, fmt, gap, isMissingBar, missingBars, seriesLine, whyHeld } from './repairs'
 
 const row = (over: Partial<Repair>): Repair => ({
   id: 1, symbol: 'GOLD', source: 'yahoo', timeframe: 'D1', barTime: '2003-04-29T00:00:00+00:00',
@@ -41,5 +41,30 @@ describe('the repair log (G76)', () => {
     expect(seriesLine({ symbol: 'GOLD', source: 'yahoo', timeframe: 'D1', held: 441, applied: 0,
       heldWithCalculated: 441, heldWithSecondSource: 0 }))
       .toBe('441 held · 0 applied · 441 of the held have a calculated value')
+  })
+})
+
+describe('missing bars (R89, step 1)', () => {
+  const bar = (field: Repair['field'], id: number, extra: Partial<Repair> = {}) => row({
+    id, field, original: null, problem: 'no bar on a trading day', status: 'held',
+    calculated: 100, secondSource: null, barTime: '2023-01-10T00:00:00Z', ...extra,
+  })
+
+  it('knows a missing bar from a wrong value', () => {
+    expect(isMissingBar(bar('close', 1))).toBe(true)
+    expect(isMissingBar(row({ original: 0 }))).toBe(false)
+  })
+
+  it('groups a bar\'s rows and offers a candidate only when every price has it', () => {
+    const rows = [bar('open', 1), bar('high', 2), bar('low', 3), bar('close', 4, { secondSource: 99 }),
+      bar('volume', 5, { calculated: 0 })]
+    const [one] = missingBars(rows)
+    expect(one.day).toBe('2023-01-10')
+    expect(one.ids).toEqual([1, 2, 3, 4, 5])
+    expect(one.choices).toEqual(['calculated'])
+  })
+
+  it('says how a missing bar with no second source is filled', () => {
+    expect(whyHeld(bar('close', 1), TOL)).toMatch(/^A missing bar with no second source/)
   })
 })

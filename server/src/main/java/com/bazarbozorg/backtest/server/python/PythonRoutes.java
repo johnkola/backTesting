@@ -101,6 +101,20 @@ public class PythonRoutes {
         return python.forward("repair-choose", 300, KEPT, request, body);
     }
 
+    /** Flags a series' missing bars and writes their repair rows (R89; step 1). */
+    @PostMapping("/api/repairs/missing")
+    public ResponseEntity<Object> findMissing(HttpServletRequest request,
+            @RequestBody(required = false) JsonNode body) {
+        return python.forward("missing-scan", 300, KEPT, request, body);
+    }
+
+    /** The held missing bars' calculated candidates, by the method picked at repair time. */
+    @PostMapping("/api/repairs/recalculate")
+    public ResponseEntity<Object> recalculateMissing(HttpServletRequest request,
+            @RequestBody(required = false) JsonNode body) {
+        return python.forward("missing-recalculate", 300, KEPT, request, body);
+    }
+
     @PostMapping("/api/repairs/revert")
     public ResponseEntity<Object> revertRepair(HttpServletRequest request,
             @RequestBody(required = false) JsonNode body) {

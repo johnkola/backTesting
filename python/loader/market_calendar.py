@@ -121,8 +121,9 @@ def is_early_close(d: date) -> bool:
 
 
 #: Whole days the NYSE was closed that no rule scheduled: the 9/11 attacks,
-#: Hurricane Sandy, and the national days of mourning for Presidents Nixon,
-#: Reagan, Ford, G. H. W. Bush and Carter. A day the exchange is closed has no
+#: Hurricane Sandy, Hurricane Gloria (1985), the 1977 blackout, and the
+#: national days of mourning for Presidents Truman, Johnson, Nixon, Reagan,
+#: Ford, G. H. W. Bush and Carter. A day the exchange is closed has no
 #: bar and is never a missing one (R3, the author 2026-11-22), whatever closed
 #: it. Kept apart from `nyse_holidays` on purpose: nobody knew these the day
 #: before, so anything that looks ahead to the next session (the holiday
@@ -130,6 +131,10 @@ def is_early_close(d: date) -> bool:
 #: model would learn from a closure that had not been announced. A closure
 #: missing from this list shows as one gap warning, never as lost data.
 UNSCHEDULED_CLOSURES = frozenset({
+    date(1972, 12, 28),                       # President Truman's funeral
+    date(1973, 1, 25),                        # President Johnson's funeral
+    date(1977, 7, 14),                        # the New York blackout
+    date(1985, 9, 27),                        # Hurricane Gloria
     date(1994, 4, 27),
     date(2001, 9, 11), date(2001, 9, 12), date(2001, 9, 13), date(2001, 9, 14),
     date(2004, 6, 11),

@@ -64,6 +64,7 @@ class StrategiesApiTest extends ServiceTest {
             worker.join();
         }
         sql("DELETE FROM walkforward_runs WHERE strategy_name = ?", NAME);
+        new RunsApiTest().purge();
         sql("DELETE FROM strategies WHERE name = ?", NAME);
     }
 
@@ -146,15 +147,9 @@ class StrategiesApiTest extends ServiceTest {
     void aVersionARunWasTrainedFromCannotBeRemoved() throws Exception {
         String kept = post("/api/strategies/saved", body()).at("id").getAsString();
         String spare = post("/api/strategies/saved", body()).at("id").getAsString();
-        sql("INSERT INTO walkforward_runs (instrument_id, source_id, timeframe, feature_set_id, "
-                + "input_width, objective, loss, cost_bps, park, train_start, first_val, last_val, "
-                + "strategy_id, strategy_name) SELECT r.instrument_id, r.source_id, r.timeframe, "
-                + "r.feature_set_id, r.input_width, r.objective, r.loss, r.cost_bps, r.park, r.train_start, "
-                + "r.first_val, r.last_val, ?, ? FROM walkforward_runs r ORDER BY r.id LIMIT 1",
-                Long.parseLong(kept), NAME);
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                "1".equals(scalar("SELECT count(*) FROM walkforward_runs WHERE strategy_name = ?", NAME)),
-                "needs one stored walk-forward run to copy");
+        long run = RunsApiTest.aRun(null);
+        sql("UPDATE walkforward_runs SET strategy_id = ?, strategy_name = ? WHERE id = ?",
+                Long.parseLong(kept), NAME, run);
 
         Reply held = call("DELETE", "/api/strategies/saved/" + kept);
         assertEquals(409, held.status());

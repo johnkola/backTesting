@@ -275,9 +275,15 @@ export type FlaggedRows = {
 }
 
 /** A series that has flagged rows, from GET /api/checks. */
+/** How a missing bar's calculated candidate is reached (R89). */
+export type MissingMethod = 'rollup' | 'related' | 'carry'
+
 export type FlaggedSeries = {
   symbol: string, source: string, timeframe: string
+  /** Open errors: they hold the feature build and training. */
   open: number, accepted: number
+  /** Open missing bars (a trading day with no bar): warnings, they hold nothing. */
+  missing?: number
   from: string, to: string
   reason: string | null
 }
@@ -2257,6 +2263,22 @@ export const api = {
   /** Write repair rows, with candidates, for a series' flagged bars. */
   proposeRepairs: (req: { symbol: string, source: string, timeframe?: string }) =>
     sendJson<{ bars: number, proposed: number, applied: number, held: number }>('/api/repairs/propose', 'POST', req),
+  /**
+   * Flag a series' missing bars (a trading day with no bar) and write their
+   * repair rows, filling the ones a second source and the calculated bar agree on.
+   */
+  findMissingBars: (req: { symbol: string, source: string, timeframe?: string }) =>
+    sendJson<{ missing: number, new: number, cleared: number, proposed: number, applied: number,
+      held: number }>('/api/repairs/missing', 'POST', req),
+  /**
+   * The held missing bars' calculated candidates by another method: rolled up
+   * from finer bars, a related series' move applied to the previous close, or
+   * the previous close carried forward. One day, or every held bar of the series.
+   */
+  recalculateMissing: (req: { symbol: string, source: string, method: MissingMethod,
+    day?: string, relatedSymbol?: string, relatedSource?: string }) =>
+    sendJson<{ recalculated: number, skipped: { day: string, why: string }[] }>(
+      '/api/repairs/recalculate', 'POST', req),
   /** Apply a candidate to the named rows, or to every held row of a series. A reason is required. */
   chooseRepair: (req: { which: RepairChoice, reason: string, ids?: number[], symbol?: string,
     source?: string, timeframe?: string, value?: number }) =>

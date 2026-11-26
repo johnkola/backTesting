@@ -1211,7 +1211,7 @@ CREATE INDEX IF NOT EXISTS idx_candle_repairs_applied
     ON candle_repairs (instrument_id, source_id, timeframe, bar_time) WHERE status = 'applied';
 
 -- The adjusted candles: the raw rows with the applied repairs laid over them,
--- in the shape of `candles`. Checks, features, training and backtests read
+-- and the missing bars the repairs fill, in the shape of `candles`. Checks, features, training and backtests read
 -- this (R63); with no repair applied it is `candles`, row for row. A view, so
 -- no bar is stored twice and reverting a repair is one row's change.
 CREATE OR REPLACE VIEW candles_adjusted AS
@@ -1233,7 +1233,24 @@ SELECT c.id, c.instrument_id, c.source_id, c.timeframe, c.timestamp,
          WHERE status = 'applied'
          GROUP BY instrument_id, source_id, timeframe, bar_time
        ) r ON r.instrument_id = c.instrument_id AND r.source_id = c.source_id
-          AND r.timeframe = c.timeframe AND r.bar_time = c.timestamp;
+          AND r.timeframe = c.timeframe AND r.bar_time = c.timestamp
+UNION ALL
+-- A missing bar filled by repairs (loader/missing.py): no raw row, its four
+-- prices applied. Volume is 0 when none was. Its id is the negative of its
+-- first repair row's, so it is never mistaken for a raw row's.
+SELECT -min(r.id), r.instrument_id, r.source_id, r.timeframe, r.bar_time,
+       max(r.applied) FILTER (WHERE r.field = 'open'),
+       max(r.applied) FILTER (WHERE r.field = 'high'),
+       max(r.applied) FILTER (WHERE r.field = 'low'),
+       max(r.applied) FILTER (WHERE r.field = 'close'),
+       COALESCE(max(r.applied) FILTER (WHERE r.field = 'volume'), 0)
+  FROM candle_repairs r
+ WHERE r.status = 'applied' AND r.original IS NULL
+   AND NOT EXISTS (SELECT 1 FROM candles c WHERE c.instrument_id = r.instrument_id
+                      AND c.source_id = r.source_id AND c.timeframe = r.timeframe
+                      AND c.timestamp = r.bar_time)
+ GROUP BY r.instrument_id, r.source_id, r.timeframe, r.bar_time
+HAVING count(*) FILTER (WHERE r.field IN ('open', 'high', 'low', 'close')) = 4;
 
 -- The jobs table (G16 step 16.1; Architecture §2, §6; R48, R67, R70). The one
 -- place the web side and the compute workers meet: the web side inserts a row

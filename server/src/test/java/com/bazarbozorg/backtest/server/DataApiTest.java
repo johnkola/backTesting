@@ -168,4 +168,34 @@ class DataApiTest extends ServiceTest {
         assertTrue(bad.at("error").getAsString().contains("2026-02-30"));
         assertEquals(0, get("/api/candles?instrument=NOSUCH&timeframe=D1").at("total").getAsInt());
     }
+
+    /**
+     * A missing bar filled by repair rows (R89; loader/missing.py) is served
+     * like any other: the view adds it once its four prices are applied, and
+     * takes it out again when one of them is held.
+     */
+    @Test
+    void aMissingBarFilledByRepairsIsServedAndAHeldOneIsNot() throws Exception {
+        sql("DELETE FROM candles WHERE instrument_id = " + instrumentId + " AND source_id = "
+                + sourceId + " AND timestamp = '2026-11-04T00:00:00Z'");
+        String[] fields = {"open", "high", "low", "close", "volume"};
+        double[] values = {103.0, 104.0, 102.0, 103.5, 0};
+        for (int f = 0; f < fields.length; f++) {
+            sql("INSERT INTO candle_repairs (instrument_id, source_id, timeframe, bar_time, field, "
+                    + "original, problem, calculated, calculated_how, status, applied, applied_from, "
+                    + "reason) VALUES (?, ?, 'D1', '2026-11-04T00:00:00Z', ?, NULL, "
+                    + "'no bar on a trading day', ?, 'the previous close carried forward', 'applied', "
+                    + "?, 'calculated', 'test')", instrumentId, sourceId, fields[f], values[f], values[f]);
+        }
+        JsonArray bars = get("/api/candles?instrument=" + SYMBOL + "&source=" + SOURCE
+                + "&timeframe=D1").at("items").getAsJsonArray();
+        assertEquals(5, bars.size(), "four raw bars and the filled one");
+        JsonObject filled = named(bars, "timestamp", "2026-11-04T00:00:00.000Z");
+        assertEquals(103.5, filled.get("close").getAsDouble());
+
+        sql("UPDATE candle_repairs SET status = 'held', applied = NULL, applied_from = NULL "
+                + "WHERE instrument_id = ? AND field = 'close'", instrumentId);
+        assertEquals(4, get("/api/candles?instrument=" + SYMBOL + "&source=" + SOURCE
+                + "&timeframe=D1").at("items").getAsJsonArray().size(), "a held price takes it out");
+    }
 }

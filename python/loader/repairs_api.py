@@ -7,6 +7,11 @@
   POST /api/repairs/choose     {which, reason, ids? | symbol+source, timeframe?,
                                value?}: apply a candidate
   POST /api/repairs/revert     {id, reason}: take a repair back
+  POST /api/repairs/missing    {symbol, source, timeframe?}: flag the series'
+                               missing bars and write their repair rows
+  POST /api/repairs/recalculate  {symbol, source, method, day?, relatedSymbol?,
+                               relatedSource?, timeframe?}: the held missing
+                               bars' calculated candidates by another method
 
 A repair never writes to `candles`: it is a row in the log, laid over the raw
 bar by `candles_adjusted` (`loader/repair.py`). Every choice needs a reason,
@@ -16,12 +21,14 @@ that is not stored.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jobs.calls import job_route
-from loader import flags, repair
+from loader import flags, missing, repair
 from loader.db import pool
 
 router = APIRouter()
@@ -41,6 +48,16 @@ class ChooseRequest(BaseModel):
     source: str | None = None
     timeframe: str = "D1"
     value: float | None = None
+
+
+class RecalculateRequest(BaseModel):
+    symbol: str = ""
+    source: str = ""
+    method: str = ""
+    day: str | None = None
+    relatedSymbol: str | None = None  # noqa: N815 - the client's spelling
+    relatedSource: str | None = None  # noqa: N815
+    timeframe: str = "D1"
 
 
 class RevertRequest(BaseModel):
@@ -111,3 +128,41 @@ def revert(req: RevertRequest) -> JSONResponse:
     if not done:
         return _bad(f"repair {req.id} is not applied", 404)
     return JSONResponse(content={"reverted": int(req.id)})
+
+
+@router.post("/api/repairs/missing")
+@job_route("missing-scan", timeout_s=300)
+def find_missing(req: ProposeRequest) -> JSONResponse:
+    if not req.symbol.strip() or not req.source.strip():
+        return _bad("symbol and source are required")
+    try:
+        with pool().connection() as conn:
+            out = missing.scan(conn, req.symbol.strip(), req.source.strip(), req.timeframe)
+    except ValueError as exc:
+        return _bad(str(exc))
+    except LookupError as exc:
+        return _bad(str(exc), 404)
+    return JSONResponse(content={"symbol": req.symbol.strip(), "source": req.source.strip(),
+                                 "timeframe": req.timeframe, **out})
+
+
+@router.post("/api/repairs/recalculate")
+@job_route("missing-recalculate", timeout_s=300)
+def recalculate(req: RecalculateRequest) -> JSONResponse:
+    if not req.symbol.strip() or not req.source.strip():
+        return _bad("symbol and source are required")
+    try:
+        day = dt.date.fromisoformat(req.day) if req.day else None
+    except ValueError:
+        return _bad(f"day is a date, yyyy-mm-dd: {req.day}")
+    related = ((req.relatedSymbol or "").strip(), (req.relatedSource or "").strip())
+    try:
+        with pool().connection() as conn:
+            out = missing.recalculate(conn, req.symbol.strip(), req.source.strip(), req.method,
+                                      day=day, related=related if all(related) else None,
+                                      timeframe=req.timeframe)
+    except ValueError as exc:
+        return _bad(str(exc))
+    except LookupError as exc:
+        return _bad(str(exc), 404)
+    return JSONResponse(content={"method": req.method, **out})

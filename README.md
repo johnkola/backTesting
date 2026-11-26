@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-24-1** · 2026-11-24 21:47 Toronto time · last edited by Claude Code (Claude Fable 5.2) · [revision history](#revision-history)
+> **Revision 2026-11-25-1** · 2026-11-25 22:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the API (a Spring Boot service) and for the backtest engine and CLI, a **Python worker** for data and machine learning, and a **standalone React client**. The API hands work to the engine and the Python worker through a jobs table; neither has a port. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -656,6 +656,15 @@ docker compose exec worker python -m loader.repair --list [--symbol GOLD] [--all
 docker compose exec worker python -m loader.repair --choose calculated --symbol GOLD --source yahoo --reason "<why>"
 docker compose exec worker python -m loader.repair --choose hand --id 12 --value 30.95 --reason "<why>"
 docker compose exec worker python -m loader.repair --revert --id 12 --reason "<why>"
+```
+
+**Filling a missing bar** (R89; step 1 of the implementation plan). A trading day with no bar, between a series' first and last, is a missing bar; the calendar is the NYSE's, so weekends, holidays and unscheduled closures are never missing. Daily bars only for now. A scan flags each one (`data_checks`, category `missing`) as a **warning**: it holds neither the feature build nor training. Each gets five repair rows with no original, and the view adds the bar once its four prices are applied (volume 0 when none was); taking one price back takes the bar out again. Its candidates: a **second source**'s bar; a **calculated** bar, by the method picked at repair time: `rollup` (from the series' finer bars that day), `related` (a related series' move from the previous bar applied to the previous close, open, high, low and close each) or `carry` (the previous close carried forward, volume 0); or **by hand**, field by field. The scan proposes the roll-up when the day has finer bars, else the carry. When a second source and the calculated bar agree on all four prices within 0.5% the second source's bar is applied by itself; otherwise the bar is held. A raw bar that arrives later clears the flag and its fill. A series on another exchange's calendar (TSX, FX, futures) shows that exchange's closed days: accept them on the Checks screen. The **Repairs** page has a "Missing bars" panel for all of it; `POST /api/repairs/missing` and `POST /api/repairs/recalculate` are the routes.
+
+```bash
+docker compose exec worker python -m loader.missing --scan --symbol AAPL --source yahoo
+docker compose exec worker python -m loader.missing --recalculate --symbol GOLD --source yahoo --method related \
+    --related-symbol SPY --related-source yahoo [--day 2002-07-05]
+docker compose exec worker python -m loader.repair --choose calculated --symbol GOLD --source yahoo --reason "<why>"
 ```
 
 A repair is a change to stored inputs. Features reads stale when a field it read was repaired after its build (a repair to GOLD's high is no reason: the table reads GOLD's close), and a backtest result when a bar in its window was. Feature values are never repaired; the set is rebuilt. Not built: repairing a missing bar, a second vendor to compare with (none is stored), and roll-ups, which are still made from the raw bars.
@@ -1531,6 +1540,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-25-1 | 2026-11-25 22:14 | Claude Code (Claude Opus 5.5) | Filling a missing bar (step 1): the scan, the three methods, the routes and the commands |
 | 2026-11-24-1 | 2026-11-24 21:47 | Claude Code (Claude Fable 5.2) | Deleting what is listed: a walk-forward run, a model version, a feature set, an instrument, a source; a strategy with its runs |
 | 2026-11-23-8 | 2026-11-23 22:48 | Claude Code (Claude Fable 5.2) | The backend is Java: the Spring Boot service is the API on port 8001, the engine and the Python worker take jobs and have no port, and the Node API and the loader's port are gone |
 | 2026-11-23-7 | 2026-11-23 20:14 | Claude Code (Claude Fable 5.2) | The Spring Boot service now answers sources, instruments, candles, imports and every route whose work Python does; Node forwards them |
