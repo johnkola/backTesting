@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import { api, type FeatureCheck, type FeatureColumn, type FeaturesReport } from '../../lib/api'
+import { useEffect, useState } from 'react'
+import FeaturePreview from '../../components/FeaturePreview'
+import { api, type FeatureCheck, type FeatureColumn, type FeaturesReport, type JobRow } from '../../lib/api'
+import { checkColumn } from '../../lib/normalizationCheck'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
@@ -44,9 +46,12 @@ function fmtParams(params: Record<string, number | string>) {
  *  normalized, and which are out of the model with the reason recorded. */
 export default function FeaturesStage() {
   const [tf] = useTimeframe()
-  const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf])
+  const [reload, setReload] = useState(0)
+  const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf, reload])
   const [openNote, setOpenNote] = useState<string | null>(null)
-  const { status } = usePipelineStatus()
+  const [previewing, setPreviewing] = useState<string | null>(null)
+  const { status, reload: reloadStatus } = usePipelineStatus()
+  const build = useBuild(tf, () => { setReload((n) => n + 1); reloadStatus() })
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!data) return <span className="loading loading-spinner" />
@@ -76,7 +81,15 @@ export default function FeaturesStage() {
   const checks = config.checks ?? []
   const checkByFeature = new Map(checks.filter((c) => c.live).map((c) => [c.feature, c]))
 
-  const own: StageState = newest === null ? 'empty' : stale ? 'stale' : 'passed'
+  // R68: every stored column is normalized, which the check below reads off
+  // its statistics. The method each got is the set's own spec, not today's file.
+  const methodOf = new Map((newest?.columns ?? []).map((c) => [c.name, c.method]))
+  const columnRows = [...data.columnStats].sort((a, b) => a.name.localeCompare(b.name))
+    .map((s) => ({ stats: s, method: methodOf.get(s.name) ?? '—', problem: checkColumn(s) }))
+  const problems = columnRows.filter((r) => r.problem)
+  const own: StageState = newest === null ? 'empty' : stale ? 'stale'
+    : problems.length ? 'failed' : 'passed'
+  const scale = config.normalization
   // The pipeline's check adds what a schema comparison cannot see: any edit to
   // features.toml, and input series stored since the build read them.
   const merged = mergeState(own, status?.features)
@@ -92,17 +105,23 @@ export default function FeaturesStage() {
           ? `No set built for ${tf}`
           : stale
             ? `Newest set is schema v${newest.schemaVersion}, config declares v${config.schemaVersion}`
-            : `${enabled.length} input columns built, ${config.inputWidth} values per bar`
+            : problems.length
+              ? `${problems.length} of ${columnRows.length} stored columns are not normalized`
+              : `${enabled.length} input columns built and normalized, ${config.inputWidth} values per bar`
               + (selectable.length ? `, plus ${selectable.length} selectable` : '')
               + (dataOnly.length ? `, plus ${dataOnly.length} data only` : '')
       }
       detail={
         newest === null
-          ? <>Run <span className="font-mono">python -m nn.feature_build</span> to build one.</>
+          ? 'Build the set with the button below.'
           : stale
             ? 'Rebuild before training, or a model binds to a vector the config no longer describes.'
             : (
               <>
+                Each column is stored normalized: after its method, scaled into -1..1 by the
+                bars before it ({scale ? `${scale.scale}, ${scale.warmupBars} bars of warm-up` : 'expanding min-max'}),
+                over the whole history, so any window cut from it later is clean and nothing is
+                fitted on a training window. {' '}
                 Aligned to <span className="font-mono">{config.alignment.calendarSymbol}</span>{' '}
                 ({config.alignment.calendarSource}, {config.alignment.calendarTimeframe}), fill{' '}
                 <span className="font-mono">{config.alignment.fill}</span> to a maximum of{' '}
@@ -116,6 +135,8 @@ export default function FeaturesStage() {
             )
       }
     >
+      <BuildPanel tf={tf} build={build} />
+
       <div className="stats stats-horizontal bg-base-200 shadow-sm mb-6 flex-wrap">
         <div className="stat">
           <div className="stat-title">Schema version</div>
@@ -141,7 +162,7 @@ export default function FeaturesStage() {
           <thead>
             <tr>
               <th>Column</th>
-              <th>Normalization</th>
+              <th>Method</th>
               <th>Params</th>
               <th className="text-right">Width</th>
               <th>State</th>
@@ -247,6 +268,67 @@ export default function FeaturesStage() {
         </>
       )}
 
+      {newest && columnRows.length > 0 && (
+        <>
+          <h2 className="text-lg font-semibold mb-2">
+            Stored values of set #{newest.id}: is every column normalized?
+          </h2>
+          {previewing && (
+            <FeaturePreview setId={newest.id} column={previewing} onClose={() => setPreviewing(null)} />
+          )}
+          <div className="overflow-x-auto bg-base-200 rounded-box mb-2">
+            <table className="table table-sm [&_td]:px-2 [&_th]:px-2">
+              <thead>
+                <tr>
+                  <th>Column</th>
+                  <th>Method</th>
+                  <th className="text-right">N</th>
+                  <th className="text-right">Nulls</th>
+                  <th className="text-right">Min</th>
+                  <th className="text-right">Max</th>
+                  <th className="text-right">Mean</th>
+                  <th className="text-right">Stdev</th>
+                  <th>Check</th>
+                  <th><span className="sr-only">Preview</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {columnRows.map(({ stats: c, method, problem }) => (
+                  <tr key={c.name} className={problem ? 'bg-error/10' : ''}>
+                    <td className="font-mono">{c.name}</td>
+                    <td className="font-mono text-xs">{method}</td>
+                    <td className="text-right">{c.n.toLocaleString()}</td>
+                    <td className="text-right">{c.nulls > 0 ? c.nulls.toLocaleString() : '—'}</td>
+                    <td className="text-right font-mono text-xs">{c.min?.toFixed(2) ?? '—'}</td>
+                    <td className="text-right font-mono text-xs">{c.max?.toFixed(2) ?? '—'}</td>
+                    <td className="text-right font-mono text-xs">{c.mean?.toFixed(3) ?? '—'}</td>
+                    <td className="text-right font-mono text-xs">{c.stdev?.toFixed(3) ?? '—'}</td>
+                    <td className="text-xs">
+                      {problem ? <span className="text-error">{problem}</span> : <span className="text-success">ok</span>}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className={`btn btn-xs ${previewing === c.name ? 'btn-primary' : 'btn-ghost'}`}
+                        onClick={() => setPreviewing(previewing === c.name ? null : c.name)}
+                      >
+                        Preview
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-sm text-base-content/60 mb-6">
+            Nulls at the start are the warm-up: a column has no value until its method's window
+            and the scale's {scale?.warmupBars ?? 252} earlier bars are there, which is why it is
+            stored as NULL rather than zero. A value past ±1 is a new extreme against the bars
+            before it. Preview a column to see the series its method read beside the stored value.
+          </p>
+        </>
+      )}
+
       <h2 className="text-lg font-semibold mb-2">Built sets</h2>
       <div className="overflow-x-auto bg-base-200 rounded-box">
         <table className="table table-sm">
@@ -292,5 +374,92 @@ export default function FeaturesStage() {
         </table>
       </div>
     </StageShell>
+  )
+}
+
+type Build = {
+  job: JobRow | null
+  error: string | null
+  start: () => void
+}
+
+/**
+ * Starts a feature build (`POST /api/features/build`, a job) and follows it on
+ * the jobs table every two seconds until it ends, then calls `onDone` so the
+ * page and the stage states read the new set.
+ */
+function useBuild(tf: string, onDone: () => void): Build {
+  const [jobId, setJobId] = useState<number | null>(null)
+  const [job, setJob] = useState<JobRow | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (jobId === null) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const row = await api.job(jobId)
+        if (cancelled) return
+        setJob(row)
+        if (row.status === 'queued' || row.status === 'running') {
+          setTimeout(tick, 2000)
+        } else {
+          setJobId(null)
+          if (row.status === 'done') onDone()
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      }
+    }
+    void tick()
+    return () => { cancelled = true }
+    // onDone is a fresh closure each render; the job id is what decides.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId])
+
+  return {
+    job,
+    error,
+    start: () => {
+      setError(null)
+      setJob(null)
+      api.buildFeatures(tf)
+        .then((r) => setJobId(r.jobId))
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+    },
+  }
+}
+
+function BuildPanel({ tf, build }: { tf: string, build: Build }) {
+  const running = build.job !== null && (build.job.status === 'queued' || build.job.status === 'running')
+  const output = build.job?.result?.output ?? []
+  return (
+    <div className="bg-base-200 rounded-box p-3 mb-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="btn btn-sm btn-primary" disabled={running} onClick={build.start}>
+          {running && <span className="loading loading-spinner loading-xs" />}
+          Build features for {tf}
+        </button>
+        <span className="text-sm text-base-content/70">
+          Builds every column over the whole history and replaces the set built from the same
+          config. Takes about half a minute for daily bars.
+        </span>
+      </div>
+      {build.error && <div className="alert alert-error text-sm mt-2">{build.error}</div>}
+      {build.job && (
+        <div className="mt-2 text-sm">
+          <span className={`badge badge-sm ${build.job.status === 'done' ? 'badge-success'
+            : build.job.status === 'failed' ? 'badge-error' : 'badge-info'}`}>
+            job {build.job.id}: {build.job.status}
+          </span>
+          {build.job.error && <span className="text-error ml-2">{build.job.error}</span>}
+          {output.length > 0 && (
+            <pre className="text-xs bg-base-300 rounded p-2 mt-2 max-h-48 overflow-auto">
+              {output.slice(-12).join('\n')}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

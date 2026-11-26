@@ -15,7 +15,7 @@ import type { PipelineStatus, StageStatus } from './api'
 export type StageState = 'passed' | 'failed' | 'stale' | 'empty' | 'unknown' | 'running'
 
 export type StageSlug = keyof Pick<PipelineStatus,
-  'data' | 'features' | 'normalization' | 'split' | 'training' | 'backtest'>
+  'data' | 'features' | 'split' | 'training' | 'backtest'>
 
 export function mergeState(
   own: StageState,

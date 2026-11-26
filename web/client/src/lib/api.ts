@@ -275,6 +275,15 @@ export type FlaggedRows = {
 }
 
 /** A series that has flagged rows, from GET /api/checks. */
+/** A row of the jobs table (`GET /api/jobs/:id`). */
+export type JobRow = {
+  id: number
+  type: string
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  error: string | null
+  result: { output?: string[], exitCode?: number | null, command?: string } | null
+}
+
 /** How a missing bar's calculated candidate is reached (R89). */
 export type MissingMethod = 'rollup' | 'related' | 'carry'
 
@@ -956,6 +965,8 @@ export type FeatureConfig = {
     maxFillDays: number
   }
   inputWidth: number
+  /** The last step of every column, after its method (R68). */
+  normalization?: { scale: string, warmupBars: number }
   lookbackWindow: number | null
   columns: FeatureColumn[]
   requiredSeries: { symbol: string, source: string }[]
@@ -1995,7 +2006,6 @@ export type PipelineStatus = {
   checkedAt: string
   data: StageStatus & { cutoff?: string, required?: number }
   features: StageStatus & { setId?: number, buildId?: number | null }
-  normalization: StageStatus
   split: StageStatus
   training: StageStatus & { runs: RunStaleness[], inProgress: number }
   backtest: StageStatus & {
@@ -2118,6 +2128,15 @@ export const api = {
     if (!res.ok) throw new Error(parsed.error ?? `${res.status} ${res.statusText}`)
     return parsed as WalkforwardJob
   },
+  /**
+   * Build the feature set of a timeframe's calendar (R68): a job, answered at
+   * once (202). Follow it with `job`. A 409 when one is already waiting or running.
+   */
+  buildFeatures: (timeframe: string) =>
+    sendJson<{ jobId: number, type: string, timeframe: string }>('/api/features/build', 'POST',
+      { timeframe }),
+  /** One row of the jobs table: its status, and its result as far as it got. */
+  job: (id: number, signal?: AbortSignal) => getJson<JobRow>(`/api/jobs/${id}`, signal),
   /** The latest walk-forward jobs from the jobs table, newest first. */
   walkforwardJobs: (signal?: AbortSignal) =>
     getJson<WalkforwardJobs>('/api/nn/walkforward/jobs', signal),

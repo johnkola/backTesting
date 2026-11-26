@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-25-1** · 2026-11-25 22:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-25-2** · 2026-11-25 23:00 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the API (a Spring Boot service) and for the backtest engine and CLI, a **Python worker** for data and machine learning, and a **standalone React client**. The API hands work to the engine and the Python worker through a jobs table; neither has a port. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -81,9 +81,10 @@ The feature table is built over **every** day the calendar instrument has, and
 the window a model trains on is chosen per run. Two commands, two decisions:
 
 ```bash
-# Build. No --since: writes every calendar day (QQQ: 1999-03-10 on, 6,930 rows
+# Build. No --since: writes every calendar day (QQQ: 1999-03-10 on, 6,971 rows
 # per column). The head where the macro series do not exist yet is stored as
-# NULL rather than skipped.
+# NULL rather than skipped. The Features stage's "Build features" button runs
+# the same thing as a job (POST /api/features/build).
 docker compose exec worker python -m nn.feature_build
 docker compose exec worker python -m nn.feature_build --dry-run   # resolve, write nothing
 
@@ -134,10 +135,19 @@ docker compose exec worker python -m nn.walkforward --source synthetic --timefra
   at each session's first bar. Strategy 2 runs on D1 only: PSQ has no intraday
   bars.
 
-Restricting the window does not change any feature value. Every column is
-normalized causally at build time, so a z-score on a given date is the same
-number whatever range the set was written over. Why, and what a method must not do to
-keep it that way, is the comment at the top of `python/nn/normalize.py`.
+Restricting the window does not change any feature value. **Every column is
+stored normalized** (R68, the author 2026-11-23): its method first (a rolling
+z-score, a ratio to the previous close, sine and cosine, ...), then the scale in
+`features.toml` under `[normalization]`: into -1..1 by the minimum and maximum of
+the bars **before** it, from the first bar of the history, with no value until 252
+earlier bars are there. A bar never sees itself or a later one, so a value on a
+given date is the same whatever range the set was written over, adding a bar
+changes nothing before it, and any train, validation or test window cut later is
+clean. Nothing is fitted afterwards: the walk-forward runner and the stored-feature
+trainer read the stored values as they are (a model keeps an identity scaler file, so
+its files stay one shape). A new extreme lands past ±1; on QQQ the widest column runs
+-2.95..2.33 and every one has 99% of its values inside ±1. Why, and what a method must
+not do, is the comment at the top of `python/nn/normalize.py`.
 
 **Each value lands on the day the system could have it.** A row is decided
 after that session's close, so it holds only what the 18:30 New York feeds run
@@ -598,7 +608,7 @@ Each tab of the pipeline page, and the tab strip, shows its stage's state: **pas
 | Stage | Stale when |
 |---|---|
 | Data | A series the feature table reads is held by the [data feeds](#data-feeds), failed its last refresh, or trails the last finished session by more than its provider's usual lag (prices 1 session, FRED and the Bank of Canada 3, WTI 8, the SEC earnings series 10) |
-| Features, Normalization, Split | `features.toml` has changed since the newest build, or a series the build read has a newer stored version. The Normalization tab also fails a column whose values break its method's shape: cyclical outside −1..1, rescaled outside 0..1, a flag holding anything but 0 or 1, a z-score off-centre or past ±25, a daily return past ±50% or a daily change past ±2 points, any NaN or infinite value, or a method it has no rule for. That check runs in the browser, so the status call does not repeat it |
+| Features, Split | `features.toml` has changed since the newest build, or a series the build read has a newer stored version. Five stages (R84): normalization is the build's last step, so the Features tab also fails a stored column that is not normalized: past ±5, a mean outside ±1, or any NaN or infinite value. That check runs in the browser, so the status call does not repeat it |
 | Training | For each strategy's newest run (of its newest version that has run, so rerunning an older version does not supersede it): the strategy has a newer saved version; inputs inside the dates the run read have changed (feature values, closes, parked return, PSQ and Fed funds); its window has gained days it never scored; or Features is stale. Changed code is shown as a note, not as stale |
 | Backtest | An import has since changed stored bars inside a result's window: the result's own bars, at its timeframe or a finer one they can be rolled up from (an M30 fix counts against a D1 result; a D1 fix does not count against an H1 one), and, for `nn-feature-store`, any series its feature table reads. For a strategy that reads prices only (sma-crossover, rsi, macd, bollinger, ema-triple), a change to volumes alone does not count; the nn strategies read volume, so it does for them. Imports recorded before the diff kept this do not say which kind of change they were, so for them every change counts |
 
@@ -781,7 +791,8 @@ neural network, XGBoost and LightGBM, registered once in the loader (`GET
 switch and its settings; the network's settings are the hyperparameters. One walk-forward
 run trains every engine switched on, fold by fold, on the same rows, labels and purge, and
 scores each with the same costs and tax beside the same benchmarks: the Training tab shows
-a line per engine per fold and a summary per engine. The tree engines take no scaler and
+a line per engine per fold and a summary per engine. No engine fits a scaler (R68): they
+read the stored, normalized features. The tree engines
 train the class label only, so a money-trained loss (`return`, `sharpe`, `calmar`) with a
 tree engine on is refused with the reason. A run from flags names its engines with
 `--engines mlp,xgboost,lightgbm` (default `mlp`), the tree engines on their defaults. Each
@@ -1160,7 +1171,7 @@ If `run` is invoked without a matching cached model, it prints the exact `train`
 ### Walk-forward fold models
 
 A walk-forward run keeps the model each fold trained, per engine, and the network's
-scaler as fitted on that fold's training rows (G50). They are not in the registry above
+scaler file (G50): since R68 an identity, since nothing is fitted on the fold's rows. They are not in the registry above
 and do not show on the Models page:
 
 ```
@@ -1540,6 +1551,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-25-2 | 2026-11-25 23:00 | Claude Code (Claude Opus 5.5) | Step 2: every feature stored normalized by the bars before it; no scaler fitted on a training window; five stages; the build button |
 | 2026-11-25-1 | 2026-11-25 22:14 | Claude Code (Claude Opus 5.5) | Filling a missing bar (step 1): the scan, the three methods, the routes and the commands |
 | 2026-11-24-1 | 2026-11-24 21:47 | Claude Code (Claude Fable 5.2) | Deleting what is listed: a walk-forward run, a model version, a feature set, an instrument, a source; a strategy with its runs |
 | 2026-11-23-8 | 2026-11-23 22:48 | Claude Code (Claude Fable 5.2) | The backend is Java: the Spring Boot service is the API on port 8001, the engine and the Python worker take jobs and have no port, and the Node API and the loader's port are gone |

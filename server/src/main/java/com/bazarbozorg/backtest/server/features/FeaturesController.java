@@ -2,6 +2,8 @@ package com.bazarbozorg.backtest.server.features;
 
 import com.bazarbozorg.backtest.server.api.ApiException;
 import com.bazarbozorg.backtest.server.api.Wire;
+import com.bazarbozorg.backtest.server.jobs.Job;
+import com.bazarbozorg.backtest.server.jobs.JobsRepository;
 import com.bazarbozorg.backtest.server.python.PythonGateway;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -9,14 +11,19 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -58,10 +65,12 @@ public class FeaturesController {
     private final PythonGateway python;
     private final ObjectMapper json;
     private final TransactionTemplate tx;
+    private final JobsRepository jobs;
 
     public FeaturesController(JdbcClient db, PythonGateway python, ObjectMapper json,
-            TransactionTemplate tx) {
+            TransactionTemplate tx, JobsRepository jobs) {
         this.tx = tx;
+        this.jobs = jobs;
         this.db = db;
         this.python = python;
         this.json = json;
@@ -290,6 +299,37 @@ public class FeaturesController {
             body.put("runsLeftWithoutASet", runs);
             return body;
         });
+    }
+
+    /**
+     * Builds the feature set of a timeframe's calendar: every column over the
+     * whole history, after its method scaled by the bars before it (R68; step
+     * 2). A `feature-build` job for the Python worker, answered at once with
+     * the job (202): the page follows it on {@code GET /api/jobs/{id}}. One at
+     * a time: a second while one waits or runs is a 409 naming it.
+     */
+    @PostMapping("/api/features/build")
+    public ResponseEntity<Object> build(@RequestBody(required = false) JsonNode body) {
+        String timeframe = body == null ? "D1" : body.path("timeframe").asString("D1");
+        if (!timeframe.matches("[A-Z][A-Z0-9]{0,3}")) {
+            throw ApiException.badRequest("timeframe is a code such as D1, H1 or M30");
+        }
+        Long busy = db.sql("SELECT id FROM " + jobs.table()
+                        + " WHERE type = 'feature-build' AND status IN ('queued', 'running') "
+                        + "ORDER BY id LIMIT 1")
+                .query(Long.class).optional().orElse(null);
+        Map<String, Object> answer = new LinkedHashMap<>();
+        if (busy != null) {
+            answer.put("error", "a feature build is already waiting or running: job " + busy);
+            answer.put("jobId", busy);
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(answer);
+        }
+        Job job = jobs.insert("feature-build", "python",
+                json.writeValueAsString(Map.of("timeframe", timeframe)), false);
+        answer.put("jobId", job.id());
+        answer.put("type", job.type());
+        answer.put("timeframe", timeframe);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(answer);
     }
 
     /** Per-feature coverage of one set over a date window. Every catalogue row gets a line. */

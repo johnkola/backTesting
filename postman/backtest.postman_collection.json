@@ -4002,12 +4002,16 @@
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
-                  "pm.test('reports all six stages with a known state', function () {",
+                  "pm.test('reports the five stages with a known state (R84)', function () {",
                   "    const d = pm.response.json();",
                   "    const states = ['passed', 'failed', 'stale', 'empty', 'unknown', 'running'];",
-                  "    for (const k of ['data', 'features', 'normalization', 'split', 'training', 'backtest']) {",
+                  "    for (const k of ['data', 'features', 'split', 'training', 'backtest']) {",
                   "        pm.expect(d).to.have.property(k);",
                   "        pm.expect(states).to.include(d[k].state);",
+                  "    }",
+                  "    // Normalization is the last step of the feature build (R68), not a stage.",
+                  "    pm.expect(d).to.not.have.property('normalization');",
+                  "    for (const k of ['data', 'features', 'split', 'training']) {",
                   "        // The backtest stage lists its results, each with its own reasons.",
                   "        if (k !== 'backtest') pm.expect(d[k].reasons).to.be.an('array');",
                   "    }",
@@ -4207,6 +4211,56 @@
                   "",
                   "pm.test('says which set', function () {",
                   "    pm.expect(pm.response.json().error).to.eql('no feature set with id 999999999');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Build features: a timeframe that is not a code is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/build",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "build"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"timeframe\": \"daily please\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The rejection path: a real build replaces the stored feature set and takes about half a minute, so it is started from the Features stage, not here."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says what a timeframe is', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('D1, H1 or M30');",
                   "});"
                 ]
               }

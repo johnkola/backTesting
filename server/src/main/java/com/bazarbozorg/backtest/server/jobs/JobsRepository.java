@@ -63,6 +63,11 @@ public class JobsRepository {
         this.table = table;
     }
 
+    /** The table's name, for a reader that counts jobs of its own kind. */
+    public String table() {
+        return table;
+    }
+
     /** Insert a job for an engine and wake its workers. {@code inputsJson} is a JSON object. */
     @Transactional
     public Job insert(String type, String engine, String inputsJson, boolean isTransient) {

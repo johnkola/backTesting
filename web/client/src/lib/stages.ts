@@ -12,11 +12,11 @@
 
 export const STAGES = [
   { slug: 'data', n: 1, label: 'Data', blurb: 'Series pulled and stored' },
-  { slug: 'features', n: 2, label: 'Features', blurb: 'Derived columns built' },
-  { slug: 'normalization', n: 3, label: 'Normalization', blurb: 'Each column made scale-free' },
-  { slug: 'split', n: 4, label: 'Split', blurb: 'Chronological train / validation / test' },
-  { slug: 'training', n: 5, label: 'Training', blurb: 'Walk-forward folds' },
-  { slug: 'backtest', n: 6, label: 'Backtest', blurb: 'Scored against buy-and-hold' },
+  // Five stages (R84): normalization is the last step of the feature build (R68).
+  { slug: 'features', n: 2, label: 'Features', blurb: 'Built and normalized by the bars before each one' },
+  { slug: 'split', n: 3, label: 'Split', blurb: 'Chronological train / validation / test' },
+  { slug: 'training', n: 4, label: 'Training', blurb: 'Walk-forward folds' },
+  { slug: 'backtest', n: 5, label: 'Backtest', blurb: 'Scored against buy-and-hold' },
 ] as const
 
 export type StageSlug = (typeof STAGES)[number]['slug']

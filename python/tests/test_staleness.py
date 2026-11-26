@@ -378,3 +378,19 @@ def test_an_empty_or_running_stage_is_left_as_it_is():
     assert staleness._held_back(_stage("empty"), blocked)["state"] == "empty"
     assert staleness._held_back(_stage("running"), blocked)["state"] == "running"
     assert staleness._held_back(_stage("passed"), None)["state"] == "passed"
+
+
+def test_the_pipeline_has_five_stages_with_normalization_inside_features(monkeypatch):
+    """R84 (the author 2026-11-23): Data, Features (normalized), Split, Training,
+    Backtest. Normalization is the build's last step (R68), so no stage of its own."""
+    from nn import staleness as st
+
+    stage = {"state": "passed", "reasons": []}
+    monkeypatch.setattr(st.Context, "open", classmethod(
+        lambda cls, cur, tf, now: type("C", (), {"now": dt.datetime(2026, 11, 25)})()))
+    for name in ("data_stage", "features_stage", "backtest_stage"):
+        monkeypatch.setattr(st, name, lambda ctx, *a: dict(stage))
+    monkeypatch.setattr(st, "training_stage", lambda ctx, features: dict(stage))
+    out = st.status(None)
+    assert [k for k in out if k not in ("timeframe", "checkedAt")] == [
+        "data", "features", "split", "training", "backtest"]

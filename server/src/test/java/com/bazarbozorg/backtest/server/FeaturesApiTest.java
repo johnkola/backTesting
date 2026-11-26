@@ -165,4 +165,29 @@ class FeaturesApiTest extends ServiceTest {
         assertEquals(404, call("DELETE", "/api/features/sets/" + setId).status());
         assertEquals(400, call("DELETE", "/api/features/sets/abc").status());
     }
+
+    @Test
+    void aBuildIsAJobForThePythonWorkerAndOneAtATime() throws Exception {
+        Reply r = send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                        "http://localhost:" + port + "/api/features/build"))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{\"timeframe\": \"D1\"}")));
+        assertEquals(202, r.status(), r.text());
+        long job = r.at("jobId").getAsLong();
+        assertEquals("feature-build|python|false|D1", scalar("SELECT type || '|' || engine || '|' "
+                + "|| transient || '|' || (inputs->>'timeframe') FROM " + TABLE + " WHERE id = ?", job));
+
+        Reply again = send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                        "http://localhost:" + port + "/api/features/build"))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{}")));
+        assertEquals(409, again.status());
+        assertEquals(job, again.at("jobId").getAsLong());
+
+        Reply bad = send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                        "http://localhost:" + port + "/api/features/build"))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{\"timeframe\": \"d1; drop\"}")));
+        assertEquals(400, bad.status());
+    }
 }

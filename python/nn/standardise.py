@@ -107,3 +107,14 @@ def fit(train_features: np.ndarray,
         out_min=out_min,
         out_max=out_max,
     )
+
+
+def identity(n_features: int) -> MinMaxScaler:
+    """The scaler a model trained on stored features carries since R68: it
+    changes nothing. The features are already on [-1, 1] by the bars before
+    each one (`normalize.expanding_minmax`), so nothing is fitted on a training
+    window. Kept as a scaler, with its file beside the model, so a fold's
+    stored files, inference and the ONNX check stay one shape."""
+    ones = np.ones(n_features, dtype=np.float32)
+    return MinMaxScaler(feature_min=-ones, feature_max=ones,
+                        out_min=DEFAULT_OUT_MIN, out_max=DEFAULT_OUT_MAX)

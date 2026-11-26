@@ -31,7 +31,8 @@ class TestRegistry:
             assert entry["kind"] == "engine" and entry["version"]
             assert entry["title"] and entry["library"] and entry["description"]
             assert entry["checkedBy"]
-        assert [e["scaled"] for e in engines.registry_json()] == [True, False, False]
+        # R68: no engine fits a scaler; the features are stored scaled.
+        assert [e["scaled"] for e in engines.registry_json()] == [False, False, False]
 
     def test_a_tree_engine_on_a_money_loss_is_refused_with_the_reason(self):
         why = engines.refusals({"mlp": {}, "xgboost": {}}, "sharpe")

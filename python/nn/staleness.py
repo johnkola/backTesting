@@ -864,8 +864,9 @@ def status(cur, timeframe: str = "D1", now: dt.datetime | None = None) -> dict[s
         "timeframe": timeframe,
         "checkedAt": ctx.now.isoformat(),
         "data": data,
+        # Five stages (R84, the author 2026-11-23): normalization is the last
+        # step of the feature build (R68), so it is Features' to report.
         "features": features,
-        "normalization": inherited,
         "split": inherited,
         "training": _held_back(training_stage(ctx, features), blocked),
         "backtest": _held_back(backtest_stage(ctx), blocked),

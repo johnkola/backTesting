@@ -60,7 +60,7 @@ import torch.nn as nn
 from nn import feature_store
 from nn.labels import CLASS_BUY, CLASS_HOLD, CLASS_SELL, NUM_CLASSES, purged_split
 from nn.model import ArchSpec, build
-from nn.standardise import fit as fit_scaler
+from nn.standardise import identity as identity_scaler
 from torch.utils.data import DataLoader, TensorDataset
 
 CLASS_NAMES = {CLASS_BUY: "BUY", CLASS_HOLD: "HOLD", CLASS_SELL: "SELL"}
@@ -248,10 +248,9 @@ def main() -> int:
           f"purged {val.start - fit.stop}  "
           f"val {len(x_va)} ({d_all[val.start]}..{d_all[-1]})")
 
-    # The scaler is fitted on the TRAIN SLICE ONLY. This is the non-causal step
-    # the feature store deliberately does not persist, precisely so it can be
-    # refitted per fold rather than baked in.
-    scaler = fit_scaler(x_tr)
+    # No scaler is fitted (R68): the stored features are already in [-1, 1] by
+    # the bars before each one. The identity keeps the model's files one shape.
+    scaler = identity_scaler(x_tr.shape[1])
     x_tr = scaler.transform(x_tr)
     x_va = scaler.transform(x_va)
 

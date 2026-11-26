@@ -1,7 +1,9 @@
 """The normalization methods named by `features.toml`.
 
 Every function here is CAUSAL: the value at index i depends only on inputs at
-indices <= i. That is the property that lets the output be precomputed into
+indices <= i. Each column gets its method first, then `scale`, which puts it
+into [-1, 1] by the bars before it: that is the stored value, and no scaler is
+fitted afterwards on a training window (R68). That is the property that lets the output be precomputed into
 `feature_values` and reused across walk-forward folds without leaking a fold's
 own future into its training rows. A method that needed the whole series (a
 min/max fitted on the data, a full-sample standardisation) would break that and
@@ -342,3 +344,62 @@ def align_forward_fill(
             staleness += 1
             out.append(last if last is not None and staleness <= max_fill_days else None)
     return out
+
+
+# ---------------------------------------------------------------------------
+# The last step of every column: scaled against the bars before it (R68)
+# ---------------------------------------------------------------------------
+
+#: How a column, after its method, is put on the scale the models read.
+SCALES = ("expanding_minmax",)
+
+#: One trading year of earlier bars before a column has a stored value.
+DEFAULT_WARMUP_BARS = 252
+
+
+def expanding_minmax(values: Sequence[Value], warmup: int = DEFAULT_WARMUP_BARS) -> Series:
+    """Each value mapped into [-1, 1] by the minimum and maximum of the values
+    BEFORE it, from the first one (R68, the author 2026-11-23).
+
+    It replaces the min-max scaler that was fitted on each fold's training
+    rows. That one's range depended on the window chosen, so one bar was a
+    different number in two runs; this one depends only on the past, so the
+    stored history is the same whatever window is cut from it, and adding a
+    bar changes nothing before it.
+
+    The bar itself is not in its own range: it is scaled by what was known the
+    day before. So a new extreme lands past -1 or +1 and is not clipped, as the
+    fold scaler's validation rows always did. `None` until `warmup` earlier
+    values exist, and for a missing value (it counts towards nothing). While
+    every earlier value is the same, the bar is 0 when it equals them, else
+    +1 or -1: the first time a flag fires is not hidden.
+    """
+    if warmup < 1:
+        raise ValueError(f"expanding_minmax: warmup must be at least 1, got {warmup}")
+    out: Series = []
+    lo = hi = None
+    seen = 0
+    for x in values:
+        if not _finite(x):
+            out.append(None)
+            continue
+        if seen >= warmup:
+            rng = hi - lo
+            if rng == 0.0:
+                out.append(0.0 if x == lo else (1.0 if x > lo else -1.0))
+            else:
+                out.append(2.0 * (x - lo) / rng - 1.0)
+        else:
+            out.append(None)
+        lo = x if lo is None else min(lo, x)
+        hi = x if hi is None else max(hi, x)
+        seen += 1
+    return out
+
+
+def scale(values: Sequence[Value], method: str = "expanding_minmax",
+          warmup: int = DEFAULT_WARMUP_BARS) -> Series:
+    """The configured last step (`features.toml`, `[normalization]`)."""
+    if method == "expanding_minmax":
+        return expanding_minmax(values, warmup)
+    raise ValueError(f"unknown scale {method!r}; one of {', '.join(SCALES)}")

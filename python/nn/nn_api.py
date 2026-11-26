@@ -821,6 +821,9 @@ def get_features_config() -> JSONResponse:
                 "maxFillDays": cfg.alignment.max_fill_days,
             },
             "inputWidth": cfg.input_width,
+            # R68: the last step of every column, after its method.
+            "normalization": {"scale": cfg.normalization.scale,
+                              "warmupBars": cfg.normalization.warmup_bars},
             "lookbackWindow": cfg.defaults.get("lookback_window"),
             "columns": [
                 {

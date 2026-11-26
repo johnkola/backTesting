@@ -1,6 +1,6 @@
 # Postman collection
 
-> **Revision 2026-11-25-1** · 2026-11-25 22:14 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-25-2** · 2026-11-25 23:10 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 Every endpoint the API origin serves, with assertions on status, shape and key
 values. Required by `docs/reference/qqq-backtesting-model/backTesting-OLD-Architecture.md` §10:
@@ -13,7 +13,7 @@ values. Required by `docs/reference/qqq-backtesting-model/backTesting-OLD-Archit
 
 | File | What it is |
 |------|------------|
-| `backtest.postman_collection.json` | 117 requests in 11 folders, 302 assertions |
+| `backtest.postman_collection.json` | 118 requests in 11 folders, 304 assertions |
 | `fixtures/ZZPOSTMAN_daily.csv` | The three-bar file the import life cycle uploads |
 | `local.postman_environment.json` | `baseUrl = http://localhost:8001` — from your own machine |
 | `docker.postman_environment.json` | `baseUrl = http://server:8001` — from inside the compose network |
@@ -110,6 +110,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-25-2 | 2026-11-25 23:10 | Claude Code (Claude Opus 5.5) | Five pipeline stages; the feature build's refusal path; counts |
 | 2026-11-25-1 | 2026-11-25 22:14 | Claude Code (Claude Opus 5.5) | The missing-bar life cycle; the test instrument deleted at the end; run requests skipped when none is stored; counts (117 requests, 302 assertions) |
 | 2026-11-24-1 | 2026-11-24 01:32 | Claude Code (Claude Fable 5.2) | The "Life cycles" folder (a result, a saved strategy, an import: created, read, removed, checked gone); six assertions brought up to date; counts (105 requests, 275 assertions) |
 | 2026-11-23-2 | 2026-11-23 22:49 | Claude Code (Claude Fable 5.2) | One address: `baseUrl` is the Spring Boot service; `serverUrl` and the Node check are gone; counts (84 requests, 237 assertions) |

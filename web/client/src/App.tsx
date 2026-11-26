@@ -3,7 +3,6 @@ import PipelinePage from './pages/PipelinePage'
 import BacktestStage from './pages/pipeline/BacktestStage'
 import DataStage from './pages/pipeline/DataStage'
 import FeaturesStage from './pages/pipeline/FeaturesStage'
-import NormalizationStage from './pages/pipeline/NormalizationStage'
 import SplitStage from './pages/pipeline/SplitStage'
 import TrainingStage from './pages/pipeline/TrainingStage'
 import Layout from './components/Layout'
@@ -40,7 +39,8 @@ export default function App() {
               <Route index element={<Navigate to="/pipeline/data" replace />} />
               <Route path="data" element={<DataStage />} />
               <Route path="features" element={<FeaturesStage />} />
-              <Route path="normalization" element={<NormalizationStage />} />
+              {/* Normalization is the last step of the feature build (R68, R84). */}
+              <Route path="normalization" element={<Navigate to="/pipeline/features" replace />} />
               <Route path="split" element={<SplitStage />} />
               <Route path="training" element={<TrainingStage />} />
               <Route path="backtest" element={<BacktestStage />} />

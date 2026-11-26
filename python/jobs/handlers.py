@@ -3,6 +3,9 @@
 A handler is given a `Context` (`worker.py`): its inputs, a `result` dict it
 fills as it goes, and `stop`, which is set when it must end early.
 
+**`feature-build`** is `python -m nn.feature_build --config ...` for the
+calendar a page asked for (R68: built and normalized over the whole history).
+
 **`walkforward`** is `python -m nn.walkforward --strategy-id N`, the same
 command a terminal runs, so a run started from the web and one started by hand
 cannot differ. It stays a separate process: a run retrains once per fold, and a
@@ -133,6 +136,67 @@ def walkforward(ctx: Context) -> dict[str, Any]:
     return ctx.result
 
 
+def feature_build_argv(inputs: dict[str, Any]) -> list[str]:
+    """The build's flags for a job's inputs: the config whose calendar is at
+    the timeframe asked for (`feature_config.for_timeframe`)."""
+    from nn import feature_config
+
+    timeframe = str(inputs.get("timeframe") or "D1")
+    name, cfg = feature_config.for_timeframe(timeframe)
+    if cfg.alignment.calendar_timeframe != timeframe:
+        raise Failed(f"no feature config builds a {timeframe} calendar; "
+                     "the files are features.toml and nn/calendars/*.toml")
+    return ["--config", str(feature_config.config_path(name))]
+
+
+def feature_build(ctx: Context) -> dict[str, Any]:
+    """`python -m nn.feature_build` for one calendar, as an operator runs it:
+    the whole history, each column after its method scaled by the bars before
+    it (R68), stored as a set that replaces the one built from the same config.
+    Its own process, like a walk-forward run; the last lines of its output are
+    the job's progress. Stopped early, the build is ended and nothing is
+    stored: it writes in one transaction at the end."""
+    argv = feature_build_argv(ctx.inputs)
+    lines: deque[str] = deque(maxlen=OUTPUT_LINES)
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "JOB_ID": str(ctx.job["id"])}
+    proc = _spawn([sys.executable, "-m", "nn.feature_build", *argv], cwd=_PKG_ROOT, env=env,
+                  text=True, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    lock = threading.Lock()
+
+    def follow() -> None:
+        for raw in proc.stdout:
+            with lock:
+                lines.append(raw.rstrip("\n"))
+
+    reader = threading.Thread(target=follow, daemon=True, name=f"job-{ctx.job['id']}-output")
+    reader.start()
+    ctx.result.update(command=" ".join(["python", "-m", "nn.feature_build", *argv]),
+                      timeframe=str(ctx.inputs.get("timeframe") or "D1"), output=[],
+                      exitCode=None)
+    while proc.poll() is None:
+        if ctx.stop.wait(REPORT_S):
+            break
+        with lock:
+            ctx.result["output"] = list(lines)
+        ctx.report()
+    if ctx.stop.is_set() and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    code = proc.wait()
+    reader.join(timeout=5)
+    with lock:
+        ctx.result.update(output=list(lines), exitCode=code)
+    if ctx.stop.is_set():
+        raise Stopped(ctx.why or "cancel")
+    if code != 0:
+        raise Failed(f"the feature build exited with code {code}; its output says why")
+    return ctx.result
+
+
 def ping(ctx: Context) -> dict[str, Any]:
     """Is a worker taking jobs? The Spring Boot service's health check asks
     with this, the only way it may ask the worker anything."""
@@ -141,5 +205,6 @@ def ping(ctx: Context) -> dict[str, Any]:
 
 HANDLERS: dict[str, Handler] = {
     "walkforward": walkforward,
+    "feature-build": feature_build,
     "ping": ping,
 }

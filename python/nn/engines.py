@@ -16,9 +16,10 @@ catalogue entry are read from the entry (R23, R74).
 Invariants a change must keep:
 
 * **Every engine eats the same rows.** The fold's features, labels and purge
-  are built once, before any engine sees them. The network fits a scaler on
-  its training rows; the tree engines take the raw rows (`scaled`), since a
-  split on a feature does not care about its scale (R68).
+  are built once, before any engine sees them. No engine fits a scaler on its
+  training rows (`scaled` is false for all): the stored features are already
+  in [-1, 1] by the bars before each one, at the feature build (R68, the
+  author 2026-11-23).
 * **A loss an engine cannot train on is refused, never swapped.** The
   money-trained losses (`return`, `sharpe`, `calmar`) differentiate through
   the network's position head; a tree engine trains on the class label (`ce`)
@@ -73,7 +74,8 @@ class Engine:
     module: str
     description: str
     checked_by: str
-    #: True when the engine fits a scaler on its training rows (R68).
+    #: True when the engine fits a scaler on its training rows. None does since
+    #: R68: the features are stored scaled.
     scaled: bool
     losses: tuple[str, ...]
     settings: tuple[Setting, ...] = ()
@@ -132,7 +134,7 @@ ENGINES: dict[str, Engine] = {
                     "money-trained loss. Its settings are the strategy's hyperparameters.",
         checked_by="Naive baseline (R72). The prediction check in ONNX Runtime (R62) "
                    "is not built.",
-        scaled=True, losses=ALL_LOSSES,
+        scaled=False, losses=ALL_LOSSES,
     ),
     "xgboost": Engine(
         name="xgboost", title="XGBoost", library="XGBoost", module="xgboost",

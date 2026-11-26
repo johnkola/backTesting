@@ -389,7 +389,9 @@ def build_columns(
     cur, cfg: FeatureConfig, calendar: list[date], prev_close: list[float | None]
 ) -> list[BuiltColumn]:
     """Resolve, align and normalize every built column: inputs first, then the
-    selectable ones, then the data-only ones (`FeatureConfig.built`).
+    selectable ones, then the data-only ones (`FeatureConfig.built`). Each
+    column gets its method, then the configured scale (`[normalization]`):
+    what is stored is what the models read, and no scaler is fitted later.
 
     On an intraday calendar each feature is normalized at its own cadence
     (`cadence`). One that reads the calendar's bars is normalized per bar. A
@@ -401,6 +403,13 @@ def build_columns(
     is known in advance and goes to its own session's bars.
     """
     intraday = is_intraday(cfg.alignment.calendar_timeframe)
+
+    def scaled(series):
+        # The last step (R68): into [-1, 1] by the bars before each one, at the
+        # cadence the method ran at, so a daily series on an intraday calendar
+        # warms up over sessions, not bars.
+        return nz.scale(series, cfg.normalization.scale, cfg.normalization.warmup_bars)
+
     sessions = sorted({session_of(b) for b in calendar}) if intraday else []
     daily_cfg = (dc_replace(cfg, alignment=dc_replace(cfg.alignment, calendar_timeframe="D1"))
                  if intraday else cfg)
@@ -410,12 +419,12 @@ def build_columns(
             kind = cadence(feat.series, cfg)
             if kind == "bar":
                 raw = resolve_aligned(cur, feat.series, cfg, calendar)
-                outputs = nz.apply(
+                outputs = {suffix: scaled(series) for suffix, series in nz.apply(
                     feat.method,
                     raw,
                     feat.params,
                     prev_close=prev_close if feat.method in nz.NEEDS_PREV_CLOSE else None,
-                )
+                ).items()}
             else:
                 if feat.method in nz.NEEDS_PREV_CLOSE:
                     raise BuildError(
@@ -423,7 +432,8 @@ def build_columns(
                         "and a daily series on an intraday calendar has none; read the "
                         "calendar instrument's bars instead")
                 raw = resolve_aligned(cur, feat.series, daily_cfg, sessions)
-                per_session = nz.apply(feat.method, raw, feat.params, prev_close=None)
+                per_session = {suffix: scaled(series) for suffix, series in
+                               nz.apply(feat.method, raw, feat.params, prev_close=None).items()}
                 outputs = {suffix: sessions_to_bars(calendar, sessions, series,
                                                     next_session=(kind == "session"))
                            for suffix, series in per_session.items()}

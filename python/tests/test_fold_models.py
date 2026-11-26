@@ -46,12 +46,14 @@ def test_every_engine_s_kept_model_gives_the_signals_its_fold_stored(tmp_path):
         assert row["path"] == f"run-7/fold-03/{engine}" and row["bytes"] > 0
 
 
-def test_the_network_keeps_the_scaler_fitted_on_its_training_rows(tmp_path):
+def test_the_network_keeps_a_scaler_that_changes_nothing(tmp_path):
+    """R68: nothing is fitted on the fold's training rows; the features are
+    stored scaled. The identity is kept, so a fold's files stay one shape."""
     kept, _, x, _, _ = a_fold(tmp_path, engines={"mlp": {}})
     model = fold_models.load_row(kept["mlp"], tmp_path)
-    from nn.standardise import fit
+    from nn.standardise import identity
 
-    assert model.scaler.to_dict() == fit(x[list(range(160))]).to_dict()
+    assert model.scaler.to_dict() == identity(x.shape[1]).to_dict()
     assert (tmp_path / "run-7" / "fold-03" / "mlp" / "scaler.json").is_file()
     # A tree engine is given the raw rows and keeps no scaler (R68).
     kept, *_ = a_fold(tmp_path, engines={"xgboost": {"nEstimators": 5}})

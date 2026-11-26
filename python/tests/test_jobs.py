@@ -420,3 +420,56 @@ def test_the_worker_as_started_records_a_failed_runner_as_the_handler_said(conn)
     assert row["error"].startswith("the runner exited with code"), row["error"]
     assert row["result"]["exitCode"] != 0 and row["result"]["runId"] is None
     assert any("999999999" in line for line in row["result"]["output"])
+
+
+# ---- the feature-build handler (R68; step 2) ------------------------------------
+
+BUILD_LINES = ["config          nn/features.toml", "stored          set 63, 6971 rows"]
+
+
+def _run_build(conn, inputs):
+    job = queue.enqueue(conn, "feature-build", inputs)
+    claimed = queue.claim(conn, "w1", types=("feature-build",))
+    out: list[str] = []
+    t = threading.Thread(target=lambda: out.append(
+        worker.run_job(claimed, "w1", _connect, handlers.HANDLERS, heartbeat_s=0.1)))
+    t.start()
+    return job, t, out
+
+
+def test_a_feature_build_job_runs_the_build_for_its_timeframes_config(conn, runner):
+    from nn import feature_config
+
+    made, code = runner
+    code["lines"] = BUILD_LINES
+    job, t, out = _run_build(conn, {"timeframe": "D1"})
+    _until(lambda: made)
+    cmd, kw, proc = made[0]
+    assert cmd[1:] == ["-m", "nn.feature_build", "--config", str(feature_config.DEFAULT_PATH)]
+    assert kw["env"]["JOB_ID"] == str(job["id"])
+    proc.finish()
+    t.join(10)
+    row = queue.get(conn, job["id"])
+    assert out == ["done"] and row["result"]["exitCode"] == 0
+    assert row["result"]["output"] == BUILD_LINES and row["result"]["timeframe"] == "D1"
+
+
+def test_an_intraday_build_uses_its_calendars_file_and_an_unknown_one_fails():
+    from jobs.worker import Failed
+
+    assert handlers.feature_build_argv({"timeframe": "H1"})[1].endswith(
+        "calendars/QQQ-synthetic-H1.toml")
+    with pytest.raises(Failed, match="no feature config builds a W1 calendar"):
+        handlers.feature_build_argv({"timeframe": "W1"})
+
+
+def test_a_build_that_exits_non_zero_fails_its_job(conn, runner):
+    made, code = runner
+    code["exit"], code["lines"] = 1, ["[STOP] a check did not run"]
+    job, t, out = _run_build(conn, {"timeframe": "D1"})
+    _until(lambda: made)
+    made[0][2].finish()
+    t.join(10)
+    row = queue.get(conn, job["id"])
+    assert out == ["failed"] and "the feature build exited with code 1" in row["error"]
+    assert row["result"]["output"] == ["[STOP] a check did not run"]

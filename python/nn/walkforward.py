@@ -94,7 +94,7 @@ from nn.profit import (  # noqa: F401
     simulate,
     simulate_taxed,
 )
-from nn.standardise import fit as fit_scaler
+from nn.standardise import identity as identity_scaler
 from nn.train_features import load_closes, load_opens
 
 
@@ -375,7 +375,9 @@ def train_money(
     """
     from nn import money_loss
 
-    scaler = fit_scaler(x_tr)
+    # No scaler is fitted (R68): the stored features are already scaled by the
+    # bars before each one. The identity keeps a fold's files one shape.
+    scaler = identity_scaler(x_tr.shape[1])
     xs = torch.from_numpy(scaler.transform(x_tr))
     gap, intra = (torch.from_numpy(a.astype(np.float32)) for a in seg_tr)
 
@@ -419,13 +421,14 @@ def train_one(
     stop: tuple[np.ndarray, np.ndarray] | None = None,
     on_epoch=None,
 ) -> tuple[nn.Module, object, Stopper | None]:
-    """Fit a scaler and a network on one fold's training slice.
+    """Fit a network on one fold's training slice.
 
-    The scaler is refitted per fold on purpose. It is the non-causal step the
-    feature store deliberately does not persist: fitting it once across all
-    folds would leak every fold's own future into its training rows.
+    No scaler is fitted on the slice (R68, the author 2026-11-23): the stored
+    features are already in [-1, 1] by the bars before each one, so the same
+    bar is the same number in every fold and every run. The scaler returned is
+    the identity, kept so a fold's files stay one shape.
     """
-    scaler = fit_scaler(x_tr)
+    scaler = identity_scaler(x_tr.shape[1])
     xs = scaler.transform(x_tr)
 
     # The head and loss follow the target (G49): three classes or up/down by

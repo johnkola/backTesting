@@ -203,12 +203,23 @@ class Check:
 
 
 @dataclass(frozen=True)
+class Normalization:
+    """`[normalization]`: the last step of every column, after its method
+    (R68). `scale` is one of `normalize.SCALES`; `warmup_bars` how many earlier
+    bars a column needs before it has a stored value."""
+
+    scale: str = "expanding_minmax"
+    warmup_bars: int = 252
+
+
+@dataclass(frozen=True)
 class FeatureConfig:
     schema_version: int
     defaults: dict[str, Any]
     alignment: Alignment
     features: tuple[Feature, ...]
     checks: tuple[Check, ...] = ()
+    normalization: Normalization = Normalization()
 
     @property
     def enabled(self) -> tuple[Feature, ...]:
@@ -481,12 +492,23 @@ def load(path: Path | str = DEFAULT_PATH) -> FeatureConfig:
             raise FeatureConfigError(f"duplicate check name {c.name!r}")
         check_names.add(c.name)
 
+    n = raw.get("normalization", {})
+    from nn.normalize import SCALES
+
+    if n.get("scale", "expanding_minmax") not in SCALES:
+        raise FeatureConfigError(f"[normalization] scale must be one of {list(SCALES)}")
+    warmup = n.get("warmup_bars", 252)
+    if not isinstance(warmup, int) or isinstance(warmup, bool) or warmup < 1:
+        raise FeatureConfigError("[normalization] warmup_bars must be a whole number >= 1")
+    normalization = Normalization(scale=n.get("scale", "expanding_minmax"), warmup_bars=warmup)
+
     return FeatureConfig(
         schema_version=int(raw["schema_version"]),
         defaults=defaults,
         alignment=alignment,
         features=features,
         checks=checks,
+        normalization=normalization,
     )
 
 
@@ -591,7 +613,7 @@ def for_timeframe(timeframe: str) -> tuple[str, FeatureConfig]:
 #: What an inheriting calendar file may say besides `inherit`. Features and
 #: checks come from the parent whole: a list cannot be overridden in part, and
 #: a calendar that needs other features is a file of its own.
-_INHERIT_KEYS = frozenset({"inherit", "alignment", "defaults", "remap"})
+_INHERIT_KEYS = frozenset({"inherit", "alignment", "defaults", "remap", "normalization"})
 
 
 def _inherited(path: Path, child: dict[str, Any]) -> dict[str, Any]:
@@ -613,7 +635,7 @@ def _inherited(path: Path, child: dict[str, Any]) -> dict[str, Any]:
     if "inherit" in parent:
         raise FeatureConfigError(f"{path.name}: {child['inherit']} inherits too; one level only")
     raw = copy.deepcopy(parent)
-    for table in ("alignment", "defaults"):
+    for table in ("alignment", "defaults", "normalization"):
         if table in child:
             merged = {**raw.get(table, {}), **child[table]}
             if table == "alignment" and "available_after" in child[table]:
