@@ -48,10 +48,16 @@ public class PythonGateway {
      * in {@link Answer#error}.
      */
     public Answer ask(String type, String method, String path, Object body, int timeoutSeconds) {
+        return ask(type, method, path, Map.of(), body, timeoutSeconds);
+    }
+
+    /** {@link #ask(String, String, String, Object, int)} with query parameters for the route. */
+    public Answer ask(String type, String method, String path, Map<String, String> query,
+            Object body, int timeoutSeconds) {
         Map<String, Object> call = new LinkedHashMap<>();
         call.put("method", method);
         call.put("path", path);
-        call.put("query", Map.of());
+        call.put("query", query);
         call.put("body", body);
         ResponseEntity<Object> reply;
         try {

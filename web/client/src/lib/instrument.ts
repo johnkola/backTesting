@@ -45,3 +45,17 @@ export function writeInstrument(c: InstrumentChoice | null): void {
 export function instrumentParams(c: InstrumentChoice | null): { symbol?: string, source?: string } {
   return c ? { symbol: c.symbol, source: c.source } : {}
 }
+
+/**
+ * The instrument a pipeline stage reads, from the pipeline status: the one the
+ * status names (the one picked, or the config's own); `{}`, the API's default,
+ * once the status has failed, so a stage never waits on it for good; null while
+ * it is still loading.
+ */
+export function stageInstrument(
+  status: { symbol?: string | null, source?: string | null } | null,
+  error: string | null,
+): { symbol?: string, source?: string } | null {
+  if (status?.symbol && status.source) return { symbol: status.symbol, source: status.source }
+  return status || error ? {} : null
+}

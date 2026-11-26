@@ -64,11 +64,25 @@ def pair(calendar: Sequence[dt.date], before: Sequence[float | None],
             for d, b in zip(calendar, before, strict=True) if lo <= d <= hi]
 
 
+def set_config(cur, set_id: int) -> tuple[Any, str, bool]:
+    """(config, timeframe, whether the config still hashes as the set) for set
+    `set_id`: against the config that built it (I3), not features.toml by
+    name. Its `config_file` is a file, or a file on another instrument
+    (`features.toml@SPY/yahoo-adj`, step 7), which is a name and not a path."""
+    from nn import feature_config
+
+    cur.execute("SELECT config_hash, config_file, timeframe FROM feature_sets WHERE id = %s",
+                (set_id,))
+    set_hash, cfg_file, set_tf = cur.fetchone()
+    return (feature_config.load_name(cfg_file), set_tf,
+            set_hash == feature_config.digest_name(cfg_file))
+
+
 def preview(cur, set_id: int, column: str, start: str | None = None,
             end: str | None = None, days: int | None = None) -> dict[str, Any]:
     """The before/after of `column` in set `set_id` over [start, end], or the
     last `days` (DEFAULT_DAYS) up to `end` when no start is given."""
-    from nn import feature_build, feature_config, feature_store, staleness
+    from nn import feature_build, feature_store
 
     cur.execute(
         "SELECT method, params_json, series_json, role FROM feature_spec "
@@ -80,12 +94,7 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
     series = json.loads(series_json) if isinstance(series_json, str) else series_json
     params = (json.loads(params_json) if isinstance(params_json, str) else params_json) or {}
 
-    # Against the file that built this set (I3), not features.toml by name.
-    cur.execute("SELECT config_hash, config_file, timeframe FROM feature_sets WHERE id = %s",
-                (set_id,))
-    set_hash, cfg_file, set_tf = cur.fetchone()
-    cfg_path = feature_config.config_path(cfg_file)
-    cfg = feature_config.load(cfg_path)
+    cfg, set_tf, matches = set_config(cur, set_id)
     _, _, calendar, _ = feature_build.load_calendar(cur, cfg)
 
     if days is not None and days < 1:
@@ -101,6 +110,6 @@ def preview(cur, set_id: int, column: str, start: str | None = None,
     return {
         "setId": set_id, "column": column, "method": method, "params": params,
         "series": series, "role": role, "from": lo.isoformat(), "to": hi.isoformat(),
-        "configMatches": set_hash == staleness.config_hash(cfg_path),
+        "configMatches": matches,
         "points": pair(calendar, before, after, lo, hi),
     }

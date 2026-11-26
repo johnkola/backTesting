@@ -250,3 +250,54 @@ def test_the_build_job_builds_the_instrument_asked_for():
     assert handlers.feature_build_argv({"timeframe": "D1", "symbol": "QQQ",
                                         "source": "yahoo-adj"})[2:] == []
     assert handlers.feature_build_argv({"timeframe": "D1"})[2:] == []
+
+
+class _OneRow:
+    """A cursor that answers one row, whatever it is asked."""
+
+    def __init__(self, row):
+        self.row = row
+
+    def execute(self, *_a):
+        pass
+
+    def fetchone(self):
+        return self.row
+
+
+def test_the_preview_reads_a_set_on_another_instrument_from_its_name():
+    # The set's config_file is a name, not a path: opening it as a file was a
+    # FileNotFoundError on SPY's set, so its Normalization preview failed.
+    from nn import feature_preview
+    name = "features.toml@SPY/yahoo-adj"
+    cfg, tf, matches = feature_preview.set_config(
+        _OneRow((feature_config.digest_name(name), name, "D1")), 230)
+    assert (cfg.alignment.calendar_symbol, tf, matches) == ("SPY", "D1", True)
+    assert "'SPY'" in repr(_series_of(cfg, "price_close"))
+    _, _, matches = feature_preview.set_config(_OneRow(("an older hash", name, "D1")), 230)
+    assert matches is False
+
+
+def _config_client():
+    pytest.importorskip("fastapi")
+    pytest.importorskip("torch")  # nn_api imports nn.train, which imports torch
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from nn.nn_api import router
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def test_the_config_the_features_tab_shows_is_the_instruments():
+    client = _config_client()
+    own = client.get("/api/nn/features/config").json()
+    spy = client.get("/api/nn/features/config",
+                     params={"symbol": "SPY", "source": "yahoo-adj"}).json()
+    assert own["alignment"]["calendarSymbol"] == "QQQ"
+    assert spy["alignment"]["calendarSymbol"] == "SPY"
+    required = {r["symbol"] for r in spy["requiredSeries"]}
+    assert "SPY" in required and "QQQ" not in required
+    assert [c["name"] for c in spy["columns"]] == [c["name"] for c in own["columns"]]
+    assert client.get("/api/nn/features/config", params={"symbol": "SPY"}).status_code == 400

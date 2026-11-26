@@ -5,6 +5,7 @@ import { usePipelineStatus } from '../../lib/pipelineStatusContext'
 import { mergeState } from '../../lib/stageStatus'
 import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
+import { stageInstrument } from '../../lib/instrument'
 import StageShell from './StageShell'
 
 type Loaded = { instruments: Instrument[], features: FeaturesReport }
@@ -22,19 +23,25 @@ type Loaded = { instruments: Instrument[], features: FeaturesReport }
  */
 export default function DataStage() {
   const [tf] = useTimeframe()
-  const { status, reload: reloadStatus } = usePipelineStatus()
+  const { status, error: statusError, reload: reloadStatus } = usePipelineStatus()
   // Bumped when a feeds run finishes, so the stored ranges below refetch.
   const [reload, setReload] = useState(0)
   const onFeedsChanged = useCallback(() => {
     setReload((n) => n + 1)
     reloadStatus()
   }, [reloadStatus])
+  // The series the instrument the pipeline is on needs (step 7): the status
+  // names it, the one picked or the config's own, and its config names that
+  // instrument's own series in place of the file's.
+  const on = stageInstrument(status, statusError)
   const { data, error } = useApiData<Loaded>(
-    (signal) => Promise.all([
-      api.instruments(tf, signal).then((r) => r.items),
-      api.features(tf, signal),
-    ]).then(([instruments, features]) => ({ instruments, features })),
-    [tf, reload],
+    (signal) => (on
+      ? Promise.all([
+        api.instruments(tf, signal).then((r) => r.items),
+        api.features(tf, signal, on),
+      ]).then(([instruments, features]) => ({ instruments, features }))
+      : new Promise<Loaded>(() => {})),
+    [tf, reload, on?.symbol ?? '', on?.source ?? '', on === null],
   )
 
   if (error) return <div className="alert alert-error">{error}</div>

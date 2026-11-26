@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { instrumentKey, instrumentParams, parseInstrument } from './instrument'
+import { instrumentKey, instrumentParams, parseInstrument, stageInstrument } from './instrument'
 
 describe('the pipeline\'s instrument (step 7)', () => {
   it('is SYMBOL/source, or none for the config\'s own', () => {
@@ -14,5 +14,14 @@ describe('the pipeline\'s instrument (step 7)', () => {
   it('asks the API with both parameters or neither', () => {
     expect(instrumentParams({ symbol: 'AAPL', source: 'yahoo' })).toEqual({ symbol: 'AAPL', source: 'yahoo' })
     expect(instrumentParams(null)).toEqual({})
+  })
+})
+
+describe('the instrument a pipeline stage reads (step 7)', () => {
+  it('is the one the status names, the API\'s default once the status fails, and waits while it loads', () => {
+    expect(stageInstrument({ symbol: 'SPY', source: 'yahoo-adj' }, null)).toEqual({ symbol: 'SPY', source: 'yahoo-adj' })
+    expect(stageInstrument({}, null)).toEqual({})
+    expect(stageInstrument(null, 'HTTP 500')).toEqual({})
+    expect(stageInstrument(null, null)).toBeNull()
   })
 })

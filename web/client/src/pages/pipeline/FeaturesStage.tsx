@@ -6,6 +6,7 @@ import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
 import { mergeState } from '../../lib/stageStatus'
+import { stageInstrument } from '../../lib/instrument'
 import StageShell, { type StageState } from './StageShell'
 
 /** A disabled column is a recorded decision, not an absence — the badge says
@@ -47,14 +48,14 @@ function fmtParams(params: Record<string, number | string>) {
 export default function FeaturesStage() {
   const [tf] = useTimeframe()
   const [reload, setReload] = useState(0)
-  const { status, reload: reloadStatus } = usePipelineStatus()
+  const { status, error: statusError, reload: reloadStatus } = usePipelineStatus()
   // The sets of the instrument the pipeline is on (step 7): the status names
   // it, the one picked or the config's own, so another instrument's newer set
   // is never shown as this one's.
-  const on = status?.symbol && status.source ? { symbol: status.symbol, source: status.source } : null
+  const on = stageInstrument(status, statusError)
   const { data, error } = useApiData<FeaturesReport>(
     (signal) => (on ? api.features(tf, signal, on) : new Promise<FeaturesReport>(() => {})),
-    [tf, reload, on?.symbol ?? '', on?.source ?? ''])
+    [tf, reload, on?.symbol ?? '', on?.source ?? '', on === null])
   const [openNote, setOpenNote] = useState<string | null>(null)
   const [previewing, setPreviewing] = useState<string | null>(null)
   const build = useBuild(tf, on, () => { setReload((n) => n + 1); reloadStatus() })
@@ -394,7 +395,7 @@ type Build = {
  * the jobs table every two seconds until it ends, then calls `onDone` so the
  * page and the stage states read the new set.
  */
-function useBuild(tf: string, on: { symbol: string, source: string } | null,
+function useBuild(tf: string, on: { symbol?: string, source?: string } | null,
   onDone: () => void): Build {
   const [jobId, setJobId] = useState<number | null>(null)
   const [job, setJob] = useState<JobRow | null>(null)

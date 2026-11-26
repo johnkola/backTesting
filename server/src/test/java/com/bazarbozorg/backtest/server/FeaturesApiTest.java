@@ -116,6 +116,12 @@ class FeaturesApiTest extends ServiceTest {
         Reply mine = get("/api/features?timeframe=" + TF + "&symbol=" + SYMBOL + "&source=" + SOURCE);
         assertEquals(1, mine.at("sets").getAsJsonArray().size());
         assertEquals(String.valueOf(setId), mine.at("newestSetId").getAsString());
+        // The config is asked for on that instrument, so the columns shown name
+        // its own series, not the config file's instrument.
+        assertEquals(SYMBOL + "|" + SOURCE + "|" + TF, scalar("SELECT (q->>'symbol') || '|' || "
+                + "(q->>'source') || '|' || (q->>'timeframe') FROM (SELECT inputs->'request'->'query' AS q "
+                + "FROM " + TABLE + " WHERE type = 'python-call' "
+                + "AND inputs->'request'->>'path' = '/api/nn/features/config' ORDER BY id DESC LIMIT 1) t"));
         Reply other = get("/api/features?timeframe=" + TF + "&symbol=ZZNOSUCH&source=" + SOURCE);
         assertEquals(0, other.at("sets").getAsJsonArray().size());
     }

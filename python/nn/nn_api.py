@@ -791,7 +791,8 @@ def get_feature_preview(column: str, set: int | None = None,  # noqa: A002 - the
 
 
 @router.get("/api/nn/features/config")
-def get_features_config() -> JSONResponse:
+def get_features_config(symbol: str | None = None, source: str | None = None,
+                        timeframe: str = "D1") -> JSONResponse:
     """The feature table as the pipeline reads it.
 
     Served from here rather than from the Node API because `features.toml` is
@@ -802,9 +803,16 @@ def get_features_config() -> JSONResponse:
     Every column is reported, disabled ones included. A column that is off is a
     recorded decision, not an absence, so the UI has to be able to show *why*
     rsi_14 and breakeven_inflation are out.
+
+    With `symbol` and `source`, the config that builds that instrument's
+    `timeframe` calendar (`feature_config.for_instrument`, step 7), so its own
+    series name it and not the file's instrument.
     """
+    if bool(symbol) != bool(source):
+        return JSONResponse(status_code=400, content={"error": "symbol and source go together"})
     try:
-        cfg = feature_config.load()
+        cfg = (feature_config.for_instrument(symbol, source, timeframe)[1]
+               if symbol and source else feature_config.load())
     except feature_config.FeatureConfigError as e:
         # A bad edit to features.toml should surface as a readable message on
         # the Features tab, not a 500 with a stack trace.

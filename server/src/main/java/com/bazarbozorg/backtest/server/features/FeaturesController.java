@@ -200,8 +200,16 @@ public class FeaturesController {
                     return c;
                 }).list();
 
+        // The config on the instrument named (step 7): its own series read that
+        // instrument, so the columns shown are the ones its set was built from.
+        Map<String, String> on = new LinkedHashMap<>();
+        if (sym != null && src != null) {
+            on.put("symbol", sym);
+            on.put("source", src);
+            on.put("timeframe", tf == null ? "D1" : tf);
+        }
         PythonGateway.Answer config = python.ask(PythonGateway.CALL, "GET",
-                "/api/nn/features/config", null, 8);
+                "/api/nn/features/config", on, null, 8);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("config", config.error() == null ? config.body() : null);
         body.put("configError", config.error());
