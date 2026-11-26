@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../../lib/api'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
-import { splitProblems } from '../../lib/split'
+import { foldProblems, splitProblems } from '../../lib/split'
 import { mergeState } from '../../lib/stageStatus'
 import { useApiData } from '../../lib/useApiData'
 import StageShell, { type StageState } from './StageShell'
@@ -9,8 +9,8 @@ import StageShell, { type StageState } from './StageShell'
 const BLOCK_PURPOSE: Record<string, string> = {
   train: 'The model learns patterns here; each fold trains from its start',
   validation: 'Walk-forward folds, one year each, choose the variant',
-  test: 'Untouched final exam: scored once, at the end (step 8)',
-  prediction: 'Ahead of the test block, for forward predictions',
+  test: 'Untouched final exam: scored once, by a test run from a terminal',
+  prediction: 'Saved for forward predictions; no run reads it yet',
 }
 
 const BLOCK_CLS: Record<string, string> = {
@@ -92,7 +92,8 @@ export default function SplitStage() {
   }
 
   const split = answer.split
-  const problems = splitProblems(split.blocks)
+  const problems = [...splitProblems(split.blocks),
+    ...foldProblems(split.folds, split.holdout, split.windowEnd)]
   const own: StageState = problems.length ? 'failed' : 'passed'
   const merged = mergeState(own, status?.split)
   const total = split.blocks.reduce((sum, b) => sum + b.rows, 0)
@@ -169,7 +170,10 @@ export default function SplitStage() {
                   <td className="text-right">
                     {total > 0 ? `${((b.rows / total) * 100).toFixed(1)}%` : '—'}
                   </td>
-                  <td className="text-xs text-base-content/70">{BLOCK_PURPOSE[b.block]}</td>
+                  <td className="text-xs text-base-content/70">
+                    {BLOCK_PURPOSE[b.block]}
+                    {b.used === false && <span className="badge badge-xs badge-ghost ml-1">not used</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -215,10 +219,38 @@ export default function SplitStage() {
           </table>
         </div>
 
+        {split.holdout && (
+          <>
+            <h3 className="font-medium mt-6 mb-2">The test block (holdout fold)</h3>
+            <div className="overflow-x-auto bg-base-200 rounded-box">
+              <table className="table table-sm">
+                <thead>
+                  <tr>
+                    <th>Trains on</th>
+                    <th className="text-right">Rows</th>
+                    <th>Scores</th>
+                    <th className="text-right">Rows</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="text-xs font-mono">{split.holdout.trainFrom} → {split.holdout.trainTo}</td>
+                    <td className="text-right">{split.holdout.trainRows.toLocaleString()}</td>
+                    <td className="text-xs font-mono">{split.holdout.testFrom} → {split.holdout.testTo}</td>
+                    <td className="text-right">{split.holdout.testRows.toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         <p className="text-sm text-base-content/60 mt-3">
           These are the strategy&apos;s saved windows and the folds a run of it makes, from
-          the runner&apos;s own code; each run also records the dates it covered. The
-          holdout fold is step 8&apos;s, made once from a terminal.
+          the runner&apos;s own code; each run also records the dates it covered. The test block
+          is scored only by a test run, made once from a terminal; the row above is the fold it
+          would make, and showing it spends nothing. The prediction window is saved and no run
+          reads it yet.
         </p>
       </StageShell>
     </>

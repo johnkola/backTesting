@@ -1048,6 +1048,19 @@ export type SplitBlock = {
   rows: number
   firstRow: string | null
   lastRow: string | null
+  /** False for the prediction window: saved, and no run reads it yet. */
+  used?: boolean
+}
+
+/** The one fold a `--test` run of the strategy makes, by the runner's own planner. */
+export type SplitHoldout = {
+  trainFrom: string
+  trainTo: string
+  trainRows: number
+  testFrom: string
+  testTo: string
+  testRows: number
+  windowEnd: string | null
 }
 
 /** One walk-forward fold as a run makes it: expanding train, purged, then one year. */
@@ -1094,6 +1107,8 @@ export type StrategySplit = {
   patience: number | null
   blocks: SplitBlock[]
   folds: SplitFold[]
+  /** What a test run trains on and scores; null while the test window holds no labelled row. */
+  holdout?: SplitHoldout | null
 }
 
 /** The split, or why the strategy cannot run as saved. */

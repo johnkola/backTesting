@@ -10,11 +10,20 @@ columns (a bar where one is NULL is dropped, as the run drops it), and
 stop at the window end, G38). This module only counts and dates what those
 return, so the tab and a run cannot disagree.
 
-Validation folds only: the holdout fold is step 8's, made once from a terminal.
+The holdout fold is in it too (step 3: the windows on screen are the ones
+used): the one fold a `--test` run of the strategy makes, by the same
+`plan_folds` with the strategy's `test.to`, so the tab shows the dates the
+test block would be scored on and what trains for it. Showing it spends
+nothing: the block is spent only by running it, once, from a terminal.
+
+The prediction window is saved and shown, and no run reads it yet; the
+report says so (`used: false`) rather than letting it pass for a window
+that is in use.
 """
 
 from __future__ import annotations
 
+import argparse
 from datetime import date
 from typing import Any
 
@@ -39,7 +48,9 @@ def blocks(windows: dict[str, dict[str, str]], dates: list[date]) -> list[dict[s
         inside = [d for d in dates if lo <= d <= hi]
         out.append({"block": name, "from": w["from"], "to": w["to"], "rows": len(inside),
                     "firstRow": _iso(inside[0]) if inside else None,
-                    "lastRow": _iso(inside[-1]) if inside else None})
+                    "lastRow": _iso(inside[-1]) if inside else None,
+                    # The prediction window is recorded and no run reads it yet.
+                    "used": name != "prediction"})
     return out
 
 
@@ -66,6 +77,22 @@ def folds(plan: list[tuple[int, list[int], list[int]]], label_dates: list[date],
                     "stopRows": len(stop)}
         out.append(f)
     return out
+
+
+def holdout(label_dates: list[date], args, test_end: date) -> dict[str, Any] | None:
+    """The one fold a `--test` run makes: what it trains on and the test rows
+    it scores, by the runner's `plan_folds`. None when the test window holds
+    no labelled row yet. Pure."""
+    test_args = argparse.Namespace(**{**vars(args), "test": True})
+    plan, end = walkforward.plan_folds(label_dates, test_args, test_end)
+    if not plan:
+        return None
+    _, tr, te = plan[0]
+    if not tr or not te:
+        return None
+    return {"trainFrom": _iso(label_dates[tr[0]]), "trainTo": _iso(label_dates[tr[-1]]),
+            "trainRows": len(tr), "testFrom": _iso(label_dates[te[0]]),
+            "testTo": _iso(label_dates[te[-1]]), "testRows": len(te), "windowEnd": _iso(end)}
 
 
 def report(cur, strategy_id: int) -> dict[str, Any]:
@@ -96,4 +123,5 @@ def report(cur, strategy_id: int) -> dict[str, Any]:
         "blocks": blocks(dict(s.windows), list(fm.dates)),
         "patience": getattr(a, "patience", None),
         "folds": folds(plan, label_dates, getattr(a, "patience", None), a.forward),
+        "holdout": holdout(label_dates, a, setup.plan.test_end),
     }

@@ -583,7 +583,7 @@ export default function StrategyPage() {
                     <span className={tipClass} data-tip={hintFor(`window.${key}`)}>
                       <span className="text-sm capitalize cursor-help underline decoration-dotted decoration-base-content/30 underline-offset-4">
                         {key}
-                        {key === 'prediction' && <span className="opacity-50"> (optional)</span>}
+                        {key === 'prediction' && <span className="opacity-50"> (optional; saved, and no run reads it yet)</span>}
                       </span>
                     </span>
                     <input

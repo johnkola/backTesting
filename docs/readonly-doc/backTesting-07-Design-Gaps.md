@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-25-4** · 2026-11-25 23:00 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-26-1** · 2026-11-26 10:03 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1201,6 +1201,12 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - **Closed 2026-11-25 on passing tests.** Measured before storing, on QQQ D1: every one of the 40 columns lands in about -3..+2.4 (widest `treasury_2y`, -2.95..1.21), and 99% or more of each column's values inside ±1; the build takes about half a minute. Live: `POST /api/features/build` queued job 1007, the worker ran the build, set 185 was written (40 columns × 6,971 bars) with its data check passing; the pipeline reads five stages, Features passed, and no column fails the check. The old set stays beside it (the config changed, so it is a new set).
     - The warm-up moves each column's first value 252 bars later: the set's first fully populated date is now 2012-02-29 (it waits for `ndx_net_income_qoq`, which starts in 2011). A run from 2003 still trains, with that column partial and flagged, as before.
     - Tests: Python 1,134 (`test_scale.py`, 8: causal, a prefix scales to a prefix, warm-up, a constant stretch, the identity, the config; the build job's handler, 3; the five stages), service 95 (the build route: 202 with the job, 409 while one runs, 400 for a bad timeframe), client 267 (the column check), engine 199, Postman 289 assertions run, none failing (the stage-state request now asks for five stages; a build is covered by its refusal path, since a real one replaces the stored set). **Not done:** the Features stage's button was not pressed in a browser (the build was started through the API), and no walk-forward run has been trained on the new set yet: that is step 5.
+  - **Step 3 of the implementation plan (Split): closed 2026-11-26 on passing tests.** Done when: the windows on screen are the ones used, with no overlap.
+    - Found already in place: the runner refuses a strategy whose windows the yearly folds cannot express exactly ("refuse, never round", `strategy_spec.fold_plan`), and the Split tab's report is made by the runner's own code (`split.report`: `strategy_setup`, the matrix, `plan_folds`, G37), so the tab and a run cannot disagree. Live, every saved strategy's split comes back; where a selected column starts late the tab shows the first row used beside the date asked for (phase1-selectable: 2007-10-10 against 2003-01-01).
+    - [x] The test window was shown as a block only, not as the fold a test run makes. The report now carries `holdout`, by the same `plan_folds` with the strategy's `test.to`, and the tab shows what trains for it and the test rows it scores (phase1-full v5: trains 2003-01-02 to 2021-12-23, scores 2022-01-03 to 2026-06-23, 1,121 rows). Showing it spends nothing.
+    - [x] The prediction window was shown as though in use, and no code reads it. The report marks it `used: false`, and the Split tab and the Strategy tab say no run reads it yet. Building forward predictions is not in step 3; it is listed among the things that change the numbers.
+    - [x] No overlap, now checked on screen as well: the tab fails a fold that trains on a day it scores, folds whose scored spans touch, a last fold reaching the test block, or a holdout training on its test days (`split.foldProblems`). The runner already makes folds so none can happen; tests hold it across expanding and sliding windows and purges of 1, 5 and 20 bars.
+    - Tests: Python (`test_split.py`, 12: the holdout is the test run's fold, none before the test window has a labelled row, no overlap in four fold shapes, the report), client 269 (the fold check).
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
 - [ ] 16.7 **STOP. Three schemas and three logins.** Tables move to `app`, `data` and `jobs` (a move of names, not of rows), each login writes only its own schema, and a test proves a wrong-schema write is refused. This changes the stored database: full backup first, and it needs the author's go
 - [ ] 16.8 **Next.js.** The 17 pages move to the Next.js app router with the same components, tests and DaisyUI theme; Recharts charts are redrawn in Lightweight Charts; the Vite client and its nginx container go
@@ -2278,6 +2284,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-1 | 2026-11-26 10:03 | Claude Code (Claude Opus 5.5) | Step 3 (Split) closed on passing tests: the holdout fold on screen; the prediction window marked as not used; the fold overlap check |
 | 2026-11-25-4 | 2026-11-25 23:00 | Claude Code (Claude Opus 5.5) | Step 2 (Features, normalized) closed on passing tests |
 | 2026-11-25-3 | 2026-11-25 22:45 | Claude Code (Claude Opus 5.5) | Step 2 (Features, normalized): the plan |
 | 2026-11-25-2 | 2026-11-25 22:14 | Claude Code (Claude Opus 5.5) | Step 1 (Data) closed on passing tests: filling a missing bar (R89) |

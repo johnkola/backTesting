@@ -74,7 +74,8 @@ def fake_store(monkeypatch):
     strategy = SimpleNamespace(id=9, name="s", version=2, instrument="QQQ", source="yahoo-adj",
                                timeframe="D1", windows=WINDOWS)
     setup = SimpleNamespace(args=run_args(), strategy=strategy, set_id=27,
-                            columns=SimpleNamespace(kept=("a", "b"), dropped=(("c", "why"),)))
+                            columns=SimpleNamespace(kept=("a", "b"), dropped=(("c", "why"),)),
+                            plan=SimpleNamespace(test_end=date(2018, 6, 29)))
     monkeypatch.setattr(wf, "strategy_setup", lambda cur, args, explicit: setup)
     monkeypatch.setattr(split.feature_store, "read_matrix", lambda cur, set_id, columns=None:
                         SimpleNamespace(dates=dates, values=np.zeros((len(dates), 2))))
@@ -115,3 +116,64 @@ def test_a_strategy_that_cannot_run_says_why(monkeypatch, fake_store):
 
     monkeypatch.setattr(wf, "strategy_setup", missing)
     assert fake_store.get("/api/nn/walkforward/split", params={"strategyId": 9}).status_code == 404
+
+
+# --------------------------------------------------------------------------
+# Step 3: the windows on screen are the ones used, with no overlap
+# --------------------------------------------------------------------------
+
+
+def test_the_holdout_fold_is_the_one_a_test_run_makes():
+    dates = weekdays(date(2014, 1, 1), date(2018, 9, 3))
+    a = run_args()
+    h = split.holdout(dates, a, date(2018, 6, 29))
+    [(_, tr, te)], end = wf.plan_folds(dates, Namespace(**{**vars(a), "test": True}),
+                                       date(2018, 6, 29))
+    assert h == {"trainFrom": "2014-01-01", "trainTo": dates[tr[-1]].isoformat(),
+                 "trainRows": len(tr), "testFrom": "2018-01-01",
+                 "testTo": dates[te[-1]].isoformat(), "testRows": len(te),
+                 "windowEnd": end.isoformat()}
+    assert h["testTo"] <= "2018-06-29", "the holdout stops at the test window's end"
+    assert a.test is False, "the run's own arguments are not touched"
+
+
+def test_a_test_window_with_no_labelled_row_yet_has_no_holdout():
+    dates = weekdays(date(2014, 1, 1), date(2017, 12, 29))
+    assert split.holdout(dates, run_args(), date(2018, 6, 29)) is None
+
+
+def _no_overlap(folds, holdout, window_end):
+    """Every training span ends before what it is scored on, the scored spans
+    run forward without touching, and nothing the validation folds score
+    reaches the test block."""
+    for f in folds:
+        assert f["trainTo"] < f["valFrom"], f
+    for before, after in zip(folds, folds[1:]):
+        assert before["valTo"] < after["valFrom"]
+    assert folds[-1]["valTo"] < window_end
+    if holdout:
+        assert holdout["trainTo"] < holdout["testFrom"]
+        assert folds[-1]["valTo"] < holdout["testFrom"]
+
+
+@pytest.mark.parametrize("over", [{}, {"train_years": 2, "step_years": 1},
+                                  {"forward": 1}, {"forward": 20}])
+def test_nothing_a_run_trains_on_reaches_what_it_is_scored_on(over):
+    dates = weekdays(date(2012, 1, 1), date(2018, 9, 3))
+    a = run_args(train_start=2012, **over)
+    plan, end = wf.plan_folds(dates, a, None)
+    out = split.folds(plan, dates)
+    _no_overlap(out, split.holdout(dates, a, date(2018, 6, 29)), end.isoformat())
+    # The purge is the gap: the label horizon's bars, never trained on.
+    for (_, tr, va) in plan:
+        assert va[0] - tr[-1] > a.forward
+
+
+def test_the_report_carries_the_holdout_and_says_the_prediction_window_is_not_used(fake_store):
+    body = fake_store.get("/api/nn/walkforward/split?strategyId=9").json()
+    assert body["holdout"]["testFrom"] == "2018-01-01"
+    _no_overlap(body["folds"], body["holdout"], body["windowEnd"])
+    windows = {**WINDOWS, "prediction": {"from": "2018-07-02", "to": "2018-12-31"}}
+    used = {b["block"]: b["used"] for b in split.blocks(windows, weekdays(date(2018, 1, 1),
+                                                                          date(2018, 9, 3)))}
+    assert used == {"train": True, "validation": True, "test": True, "prediction": False}
