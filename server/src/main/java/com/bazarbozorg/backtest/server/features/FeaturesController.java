@@ -90,10 +90,16 @@ public class FeaturesController {
     }
 
     @GetMapping("/api/features")
-    public Map<String, Object> stage(@RequestParam(required = false) String timeframe) {
+    public Map<String, Object> stage(@RequestParam(required = false) String timeframe,
+            @RequestParam(required = false) String symbol,
+            @RequestParam(required = false) String source) {
         // The config is timeframe-independent (it describes the columns, not
-        // the bars), so only the built sets filter.
+        // the bars), so only the built sets filter: by timeframe, and by
+        // instrument when one is named (step 7), so the newest set is that
+        // instrument's and not whichever was built last.
         String tf = given(timeframe);
+        String sym = given(symbol);
+        String src = given(source);
         Map<String, List<Map<String, Object>>> specBySet = new HashMap<>();
         db.sql("SELECT s.feature_set_id, s.feature_name, s.method, s.params_json, s.column_index, "
                         + "s.role FROM feature_spec s JOIN feature_sets fs ON fs.id = s.feature_set_id "
@@ -135,8 +141,10 @@ public class FeaturesController {
                         + "fs.max_fill_days, fs.first_complete_date, fs.row_count, fs.built_at "
                         + "FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
                         + "JOIN data_sources ds ON ds.id = fs.source_id "
-                        + "WHERE (?::text IS NULL OR fs.timeframe = ?) ORDER BY fs.id DESC")
-                .params(tf, tf)
+                        + "WHERE (?::text IS NULL OR fs.timeframe = ?) "
+                        + "AND (?::text IS NULL OR i.symbol = ?) AND (?::text IS NULL OR ds.name = ?) "
+                        + "ORDER BY fs.id DESC")
+                .params(tf, tf, sym, sym, src, src)
                 .query((rs, n) -> {
                     String id = Wire.id(rs, "id");
                     Map<String, Object> stats = statsBySet.get(id);
@@ -314,6 +322,24 @@ public class FeaturesController {
         if (!timeframe.matches("[A-Z][A-Z0-9]{0,3}")) {
             throw ApiException.badRequest("timeframe is a code such as D1, H1 or M30");
         }
+        // Any instrument (step 7): its calendar, with the config's own series
+        // on it. Both or neither: without them, the config's own instrument.
+        String symbol = body == null ? "" : body.path("symbol").asString("").trim();
+        String source = body == null ? "" : body.path("source").asString("").trim();
+        if (symbol.isEmpty() != source.isEmpty()) {
+            throw ApiException.badRequest("symbol and source go together");
+        }
+        if (!symbol.isEmpty()) {
+            Long known = db.sql("SELECT count(*) FROM (SELECT 1 FROM candles_adjusted c "
+                            + "JOIN instruments i ON i.id = c.instrument_id "
+                            + "JOIN data_sources s ON s.id = c.source_id "
+                            + "WHERE i.symbol = ? AND s.name = ? AND c.timeframe = ? LIMIT 1) t")
+                    .params(symbol, source, timeframe).query(Long.class).single();
+            if (known == 0) {
+                throw ApiException.badRequest("no " + timeframe + " bars of " + symbol
+                        + " (" + source + ") to build on");
+            }
+        }
         Long busy = db.sql("SELECT id FROM " + jobs.table()
                         + " WHERE type = 'feature-build' AND status IN ('queued', 'running') "
                         + "ORDER BY id LIMIT 1")
@@ -324,11 +350,20 @@ public class FeaturesController {
             answer.put("jobId", busy);
             return ResponseEntity.status(HttpStatus.CONFLICT).body(answer);
         }
-        Job job = jobs.insert("feature-build", "python",
-                json.writeValueAsString(Map.of("timeframe", timeframe)), false);
+        Map<String, Object> inputs = new LinkedHashMap<>();
+        inputs.put("timeframe", timeframe);
+        if (!symbol.isEmpty()) {
+            inputs.put("symbol", symbol);
+            inputs.put("source", source);
+        }
+        Job job = jobs.insert("feature-build", "python", json.writeValueAsString(inputs), false);
         answer.put("jobId", job.id());
         answer.put("type", job.type());
         answer.put("timeframe", timeframe);
+        if (!symbol.isEmpty()) {
+            answer.put("symbol", symbol);
+            answer.put("source", source);
+        }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(answer);
     }
 

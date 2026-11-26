@@ -103,6 +103,35 @@ class FeaturesApiTest extends ServiceTest {
         assertEquals(1.5, stats.get("mean").getAsDouble());
     }
 
+    private Reply post(String path, String body) throws Exception {
+        return send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                        "http://localhost:" + port + path))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)));
+    }
+
+    @Test
+    void theStageListsOneInstrumentsSetsWhenOneIsNamed() throws Exception {
+        // Step 7: another instrument's newer set must not become this one's newest.
+        Reply mine = get("/api/features?timeframe=" + TF + "&symbol=" + SYMBOL + "&source=" + SOURCE);
+        assertEquals(1, mine.at("sets").getAsJsonArray().size());
+        assertEquals(String.valueOf(setId), mine.at("newestSetId").getAsString());
+        Reply other = get("/api/features?timeframe=" + TF + "&symbol=ZZNOSUCH&source=" + SOURCE);
+        assertEquals(0, other.at("sets").getAsJsonArray().size());
+    }
+
+    @Test
+    void aBuildForAnInstrumentWithNoBarsIsRefused() throws Exception {
+        Reply r = post("/api/features/build", "{\"timeframe\": \"" + TF + "\", \"symbol\": \""
+                + SYMBOL + "\", \"source\": \"" + SOURCE + "\"}");
+        assertEquals(400, r.status(), r.text());
+        assertTrue(r.at("error").getAsString().startsWith("no " + TF + " bars of " + SYMBOL));
+        Reply half = post("/api/features/build", "{\"timeframe\": \"" + TF + "\", \"symbol\": \""
+                + SYMBOL + "\"}");
+        assertEquals(400, half.status());
+        assertEquals("symbol and source go together", half.at("error").getAsString());
+    }
+
     @Test
     void theCatalogueListsTheDefinitionsAndTheSets() throws Exception {
         JsonObject body = get("/api/features/catalogue").json();

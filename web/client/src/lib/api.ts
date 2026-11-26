@@ -2085,6 +2085,9 @@ export type RunStaleness = {
 
 export type PipelineStatus = {
   timeframe: string
+  /** The instrument whose calendar the status is on (step 7): the one asked for, or the config's own. */
+  symbol?: string
+  source?: string
   checkedAt: string
   data: StageStatus & { cutoff?: string, required?: number }
   features: StageStatus & { setId?: number, buildId?: number | null }
@@ -2105,8 +2108,9 @@ export const api = {
       `/api/instruments${timeframe ? `?${qs({ timeframe })}` : ''}`, signal,
     ),
   feeds: (signal?: AbortSignal) => getJson<FeedsReport>('/api/feeds', signal),
-  pipelineStatus: (timeframe: string, signal?: AbortSignal) =>
-    getJson<PipelineStatus>(`/api/nn/pipeline/status?${qs({ timeframe })}`, signal),
+  pipelineStatus: (timeframe: string, signal?: AbortSignal,
+    instrument: { symbol?: string, source?: string } = {}) =>
+    getJson<PipelineStatus>(`/api/nn/pipeline/status?${qs({ timeframe, ...instrument })}`, signal),
   feedRun: (id: number, signal?: AbortSignal) =>
     getJson<FeedRunDetail>(`/api/feeds/runs/${id}`, signal),
   refreshFeeds: (body: { feeds?: string[], rebuild?: boolean } = {}) =>
@@ -2221,16 +2225,17 @@ export const api = {
    * Build the feature set of a timeframe's calendar (R68): a job, answered at
    * once (202). Follow it with `job`. A 409 when one is already waiting or running.
    */
-  buildFeatures: (timeframe: string) =>
+  buildFeatures: (timeframe: string, instrument: { symbol?: string, source?: string } = {}) =>
     sendJson<{ jobId: number, type: string, timeframe: string }>('/api/features/build', 'POST',
-      { timeframe }),
+      { timeframe, ...instrument }),
   /** One row of the jobs table: its status, and its result as far as it got. */
   job: (id: number, signal?: AbortSignal) => getJson<JobRow>(`/api/jobs/${id}`, signal),
   /** The latest walk-forward jobs from the jobs table, newest first. */
   walkforwardJobs: (signal?: AbortSignal) =>
     getJson<WalkforwardJobs>('/api/nn/walkforward/jobs', signal),
-  features: (timeframe?: string, signal?: AbortSignal) =>
-    getJson<FeaturesReport>(`/api/features${timeframe ? `?${qs({ timeframe })}` : ''}`, signal),
+  features: (timeframe?: string, signal?: AbortSignal,
+    instrument: { symbol?: string, source?: string } = {}) =>
+    getJson<FeaturesReport>(`/api/features?${qs({ timeframe, ...instrument })}`, signal),
   /** One column of a set before and after its method, over the last `days`. */
   featurePreview: (setId: number | string, column: string, days?: number, signal?: AbortSignal) =>
     getJson<FeaturePreview>(`/api/nn/features/preview?${qs({ set: setId, column, days })}`, signal),

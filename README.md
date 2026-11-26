@@ -1,6 +1,6 @@
 # BackTesting
 
-> **Revision 2026-11-26-3** · 2026-11-26 11:42 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-26-4** · 2026-11-26 16:55 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 A stock/forex backtesting system: **Java 21** for the API (a Spring Boot service) and for the backtest engine and CLI, a **Python worker** for data and machine learning, and a **standalone React client**. The API hands work to the engine and the Python worker through a jobs table; neither has a port. Historical OHLCV candles live in PostgreSQL/TimescaleDB; strategies (the model strategies, plus five Ta4j indicator rules kept as rule benchmarks for comparison) run bar-by-bar with commission and slippage, and every run is persisted with its metrics, trades and equity curve.
 
@@ -87,6 +87,13 @@ the window a model trains on is chosen per run. Two commands, two decisions:
 # the same thing as a job (POST /api/features/build).
 docker compose exec worker python -m nn.feature_build
 docker compose exec worker python -m nn.feature_build --dry-run   # resolve, write nothing
+
+# Any other instrument (step 7): the same config, its own series (prices,
+# volume, RSI, MACD, volatility, relative strength) on the instrument named,
+# the market and macro series as they are. The set records its config as
+# features.toml@SPY/yahoo-adj. The Features stage builds the instrument picked
+# on the Pipeline page (POST /api/features/build with symbol and source).
+docker compose exec worker python -m nn.feature_build --instrument SPY/yahoo-adj
 
 # Train on a slice of it. --from and --to are both INCLUSIVE.
 docker compose exec worker python -m nn.train_features --from 2003-01-01 --to 2017-12-31
@@ -455,7 +462,7 @@ Anything a screen lists can be deleted from it. Each asks for a confirm that say
 | `DELETE /api/imports/:id` | `dry_run` | Undoes the current version of one year slice: deletes the candles in that slice's calendar year and every audit row of the slice (its older versions describe data already replaced). The archived CSV is **kept** — it's how you put the data back. An older version answers `409` `superseded` with `currentImportId`, because undoing it would delete the newer data. `dry_run=true` reports `candlesWouldDelete`, `auditRowsWouldDelete` and `olderVersionIds` without deleting. `409` too when the candles sit in a compressed chunk |
 | `POST /api/aggregate` | `symbol`, `source`, `source_tf`, `target_tfs`, `since`, `until`, `skip_existing` | Builds higher-timeframe candles. `skip_existing` leaves populated targets alone; the default rebuilds through an idempotent upsert |
 | `POST /api/audit` | `symbol`, `source`, `timeframe`, `checks`, `examples` | Runs the cohesion checks over candles already stored, per series. Read-only. Omit the filters to audit everything |
-| `GET /api/nn/pipeline/status` | `timeframe` (default `D1`), `fresh` | Each pipeline stage's state (`passed`, `failed`, `stale`, `empty`, `unknown`, `running`) with the reasons, as the pipeline tabs show them; per strategy, whether its newest walk-forward run would read the same inputs if rerun (`fresh`, `stale`, `unknown`), and which stored backtest results a later fix has touched. Kept for a minute; `fresh=1` recomputes. See [Pipeline stage states](#pipeline-stage-states) |
+| `GET /api/nn/pipeline/status` | `timeframe` (default `D1`), `fresh`, `symbol` and `source` (together) | On the instrument named, its feature set, runs and results (step 7), or on the feature config's own; the answer names it (`symbol`, `source`). Each pipeline stage's state (`passed`, `failed`, `stale`, `empty`, `unknown`, `running`) with the reasons, as the pipeline tabs show them; per strategy, whether its newest walk-forward run would read the same inputs if rerun (`fresh`, `stale`, `unknown`), and which stored backtest results a later fix has touched. Kept for a minute; `fresh=1` recomputes. See [Pipeline stage states](#pipeline-stage-states) |
 | `POST /api/nn/train` | `symbol`, `source`, `timeframe`, `mode`, hyperparameters, `engine`, `engine_settings` | Trains and caches a model. `mode` is `auto` / `force` / `load_only`; `404` on a `load_only` miss. `engine` is `mlp` (the default, the network, with the hyperparameter fields) or `xgboost` / `lightgbm` with their own `engine_settings` (B9), on the same rows, labels and purged split; a tree model is saved in its library's format under its own strategy name, with no scaler. `400` for an unknown engine or a setting out of bounds; `422` for a field the request does not know, named, before any work (a misspelt hyperparameter used to be dropped, and the model trained at the default) |
 | `POST /api/nn/predict_range` | `symbol`, `source`, `timeframe`, `cache_key`, `version_id`, `since`, `until`, `engine` | Predicts every bar in a range in one call. This is what the engine uses; `engine` (default `mlp`) says whose model to load |
 | `POST /api/nn/predict` | `cache_key`, `version_id`, feature rows | Single-shot scoring against a stored model, for callers that already have features |
@@ -1556,6 +1563,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-4 | 2026-11-26 16:55 | Claude Code (Claude Opus 5.5) | Step 7: features for any instrument (`--instrument`, `symbol`/`source` on the build, the features report and the pipeline status) |
 | 2026-11-26-3 | 2026-11-26 11:42 | Claude Code (Claude Opus 5.5) | Step 5: `train` on `GET /api/strategies`; `POST /api/nn/train` refuses an unknown field |
 | 2026-11-26-2 | 2026-11-26 10:36 | Claude Code (Claude Opus 5.5) | Step 4: the SMA crossover twice (50/200 and 10/50); `at` on `GET /api/candles`; `months` on `GET /api/nn/rules` |
 | 2026-11-26-1 | 2026-11-26 10:03 | Claude Code (Claude Opus 5.5) | Step 3: the split shows the holdout fold and says the prediction window is not used |

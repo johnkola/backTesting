@@ -391,10 +391,11 @@ def test_the_pipeline_has_five_stages_with_normalization_inside_features(monkeyp
 
     stage = {"state": "passed", "reasons": []}
     monkeypatch.setattr(st.Context, "open", classmethod(
-        lambda cls, cur, tf, now: type("C", (), {"now": dt.datetime(2026, 11, 25)})()))
+        lambda cls, cur, tf, now, symbol=None, source=None: type(
+            "C", (), {"now": dt.datetime(2026, 11, 25), "cfg": None})()))
     for name in ("data_stage", "features_stage", "backtest_stage"):
         monkeypatch.setattr(st, name, lambda ctx, *a: dict(stage))
     monkeypatch.setattr(st, "training_stage", lambda ctx, features: dict(stage))
     out = st.status(None)
-    assert [k for k in out if k not in ("timeframe", "checkedAt")] == [
+    assert [k for k in out if k not in ("timeframe", "symbol", "source", "checkedAt")] == [
         "data", "features", "split", "training", "backtest"]

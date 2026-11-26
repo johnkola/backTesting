@@ -7,6 +7,8 @@ import { tabState } from '../lib/stageStatus'
 import { STAGES } from '../lib/stages'
 import { useApiData } from '../lib/useApiData'
 import { useTimeframe } from '../lib/useTimeframe'
+import { useInstrument } from '../lib/useInstrument'
+import { instrumentKey, instrumentParams, parseInstrument } from '../lib/instrument'
 
 /** How often the stage states are re-read while the page is open. */
 const STATUS_REFRESH_MS = 60_000
@@ -31,6 +33,12 @@ const STATUS_REFRESH_MS = 60_000
 export default function PipelinePage() {
   const { pathname } = useLocation()
   const [tf] = useTimeframe()
+  const [instrument, setInstrument] = useInstrument()
+  // Every instrument with bars at this timeframe, one entry per source (step 7).
+  const { data: instruments } = useApiData((signal) => api.instruments(tf, signal), [tf])
+  const choices = (instruments?.items ?? []).flatMap((i) => i.sources
+    .filter((s) => s.timeframe === tf)
+    .map((s) => ({ symbol: i.symbol, source: s.sourceName })))
 
   // The last path segment is the stage. An unknown slug is already redirected
   // by the router, so the fallback here only covers the bare /pipeline frame
@@ -45,16 +53,35 @@ export default function PipelinePage() {
     return () => clearInterval(timer)
   }, [reload])
   const { data: status, error } = useApiData(
-    (signal) => api.pipelineStatus(tf, signal), [tf, tick],
+    (signal) => api.pipelineStatus(tf, signal, instrumentParams(instrument)),
+    [tf, tick, instrumentKey(instrument)],
   )
+  // The status names the calendar it is on: the one picked, or the config's own.
+  const onKey = status?.symbol && status.source ? `${status.symbol}/${status.source}` : ''
   const ctx = useMemo(() => ({ status, error, reload }), [status, error, reload])
 
   return (
     <section>
       <div className="flex items-baseline justify-between flex-wrap gap-2 mb-1">
         <h1 className="text-2xl font-semibold">Pipeline</h1>
-        <span className="text-sm text-base-content/70">
-          reading <span className="badge badge-outline font-mono">{tf}</span> bars
+        <span className="text-sm text-base-content/70 flex items-center gap-2">
+          reading
+          <select
+            className="select select-bordered select-xs font-mono" aria-label="Instrument"
+            title="The instrument the stages are read on: its bars, its feature set, its runs and results"
+            value={instrumentKey(instrument) || onKey}
+            onChange={(e) => setInstrument(parseInstrument(e.target.value))}
+          >
+            {onKey && !choices.some((c) => `${c.symbol}/${c.source}` === onKey) && (
+              <option value={onKey}>{onKey}</option>
+            )}
+            {choices.map((c) => (
+              <option key={`${c.symbol}/${c.source}`} value={`${c.symbol}/${c.source}`}>
+                {c.symbol}/{c.source}
+              </option>
+            ))}
+          </select>
+          <span className="badge badge-outline font-mono">{tf}</span> bars
         </span>
       </div>
       <p className="text-base-content/70 mb-4">

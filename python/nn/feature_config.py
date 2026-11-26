@@ -436,12 +436,93 @@ def _build_check(raw: dict[str, Any], feature_names: set[str]) -> Check:
 def load(path: Path | str = DEFAULT_PATH) -> FeatureConfig:
     """Parse and validate the feature table. Raises FeatureConfigError naming
     the offending feature rather than letting a bad edit reach training."""
-    path = Path(path)
+    return _from_raw(_read(Path(path)))
+
+
+def _read(path: Path) -> dict[str, Any]:
+    """A config file's table, its parent's merged in when it inherits."""
     with path.open("rb") as fh:
         raw = tomllib.load(fh)
     if "inherit" in raw:
         raw = _inherited(path, raw)
+    return raw
 
+
+#: A config name may carry an instrument: `features.toml@SPY/yahoo-adj` is the
+#: file's calendar and features with the file's own instrument moved to SPY
+#: (step 7, G56: nothing on the path assumes QQQ). Every feature the base
+#: names on its calendar instrument (the instrument-scoped ones: prices,
+#: volume, RSI, MACD, volatility, relative strength) reads the new one; the
+#: market and macro series stay. No file is written: the name says it all,
+#: the set records it in `config_file`, and its digest (`digest_name`) is the
+#: base file's with the instrument, so an edit to the base marks it stale too.
+INSTRUMENT_MARK = "@"
+
+
+def split_name(name: str) -> tuple[str, tuple[str, str] | None]:
+    """(file name, (symbol, source) or None) for a config name."""
+    if INSTRUMENT_MARK not in name:
+        return name, None
+    file, inst = name.split(INSTRUMENT_MARK, 1)
+    parts = inst.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise FeatureConfigError(f"config {name!r}: the instrument must be SYMBOL/source")
+    return file, (parts[0], parts[1])
+
+
+def instrument_name(file: str, symbol: str, source: str) -> str:
+    """The config name of `file` on another instrument."""
+    return f"{file}{INSTRUMENT_MARK}{symbol}/{source}"
+
+
+def _on_instrument(raw: dict[str, Any], symbol: str, source: str) -> dict[str, Any]:
+    """`raw` with its calendar instrument's series, and the calendar, on symbol/source."""
+    import copy
+
+    out = copy.deepcopy(raw)
+    a = out.setdefault("alignment", {})
+    old = (a.get("calendar_symbol"), a.get("calendar_source"))
+    a["calendar_symbol"], a["calendar_source"] = symbol, source
+    old_key = f"{old[0]}/{old[1]}"
+    available = a.get("available_after", {})
+    if old_key in available:
+        available[f"{symbol}/{source}"] = available.pop(old_key)
+    _move_series(out, {old: (symbol, source)})
+    return out
+
+
+def load_name(name: str) -> FeatureConfig:
+    """The config a set's `config_file` names: a file, or a file on an instrument."""
+    file, inst = split_name(name)
+    raw = _read(config_path(file))
+    return _from_raw(raw if inst is None else _on_instrument(raw, *inst))
+
+
+def digest_name(name: str) -> str:
+    """A set's `config_hash` for a config name: the file's digest, and for one
+    on an instrument the file's digest with the instrument."""
+    file, inst = split_name(name)
+    base = config_digest(config_path(file))
+    if inst is None:
+        return base
+    return hashlib.sha256(f"{base}\0instrument\0{inst[0]}/{inst[1]}".encode()).hexdigest()
+
+
+def for_instrument(symbol: str, source: str, timeframe: str) -> tuple[str, FeatureConfig]:
+    """The config that builds `symbol`'s `timeframe` calendar on `source`, as
+    (config name, config): the file that claims that calendar, else the
+    timeframe's config (`for_timeframe`) on the instrument."""
+    for name, cfg in configs().items():
+        a = cfg.alignment
+        if (a.calendar_symbol, a.calendar_source, a.calendar_timeframe) == (
+                symbol, source, timeframe):
+            return name, cfg
+    file, cfg = for_timeframe(timeframe)
+    name = instrument_name(file, symbol, source)
+    return name, load_name(name)
+
+
+def _from_raw(raw: dict[str, Any]) -> FeatureConfig:
     if "schema_version" not in raw:
         raise FeatureConfigError("`schema_version` is required — it keys the model cache")
 
@@ -650,6 +731,12 @@ def _inherited(path: Path, child: dict[str, Any]) -> dict[str, Any]:
                                      "SYMBOL/source = SYMBOL/source")
         remap[(parts_old[0], parts_old[1])] = (parts_new[0], parts_new[1])
 
+    _move_series(raw, remap)
+    return raw
+
+
+def _move_series(raw: dict[str, Any], remap: dict[tuple[str, str], tuple[str, str]]) -> None:
+    """Every feature's and check's series that `remap` names, moved, in place."""
     def move(spec: Any) -> None:
         if not isinstance(spec, dict):
             return
@@ -664,7 +751,6 @@ def _inherited(path: Path, child: dict[str, Any]) -> dict[str, Any]:
     for block in [*raw.get("feature", []), *raw.get("check", [])]:
         for field_name in ("series", "published"):
             move(block.get(field_name))
-    return raw
 
 
 def config_digest(path: Path | str) -> str:

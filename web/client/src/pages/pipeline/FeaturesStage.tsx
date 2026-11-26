@@ -47,11 +47,17 @@ function fmtParams(params: Record<string, number | string>) {
 export default function FeaturesStage() {
   const [tf] = useTimeframe()
   const [reload, setReload] = useState(0)
-  const { data, error } = useApiData<FeaturesReport>((signal) => api.features(tf, signal), [tf, reload])
+  const { status, reload: reloadStatus } = usePipelineStatus()
+  // The sets of the instrument the pipeline is on (step 7): the status names
+  // it, the one picked or the config's own, so another instrument's newer set
+  // is never shown as this one's.
+  const on = status?.symbol && status.source ? { symbol: status.symbol, source: status.source } : null
+  const { data, error } = useApiData<FeaturesReport>(
+    (signal) => (on ? api.features(tf, signal, on) : new Promise<FeaturesReport>(() => {})),
+    [tf, reload, on?.symbol ?? '', on?.source ?? ''])
   const [openNote, setOpenNote] = useState<string | null>(null)
   const [previewing, setPreviewing] = useState<string | null>(null)
-  const { status, reload: reloadStatus } = usePipelineStatus()
-  const build = useBuild(tf, () => { setReload((n) => n + 1); reloadStatus() })
+  const build = useBuild(tf, on, () => { setReload((n) => n + 1); reloadStatus() })
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!data) return <span className="loading loading-spinner" />
@@ -388,7 +394,8 @@ type Build = {
  * the jobs table every two seconds until it ends, then calls `onDone` so the
  * page and the stage states read the new set.
  */
-function useBuild(tf: string, onDone: () => void): Build {
+function useBuild(tf: string, on: { symbol: string, source: string } | null,
+  onDone: () => void): Build {
   const [jobId, setJobId] = useState<number | null>(null)
   const [job, setJob] = useState<JobRow | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -423,7 +430,7 @@ function useBuild(tf: string, onDone: () => void): Build {
     start: () => {
       setError(null)
       setJob(null)
-      api.buildFeatures(tf)
+      api.buildFeatures(tf, on ?? {})
         .then((r) => setJobId(r.jobId))
         .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
     },

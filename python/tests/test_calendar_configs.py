@@ -193,3 +193,60 @@ def test_the_data_stage_looks_for_each_series_where_the_build_reads_it():
     assert ("QQQ", "yahoo-adj") not in at
     assert at[("DGS10", "fred")] == {"D1"}
     assert set(at) == m30.required_series()
+
+
+# --------------------------------------------------------------------------
+# Step 7 (G56): any instrument, from the same config
+# --------------------------------------------------------------------------
+
+_OWN = {"price_open", "price_high", "price_low", "price_close", "volume", "rsi_14", "macd",
+        "realized_vol", "qqq_spy_relative"}
+
+
+def _series_of(cfg, name):
+    return next(f for f in cfg.features if f.name == name).series
+
+
+def test_another_instrument_moves_the_instruments_own_series_and_nothing_else():
+    name, cfg = feature_config.for_instrument("SPY", "yahoo-adj", "D1")
+    assert name == "features.toml@SPY/yahoo-adj"
+    a = cfg.alignment
+    assert (a.calendar_symbol, a.calendar_source, a.calendar_timeframe) == ("SPY", "yahoo-adj", "D1")
+    base = feature_config.load()
+    moved = {f.name for f in cfg.features if "'QQQ'" in repr(f.series)}
+    assert moved == set(), "no series reads QQQ on SPY's calendar"
+    for f in base.features:
+        before, after = repr(f.series), repr(_series_of(cfg, f.name))
+        if f.name in _OWN:
+            assert "'QQQ'" in before and "'SPY'" in after, f.name
+        else:
+            assert before == after, f"{f.name} is not the instrument's own and must not move"
+    # The same features and checks, in the same order: only the instrument changed.
+    assert [f.name for f in cfg.features] == [f.name for f in base.features]
+
+
+def test_the_configs_own_instrument_is_the_file_itself():
+    assert feature_config.for_instrument("QQQ", "yahoo-adj", "D1")[0] == "features.toml"
+    assert feature_config.for_instrument("QQQ", "synthetic", "H1")[0] == "calendars/QQQ-synthetic-H1.toml"
+
+
+def test_a_set_on_another_instrument_has_its_own_digest_and_follows_the_base():
+    spy = feature_config.digest_name("features.toml@SPY/yahoo-adj")
+    assert spy != feature_config.digest_name("features.toml")
+    assert spy != feature_config.digest_name("features.toml@AAPL/yahoo")
+    # The file alone hashes as before, so no set built before step 7 goes stale.
+    assert feature_config.digest_name("features.toml") == feature_config.config_digest(
+        feature_config.DEFAULT_PATH)
+    assert feature_config.load_name("features.toml@AAPL/yahoo").alignment.calendar_symbol == "AAPL"
+    with pytest.raises(feature_config.FeatureConfigError, match="SYMBOL/source"):
+        feature_config.split_name("features.toml@AAPL")
+
+
+def test_the_build_job_builds_the_instrument_asked_for():
+    from jobs import handlers
+    argv = handlers.feature_build_argv({"timeframe": "D1", "symbol": "SPY", "source": "yahoo-adj"})
+    assert argv[0] == "--config" and argv[1].endswith("features.toml")
+    assert argv[2:] == ["--instrument", "SPY/yahoo-adj"]
+    assert handlers.feature_build_argv({"timeframe": "D1", "symbol": "QQQ",
+                                        "source": "yahoo-adj"})[2:] == []
+    assert handlers.feature_build_argv({"timeframe": "D1"})[2:] == []

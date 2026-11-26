@@ -138,15 +138,23 @@ def walkforward(ctx: Context) -> dict[str, Any]:
 
 def feature_build_argv(inputs: dict[str, Any]) -> list[str]:
     """The build's flags for a job's inputs: the config whose calendar is at
-    the timeframe asked for (`feature_config.for_timeframe`)."""
+    the timeframe asked for (`feature_config.for_timeframe`), on the instrument
+    asked for when there is one (`for_instrument`, step 7): the config's own
+    instrument when none is."""
     from nn import feature_config
 
     timeframe = str(inputs.get("timeframe") or "D1")
-    name, cfg = feature_config.for_timeframe(timeframe)
+    symbol, source = inputs.get("symbol"), inputs.get("source")
+    if symbol and source:
+        name, cfg = feature_config.for_instrument(str(symbol), str(source), timeframe)
+    else:
+        name, cfg = feature_config.for_timeframe(timeframe)
     if cfg.alignment.calendar_timeframe != timeframe:
         raise Failed(f"no feature config builds a {timeframe} calendar; "
                      "the files are features.toml and nn/calendars/*.toml")
-    return ["--config", str(feature_config.config_path(name))]
+    file, inst = feature_config.split_name(name)
+    argv = ["--config", str(feature_config.config_path(file))]
+    return argv + (["--instrument", f"{inst[0]}/{inst[1]}"] if inst else [])
 
 
 def feature_build(ctx: Context) -> dict[str, Any]:

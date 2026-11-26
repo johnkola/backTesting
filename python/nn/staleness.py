@@ -423,20 +423,52 @@ class Context:
     cfg: Any = None
     cfg_error: str | None = None
     cfg_hash: str | None = None
+    #: The instrument the status is on (step 7): the one asked for, or the
+    #: config's calendar instrument. None only when the config cannot be read,
+    #: and then every instrument's runs and results are listed.
+    symbol: str | None = None
+    source: str | None = None
     #: The file `cfg` came from: the calendar at this context's timeframe (I3).
     cfg_name: str = "features.toml"
     _closes: dict = field(default_factory=dict)
     _sets: dict = field(default_factory=dict)
 
     @classmethod
-    def open(cls, cur, timeframe: str, now: dt.datetime | None = None) -> Context:
-        ctx = cls(cur=cur, now=now or dt.datetime.now(dt.UTC), timeframe=timeframe)
+    def open(cls, cur, timeframe: str, now: dt.datetime | None = None,
+             symbol: str | None = None, source: str | None = None) -> Context:
+        """The context for one timeframe, on `symbol`'s calendar when given
+        (step 7: any instrument), else the timeframe's config's own."""
+        ctx = cls(cur=cur, now=now or dt.datetime.now(dt.UTC), timeframe=timeframe,
+                  symbol=symbol or None, source=source or None)
         try:
-            ctx.cfg_name, ctx.cfg = feature_config.for_timeframe(timeframe)
-            ctx.cfg_hash = config_hash(feature_config.config_path(ctx.cfg_name))
+            if symbol and source:
+                ctx.cfg_name, ctx.cfg = feature_config.for_instrument(symbol, source, timeframe)
+            else:
+                ctx.cfg_name, ctx.cfg = feature_config.for_timeframe(timeframe)
+            ctx.cfg_hash = feature_config.digest_name(ctx.cfg_name)
+            # Always one instrument: the one asked for, or the config's own, so
+            # the runs and results shown are the ones its feature set serves.
+            ctx.symbol = ctx.cfg.alignment.calendar_symbol
+            ctx.source = ctx.cfg.alignment.calendar_source
         except Exception as exc:  # noqa: BLE001
             ctx.cfg_error = str(exc)
         return ctx
+
+    def _hash_for(self, instrument_id: int, source_id: int, timeframe: str) -> str | None:
+        """The digest the current config gives this instrument's calendar: each
+        instrument's set is built from its own config name (step 7), so one
+        hash for the timeframe would call every other instrument's set stale."""
+        self.cur.execute("SELECT symbol FROM instruments WHERE id = %s", (instrument_id,))
+        sym = self.cur.fetchone()
+        self.cur.execute("SELECT name FROM data_sources WHERE id = %s", (source_id,))
+        src = self.cur.fetchone()
+        if not sym or not src:
+            return self.cfg_hash
+        try:
+            name, _ = feature_config.for_instrument(sym[0], src[0], timeframe)
+            return feature_config.digest_name(name)
+        except Exception:  # noqa: BLE001
+            return self.cfg_hash
 
     def current_set(self, instrument_id: int, source_id: int, timeframe: str):
         """(set id, current build id) the current config built, or None."""
@@ -446,7 +478,8 @@ class Context:
                 "SELECT id, current_run_id FROM feature_sets WHERE instrument_id = %s "
                 "AND source_id = %s AND timeframe = %s AND config_hash = %s "
                 "ORDER BY id DESC LIMIT 1",
-                (instrument_id, source_id, timeframe, self.cfg_hash),
+                (instrument_id, source_id, timeframe,
+                 self._hash_for(instrument_id, source_id, timeframe)),
             )
             self._sets[key] = self.cur.fetchone()
         return self._sets[key]
@@ -697,11 +730,14 @@ def pick_newest(runs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(best.values(), key=lambda r: r["id"], reverse=True)
 
 
-def newest_runs(cur, timeframe: str) -> list[dict[str, Any]]:
+def newest_runs(cur, timeframe: str, symbol: str | None = None,
+                source: str | None = None) -> list[dict[str, Any]]:
     """The newest finished run per strategy (and per whole-set label): an older
-    run of the same strategy is superseded, not stale (`pick_newest`)."""
-    cur.execute(_RUN_SQL + " WHERE r.timeframe = %s AND r.finished_at IS NOT NULL "
-                "ORDER BY r.id DESC", (timeframe,))
+    run of the same strategy is superseded, not stale (`pick_newest`). On one
+    instrument when given (step 7)."""
+    on = " AND i.symbol = %s AND s.name = %s" if symbol and source else ""
+    cur.execute(_RUN_SQL + " WHERE r.timeframe = %s AND r.finished_at IS NOT NULL" + on
+                + " ORDER BY r.id DESC", (timeframe, *((symbol, source) if on else ())))
     return pick_newest([dict(zip(_RUN_KEYS, row, strict=True)) for row in cur.fetchall()])
 
 
@@ -769,7 +805,7 @@ def check_run(ctx: Context, run: dict[str, Any], latest_versions: dict[str, int]
 
 
 def training_stage(ctx: Context, features: dict[str, Any]) -> dict[str, Any]:
-    runs = newest_runs(ctx.cur, ctx.timeframe)
+    runs = newest_runs(ctx.cur, ctx.timeframe, ctx.symbol, ctx.source)
     ctx.cur.execute("SELECT name, max(version) FROM strategies GROUP BY name")
     latest_versions = {n: int(v) for n, v in ctx.cur.fetchall()}
     code_now = lineage.code_hash()
@@ -787,8 +823,13 @@ def training_stage(ctx: Context, features: dict[str, Any]) -> dict[str, Any]:
     if features.get("state") == "stale":
         reasons.append(reason("upstream", "the feature table is stale (see Features), so every "
                               "run reads from an out-of-date build"))
-    ctx.cur.execute("SELECT count(*) FROM walkforward_runs WHERE timeframe = %s "
-                    "AND finished_at IS NULL AND failed_reason IS NULL", (ctx.timeframe,))
+    on = ctx.symbol and ctx.source
+    ctx.cur.execute("SELECT count(*) FROM walkforward_runs r "
+                    "JOIN instruments i ON i.id = r.instrument_id "
+                    "JOIN data_sources s ON s.id = r.source_id WHERE r.timeframe = %s "
+                    "AND r.finished_at IS NULL AND r.failed_reason IS NULL"
+                    + (" AND i.symbol = %s AND s.name = %s" if on else ""),
+                    (ctx.timeframe, *((ctx.symbol, ctx.source) if on else ())))
     in_progress = int(ctx.cur.fetchone()[0])
     stale_runs = [r for r in checked if r["state"] == "stale"]
     if in_progress:
@@ -805,8 +846,10 @@ def training_stage(ctx: Context, features: dict[str, Any]) -> dict[str, Any]:
 def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
     ctx.cur.execute(
         "SELECT id, instrument_symbol, data_source, timeframe, start_date, end_date, created_at, "
-        "strategy_name FROM backtest_results WHERE timeframe = %s ORDER BY id DESC LIMIT %s",
-        (ctx.timeframe, limit))
+        "strategy_name FROM backtest_results WHERE timeframe = %s"
+        + (" AND instrument_symbol = %s AND data_source = %s" if ctx.symbol and ctx.source else "")
+        + " ORDER BY id DESC LIMIT %s",
+        (ctx.timeframe, *((ctx.symbol, ctx.source) if ctx.symbol and ctx.source else ()), limit))
     results = ctx.cur.fetchall()
     fixes = _fixes(ctx.cur)
     table = series_timeframes(ctx.cfg) if ctx.cfg is not None else None
@@ -847,9 +890,11 @@ def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
             "results": out, "stale": sum(1 for r in out if r["state"] == "stale")}
 
 
-def status(cur, timeframe: str = "D1", now: dt.datetime | None = None) -> dict[str, Any]:
-    """Every stage's state, with the reasons, for one timeframe."""
-    ctx = Context.open(cur, timeframe, now)
+def status(cur, timeframe: str = "D1", now: dt.datetime | None = None,
+           symbol: str | None = None, source: str | None = None) -> dict[str, Any]:
+    """Every stage's state, with the reasons, for one timeframe, on one
+    instrument's calendar when given (step 7)."""
+    ctx = Context.open(cur, timeframe, now, symbol, source)
     data = data_stage(ctx)
     features = features_stage(ctx)
     # A later stage is not done while an earlier one has an error nobody
@@ -861,8 +906,11 @@ def status(cur, timeframe: str = "D1", now: dt.datetime | None = None) -> dict[s
                              else [reason("upstream", "built from the same feature build as "
                                           "Features, which is stale")]
                              if features["state"] == "stale" else [])}
+    a = ctx.cfg.alignment if ctx.cfg is not None else None
     return {
         "timeframe": timeframe,
+        "symbol": a.calendar_symbol if a else symbol,
+        "source": a.calendar_source if a else source,
         "checkedAt": ctx.now.isoformat(),
         "data": data,
         # Five stages (R84, the author 2026-11-23): normalization is the last

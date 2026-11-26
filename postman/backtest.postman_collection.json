@@ -4159,6 +4159,105 @@
           ]
         },
         {
+          "name": "Pipeline status on another instrument",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/pipeline/status?timeframe=D1&symbol=SPY&source=yahoo-adj",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "pipeline",
+                "status?timeframe=D1&symbol=SPY&source=yahoo-adj"
+              ]
+            },
+            "description": "Step 7: the stages on one instrument's calendar, feature set, runs and results."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('is on the instrument asked for, every stage there (step 7)', function () {",
+                  "    const d = pm.response.json();",
+                  "    pm.expect(d.symbol).to.eql('SPY');",
+                  "    pm.expect(d.source).to.eql('yahoo-adj');",
+                  "    pm.expect(d).to.include.keys('data', 'features', 'split', 'training', 'backtest');",
+                  "    // Its runs and results only: none of another instrument's.",
+                  "    for (const r of d.backtest.results || []) pm.expect(r.symbol || r.instrument || 'SPY').to.eql('SPY');",
+                  "});",
+                  "",
+                  "pm.test('a symbol without its source is refused', function () {",
+                  "    pm.sendRequest(pm.environment.get('baseUrl') + '/api/nn/pipeline/status?timeframe=D1&symbol=SPY', function (err, res) {",
+                  "        pm.expect(err).to.be.null;",
+                  "        pm.expect(res.code).to.eql(400);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A feature build for an instrument with no bars is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/features/build",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "features",
+                "build"
+              ]
+            },
+            "description": "Step 7: any instrument with bars can be built; one without is refused before a job is queued.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"timeframe\": \"D1\",\n  \"symbol\": \"ZZNOBARS\",\n  \"source\": \"{{source}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400, before any job', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('says which bars are missing', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('no D1 bars of ZZNOBARS');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Walk-forward jobs",
           "request": {
             "method": "GET",

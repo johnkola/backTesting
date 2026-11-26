@@ -534,13 +534,15 @@ def record_run(cur, set_id: int, cfg: FeatureConfig, cfg_hash: str,
 
 
 def store(
-    conn, cur, cfg: FeatureConfig, cfg_path: Path, inst_id: int, src_id: int,
+    conn, cur, cfg: FeatureConfig, cfg_name: str, inst_id: int, src_id: int,
     calendar: list[date], columns: list[BuiltColumn],
     inputs: lineage.InputLog | None = None,
 ) -> tuple[int, int]:
     """Write the set and its values, and record the build. Returns (set id, build id)."""
-    cfg_hash = feature_config.config_digest(cfg_path)
-    cfg_file = feature_config.config_name(cfg_path)
+    # The config's name, which may carry an instrument (`features.toml@SPY/
+    # yahoo-adj`, step 7), and its digest: what any later check rebuilds.
+    cfg_hash = feature_config.digest_name(cfg_name)
+    cfg_file = cfg_name
     a = cfg.alignment
 
     # The first day every INPUT column can speak to. Rows before it hold NULLs
@@ -612,11 +614,12 @@ def connect():
 #: `feature_store.UNBUILDABLE_TIMEFRAMES`.
 
 
-def refusal(cfg: FeatureConfig, cfg_path: Path) -> str | None:
+def refusal(cfg: FeatureConfig, cfg_name: str | Path) -> str | None:
     """Why this config cannot be built, or None. Checked before the database
     is touched, dry run included."""
     try:
-        name = feature_config.config_name(cfg_path)
+        name = (feature_config.config_name(cfg_name) if isinstance(cfg_name, Path)
+                else cfg_name)
         feature_config.configs()  # one file per calendar, all of them valid
     except feature_config.FeatureConfigError as e:
         return str(e)
@@ -630,6 +633,11 @@ def refusal(cfg: FeatureConfig, cfg_path: Path) -> str | None:
 def main() -> int:
     p = argparse.ArgumentParser(description="Build the normalized feature table.")
     p.add_argument("--config", default=str(feature_config.DEFAULT_PATH))
+    p.add_argument("--instrument", metavar="SYMBOL/source", default=None,
+                   help="Build the config's calendar on another instrument: its own "
+                        "series (prices, volume, RSI, MACD, volatility) read this one, "
+                        "the market and macro series stay (step 7). Omit for the "
+                        "config's own instrument")
     p.add_argument("--since", help="First calendar date to build (e.g. 2003-01-01)")
     p.add_argument("--dry-run", action="store_true",
                    help="Resolve and normalize, report, write nothing")
@@ -639,9 +647,18 @@ def main() -> int:
                         "on the set")
     args = p.parse_args()
 
-    cfg_path = Path(args.config)
-    cfg = feature_config.load(cfg_path)
-    why = refusal(cfg, cfg_path)
+    try:
+        cfg_name = feature_config.config_name(Path(args.config))
+        if args.instrument:
+            symbol, _, source = args.instrument.partition("/")
+            a = feature_config.load_name(cfg_name).alignment
+            if (symbol, source) != (a.calendar_symbol, a.calendar_source):
+                cfg_name = feature_config.instrument_name(cfg_name, symbol, source)
+        cfg = feature_config.load_name(cfg_name)
+    except feature_config.FeatureConfigError as e:
+        print(f"refused: {e}")
+        return 2
+    why = refusal(cfg, cfg_name)
     if why:
         print(f"refused: {why}")
         return 2
@@ -726,7 +743,7 @@ def main() -> int:
         print("\n--dry-run: nothing written")
         return 0
 
-    set_id, build_id = store(conn, cur, cfg, cfg_path, inst_id, src_id, calendar, columns,
+    set_id, build_id = store(conn, cur, cfg, cfg_name, inst_id, src_id, calendar, columns,
                              build_inputs)
     # Who built over a failed check and why, or NULL: a rebuild of the same set
     # with its checks passing clears an earlier override.
