@@ -22,7 +22,7 @@
  *   against the bar's price, so a reader compares it with the run's slippage
  *   setting instead of being told they agree.
  */
-import type { Candle, EquityPoint, Trade } from './api'
+import type { Candle, EquityPoint, RunCost, Trade } from './api'
 
 /** The engine's id for SPY, which dual momentum switches into (`BacktestEngine.SPY_ID`). */
 export const SPY_INSTRUMENT_ID = -1
@@ -71,9 +71,13 @@ export type TradeLine = {
   quantity: number | null
   buy: Fill
   sell: Fill
+  /** Both legs' commission, the buy's and the sale's. */
   commission: number | null
   tax: number | null
+  /** The price gain, quantity × (sale fill − buy fill), before commission and tax. */
   pnl: number | null
+  /** What the trade added to the account: the gain less both commissions and its tax. */
+  net: number | null
   /** Calendar days from the buy to the sale, as the table's average holding time counts them. */
   holdDays: number | null
 }
@@ -111,11 +115,15 @@ export function tradeLines(trades: readonly Trade[], symbol: string,
     }
     const days = t.entryTime && t.exitTime
       ? (key(t.exitTime) - key(t.entryTime)) / 86_400_000 : null
+    const pnl = numberOr(t.pnl)
+    const commission = numberOr(t.commission)
+    const tax = numberOr(t.tax)
     return {
       n: i + 1, asset, quantity: numberOr(t.quantity),
       buy: fill(t.entryTime, numberOr(t.entryPrice), entryBar, 'open'),
       sell: fill(t.exitTime, exitPrice, exitBar, at),
-      commission: numberOr(t.commission), tax: numberOr(t.tax), pnl: numberOr(t.pnl),
+      commission, tax, pnl,
+      net: pnl === null || commission === null ? null : pnl - commission - (tax ?? 0),
       holdDays: days,
     }
   })
@@ -139,9 +147,9 @@ const csvCell = (v: string | number | null) => (v === null ? '' : String(v))
 /** The trades with their bars, as a CSV a spreadsheet opens. */
 export function tradesCsv(lines: readonly TradeLine[]): string {
   const head = ['trade', 'asset', 'quantity', 'buy_date', 'buy_bar_open', 'buy_fill',
-    'sell_date', 'sell_bar_price', 'sell_price_is', 'sell_fill', 'commission', 'tax', 'pnl']
+    'sell_date', 'sell_bar_price', 'sell_price_is', 'sell_fill', 'commission', 'tax', 'pnl', 'net']
   const rows = lines.map((l) => [l.n, l.asset, l.quantity, l.buy.time, l.buy.barPrice, l.buy.fill,
-    l.sell.time, l.sell.barPrice, l.sell.at, l.sell.fill, l.commission, l.tax, l.pnl]
+    l.sell.time, l.sell.barPrice, l.sell.at, l.sell.fill, l.commission, l.tax, l.pnl, l.net]
     .map(csvCell).join(','))
   return [head.join(','), ...rows].join('\n') + '\n'
 }
@@ -154,4 +162,51 @@ export function tradesCsv(lines: readonly TradeLine[]): string {
 export function equityCsv(points: readonly EquityPoint[], equity: readonly number[]): string {
   const rows = points.slice(0, equity.length).map((p, i) => `${p.timestamp},${equity[i]}`)
   return ['date,equity', ...rows].join('\n') + '\n'
+}
+
+/** Agreement within a part in a billion of the figure: the engine's arithmetic, not a tolerance for error. */
+const agree = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b))
+
+/**
+ * Both legs' commission as the run's setting makes it (`PercentageCommission`,
+ * `FixedCommission`: per leg, on the filled price), or null when the setting
+ * is not one of the two or a figure is missing.
+ */
+export function commissionPerSettings(l: TradeLine, cost: RunCost | null | undefined): number | null {
+  if (!cost || cost.value === null) return null
+  if (cost.type === 'fixed') return 2 * cost.value
+  if (cost.type !== 'percentage' || l.quantity === null || l.buy.fill === null
+    || l.sell.fill === null) return null
+  return cost.value * l.quantity * (l.buy.fill + l.sell.fill)
+}
+
+/**
+ * A fill as the run's slippage makes it from its bar's price
+ * (`PercentageSlippage`, `FixedSlippage`): above it for a buy, below for a
+ * sale. Null when the bar or the setting is not there to say.
+ */
+export function fillPerSettings(f: Fill, side: 'buy' | 'sell', cost: RunCost | null | undefined): number | null {
+  if (!cost || cost.value === null || f.barPrice === null) return null
+  const sign = side === 'buy' ? 1 : -1
+  if (cost.type === 'percentage') return f.barPrice * (1 + sign * cost.value)
+  if (cost.type === 'fixed') return f.barPrice + sign * cost.value
+  return null
+}
+
+/** Whether a figure agrees with the settings: true, false, or null when there is nothing to hold it to. */
+export function agreesWith(actual: number | null, expected: number | null): boolean | null {
+  return actual === null || expected === null ? null : agree(actual, expected)
+}
+
+/**
+ * The profit figure, followed: the capital plus every trade's net comes to the
+ * final equity, and what is left over is what the account earned outside a
+ * trade (T-bill interest on dual momentum's cash; zero for everything else).
+ */
+export function reconcile(capital: number, lines: readonly TradeLine[], finalEquity: number | null):
+{ netTotal: number | null, end: number | null, rest: number | null } {
+  if (lines.some((l) => l.net === null)) return { netTotal: null, end: null, rest: null }
+  const netTotal = lines.reduce((a, l) => a + (l.net ?? 0), 0)
+  const end = capital + netTotal
+  return { netTotal, end, rest: finalEquity === null ? null : finalEquity - end }
 }

@@ -1,6 +1,6 @@
 # Design gap tracker
 
-> **Revision 2026-11-26-4** · 2026-11-26 11:42 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-26-5** · 2026-11-26 16:42 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1226,6 +1226,12 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - [x] On the way: PyTorch warned on every batch of the network (`float(loss)` on a tensor that requires grad); `loss.item()`, the same number.
     - Tests: engine 206 (`TrainFieldsTest`, 5: each engine trains as itself, every network parameter has its field, a tree engine's own settings go as `engine_settings`, every field is one the loader's request has, numbers keep their kind), service 97 (the params show the shape and a tree's settings), Python 1,146 (an unknown field is refused, 422), client 281 (`trainBody`, 3), Postman 122 requests and 310 assertions, none failing (the training table on the strategy list; a misspelt field refused).
     - Found by Postman once a run was stored again: two checks of a run's folds assumed one engine a run (the summary's fold count equal to the rows returned, and its mean recomputed over all of them). A run's summary is its first engine's folds by design (B9); the checks now compare with that engine's folds and hold the rows to folds × engines. They had been skipped since the stored runs were deleted on 2026-11-25.
+  - **Step 6 of the implementation plan (Backtest and result): closed 2026-11-26 on passing tests.** Done when: the trades and the profit figure can be followed and agree with the settings.
+    - [x] 6.1 **The profit figure did not add up on the page.** A trade's `pnl` is the price gain before costs, and its `commission` is both legs; the trade table labelled the first "P&L", which reads as net. Each trade now shows its gain, both commissions, its tax and its net, and the panel follows the final equity: capital + the Net column's total = final equity, with anything left over named (dual momentum's T-bill interest).
+    - [x] 6.2 **Agreement with the settings, per trade.** Each fill is checked against its bar's price moved by the run's slippage, and each commission against the run's commission on both filled prices (`PercentageSlippage`/`FixedSlippage`, `PercentageCommission`/`FixedCommission`, the engine's own arithmetic): ✓, or ✗ with the figure the settings make. The tax line says the run's rate and rule.
+    - [x] 6.3 **The strategy's own row opens** like a benchmark's, with the same panel (step 4's): how its figures are made, its trades beside the bars, the formulas for max drawdown and Sharpe, the CSVs.
+    - [x] 6.4 Live, out of sample: the three models trained in step 5 (QQQ 2003 to 2015) backtested on 2016 to 2021, each loading the exact version trained (cache hit): network +53.65% (4 trades), XGBoost +145.35% (15), LightGBM +118.69% (22), buy-and-hold +274.11%. For each, capital + the trades' nets = the final equity to the cent; on XGBoost's page every fill and commission agrees (✓). A taxed run (XGBoost at 25%): $3,289.48 of tax, each trade's tax 25% of its gain net of both commissions with losses carried, and capital + nets = final equity.
+    - Tests: client 285 (`benchmarkCheck.test.ts`, 12: on result 1405's stored Faber trade, the net, both commissions against the setting, each fill against its bar and the slippage, and the capital and nets coming to the final equity). No engine, service or Python change in this step.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
 - [ ] 16.7 **STOP. Three schemas and three logins.** Tables move to `app`, `data` and `jobs` (a move of names, not of rows), each login writes only its own schema, and a test proves a wrong-schema write is refused. This changes the stored database: full backup first, and it needs the author's go
 - [ ] 16.8 **Next.js.** The 17 pages move to the Next.js app router with the same components, tests and DaisyUI theme; Recharts charts are redrawn in Lightweight Charts; the Vite client and its nginx container go
@@ -2303,6 +2309,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-5 | 2026-11-26 16:42 | Claude Code (Claude Opus 5.5) | Step 6 (Backtest and result) closed on passing tests: each trade's net and the final equity followed; fills and commissions checked against the settings; the strategy's row opens |
 | 2026-11-26-4 | 2026-11-26 11:42 | Claude Code (Claude Opus 5.5) | Step 5 (Training) closed on passing tests: every engine trained to the end and recorded; the Train page trains the engine picked, with the engine's field names |
 | 2026-11-26-3 | 2026-11-26 11:08 | Claude Code (Claude Opus 5.5) | Step 4 (Benchmarks) closed on passing tests: each benchmark opens on the result page to check its figures by hand; the stored results rerun |
 | 2026-11-26-2 | 2026-11-26 10:36 | Claude Code (Claude Opus 5.5) | Step 4 (Benchmarks): the plan, and 4.1 to 4.4 built (dates on fills, the 10/50 crossover, the bars at instants, the month-end table) |

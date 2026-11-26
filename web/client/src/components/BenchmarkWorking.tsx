@@ -1,12 +1,12 @@
-import { api, type Candle, type ResultDetail, type RuleMonth, type Trade } from '../lib/api'
+import { api, type Candle, type ResultDetail, type RuleMonth, type RunCost, type Trade } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { barStamp } from '../lib/marketTime'
 import { grouped, percent } from '../lib/numbers'
 import { costText } from '../lib/runSettings'
 import { isMonthly } from '../lib/benchmarks'
 import {
-  MAX_AT, barIndex, boughtAtTheFirstOpen, equityCsv, instantsByAsset, tradeLines, tradesCsv,
-  type Fill,
+  MAX_AT, agreesWith, barIndex, boughtAtTheFirstOpen, commissionPerSettings, equityCsv,
+  fillPerSettings, instantsByAsset, reconcile, tradeLines, tradesCsv, type Fill,
 } from '../lib/benchmarkCheck'
 
 /**
@@ -30,6 +30,10 @@ type Benchmark = {
 }
 
 function benchmarkOf(result: NonNullable<ResultDetail['result']>, name: string): Benchmark | null {
+  if (name === 'strategy') {
+    return { finalEquity: result.finalEquity, trades: result.trades,
+      equity: result.equityHistory.map((p) => p.equity), metrics: result.metrics }
+  }
   if (name === 'buy_and_hold') return result.buyAndHold ?? null
   return result.benchmarks?.find((b) => b.name === name && b.available) ?? null
 }
@@ -70,14 +74,27 @@ function useFillBars(detail: ResultDetail, trades: readonly Trade[]) {
   }
 }
 
-function FillCells({ f, timeframe }: { f: Fill, timeframe: string }) {
+/** ✓ when a figure agrees with the run's settings, ✗ with the figure they make when not. */
+function Agrees({ ok, expected }: { ok: boolean | null, expected: number | null }) {
+  if (ok === null) return null
+  return ok
+    ? <span className="text-success" title="agrees with the run's settings"> ✓</span>
+    : <span className="text-error" title={`the run's settings make it ${expected}`}> ✗</span>
+}
+
+function FillCells({ f, side, timeframe, slippage }: {
+  f: Fill, side: 'buy' | 'sell', timeframe: string, slippage: RunCost | null | undefined
+}) {
+  const expected = fillPerSettings(f, side, slippage)
   return (
     <>
       <td className="whitespace-nowrap">{barStamp(f.time, timeframe)}</td>
       <td className="text-right tabular-nums" title={`the bar's ${f.at}`}>
         {price(f.barPrice)} <span className="text-base-content/50">{f.at}</span>
       </td>
-      <td className="text-right tabular-nums">{price(f.fill)}</td>
+      <td className="text-right tabular-nums whitespace-nowrap">
+        {price(f.fill)}<Agrees ok={agreesWith(f.fill, expected)} expected={expected} />
+      </td>
       <td className="text-right tabular-nums text-base-content/70">{signed(f.slipPct)}</td>
     </>
   )
@@ -160,6 +177,7 @@ export default function BenchmarkWorking({ detail, name, label }: {
   const points = r.equityHistory ?? []
   const last = points.length ? points[points.length - 1].timestamp : null
   const lines = tradeLines(trades, detail.instrumentSymbol, bars.data ?? new Map(), last)
+  const settled = reconcile(r.initialCapital, lines, b.finalEquity)
   const capital = r.initialCapital
   const final = b.finalEquity
   const n = b.metrics?.totalTrades ?? trades.length
@@ -179,19 +197,33 @@ export default function BenchmarkWorking({ detail, name, label }: {
         <h3 className="font-semibold">How {label}'s figures are made</h3>
         <ul className="list-disc ml-5 space-y-1 text-base-content/80">
           <li>
-            {name === 'buy_and_hold'
-              ? 'Bought at the first open the strategy could trade at and sold at the last close.'
-              : monthly
-                ? 'Decided at each month\'s last close (the table below) and traded at the next bar\'s open.'
-                : 'Decided at each daily close at its pinned settings and traded at the next bar\'s open, so each date below is the bar after the signal.'}
+            {name === 'strategy'
+              ? 'Decided by the strategy at each bar\'s close and traded at the next bar\'s open; a holding still open at the end is sold at the last close.'
+              : name === 'buy_and_hold'
+                ? 'Bought at the first open the strategy could trade at and sold at the last close.'
+                : monthly
+                  ? 'Decided at each month\'s last close (the table below) and traded at the next bar\'s open.'
+                  : 'Decided at each daily close at its pinned settings and traded at the next bar\'s open, so each date below is the bar after the signal.'}
             {' '}A fill is the bar's price moved by the slippage, {slip}, against the trade; commission is {commission}.
             {name === 'dual_momentum'
               ? ' Out of the market its cash earns T-bills, so its equity grows on days it holds nothing.'
               : name !== 'buy_and_hold' ? ' Out of the market its cash earns nothing.' : ''}
+            {s?.taxRatePct != null
+              ? ` Tax: ${s.taxRatePct}% of each realized gain net of both commissions, a loss carried to offset later gains, the holding sold at the end taxed like any other.`
+              : ' Scored before tax.'}
           </li>
           <li>
             Return: final equity {money(final)} ÷ capital {money(capital)} − 1 ={' '}
             <strong>{final !== null ? percent((final / capital - 1) * 100) : '—'}</strong>.
+            {settled.end !== null && (
+              <>
+                {' '}The final equity, followed: capital {money(capital)} + the Net column's
+                total {money(settled.netTotal)} = {money(settled.end)}
+                {settled.rest !== null && Math.abs(settled.rest) >= 0.005
+                  ? <>, and {money(settled.rest)} earned outside a trade{name === 'dual_momentum' ? ' (T-bill interest on its cash)' : ''}.</>
+                  : <> <span className="text-success">✓</span></>}
+              </>
+            )}
           </li>
           <li>
             Trades: the {n} round trips below.
@@ -247,8 +279,10 @@ export default function BenchmarkWorking({ detail, name, label }: {
                 <th className="text-right">Fill</th>
                 <th className="text-right">Slip</th>
                 <th className="text-right">Qty</th>
-                <th className="text-right">Comm.</th>
-                <th className="text-right">P&amp;L</th>
+                <th className="text-right" title="Both legs: the buy's and the sale's">Comm.</th>
+                <th className="text-right" title="Quantity × (sale fill − buy fill), before commission and tax">Gain</th>
+                <th className="text-right">Tax</th>
+                <th className="text-right" title="The gain less both commissions and the tax: what the trade added to the account">Net</th>
                 <th className="text-right">Days</th>
               </tr>
             </thead>
@@ -257,16 +291,22 @@ export default function BenchmarkWorking({ detail, name, label }: {
                 <tr key={l.n}>
                   <td className="tabular-nums">{l.n}</td>
                   <td className="font-mono">{l.asset}</td>
-                  <FillCells f={l.buy} timeframe={tf} />
-                  <FillCells f={l.sell} timeframe={tf} />
+                  <FillCells f={l.buy} side="buy" timeframe={tf} slippage={s?.slippage} />
+                  <FillCells f={l.sell} side="sell" timeframe={tf} slippage={s?.slippage} />
                   <td className="text-right tabular-nums">{l.quantity === null ? '—' : grouped(l.quantity, 4)}</td>
-                  <td className="text-right tabular-nums">{money(l.commission)}</td>
-                  <td className={`text-right tabular-nums ${(l.pnl ?? 0) < 0 ? 'text-error' : ''}`}>{money(l.pnl)}</td>
+                  <td className="text-right tabular-nums whitespace-nowrap">
+                    {money(l.commission)}
+                    <Agrees ok={agreesWith(l.commission, commissionPerSettings(l, s?.commission))}
+                      expected={commissionPerSettings(l, s?.commission)} />
+                  </td>
+                  <td className="text-right tabular-nums">{money(l.pnl)}</td>
+                  <td className="text-right tabular-nums">{money(l.tax)}</td>
+                  <td className={`text-right tabular-nums ${(l.net ?? 0) < 0 ? 'text-error' : ''}`}>{money(l.net)}</td>
                   <td className="text-right tabular-nums">{l.holdDays === null ? '—' : grouped(l.holdDays, 0)}</td>
                 </tr>
               ))}
               {lines.length === 0 && (
-                <tr><td colSpan={14} className="text-center text-base-content/60">No trades: it held cash throughout.</td></tr>
+                <tr><td colSpan={16} className="text-center text-base-content/60">No trades: it held cash throughout.</td></tr>
               )}
             </tbody>
           </table>

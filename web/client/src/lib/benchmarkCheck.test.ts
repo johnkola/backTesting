@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Candle, EquityPoint, Trade } from './api'
 import {
-  assetOf, barIndex, boughtAtTheFirstOpen, equityCsv, instantsByAsset, tradeLines, tradesCsv,
+  agreesWith, assetOf, barIndex, boughtAtTheFirstOpen, commissionPerSettings, equityCsv,
+  fillPerSettings, instantsByAsset, reconcile, tradeLines, tradesCsv,
 } from './benchmarkCheck'
 
 const bar = (day: string, open: number, close: number): Candle =>
@@ -87,9 +88,55 @@ describe('a benchmark fill beside its bar (step 4)', () => {
   it('writes the trades and the equity as CSV', () => {
     const csv = tradesCsv(tradeLines(trades.slice(0, 1), 'QQQ', bars, LAST)).split('\n')
     expect(csv[0]).toBe('trade,asset,quantity,buy_date,buy_bar_open,buy_fill,sell_date,'
-      + 'sell_bar_price,sell_price_is,sell_fill,commission,tax,pnl')
+      + 'sell_bar_price,sell_price_is,sell_fill,commission,tax,pnl,net')
     expect(csv[1].startsWith('1,QQQ,100,2016-03-18T00:00:00Z,99.904393,99.9543451965,')).toBe(true)
     expect(equityCsv([{ timestamp: 'a', equity: 0 }, { timestamp: 'b', equity: 0 }], [10, 11]))
       .toBe('date,equity\na,10\nb,11\n')
+  })
+})
+
+// Result 1405's Faber trade 1, as stored (step 6): QQQ opened at 100.90846 on
+// 2016-04-01 and 98.537750 on 2016-05-02; 0.05% slippage, 0.1% commission.
+const faber: Trade = { instrumentId: 47, entryTime: '2016-04-01T00:00:00Z',
+  entryPrice: 100.95891423, exitTime: '2016-05-02T00:00:00Z', exitPrice: 98.48846313400001,
+  quantity: 98.95124235638276, pnl: -244.4542051298865, commission: 19.735565774890098, tax: 0 }
+const faberBars = new Map([['QQQ', barIndex([bar('2016-04-01', 100.90846, 102.6),
+  bar('2016-05-02', 98.537732, 98.9)])]])
+const pct = (value: number) => ({ type: 'percentage', value, description: null })
+
+describe('a trade followed to the settings (step 6)', () => {
+  const [line] = tradeLines([faber], 'QQQ', faberBars, null)
+
+  it('nets the gain, both commissions and the tax', () => {
+    expect(line.net).toBeCloseTo(-244.4542051298865 - 19.735565774890098, 9)
+    expect(tradeLines([{ ...faber, tax: 5 }], 'QQQ', faberBars, null)[0].net)
+      .toBeCloseTo(-244.4542051298865 - 19.735565774890098 - 5, 9)
+  })
+
+  it('both legs\' commission is the setting on each filled price', () => {
+    const expected = commissionPerSettings(line, pct(0.001))
+    expect(expected).toBeCloseTo(0.001 * 98.95124235638276 * (100.95891423 + 98.48846313400001), 9)
+    expect(agreesWith(line.commission, expected)).toBe(true)
+    expect(agreesWith(line.commission, commissionPerSettings(line, pct(0.002)))).toBe(false)
+    expect(commissionPerSettings(line, { type: 'fixed', value: 1.5, description: null })).toBe(3)
+    expect(commissionPerSettings(line, null)).toBeNull()
+  })
+
+  it('each fill is its bar\'s price moved by the slippage setting against the trade', () => {
+    expect(agreesWith(line.buy.fill, fillPerSettings(line.buy, 'buy', pct(0.0005)))).toBe(true)
+    expect(agreesWith(line.sell.fill, fillPerSettings(line.sell, 'sell', pct(0.0005)))).toBe(true)
+    expect(fillPerSettings(line.buy, 'buy', { type: 'fixed', value: 0.01, description: null }))
+      .toBeCloseTo(100.91846, 9)
+    expect(agreesWith(null, 1)).toBeNull()
+  })
+
+  it('the capital and every trade\'s net come to the final equity', () => {
+    const lines = tradeLines([faber], 'QQQ', faberBars, null)
+    const r = reconcile(10_000, lines, 10_000 + lines[0].net!)
+    expect(r.end).toBeCloseTo(10_000 - 244.4542051298865 - 19.735565774890098, 9)
+    expect(r.rest).toBeCloseTo(0, 9)
+    // What is left over is earned outside a trade: dual momentum's T-bills.
+    expect(reconcile(10_000, lines, r.end! + 12.5).rest).toBeCloseTo(12.5, 9)
+    expect(reconcile(10_000, [{ ...lines[0], net: null }], 1).end).toBeNull()
   })
 })
