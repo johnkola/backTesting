@@ -896,3 +896,69 @@ def test_the_holdout_scores_the_test_block_once_and_says_when_it_is_looked_at_ag
 
     assert wf.main(["--strategy-id", str(sid), "--test", "--label", "pytest-holdout-2"]) == 0
     assert "TEST WINDOW REUSED: looked at 1 time(s) before" in capsys.readouterr().out
+
+
+@requires_db
+def test_a_strategy_2_run_is_scored_on_margin_and_recalculates_to_the_same(
+        config, seeded, monkeypatch, capsys):
+    # Strategy 2 end to end: a core never sold, extra long on margin on an up
+    # signal, the inverse on a down one, interest on what is borrowed. It runs
+    # on QQQ only and reads PSQ and Fed funds by name, which a test may not seed
+    # beside the real series; so the runner is handed a seeded inverse series and
+    # a flat 2% rate, and only the QQQ-only reason is lifted from its refusals.
+    # The rest is the real path: the margin inputs, the scoring, what is stored,
+    # the report's Strategy 2 lines, and a recalculation of the run.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import profit, recalculate
+    from nn import walkforward as wf
+
+    inverse = "ZZPIPEINV"
+    purge_instrument(inverse, SOURCE)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO instruments (symbol, name, type) VALUES (%s, 'pytest inverse', "
+                    "'ETF') RETURNING id", (inverse,))
+        inst = cur.fetchone()[0]
+        cur.execute("SELECT id FROM data_sources WHERE name = %s", (SOURCE,))
+        src = cur.fetchone()[0]
+        rows = []
+        for i, d in enumerate(DAYS):
+            o, _, _, c, v = bar(i)
+            inv_o, inv_c = 10_000 / o, 10_000 / c
+            rows.append((inst, src, dt.datetime(d.year, d.month, d.day, tzinfo=dt.UTC),
+                         inv_o, max(inv_o, inv_c) * 1.004, min(inv_o, inv_c) * 0.996, inv_c, v))
+        cur.executemany("INSERT INTO candles (instrument_id, source_id, timeframe, timestamp, "
+                        "open, high, low, close, volume) VALUES (%s, %s, 'D1', %s, %s, %s, %s, "
+                        "%s, %s)", rows)
+    real_refusals = wf.margin_refusals
+    monkeypatch.setattr(wf, "load_margin_series", lambda cur, source: (
+        wf.load_prices(cur, inverse, SOURCE, "D1"), {d: 2.0 for d in DAYS}))
+    monkeypatch.setattr(wf, "margin_refusals", lambda args, folds, margin: [
+        why for why in real_refusals(args, folds, margin) if "holds a QQQ core" not in why])
+    try:
+        set_id = _build(config)
+        assert wf.main([*_WF_ARGS, "--set-id", str(set_id), "--execution", "margin",
+                        "--label", "pytest-margin"]) == 0
+        out = capsys.readouterr().out
+        assert "Strategy 2   interest" in out and "TIMING:" in out
+        with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT id, execution, leverage_pct, hedge_pct FROM walkforward_runs "
+                        "WHERE label = 'pytest-margin'")
+            run_id, execution, leverage, hedge = cur.fetchone()
+            assert (execution, leverage, hedge) == ("margin", 20.0, 20.0)
+            cur.execute("SELECT margin_interest, margin_calls, trims, days_long, days_hedged, "
+                        "levered_return FROM walkforward_folds WHERE run_id = %s", (run_id,))
+            (interest, calls, trims, days_long, days_hedged, levered), = cur.fetchall()
+        assert None not in (interest, calls, trims, days_long, days_hedged, levered)
+        assert interest <= 0, "borrowing costs interest"
+
+        # A recalculation at its own settings gives back what the run stored,
+        # the margin figures included.
+        with psycopg.connect(dsn()) as conn:
+            dry = recalculate.recalculate(conn, run_id, dry_run=True)
+        for before, after in zip(dry.before, dry.after, strict=True):
+            for name in profit.PROFIT_FIELDS:
+                b, a = getattr(before, name), getattr(after, name)
+                assert a == pytest.approx(b) if b is not None else a is None, name
+    finally:
+        purge_instrument(inverse, SOURCE)

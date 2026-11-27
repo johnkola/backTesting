@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-34** · 2026-11-27 06:58 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-35** · 2026-11-27 07:00 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -24,10 +24,6 @@ review was run again on 2026-11-27: its result is "Test gaps" below.
 Each committed on passing tests; each leaves this list and the "Test gaps" table when
 it is in.
 
-1. Strategy 2 end to end. Run on the seeded set: Strategy 2 holds only QQQ and reads PSQ
-   and Fed funds by name, which the test may not seed beside the real series. So the test
-   gives the runner a seeded inverse series and a flat rate, and lifts only the QQQ-only
-   refusal; the rest of the margin path is the real one.
 2. The pipeline status route.
 3. The Python worker as started.
 
@@ -133,7 +129,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 5 | Strategy 2 end to end | A margin run: the PSQ and rate series loaded, the margin refusals, the margin figures stored. Its parts are tested, the run is not | M |
 | 0 | The Python worker as started | `jobs/worker.py` (69%) `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
 | 0 | The engine worker's loop | `JobWorker.start`: it polls, takes a job, beats its heartbeat and stops when asked. `runOne` is tested; the loop around it is not | S |
 | 0 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
