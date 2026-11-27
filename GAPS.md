@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-25** · 2026-11-27 05:55 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-26** · 2026-11-27 05:58 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -16,13 +16,6 @@ The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 
 closed on full unit testing (his decision of 2026-11-26), and the six tests he chose
 from step 10's report built. Suites: Python 1,200, engine 214, service 101, client 292;
 Python line coverage 82%.
-
-## In progress: seven test gaps (John's go, 2026-11-27)
-
-Built one at a time, each committed on passing tests; each leaves this list and the
-"Test gaps" table when it is in.
-
-7. The engine's job worker end to end.
 
 ## Waiting on John
 
@@ -123,7 +116,6 @@ the service calls 67 of its 70 routes under test.
 
 | Where | What a test would check | Size |
 |---|---|---|
-| The engine's job worker | A `java-compute` backtest job taken from a copy of the jobs table and answered with a saved result (only the request routes are tested) | M |
 | The Python worker as started | `jobs/worker.py` `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
 | An import's roll-ups | W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |

@@ -413,6 +413,84 @@ class WholeBacktestTest {
         assertTrue(a.body().toString().contains("'from' is not a date"), a.body().toString());
     }
 
+    @Test
+    @DisplayName("a backtest job is taken from the jobs table, answered with the run, and the run is saved")
+    void aBacktestJobRunsThroughTheWorker() throws Exception {
+        // The hop between POST /api/run and the engine: the service puts a
+        // java-compute job in the table, the engine's worker claims it, runs it
+        // through EngineApi and stores the answer as the job's result. On a copy
+        // of the jobs table, which the running workers do not read.
+        String table = "jobs.jobs_test_wholebacktest";
+        try (Connection c = db.getConnection(); java.sql.Statement s = c.createStatement()) {
+            s.execute("DROP TABLE IF EXISTS " + table);
+            s.execute("CREATE TABLE " + table + " (LIKE jobs.jobs INCLUDING ALL)");
+        }
+        Function<String, JsonObject> loader = BacktestEngine.ruleDecisions;
+        try {
+            com.bazarbozorg.backtest.jobs.JobQueue queue =
+                    new com.bazarbozorg.backtest.jobs.JobQueue(db, table);
+            com.bazarbozorg.backtest.jobs.JobWorker worker =
+                    new com.bazarbozorg.backtest.jobs.JobWorker(db, queue, new EngineApi(db));
+            JsonObject body = new JsonObject();
+            body.addProperty("strategy", "sma-crossover-10-50");
+            body.addProperty("instrument", SYMBOL);
+            body.addProperty("timeframe", "D1");
+            body.addProperty("source", SOURCE);
+            body.addProperty("from", "2020-03-02");
+            body.addProperty("to", "2020-12-31");
+            body.addProperty("capital", CAPITAL);
+            body.addProperty("aggregateMissing", false);
+            JsonObject request = new JsonObject();
+            request.addProperty("method", "POST");
+            request.addProperty("path", "/api/run");
+            request.add("query", new JsonObject());
+            request.add("body", body);
+            JsonObject inputs = new JsonObject();
+            inputs.add("request", request);
+
+            long saved = countResults();
+            var job = queue.insert("backtest", com.bazarbozorg.backtest.jobs.JobQueue.ENGINE,
+                    inputs.toString(), false);
+            var claimed = queue.claim("test-worker").orElseThrow();
+            assertEquals(job.id(), claimed.id());
+            BacktestEngine.ruleDecisions = WholeBacktestTest::decisions;
+            worker.runOne(claimed, "test-worker");
+
+            var done = queue.find(job.id()).orElseThrow();
+            assertEquals("done", done.status(), String.valueOf(done.error()));
+            JsonObject result = JsonParser.parseString(done.result()).getAsJsonObject();
+            assertEquals(200, result.get("status").getAsInt(), result.toString());
+            JsonObject r = JsonParser.parseString(result.get("body").getAsString()).getAsJsonObject();
+            JsonArray trades = r.getAsJsonArray("trades");
+            assertFalse(trades.isEmpty());
+            double finalEquity = r.get("finalEquity").getAsDouble();
+            assertEquals(CAPITAL + nets(trades), finalEquity, 1e-6);
+            assertEquals(saved + 1, countResults(), "the run was saved once");
+            try (Connection c = db.getConnection();
+                 PreparedStatement ps = c.prepareStatement("SELECT final_equity, total_trades FROM "
+                         + "backtest_results WHERE instrument_symbol = ? ORDER BY id DESC LIMIT 1")) {
+                ps.setString(1, SYMBOL);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(finalEquity, rs.getDouble(1), 1e-6);
+                    assertEquals(trades.size(), rs.getInt(2));
+                }
+            }
+        } finally {
+            BacktestEngine.ruleDecisions = loader;
+            try (Connection c = db.getConnection(); java.sql.Statement s = c.createStatement()) {
+                s.execute("DROP TABLE IF EXISTS " + table);
+            }
+        }
+    }
+
+    private static long countResults() throws Exception {
+        try (Connection c = db.getConnection()) {
+            return scalarLong(c, "SELECT count(*) FROM backtest_results WHERE instrument_symbol = ?",
+                    SYMBOL);
+        }
+    }
+
     private static long id(Connection c, String sql, String arg) throws Exception {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, arg);

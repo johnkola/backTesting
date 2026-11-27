@@ -128,8 +128,11 @@ public final class JobWorker {
         }
     }
 
-    /** Runs one claimed job to its end. Package-visible for the test. */
-    void runOne(JobQueue.Job job, String workerId) {
+    /**
+     * Runs one claimed job to its end. Public for the tests: the engine's own
+     * runs a backtest job through it end to end ({@code WholeBacktestTest}).
+     */
+    public void runOne(JobQueue.Job job, String workerId) {
         running.put(job.id(), workerId);
         String status = "done";
         String result = null;
