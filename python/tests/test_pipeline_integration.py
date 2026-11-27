@@ -304,3 +304,44 @@ def test_an_hourly_set_is_built_read_and_split_by_its_bars(config, seeded):
     assert blocks[0]["lastRow"].endswith("Z") and blocks[1]["firstRow"].endswith("Z")
     assert sum(b["rows"] for b in blocks) == len(fm.dates)
 
+
+
+@requires_db
+def test_the_offline_trainer_learns_from_the_built_set_and_names_it(config, seeded, tmp_path):
+    # `nn.train_features` (the feature-store network's trainer) on the set the
+    # build just wrote: it reads the set's matrix, trains, and saves a version
+    # whose metadata names the set, which is how a later prediction finds the
+    # same rows (`predict_range`).
+    pytest.importorskip("talib")
+    pytest.importorskip("torch")
+    import json
+    import sys
+
+    from nn import train_features
+
+    set_id = _build(config)
+    models = tmp_path / "models"
+    argv = sys.argv
+    sys.argv = ["nn.train_features", "--symbol", SYMBOL, "--source", SOURCE,
+                "--to", "2020-12-31", "--epochs", "2", "--hidden", "8", "--layers", "1",
+                "--save", "--models-dir", str(models)]
+    try:
+        assert train_features.main() == 0
+    finally:
+        sys.argv = argv
+    saved = list(models.glob("nn-feedforward-v2/*/*/metadata.json"))
+    assert len(saved) == 1
+    meta = json.loads(saved[0].read_text(encoding="utf-8"))
+
+    def found(node):
+        """Every value stored under a `feature_set_id` key, at any depth."""
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "feature_set_id":
+                    yield v
+                yield from found(v)
+        elif isinstance(node, list):
+            for v in node:
+                yield from found(v)
+    ids = {int(v) for v in found(meta)}
+    assert ids == {set_id}, meta

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from argparse import Namespace
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -892,3 +893,128 @@ def test_the_run_records_its_window_and_null_means_expanding():
     row = ws.run_row(an_args(train_years=5, step_years=1), 6, 580, 47, 2)
     assert (row["train_years"], row["step_years"]) == (5, 1)
     assert "train_years" in ws._INSERT_RUN and "%(step_years)s" in ws._INSERT_RUN
+
+
+# --------------------------------------------------------------------------
+# Recalculating under another version of the run's strategy (step 9)
+# --------------------------------------------------------------------------
+
+
+class TestRecalculateToAnotherVersion:
+    """`recalculate.recalculate` with a `strategy_id` other than the run's: a
+    version that changes only how signals are acted on (costs, tax) is rescored
+    into a new run that names the one it came from; anything the model would
+    learn differently is refused with why, before a signal is read. Only the
+    in-place path had tests. Needs Postgres; the two versions stand in for the
+    saved ones (`strategy_spec.load`), so no strategy row is written."""
+
+    A, B = 9101, 9102
+
+    @staticmethod
+    def _versions(monkeypatch, **b_over):
+        from nn import strategy_spec as ss
+        from .test_strategy_spec import a_body
+
+        a = replace(ss.candidate(a_body(objective={**ss.OBJECTIVE_DEFAULTS, "costBps": 5})),
+                    id=TestRecalculateToAnotherVersion.A, version=1)
+        b = replace(ss.candidate(a_body(**b_over)), id=TestRecalculateToAnotherVersion.B,
+                    version=2)
+        found = {a.id: a, b.id: b}
+
+        def load(cur, sid):
+            if sid not in found:
+                raise LookupError(f"no strategy {sid}")
+            return found[sid]
+        monkeypatch.setattr(ss, "load", load)
+        return a, b
+
+    @staticmethod
+    def _run(db, a_set, strategy_id, signals=None, settings=None, fold=None, **args):
+        prov = None if strategy_id is None else {
+            **ws.NO_PROVENANCE, "strategy_id": strategy_id, "strategy_name": "baseline",
+            "strategy_version": 1}
+        run_id = ws.open_run(db, an_args(label="pytest-recalc-other", **args), a_set, 580,
+                             provenance=prov)
+        ws.save_fold(db, run_id, fold or FakeFold(fold=1), signals, settings)
+        ws.close_run(db, run_id)
+        return run_id
+
+    @pytest.mark.parametrize("case, b_over, run_over, reason", [
+        ("a run set up by flags", {}, {"strategy_id": None}, "set up by flags"),
+        ("a model-side change", {"features": ["price_close"]}, {}, "in what the model learns: features"),
+        ("the holdout run", {}, {"test": True}, "scored the holdout"),
+        ("an unknown version", {}, {"target": 9999}, "no strategy 9999"),
+    ])
+    def test_what_cannot_be_rescored_is_refused_with_why(self, db, a_set, monkeypatch,
+                                                         case, b_over, run_over, reason):
+        from nn import recalculate
+        self._versions(monkeypatch, **b_over)
+        sid = run_over.pop("strategy_id", self.A)
+        target = run_over.pop("target", self.B)
+        run_id = self._run(db, a_set, sid, **run_over)
+        try:
+            with pytest.raises(recalculate.Refused) as exc:
+                recalculate.recalculate(db, run_id, strategy_id=target, dry_run=True)
+            assert any(reason in r for r in exc.value.reasons), (case, exc.value.reasons)
+        finally:
+            TestRoundTrip._cleanup(db, run_id)
+
+    def test_a_cost_change_is_rescored_into_a_new_run_that_names_its_source(
+            self, db, a_set, monkeypatch):
+        import numpy as np
+
+        from nn import profit, recalculate
+        from nn import walkforward as wf
+        from nn import strategy_spec as ss
+        _, b = self._versions(monkeypatch,
+                              objective={**ss.OBJECTIVE_DEFAULTS, "costBps": 50})
+        with db.cursor() as cur:
+            cur.execute("SELECT i.symbol, ds.name FROM feature_sets fs "
+                        "JOIN instruments i ON i.id = fs.instrument_id "
+                        "JOIN data_sources ds ON ds.id = fs.source_id WHERE fs.id = %s", (a_set,))
+            symbol, source = cur.fetchone()
+            prices = wf.load_prices(cur, symbol, source, "D1")
+        days = sorted(prices.closes)[-5:]
+        if len(days) < 5:
+            pytest.skip(f"no D1 candles for {symbol}/{source}, which the set is of")
+        # In, out, in: three position changes, so the cost shows.
+        sig = profit.Signals(days[:4], days[1:], np.array([[0.9], [0.1], [0.9], [0.9]]),
+                             np.array([0, 2, 0, 0]))
+        cheap = profit.Settings(loss="return", cost_bps=5.0)
+        money = profit.score(sig.output, profit.market(prices, sig.dates, sig.exits, None,
+                                                       "cash"), cheap)
+        fold = wf.FoldResult(fold=1, train_from=days[0], train_to=days[0], val_year=days[0].year,
+                             n_train=1, n_val=4, accuracy=0.5, baseline_acc=0.5, **money.fields())
+        run_id = self._run(db, a_set, self.A, signals=sig, settings=cheap, fold=fold,
+                           loss="return", symbol=symbol, source=source)
+        new_id = None
+        try:
+            done = recalculate.recalculate(db, run_id, strategy_id=b.id)
+            new_id = done.run_id
+            assert new_id is not None and new_id != run_id
+            with db.cursor() as cur:
+                cur.execute("SELECT recalculated_from, strategy_id, cost_bps FROM walkforward_runs "
+                            "WHERE id = %s", (new_id,))
+                assert cur.fetchone() == (run_id, b.id, 50.0)
+                cur.execute("SELECT strat_return FROM walkforward_folds WHERE run_id = %s",
+                            (new_id,))
+                rescored = cur.fetchone()[0]
+            # B's settings as the runner maps them (its tax included), and the
+            # same at the old cost: the rescore is B's, and dearer.
+            import dataclasses
+            mkt = profit.market(prices, sig.dates, sig.exits, None, "cash")
+            as_b = profit.Settings.from_args(recalculate.strategy_args(b))
+            assert as_b.cost_bps == 50.0
+            dear = profit.score(sig.output, mkt, as_b).fields()["strat_return"]
+            cheap_b = profit.score(sig.output, mkt, dataclasses.replace(as_b, cost_bps=5.0))
+            assert rescored == pytest.approx(dear)
+            assert rescored < cheap_b.fields()["strat_return"]     # the dearer costs show
+            # The source run is left as it was.
+            with db.cursor() as cur:
+                cur.execute("SELECT strat_return FROM walkforward_folds WHERE run_id = %s",
+                            (run_id,))
+                assert cur.fetchone()[0] == fold.strat_return
+        finally:
+            TestRoundTrip._cleanup(db, run_id)
+            if new_id is not None:
+                TestRoundTrip._cleanup(db, new_id)

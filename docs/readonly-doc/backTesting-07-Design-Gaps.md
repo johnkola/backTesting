@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-27-2** · 2026-11-27 00:27 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-27-3** · 2026-11-27 00:35 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1264,7 +1264,7 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - [x] 9.5 **The pipeline status against the client** (`python/tests/test_status_contract.py`): the whole `staleness.status` answer on D1, H1 and M30, and on another instrument: one stage per tab of `stages.ts`, each in a state `StageState` knows, its reasons shaped as the tabs read them, and the instrument named. Its parts had tests; the whole answer had none.
     - [x] 9.6 **Client: the timeframe** (`timeframe.test.ts`): daily by default and for a stored value it does not know, a choice remembered and announced, the default stored as nothing, blocked storage still announcing; D1, H1 and M30 offered.
     - [x] 9.7 **Across the pipeline in Python** (`python/tests/test_pipeline_integration.py`): a feature set built by `nn.feature_build` from candles of a seeded instrument (ZZPIPE), on a configuration of the test's own (four columns, so it needs no other series and runs on CI's empty database), stored with its config name and hash, read back by `read_matrix` as one row per seeded day after the warm-ups, and placed by the split. Step 2's rule held outright: the last 50 bars changed and the set rebuilt, none of the 1,000+ earlier stored values moved, while the changed bars did. The same on hourly bars from an intraday calendar that inherits the file: rows keyed by bar time, placed by the split and shown as UTC (it would have caught 8.2). Found on the way, as designed: on an intraday calendar a weekday column is normalized per session, so it needs 252 sessions before its first value; with fewer, the build refuses with "produced no values".
-    - [ ] 9.8 **Staleness, recalculation, offline training**: stale and fresh as a seeded set, run and result change (`staleness` 48%, `recalculate` 56%, `train_features` 29%).
+    - [x] 9.8 **Staleness, recalculation, offline training.** Staleness: the whole status answer (9.5) brought `nn/staleness.py` from 48% to 78% under its tests; what is left is mostly its command line. Recalculation under another version of the run's strategy (`test_walkforward_store.py`, `TestRecalculateToAnotherVersion`; only the in-place path had tests): a cost-only change is rescored into a new run with `recalculated_from` set, the new version's settings as the runner maps them (its tax included) and a lower return than at the old cost, the source run untouched; a run set up by flags, a model-side change, the holdout run and an unknown version are each refused with why, before a signal is read. Offline training (`test_pipeline_integration.py`): `nn.train_features` learns from the set the build wrote and saves a version whose metadata names that set and no other (`train_features` was 29%, its `main` untested).
     - [ ] 9.9 **Feeds, flags, repairs**: the feeds runner with a provider of the test's own (`feeds/runner` 41%), flagged rows (`flags` 53%), the repairs routes (`repairs_api` 46%).
     - [ ] 9.10 **The engine's request to Python** (`PythonCalls`): the path, query and body it builds, on its own; the call itself reaches the real jobs table, which the running worker would claim.
     - [ ] 9.11 The list of what could not be tested, with the reason.
@@ -2352,6 +2352,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-3 | 2026-11-27 00:35 | Claude Code (Claude Opus 5.5) | Step 9: 9.8 built, recalculation under another version and the offline trainer on a built set |
 | 2026-11-27-2 | 2026-11-27 00:27 | Claude Code (Claude Opus 5.5) | Step 9: 9.7 built, the pipeline end to end on a seeded instrument, daily and hourly |
 | 2026-11-27-1 | 2026-11-27 00:17 | Claude Code (Claude Opus 5.5) | Steps 7 and 8 closed on full unit testing (the author's decision of 2026-11-26); step 9 (Test review): the plan, the baseline, and 9.2 to 9.6 built |
 | 2026-11-26-13 | 2026-11-26 23:44 | Claude Code (Claude Opus 5.5) | Notes for the author to pick up: `AGENTS.md`'s commit rule and container names, two rules followed short, today's `README.md` edits, two undocumented routes |
