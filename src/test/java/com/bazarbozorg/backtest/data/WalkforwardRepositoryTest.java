@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -456,6 +457,48 @@ class WalkforwardRepositoryTest {
         assertFalse(repo.findRuns("H1", true, 50).stream().anyMatch(r -> r.id() == runId));
         assertTrue(repo.findRuns(null, true, 50).stream().anyMatch(r -> r.id() == runId),
                 "null timeframe must not filter anything out");
+    }
+
+    @Test
+    @DisplayName("an instrument filter keeps that instrument's runs, and its symbol and source go together")
+    void instrumentFilters() {
+        assertTrue(repo.findRuns("D1", TEST_SYMBOL, TEST_SOURCE, true, 50).stream()
+                .anyMatch(r -> r.id() == runId));
+        assertTrue(repo.findRuns("D1", TEST_SYMBOL, TEST_SOURCE, true, 50).stream()
+                .allMatch(r -> TEST_SYMBOL.equals(r.symbol())
+                        && TEST_SOURCE.equals(r.sourceName())), "only that instrument's");
+        assertFalse(repo.findRuns("D1", TEST_SYMBOL, "zz-wf-other", true, 50).stream()
+                .anyMatch(r -> r.id() == runId), "the same symbol from another source is another series");
+        assertFalse(repo.findRuns("D1", "ZZWF-OTHER", TEST_SOURCE, true, 50).stream()
+                .anyMatch(r -> r.id() == runId));
+        assertTrue(repo.findRuns("D1", null, null, true, 50).stream()
+                .anyMatch(r -> r.id() == runId), "no instrument: every instrument");
+        assertThrows(IllegalArgumentException.class,
+                () -> repo.findRuns("D1", TEST_SYMBOL, null, true, 50));
+    }
+
+    @Test
+    @DisplayName("GET /api/walkforward/runs?symbol=&source= lists that instrument's runs; one without the other is a 400")
+    void theRouteFiltersByInstrument() {
+        com.bazarbozorg.backtest.api.EngineApi api = new com.bazarbozorg.backtest.api.EngineApi(db);
+        com.bazarbozorg.backtest.api.EngineApi.Answer on = api.answer(
+                new com.bazarbozorg.backtest.api.EngineApi.Request("GET", "/api/walkforward/runs",
+                        java.util.Map.of("timeframe", "D1", "includeTest", "true",
+                                "symbol", TEST_SYMBOL, "source", TEST_SOURCE), null));
+        assertEquals(200, on.status(), on.body().toString());
+        com.google.gson.JsonObject body = on.body().getAsJsonObject();
+        assertEquals(TEST_SYMBOL, body.get("symbol").getAsString());
+        assertEquals(TEST_SOURCE, body.get("source").getAsString());
+        com.google.gson.JsonArray items = body.getAsJsonArray("items");
+        assertTrue(items.size() >= 2, "the fixture's run and its holdout: " + items.size());
+        for (com.google.gson.JsonElement item : items) {
+            assertEquals(TEST_SYMBOL, item.getAsJsonObject().get("symbol").getAsString());
+        }
+        com.bazarbozorg.backtest.api.EngineApi.Answer half = api.answer(
+                new com.bazarbozorg.backtest.api.EngineApi.Request("GET", "/api/walkforward/runs",
+                        java.util.Map.of("symbol", TEST_SYMBOL), null));
+        assertEquals(400, half.status(), half.body().toString());
+        assertTrue(half.body().toString().contains("symbol and source go together"));
     }
 
     @Test

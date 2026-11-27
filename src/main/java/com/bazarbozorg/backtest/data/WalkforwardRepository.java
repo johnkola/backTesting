@@ -132,10 +132,26 @@ public class WalkforwardRepository {
      * @param limit       capped at {@link #MAX_LIMIT}
      */
     public List<WalkforwardRun> findRuns(String timeframe, boolean includeTest, int limit) {
+        return findRuns(timeframe, null, null, includeTest, limit);
+    }
+
+    /**
+     * Runs newest first, on one instrument: its symbol and source, both or
+     * neither (null for every instrument). A pipeline view is on one
+     * instrument, and a list of every instrument's runs there reads as that
+     * instrument's history.
+     */
+    public List<WalkforwardRun> findRuns(String timeframe, String symbol, String source,
+                                         boolean includeTest, int limit) {
+        if ((symbol == null) != (source == null)) {
+            throw new IllegalArgumentException("symbol and source go together");
+        }
         // The cast lets one bound parameter stand for "no filter" instead of
         // building two different statements.
         String sql = SELECT_RUNS
                 + " WHERE (CAST(? AS text) IS NULL OR r.timeframe = CAST(? AS text)) "
+                + " AND (CAST(? AS text) IS NULL OR (i.symbol = CAST(? AS text) "
+                + "      AND ds.name = CAST(? AS text))) "
                 + (includeTest ? "" : " AND NOT r.is_test ")
                 + GROUP_BY
                 // started_at DESC matches idx_walkforward_runs_recent; id breaks
@@ -148,7 +164,10 @@ public class WalkforwardRepository {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             setNullableString(ps, 1, timeframe);
             setNullableString(ps, 2, timeframe);
-            ps.setInt(3, capped);
+            setNullableString(ps, 3, symbol);
+            setNullableString(ps, 4, symbol);
+            setNullableString(ps, 5, source);
+            ps.setInt(6, capped);
             try (ResultSet rs = ps.executeQuery()) {
                 List<WalkforwardRun> out = new ArrayList<>();
                 while (rs.next()) {

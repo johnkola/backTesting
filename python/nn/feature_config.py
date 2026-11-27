@@ -488,7 +488,25 @@ def _on_instrument(raw: dict[str, Any], symbol: str, source: str) -> dict[str, A
     if old_key in available:
         available[f"{symbol}/{source}"] = available.pop(old_key)
     _move_series(out, {old: (symbol, source)})
+    # A ratio of the file's instrument to another series (relative strength to
+    # SPY) is, on that other series' own calendar, the series over itself: 1 on
+    # every bar, 0 once normalized. It is left out of the set rather than stored
+    # as a column that says nothing; a strategy that selects it has it dropped
+    # as "not in this feature set" (`strategy_spec`).
+    out["feature"] = [f for f in out.get("feature", []) if not _over_itself(f.get("series"))]
     return out
+
+
+def _over_itself(spec: Any) -> bool:
+    """A series that divides one series by the same series."""
+    return (isinstance(spec, dict) and spec.get("op") == "divide"
+            and isinstance(spec.get("a"), dict) and spec.get("a") == spec.get("b"))
+
+
+#: What `_on_instrument` makes of a file, by version, so a change to it marks
+#: every set built on an instrument stale (its digest changes) and the build is
+#: run again. 2: a feature that would be a series over itself is left out.
+INSTRUMENT_RULES = 2
 
 
 def load_name(name: str) -> FeatureConfig:
@@ -505,7 +523,8 @@ def digest_name(name: str) -> str:
     base = config_digest(config_path(file))
     if inst is None:
         return base
-    return hashlib.sha256(f"{base}\0instrument\0{inst[0]}/{inst[1]}".encode()).hexdigest()
+    return hashlib.sha256(f"{base}\0instrument\0{inst[0]}/{inst[1]}\0rules\0{INSTRUMENT_RULES}"
+                          .encode()).hexdigest()
 
 
 def for_instrument(symbol: str, source: str, timeframe: str) -> tuple[str, FeatureConfig]:

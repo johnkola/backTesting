@@ -8,6 +8,7 @@ import { useApiData } from '../../lib/useApiData'
 import { useTimeframe } from '../../lib/useTimeframe'
 import DeleteResultRowButton from '../../components/DeleteResultRowButton'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { stageInstrument } from '../../lib/instrument'
 import { mergeState } from '../../lib/stageStatus'
 import StageShell, { NotWired, type StageState } from './StageShell'
 import { sampleNote, sampleOf } from '../../lib/inSample'
@@ -42,17 +43,30 @@ const pct = percent
  */
 export default function BacktestStage() {
   const [tf] = useTimeframe()
-  const { status } = usePipelineStatus()
+  const { status, error: statusError } = usePipelineStatus()
+  // The results of the instrument the pipeline is on, as the status names it;
+  // the Results page lists every instrument's.
+  const on = stageInstrument(status, statusError)
   const [sort, setSort] = useState<ResultSortKey>('created')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
-  const [offset, setOffset] = useState(0)
+  // A page belongs to one list: another timeframe or instrument starts at its
+  // first page, not at an offset past its end.
+  const listKey = `${tf}|${on?.symbol ?? ''}|${on?.source ?? ''}`
+  const [paged, setPaged] = useState({ key: listKey, offset: 0 })
+  const offset = paged.key === listKey ? paged.offset : 0
+  const setOffset = (n: number) => setPaged({ key: listKey, offset: n })
   // Bumped after a delete so the list refetches: the row is gone server-side,
   // and the page it was on has shifted.
   const [reloadKey, setReloadKey] = useState(0)
 
   const { data, error } = useApiData<Paginated<ResultSummary>>(
-    (signal) => api.results({ limit: LIMIT, offset, timeframe: tf, sort, dir }, signal),
-    [tf, sort, dir, offset, reloadKey],
+    (signal) => (on
+      ? api.results({
+        limit: LIMIT, offset, timeframe: tf, sort, dir,
+        instrument: on.symbol, source: on.source,
+      }, signal)
+      : new Promise<Paginated<ResultSummary>>(() => {})),
+    [tf, sort, dir, offset, reloadKey, on?.symbol ?? '', on?.source ?? '', on === null],
   )
 
   /** Clicking the active column flips direction; a new column starts descending
@@ -93,7 +107,7 @@ export default function BacktestStage() {
       reasons={status?.backtest.state === 'stale' ? staleById.get(String(rows[0]?.id))?.reasons : undefined}
       summary={
         rows.length === 0
-          ? `No runs scored at ${tf}`
+          ? `No runs scored at ${tf}` + (on?.symbol ? ` on ${on.symbol}/${on.source}` : '')
           : `${beating.length} of ${comparable.length} runs on this page beat buy-and-hold`
             + (staleHere ? `; ${staleHere} stale` : '')
       }

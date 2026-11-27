@@ -7,6 +7,7 @@ import {
   type WalkforwardRun,
   type WalkforwardFold,
   type WalkforwardRunDetail,
+  type WalkforwardRuns,
 } from '../../lib/api'
 import {
   NETWORK, engineBenchmarkRows, engineRecordLine, engineTitle, foldEngine, isNetworkAlone,
@@ -20,6 +21,7 @@ import {
 } from '../../lib/walkforwardView'
 import StartWalkforward from '../../components/StartWalkforward'
 import { usePipelineStatus } from '../../lib/pipelineStatusContext'
+import { stageInstrument } from '../../lib/instrument'
 import { mergeState } from '../../lib/stageStatus'
 import StageShell from './StageShell'
 import LossCurves from '../../components/LossCurves'
@@ -54,7 +56,10 @@ type Loaded = { items: TrainedModel[], modelsDir: string }
  */
 export default function TrainingStage() {
   const [tf] = useTimeframe()
-  const { status } = usePipelineStatus()
+  const { status, error: statusError } = usePipelineStatus()
+  // The runs of the instrument the pipeline is on, as the status names it:
+  // every instrument's runs here read as this one's history.
+  const on = stageInstrument(status, statusError)
   const [includeTest, setIncludeTest] = useState(false)
   const [openRun, setOpenRun] = useState<number | null>(null)
   // Bumped when a run started here opens its row or ends, so the table re-reads.
@@ -64,8 +69,10 @@ export default function TrainingStage() {
   // G11: while a run is going, the list and an open run re-read on a clock.
   const [tick, setTick] = useState(0)
   const { data: runsData, error: runsError, loading: runsLoading } = useApiData(
-    (signal) => api.walkforwardRuns({ timeframe: tf, includeTest, limit: 50 }, signal),
-    [tf, includeTest, runsKey, tick],
+    (signal) => (on
+      ? api.walkforwardRuns({ timeframe: tf, includeTest, limit: 50, ...on }, signal)
+      : new Promise<WalkforwardRuns>(() => {})),
+    [tf, includeTest, runsKey, tick, on?.symbol ?? '', on?.source ?? '', on === null],
   )
   const anyRunning = runsData?.items.some((r) => r.inProgress) ?? false
   useEffect(() => {
@@ -348,6 +355,7 @@ export default function TrainingStage() {
               <tr>
                 <td colSpan={14} className="text-center text-base-content/60">
                   No walk-forward runs recorded at {tf}
+                  {on?.symbol && ` on ${on.symbol}/${on.source}`}
                   {!includeTest && ' (holdout runs are hidden)'}.
                 </td>
               </tr>

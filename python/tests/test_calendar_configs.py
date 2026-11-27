@@ -200,7 +200,9 @@ def test_the_data_stage_looks_for_each_series_where_the_build_reads_it():
 # --------------------------------------------------------------------------
 
 _OWN = {"price_open", "price_high", "price_low", "price_close", "volume", "rsi_14", "macd",
-        "realized_vol", "qqq_spy_relative"}
+        "realized_vol"}
+#: The file's instrument over SPY: on SPY's calendar it would be SPY over SPY.
+_OVER_ITSELF_ON_SPY = {"qqq_spy_relative"}
 
 
 def _series_of(cfg, name):
@@ -216,13 +218,18 @@ def test_another_instrument_moves_the_instruments_own_series_and_nothing_else():
     moved = {f.name for f in cfg.features if "'QQQ'" in repr(f.series)}
     assert moved == set(), "no series reads QQQ on SPY's calendar"
     for f in base.features:
+        if f.name in _OVER_ITSELF_ON_SPY:
+            assert f.name not in {g.name for g in cfg.features}, f"{f.name} is SPY over SPY"
+            continue
         before, after = repr(f.series), repr(_series_of(cfg, f.name))
         if f.name in _OWN:
             assert "'QQQ'" in before and "'SPY'" in after, f.name
         else:
             assert before == after, f"{f.name} is not the instrument's own and must not move"
-    # The same features and checks, in the same order: only the instrument changed.
-    assert [f.name for f in cfg.features] == [f.name for f in base.features]
+    # The same features and checks, in the same order, less the ones that would
+    # divide SPY by itself: only the instrument changed.
+    assert [f.name for f in cfg.features] == [f.name for f in base.features
+                                              if f.name not in _OVER_ITSELF_ON_SPY]
 
 
 def test_the_configs_own_instrument_is_the_file_itself():
@@ -299,5 +306,37 @@ def test_the_config_the_features_tab_shows_is_the_instruments():
     assert spy["alignment"]["calendarSymbol"] == "SPY"
     required = {r["symbol"] for r in spy["requiredSeries"]}
     assert "SPY" in required and "QQQ" not in required
-    assert [c["name"] for c in spy["columns"]] == [c["name"] for c in own["columns"]]
+    assert [c["name"] for c in spy["columns"]] == [c["name"] for c in own["columns"]
+                                                   if c["name"] not in _OVER_ITSELF_ON_SPY]
     assert client.get("/api/nn/features/config", params={"symbol": "SPY"}).status_code == 400
+
+
+def test_a_ratio_to_the_instrument_itself_is_left_out_and_kept_elsewhere():
+    # Relative strength to SPY is the file's instrument over SPY: on SPY's own
+    # set it was SPY over SPY, a column of zeros once normalized. On any other
+    # instrument it is that instrument over SPY, and stays.
+    def names(symbol, source):
+        return {f.name for f in feature_config.for_instrument(symbol, source, "D1")[1].features}
+
+    assert "qqq_spy_relative" in names("QQQ", "yahoo-adj")
+    assert "qqq_spy_relative" not in names("SPY", "yahoo-adj")
+    aapl = feature_config.for_instrument("AAPL", "yahoo", "D1")[1]
+    assert "'AAPL'" in repr(_series_of(aapl, "qqq_spy_relative"))
+    # SPY from another vendor is another series, so the ratio is not over itself.
+    assert "qqq_spy_relative" in names("SPY", "zz-other-vendor")
+
+
+def test_what_an_instrument_set_leaves_out_is_part_of_its_digest():
+    # A change to what a set on an instrument holds must make its stored set
+    # stale, or the set built before it would pass as current.
+    spy = feature_config.digest_name("features.toml@SPY/yahoo-adj")
+    old = feature_config.INSTRUMENT_RULES
+    try:
+        feature_config.INSTRUMENT_RULES = old + 1
+        assert feature_config.digest_name("features.toml@SPY/yahoo-adj") != spy
+        assert feature_config.digest_name("features.toml") == \
+            feature_config.config_digest(feature_config.config_path("features.toml")), \
+            "the file's own set is the file's digest, untouched"
+    finally:
+        feature_config.INSTRUMENT_RULES = old
+

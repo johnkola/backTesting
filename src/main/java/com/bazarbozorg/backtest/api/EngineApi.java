@@ -347,6 +347,11 @@ public class EngineApi {
      * {@code limit}. On the detail route they are ignored &mdash; an id is an
      * id.
      */
+    /** A query value, with an empty one taken as absent. */
+    private static String orNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     private Object walkforwardRuns(Request req) {
         WalkforwardRepository repo = new WalkforwardRepository(databaseManager);
         Optional<String> idSegment = lastPathSegment(req.path(), "/api/walkforward/runs");
@@ -385,8 +390,13 @@ public class EngineApi {
         String timeframe = params.get("timeframe");
         boolean includeTest = "true".equalsIgnoreCase(params.get("includeTest"));
         int limit = parseLimit(params.get("limit"));
+        String symbol = orNull(params.get("symbol"));
+        String source = orNull(params.get("source"));
+        if ((symbol == null) != (source == null)) {
+            throw badRequest("symbol and source go together");
+        }
 
-        List<WalkforwardRun> runs = repo.findRuns(timeframe, includeTest, limit);
+        List<WalkforwardRun> runs = repo.findRuns(timeframe, symbol, source, includeTest, limit);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("items", runs.stream().map(r -> {
             Map<String, Object> payload = runPayload(r);
@@ -398,6 +408,8 @@ public class EngineApi {
         // Echoed back so a client can tell a filtered list from a complete one
         // -- an empty list means something different under each.
         body.put("timeframe", timeframe);
+        body.put("symbol", symbol);
+        body.put("source", source);
         body.put("includeTest", includeTest);
         body.put("limit", limit);
         return body;

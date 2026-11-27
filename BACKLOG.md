@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-48** · 2026-11-27 07:57 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-49** · 2026-11-27 08:13 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -14,21 +14,10 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 ## Where it stands
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
-closed on full unit testing (his decision of 2026-11-26), and the nineteen tests he chose
-from step 10's reviews built (six, seven, three, then three). Suites: Python 1,236, engine 223,
-service 101, client 294; Python line coverage 86% at the last line report. Step 10's
+closed on full unit testing (his decision of 2026-11-26), and the twenty-two tests he chose
+from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,236, engine 225,
+service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
-
-## In progress: two code fixes (John's go, 2026-11-27)
-
-Each committed on passing tests; each leaves this list when it is in.
-
-2. G56's rest: `qqq_spy_relative` is not built on SPY's own set (it would be SPY over SPY,
-   0 on every bar), and the Training and Backtest tabs list only the picked instrument's
-   runs and results.
-
-The third fix asked for, the catalogue sync, rested on a wrong claim of the agent's (that
-every feature build pays for it): nothing in the app runs it. Corrected under "Open gaps".
 
 ## Waiting on John
 
@@ -100,7 +89,6 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 | G52 | Non-price series are stored as degenerate candles at the calendar's cadence; no raw series table at native cadence; quarterly SEC net income carried daily | L |
 | G53 | Strategy settings the design adds: separate cost items with on/off flags, capital-gains inclusion rate, the superficial-loss rule, a minimum trades a year, dividends, account currency (CAD, USD/CAD from the Bank of Canada), a capital setting. Out of the plan until John adds them | L |
 | G55 | The coverage grid covers the train window only, as marks and a warning; a strategy can be cloned only from its newest version | S |
-| G56 | Not quite instrument-agnostic: `qqq_spy_relative` is the instrument over SPY, so on SPY's set it is 0 on every bar; the Training and Backtest tabs list every instrument's runs and results, not the picked one's. Strategy 2 stays QQQ only by design (its hedge is PSQ) | S |
 | G58 | Train and Run are still two tabs with their own forms; the design has one Train & Run tab that runs a saved strategy | M |
 | G59 | Tooltips come from three dictionaries and about 29 hard-coded strings; the nav and Pipeline sub-tabs have none | S |
 | G60 | Testing layers: React Testing Library component tests, Newman in CI, one scripted end-to-end path, a reproducibility test (same seed and snapshot, same model), indicators against published values. See "Test gaps" | L |

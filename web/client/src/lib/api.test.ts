@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { engineWindow, sorted, trainBody } from './api'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api, engineWindow, sorted, trainBody } from './api'
 
 /**
  * The loader's own row filter, in JavaScript.
@@ -139,5 +139,40 @@ describe('trainBody', () => {
     const body = trainBody({ ...req, training: network, parameters: { cacheKey: 'abc', other: '3' } })
     expect(Object.keys(body).sort()).toEqual(['engine', 'mode', 'since', 'source', 'symbol',
       'timeframe', 'until'])
+  })
+})
+
+describe('a pipeline stage\'s lists, on one instrument', () => {
+  // The Training and Backtest tabs ask for the picked instrument's runs and
+  // results. The parameter names are the routes': the runs route takes
+  // `symbol` and `source`, the results list `instrument` and `source`.
+  const asked: string[] = []
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    asked.length = 0
+  })
+  function stubFetch(body: unknown) {
+    vi.stubGlobal('fetch', (url: string) => {
+      asked.push(url)
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
+    })
+  }
+
+  it('asks the runs route for that instrument\'s runs, and every instrument\'s without one', async () => {
+    stubFetch({ items: [], timeframe: 'D1', includeTest: false, limit: 50 })
+    await api.walkforwardRuns({ timeframe: 'D1', limit: 50, symbol: 'SPY', source: 'yahoo-adj' })
+    await api.walkforwardRuns({ timeframe: 'D1', limit: 50 })
+    const [on, all] = asked.map((u) => new URL(u, 'http://x').searchParams)
+    expect(on.get('symbol')).toBe('SPY')
+    expect(on.get('source')).toBe('yahoo-adj')
+    expect(all.has('symbol') || all.has('source')).toBe(false)
+  })
+
+  it('asks the results list by instrument and source', async () => {
+    stubFetch({ items: [], total: 0, limit: 25, offset: 0 })
+    await api.results({ timeframe: 'D1', instrument: 'SPY', source: 'yahoo-adj' })
+    const q = new URL(asked[0], 'http://x').searchParams
+    expect([q.get('instrument'), q.get('source'), q.get('timeframe')])
+      .toEqual(['SPY', 'yahoo-adj', 'D1'])
   })
 })

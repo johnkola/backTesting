@@ -1869,6 +1869,9 @@ export type WalkforwardRuns = {
   items: WalkforwardRun[]
   /** Echoed back: an empty list means something different filtered than not. */
   timeframe: string | null
+  /** The instrument the list is on, or null for every instrument's. */
+  symbol?: string | null
+  source?: string | null
   includeTest: boolean
   limit: number
 }
@@ -2170,7 +2173,11 @@ export const api = {
    * is how it quietly becomes training data. Asking for them is deliberate.
    */
   walkforwardRuns: (
-    params: { timeframe?: string, includeTest?: boolean, limit?: number } = {},
+    params: {
+      timeframe?: string, includeTest?: boolean, limit?: number,
+      /** One instrument's runs: its symbol and source, both or neither. */
+      symbol?: string, source?: string,
+    } = {},
     signal?: AbortSignal,
   ) => getJson<WalkforwardRuns>(`/api/walkforward/runs?${qs(params)}`, signal),
   /**
