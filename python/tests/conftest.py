@@ -29,6 +29,41 @@ def _fold_models_in_a_temp_dir(tmp_path_factory):
         os.environ["FOLD_MODELS_DIR"] = before
 
 
+#: Test files that share state outside their own rows, so in a parallel run
+#: they run one after another in one process. The feeds runs hold one
+#: database-wide lock, and a worker starting up marks every feeds run it cannot
+#: see a job for as interrupted, another process's live run included.
+TOGETHER = {
+    "feeds": (
+        "tests/test_feeds_api.py",
+        "tests/test_feeds_runner_integration.py",
+        "tests/test_pipeline_integration.py",
+        "tests/test_job_calls.py",
+        "tests/test_worker_start.py",
+    ),
+}
+
+
+def xdist_group(nodeid: str, together=TOGETHER) -> str:
+    """The process group a test runs in when the suite runs in parallel: its
+    file's group in `together`, or else its file."""
+    path = nodeid.split("::", 1)[0]
+    return next((g for g, files in together.items() if path in files), path)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """In a parallel run (pytest-xdist, `-n`; `--dist loadgroup` is the default
+    in pyproject.toml) each file stays whole in one process: its tests seed and
+    purge the file's own instrument, and module fixtures set up once per
+    process, so a file split across two would purge under itself. Runs before
+    xdist reads the marks (`tryfirst`)."""
+    if not config.pluginmanager.hasplugin("xdist"):
+        return
+    for item in items:
+        item.add_marker(pytest.mark.xdist_group(xdist_group(item.nodeid)))
+
+
 #: The integration tests that must run, not skip, where `MUST_RUN_INTEGRATION`
 #: is set (CI). Each skips without the database, TA-Lib, torch or the Java and
 #: client sources beside the checkout, and a skip in CI passed unseen: a green
