@@ -11,7 +11,8 @@ same decisions and nobody keeps a second copy of the rules.
   200 {symbol, dates, faber: {available, reason, calls}, dualMomentum: {...},
        indicatorRules: {name: {available, reason, calls, settings}}, bills, months,
        checks}
-  400 a bad date or a timeframe other than D1; 404 no candles for the series.
+  400 a bad date, a window that ends before it starts, or a timeframe other
+  than D1; 404 no candles for the series, or none in the window.
 
 A call is the symbol to hold from the next open, "SPY", or null for cash. A rule
 without enough history before `from` is `available: false` with the reason and
@@ -80,11 +81,21 @@ def rule_calls(symbol: str, source: str, start: str = Query(..., alias="from"),
         first, last = date.fromisoformat(start[:10]), date.fromisoformat(end[:10])
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "from and to must be dates"})
+    # A window with no bar in it has no call to make. Answered anyway, every
+    # rule read as available with no calls, dual momentum too when neither SPY
+    # nor T-bills were stored, since no bar asked for them.
+    if first > last:
+        return JSONResponse(status_code=400, content={
+            "error": f"the window ends ({last}) before it starts ({first})"})
     with pool().connection() as conn:
         cur = conn.cursor()
         px = walkforward.load_prices(cur, symbol, source, "D1")
         if not px.closes:
             return JSONResponse(status_code=404, content={
                 "error": f"no D1 candles for {symbol} ({source})"})
+        if not any(first <= d <= last for d in px.closes):
+            return JSONResponse(status_code=404, content={
+                "error": f"no D1 candles for {symbol} ({source}) from {first} to {last}; "
+                         f"its bars run {min(px.closes)} to {max(px.closes)}"})
         spy, dtb3 = walkforward.load_rule_inputs(cur, source)
     return rule_payload(symbol, px, spy, dtb3, first, last)

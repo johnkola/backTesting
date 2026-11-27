@@ -702,3 +702,52 @@ def test_plan_folds_reads_the_window_from_the_run_settings():
          "--train-years", "2", "--forward", "1"])
     folds, _ = wf.plan_folds(cal, args, None)
     assert [{cal[i].year for i in tr} for _, tr, _ in folds] == [{2006, 2007}, {2007, 2008}]
+
+
+# --------------------------------------------------------------------------
+# `--check-snapshot` when it cannot compare (the comparison itself runs on a
+# stored run in test_pipeline_integration.py)
+# --------------------------------------------------------------------------
+
+
+class _RunRow:
+    """A cursor holding one run's check row, or none."""
+
+    def __init__(self, row):
+        self.row = row
+
+    def execute(self, sql, params=None):
+        pass
+
+    def fetchone(self):
+        return self.row
+
+
+def _check_row(**over):
+    row = {"set_id": 27, "columns": '["a"]', "park": "bills", "snapshot": "ab" * 32,
+           "parts": '{"matrix": "x"}', "built_from": 5, "code": "cd" * 32, "symbol": "QQQ",
+           "source": "yahoo-adj", "timeframe": "D1", **over}
+    return tuple(row.values())
+
+
+@pytest.mark.parametrize("row, code, said", [
+    (None, 2, "no walkforward run with id 7"),
+    (_check_row(snapshot=None), 2,
+     "run 7 has no input snapshot: it was recorded before G3, so there is nothing to compare"),
+    (_check_row(set_id=None), 1,
+     "run 7's feature set has been deleted; its inputs cannot be rebuilt"),
+])
+def test_a_snapshot_that_cannot_be_compared_says_why(row, code, said, capsys):
+    assert wf.check_snapshot(_RunRow(row), 7) == code
+    assert said in capsys.readouterr().out
+
+
+def test_a_matrix_that_cannot_be_rebuilt_is_a_difference(monkeypatch, capsys):
+    def gone(cur, set_id, columns=None):
+        assert (set_id, columns) == (27, ["a"])
+        raise LookupError("feature set 27 has no column(s): a")
+
+    monkeypatch.setattr(wf.feature_store, "read_matrix", gone)
+    assert wf.check_snapshot(_RunRow(_check_row()), 7) == 1
+    assert ("run 7: its matrix cannot be rebuilt: feature set 27 has no column(s): a"
+            in capsys.readouterr().out)

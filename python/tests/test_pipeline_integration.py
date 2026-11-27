@@ -558,11 +558,41 @@ def test_a_walk_forward_run_on_the_built_set_is_stored_reproduced_and_goes_stale
         return next(r["state"] for r in body["training"]["runs"] if r["runId"] == run_id)
 
     assert run_state() == "fresh"
+    # `--check-snapshot`: the store still holds exactly what the run read.
+    capsys.readouterr()
+    assert wf.main(["--check-snapshot", str(run_id)]) == 0
+    out = capsys.readouterr().out
+    assert f"MATCH  the store still holds exactly what run {run_id} read" in out
+    assert "the code has changed since" not in out
+    # The same inputs under other code: a match, and a rerun may still differ.
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE walkforward_runs SET code_hash = %s WHERE id = %s",
+                    ("f" * 64, run_id))
+    assert wf.main(["--check-snapshot", str(run_id)]) == 0
+    assert ("the code has changed since (run ffffffffffff, now "
+            in capsys.readouterr().out)
+
     # A bar inside the run's span changes and the set is rebuilt from it, as the
     # evening run would: the run now reads inputs it was not made from.
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT feature_run_id FROM walkforward_runs WHERE id = %s", (run_id,))
+        built_from = cur.fetchone()[0]
     _seed(bump_from=DAYS.index(dt.date(2020, 6, 1)) if dt.date(2020, 6, 1) in DAYS else 360)
     _build(config)
     assert run_state() == "stale"
+
+    # And the check names what moved: the matrix and the closes, the build the
+    # set was rebuilt by, and the input series whose values changed.
+    capsys.readouterr()
+    assert wf.main(["--check-snapshot", str(run_id)]) == 1
+    out = capsys.readouterr().out
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT max(id) FROM feature_runs WHERE feature_set_id = %s", (set_id,))
+        current = cur.fetchone()[0]
+    assert "DIFFERS  snapshot " in out
+    assert "  matrix  CHANGED" in out and "  closes  CHANGED" in out
+    assert f"  set {set_id} was rebuilt since: build {built_from} then, {current} now" in out
+    assert f"    {SYMBOL} ({SOURCE}, D1) close: values changed (" in out
 
 
 
@@ -738,6 +768,38 @@ def test_an_hourly_walk_forward_run_scores_its_rules_on_daily_closes(config, see
         assert faber[0] and faber[2] is not None and faber[3] >= 1, faber
         momentum = rules[(fold, "dual_momentum")]
         assert not momentum[0] and "needs SPY" in momentum[1], momentum
+
+    # The indicator rules too: decided on each session's D1 close and held a
+    # session at a time, so a fold holds one for as many bars as the daily rule
+    # holds the instrument over the fold's sessions, not the hourly bars in them.
+    from nn import rules as rule_defs
+
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        d1 = wf.load_closes(cur, SYMBOL, SOURCE, "D1")
+        cur.execute("SELECT fold, name, bars_held, trades FROM walkforward_benchmarks "
+                    "WHERE run_id = %s AND name = ANY(%s)",
+                    (run_id, list(rule_defs.INDICATOR_RULES)))
+        stored = {(f, n): (held, tr) for f, n, held, tr in cur.fetchall()}
+        cur.execute("SELECT fold, array_agg(DISTINCT (bar_date AT TIME ZONE 'UTC')::date) "
+                    "FROM walkforward_signals WHERE run_id = %s GROUP BY fold", (run_id,))
+        sessions = {f: sorted(days) for f, days in cur.fetchall()}
+    days = sorted(d1)
+    for name in rule_defs.INDICATOR_RULES:
+        holds = dict(zip(days, rule_defs.indicator_holdings(name, [d1[d] for d in days]),
+                         strict=True))
+        for fold, _, _ in folds:
+            # Held from the next session's open; the fold's last session has
+            # none, so it keeps what it held, and what is held then is sold.
+            prev, held, trades = None, 0, 0
+            for i, s in enumerate(sessions[fold]):
+                now = (holds[s] or None) if i < len(sessions[fold]) - 1 else prev
+                trades += (now != prev) * ((prev is not None) + (now is not None))
+                held += now is not None
+                prev = now
+            trades += prev is not None
+            assert rules[(fold, name)][0], (name, rules[(fold, name)])
+            assert stored[(fold, name)] == (held, trades), (name, fold)
+            assert held <= len(sessions[fold]) < folds[fold - 1][2]
 
     with psycopg.connect(dsn()) as conn:
         dry = recalculate.recalculate(conn, run_id, dry_run=True)
