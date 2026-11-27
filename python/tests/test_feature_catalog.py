@@ -245,30 +245,67 @@ class TestSync:
         finally:
             conn.close()
 
+    @staticmethod
+    def _stored_ranges(cur) -> dict[str, tuple]:
+        """Every feature's range as the stored values give it, matched to the
+        definitions here rather than in SQL, so the check does not share the
+        sync's join: a cyclical feature is its `_sin` and `_cos` columns."""
+        cur.execute("SELECT feature_name, min(timestamp), max(timestamp) FROM feature_values "
+                    "WHERE value IS NOT NULL GROUP BY feature_name")
+        columns = {name: (lo, hi) for name, lo, hi in cur.fetchall()}
+        cur.execute("SELECT name, width FROM feature_definitions")
+        out = {}
+        for name, width in cur.fetchall():
+            parts = [columns[c] for c in ((name,) if width == 1 else (f"{name}_sin",
+                                                                      f"{name}_cos"))
+                     if c in columns]
+            out[name] = ((min(p[0] for p in parts), max(p[1] for p in parts)) if parts
+                         else (None, None))
+        return out
+
     def test_ranges_come_from_stored_values_not_from_config(self, cfg):
+        # Every feature, start and end, against the stored values; a feature
+        # with none is NULL ("not yet known"). Read in one snapshot; another
+        # process building a set in between is a reason to look again.
+        import psycopg
+
+        conn = self._conn()
+        try:
+            for _ in range(3):
+                feature_catalog.sync(conn, cfg)
+                conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+                with conn.cursor() as cur:
+                    cur.execute("SELECT name, range_start, range_end FROM feature_definitions")
+                    stored = {n: (lo, hi) for n, lo, hi in cur.fetchall()}
+                    expected = self._stored_ranges(cur)
+                conn.rollback()
+                conn.isolation_level = None
+                if stored == expected:
+                    break
+            assert stored == expected
+            assert set(stored) == {f.name for f in cfg.features}
+        finally:
+            conn.close()
+
+    def test_a_feature_whose_values_are_gone_goes_back_to_unknown(self, cfg):
+        # A range left over from values since deleted is cleared by the sync.
         conn = self._conn()
         try:
             feature_catalog.sync(conn, cfg)
             with conn.cursor() as cur:
-                # The expectation uses the same width-aware name match the
-                # sync does. A cyclical column is stored as `<name>_sin` and
-                # `<name>_cos`, so a naive `feature_name = d.name` finds
-                # nothing for the three calendar columns -- which is the bug
-                # this join was fixed to avoid, and an expectation computed the
-                # naive way would re-introduce it here.
-                cur.execute(
-                    "SELECT d.name, d.range_start, d.range_end, "
-                    "       (SELECT min(v.timestamp) FROM feature_values v "
-                    "         WHERE ((d.width = 1 AND v.feature_name = d.name) "
-                    "             OR (d.width > 1 AND v.feature_name IN "
-                    "                 (d.name || '_sin', d.name || '_cos'))) "
-                    "           AND v.value IS NOT NULL) "
-                    "  FROM feature_definitions d "
-                    " WHERE d.range_start IS NOT NULL ORDER BY d.name LIMIT 8")
-                rows = cur.fetchall()
-            for name, lo, hi, actual_lo in rows:
-                assert lo == actual_lo, name
-                assert hi >= lo, name
+                unbuilt = [n for n, (lo, _) in self._stored_ranges(cur).items() if lo is None]
+            if not unbuilt:
+                pytest.skip("every feature has stored values here")
+            with conn.cursor() as cur:
+                cur.execute("UPDATE feature_definitions SET range_start = '2001-01-02', "
+                            "range_end = '2001-12-31' WHERE name = %s", (unbuilt[0],))
+            conn.commit()
+            counts = feature_catalog.sync(conn, cfg)
+            assert counts["rangesUpdated"] >= 1
+            with conn.cursor() as cur:
+                cur.execute("SELECT range_start, range_end FROM feature_definitions "
+                            "WHERE name = %s", (unbuilt[0],))
+                assert cur.fetchone() == (None, None)
         finally:
             conn.close()
 

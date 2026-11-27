@@ -76,6 +76,7 @@ MUST_RUN = (
     "tests/test_repairs_api.py",
     "tests/test_walkforward_report.py",
     "tests/test_worker_start.py",
+    "tests/test_fold_models.py",
 )
 
 

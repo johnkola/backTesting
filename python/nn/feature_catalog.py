@@ -144,34 +144,38 @@ ON CONFLICT (name) DO UPDATE SET
 # three calendar columns and left their range NULL. `width` is the
 # discriminator rather than a prefix match, because `price_close` would
 # otherwise claim any future `price_close_*`.
-_REFRESH_RANGES = """
-UPDATE feature_definitions d
-   SET range_start = r.lo, range_end = r.hi
-  FROM (SELECT d2.name, MIN(v.timestamp) AS lo, MAX(v.timestamp) AS hi
-          FROM feature_definitions d2
-          JOIN feature_values v
-            ON (d2.width = 1 AND v.feature_name = d2.name)
-            OR (d2.width > 1
-                AND v.feature_name IN (d2.name || '_sin', d2.name || '_cos'))
-         WHERE v.value IS NOT NULL
-         GROUP BY d2.name) r
- WHERE r.name = d.name
-   AND (d.range_start IS DISTINCT FROM r.lo OR d.range_end IS DISTINCT FROM r.hi)
+#
+# The stored values are grouped by column name first, in one pass, and only
+# those few dozen results are matched to the definitions. Matching the
+# definitions against the values directly put an OR in the join, which no
+# index or hash join can serve: every stored value was compared with every
+# definition, about 50 s on 19 million values, against about 1 s this way.
+_FEATURE_RANGES = """
+SELECT d.name, MIN(c.lo) AS lo, MAX(c.hi) AS hi
+  FROM feature_definitions d
+  JOIN (SELECT feature_name, MIN(timestamp) AS lo, MAX(timestamp) AS hi
+          FROM feature_values
+         WHERE value IS NOT NULL
+         GROUP BY feature_name) c
+    ON (d.width = 1 AND c.feature_name = d.name)
+    OR (d.width > 1 AND c.feature_name IN (d.name || '_sin', d.name || '_cos'))
+ GROUP BY d.name
 """
 
-# The other half: a feature whose stored values are all gone (its feature sets
-# deleted) goes back to NULL, "not yet known". The inner join above cannot see
-# such a feature, so without this it kept the range of values that no longer
-# exist -- which surfaced when old feature sets were cleaned out (2026-11-10).
-_CLEAR_RANGES = """
+# Both halves at once, from the ranges read above: every feature takes its
+# range, and one with no stored values left (its feature sets deleted) goes back
+# to NULL, "not yet known". Without that second half a feature kept the range of
+# values that no longer exist -- which surfaced when old feature sets were
+# cleaned out (2026-11-10). One statement, so the grouping is read only once.
+_SET_RANGES = """
 UPDATE feature_definitions d
-   SET range_start = NULL, range_end = NULL
- WHERE (d.range_start IS NOT NULL OR d.range_end IS NOT NULL)
-   AND NOT EXISTS (
-       SELECT 1 FROM feature_values v
-        WHERE ((d.width = 1 AND v.feature_name = d.name)
-            OR (d.width > 1 AND v.feature_name IN (d.name || '_sin', d.name || '_cos')))
-          AND v.value IS NOT NULL)
+   SET range_start = r.lo, range_end = r.hi
+  FROM (SELECT d2.name, x.lo, x.hi
+          FROM feature_definitions d2
+          LEFT JOIN unnest(%(names)s::text[], %(los)s::timestamptz[], %(his)s::timestamptz[])
+               AS x(name, lo, hi) ON x.name = d2.name) r
+ WHERE r.name = d.name
+   AND (d.range_start IS DISTINCT FROM r.lo OR d.range_end IS DISTINCT FROM r.hi)
 """
 
 # A feature the file no longer defines is removed, so the catalogue cannot show
@@ -198,10 +202,12 @@ def sync(conn, cfg: feature_config.FeatureConfig | None = None) -> dict[str, int
         cur.execute(_PRUNE, {"names": [r["name"] for r in rows]})
         pruned = cur.rowcount
 
-        cur.execute(_REFRESH_RANGES)
+        cur.execute(_FEATURE_RANGES)
+        ranges = cur.fetchall()
+        cur.execute(_SET_RANGES, {"names": [r[0] for r in ranges],
+                                  "los": [r[1] for r in ranges],
+                                  "his": [r[2] for r in ranges]})
         ranged = cur.rowcount
-        cur.execute(_CLEAR_RANGES)
-        ranged += cur.rowcount
     conn.commit()
     return {"upserted": upserted, "pruned": pruned, "rangesUpdated": ranged}
 

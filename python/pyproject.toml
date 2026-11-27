@@ -21,8 +21,8 @@ dependencies = [
     "TA-Lib>=0.6",
     # The fold's network exported to ONNX for the prediction check the Java
     # side runs in ONNX Runtime (R62, G77; nn/onnx_export.py). onnxscript is
-    # what torch's exporter is built on. ONNX Runtime itself is not needed
-    # here: the tests use it when it is installed.
+    # what torch's exporter is built on. ONNX Runtime itself is not needed at
+    # run time: the dev dependencies below bring it for the tests.
     "onnx>=1.17",
     "onnxscript>=0.2",
 ]
@@ -36,6 +36,9 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3.6",
+    # The fold network in ONNX Runtime against PyTorch's own output, the check
+    # the Java side makes (tests/test_fold_models.py).
+    "onnxruntime>=1.20",
     "httpx>=0.27",
     "ruff>=0.7",
     "mypy>=1.13",

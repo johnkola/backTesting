@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-55** · 2026-11-27 09:35 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-56** · 2026-11-27 12:19 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -15,7 +15,7 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
 closed on full unit testing (his decision of 2026-11-26), and the twenty-two tests he chose
-from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,238, engine 225,
+from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,239, engine 225,
 service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
 
@@ -64,7 +64,7 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
   rebuild rule names the containers "loader, engine, api, client", now `server`,
   `worker`, `engine` and `client`; step 0 still describes the Node stack.
 - **`README.md`, running the Python tests**: they can run in parallel, `pytest -n 8`
-  (pytest-xdist, in the dev dependencies), about 7½ minutes here against 12 in one
+  (pytest-xdist, in the dev dependencies), about 5 minutes here against 12 in one
   process; a plain `pytest` is one process as before. Each file stays whole in one
   process (`tests/conftest.py`). CI stays in one process: its database starts empty and
   the suite takes under a minute there.
@@ -109,7 +109,7 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 | G75 | Flagged rows: no page lists them, and the Run tab's backtests do not ask about flags | S |
 | G76 | Data repair, what is left: a second vendor (G9b), split adjustment (R63's other half), roll-ups from the adjusted bars | L |
 | — | Filling a missing bar works on daily bars only: an intraday day needs a session calendar, which is not built | M |
-| — | Nothing in the app runs `feature_catalog.sync`: the Features catalogue's date ranges are as current as the last time someone ran `python -m nn.feature_catalog` (on this machine the test suite did, since its tests sync the real table). And the sync scans all of `feature_values` (about 13 million values here), about 30 s each, which the local test suite pays eight times. When it should run is John's to say (after each build, or on a schedule) | S |
+| — | Nothing in the app runs `feature_catalog.sync`: the Features catalogue's date ranges are as current as the last time someone ran `python -m nn.feature_catalog --sync` (on this machine the test suite does, since its tests sync the real table). A sync takes about 2 s. When it should run is John's to say (after each build, or on a schedule) | S |
 | — | `JAVA_HOME` under WSL points at a Windows JDK path; Gradle and npm run only through `cmd.exe` | S |
 
 ## Test gaps
@@ -140,11 +140,6 @@ client's modules (no page or component has a test).
 failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not
 the best epoch's 4.0). It passed alone three times and in every full run since, and no
 test changes torch's global state. Cause not found; in CI it would fail the job at random.
-
-**A test CI skips**: `test_fold_models.py`'s ONNX Runtime check (the fold network run in
-ONNX Runtime against PyTorch's output) skips there, because `onnxruntime` is not among
-the dependencies CI installs; it runs here. Adding it to the dev dependencies would run it
-in CI. S.
 
 **Not testable as things stand**, with what it would take:
 
