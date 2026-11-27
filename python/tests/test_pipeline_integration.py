@@ -862,3 +862,37 @@ def test_a_bar_the_run_would_trade_with_no_price_is_refused(config, seeded, caps
     assert f"refused: {SYMBOL} has no open or close for 1 bar(s) the run would trade" in out
     assert f"from {gone}" in out
     assert _run_row("pytest-hole-run") is None
+
+
+@requires_db
+def test_the_holdout_scores_the_test_block_once_and_says_when_it_is_looked_at_again(
+        config, seeded, capsys):
+    # `--test`, the final exam: one fold trained on the train and validation
+    # years, scored on the strategy's test block alone. Its look at that block is
+    # recorded before anything is scored, and a second holdout says the block was
+    # seen before (warned, not refused: whether to refuse is John's to say).
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import walkforward as wf
+
+    _build(config)
+    sid = _save_strategy()
+    assert wf.main(["--strategy-id", str(sid), "--test", "--label", "pytest-holdout"]) == 0
+    out = capsys.readouterr().out
+    assert f"test window  {SYMBOL} 2022-01-01 to 2022-06-30: first look" in out
+    run_id, strategy_id, *_, is_test = _run_row("pytest-holdout")
+    assert (strategy_id, is_test) == (sid, True)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*), min(bar_date)::date, max(bar_date)::date FROM walkforward_signals "
+                    "WHERE run_id = %s", (run_id,))
+        n, first, last = cur.fetchone()
+        assert n > 100 and first >= dt.date(2022, 1, 1) and last <= dt.date(2022, 6, 30)
+        cur.execute("SELECT count(*) FROM walkforward_folds WHERE run_id = %s", (run_id,))
+        assert cur.fetchone()[0] == 1
+        cur.execute("SELECT kind, ref_id, test_from, test_to FROM test_window_looks "
+                    "WHERE instrument = %s", (SYMBOL,))
+        assert cur.fetchall() == [("walkforward", run_id, dt.date(2022, 1, 1),
+                                   dt.date(2022, 6, 30))]
+
+    assert wf.main(["--strategy-id", str(sid), "--test", "--label", "pytest-holdout-2"]) == 0
+    assert "TEST WINDOW REUSED: looked at 1 time(s) before" in capsys.readouterr().out

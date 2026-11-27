@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-31** · 2026-11-27 06:27 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-32** · 2026-11-27 06:32 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,13 +18,6 @@ closed on full unit testing (his decision of 2026-11-26), and the thirteen tests
 from step 10's reviews built (six, then seven). Suites: Python 1,207, engine 219,
 service 101, client 294; Python line coverage 86%. Step 10's review was run again on
 2026-11-27: its result is "Test gaps" below.
-
-## In progress: three test gaps (John's go, 2026-11-27)
-
-Built one at a time on the seeded set, each committed on passing tests; each leaves this
-list and the "Test gaps" table when it is in.
-
-3. The holdout run.
 
 ## Waiting on John
 
@@ -128,7 +121,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 8 | The holdout run | `--test`: one fold over the test block, its look recorded before anything is scored, an earlier look said ("TEST WINDOW REUSED") | M |
 | 5 | Strategy 2 end to end | A margin run: the PSQ and rate series loaded, the margin refusals, the margin figures stored. Its parts are tested, the run is not | M |
 | 0 | The Python worker as started | `jobs/worker.py` (69%) `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
 | 0 | The engine worker's loop | `JobWorker.start`: it polls, takes a job, beats its heartbeat and stops when asked. `runOne` is tested; the loop around it is not | S |
