@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-30** · 2026-11-27 06:21 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-31** · 2026-11-27 06:27 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -24,7 +24,6 @@ service 101, client 294; Python line coverage 86%. Step 10's review was run agai
 Built one at a time on the seeded set, each committed on passing tests; each leaves this
 list and the "Test gaps" table when it is in.
 
-2. The runner's refusals.
 3. The holdout run.
 
 ## Waiting on John
@@ -129,7 +128,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 5 | The runner's refusals | Training over a series with an open flagged row is refused (the build's refusal is tested, the runner's is not); a missing open or close in the bars it would trade is refused | S |
 | 8 | The holdout run | `--test`: one fold over the test block, its look recorded before anything is scored, an earlier look said ("TEST WINDOW REUSED") | M |
 | 5 | Strategy 2 end to end | A margin run: the PSQ and rate series loaded, the margin refusals, the margin figures stored. Its parts are tested, the run is not | M |
 | 0 | The Python worker as started | `jobs/worker.py` (69%) `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |

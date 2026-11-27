@@ -794,3 +794,71 @@ def test_a_saved_strategy_with_nothing_to_train_on_is_refused(config, seeded, ca
             "window); rsi_14 (no values in the train window)") in out
     assert _run_row("pytest-strategy-empty") is None
 
+
+
+_WF_ARGS = ["--symbol", SYMBOL, "--source", SOURCE, "--train-start", "2020",
+            "--first-val", "2021", "--last-val", "2021", "--engines", "xgboost"]
+
+
+@requires_db
+def test_training_over_an_open_flagged_row_is_refused_until_it_is_accepted(
+        config, seeded, capsys):
+    # The build's refusal over a flag has its test; this is the runner's own: a
+    # set built before the flag was found still may not be trained on.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from loader import flags
+    from loader.cohesion import check_candles, gate
+    from nn import walkforward as wf
+
+    set_id = _build(config)
+    bad = dt.datetime(DAYS[600].year, DAYS[600].month, DAYS[600].day, tzinfo=dt.UTC)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT i.id, s.id FROM instruments i, data_sources s "
+                    "WHERE i.symbol = %s AND s.name = %s", (SYMBOL, SOURCE))
+        inst, src = cur.fetchone()
+        cur.execute("UPDATE candles SET high = low - 1 WHERE instrument_id = %s AND "
+                    "source_id = %s AND timeframe = 'D1' AND timestamp = %s", (inst, src, bad))
+        cur.execute("SELECT timestamp, open, high, low, close, volume FROM candles "
+                    "WHERE instrument_id = %s AND source_id = %s AND timeframe = 'D1' "
+                    "ORDER BY timestamp", (inst, src))
+        flags.record(conn, inst, src, "D1", gate(check_candles(cur.fetchall(), "D1")))
+        conn.commit()
+
+    args = [*_WF_ARGS, "--set-id", str(set_id), "--label", "pytest-flagged-run"]
+    assert wf.main(args) == 2
+    out = capsys.readouterr().out
+    assert "refused:" in out and SYMBOL in out
+    assert _run_row("pytest-flagged-run") is None, "a refused run stores nothing"
+
+    with psycopg.connect(dsn()) as conn:
+        assert flags.accept(conn, "pytest: a seeded bad bar", SYMBOL, SOURCE, "D1") >= 1
+        conn.commit()
+    assert wf.main(args) == 0
+    assert _run_row("pytest-flagged-run") is not None
+
+
+@requires_db
+def test_a_bar_the_run_would_trade_with_no_price_is_refused(config, seeded, capsys):
+    # Trades fill at the next bar's open, so every bar a fold would trade needs
+    # its open and close. A bar the set holds but the store no longer does (here
+    # deleted after the build) is refused by name rather than traded on a guess.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import walkforward as wf
+
+    set_id = _build(config)
+    gone = next(d for d in DAYS if d >= dt.date(2021, 6, 1))
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT i.id, s.id FROM instruments i, data_sources s "
+                    "WHERE i.symbol = %s AND s.name = %s", (SYMBOL, SOURCE))
+        inst, src = cur.fetchone()
+        # The ids as values: the delete stays inside this series' compressed segments.
+        cur.execute(f"DELETE FROM candles WHERE instrument_id = {int(inst)} "  # noqa: S608
+                    f"AND source_id = {int(src)} AND timeframe = 'D1' AND timestamp = %s",
+                    (dt.datetime(gone.year, gone.month, gone.day, tzinfo=dt.UTC),))
+    assert wf.main([*_WF_ARGS, "--set-id", str(set_id), "--label", "pytest-hole-run"]) == 2
+    out = capsys.readouterr().out
+    assert f"refused: {SYMBOL} has no open or close for 1 bar(s) the run would trade" in out
+    assert f"from {gone}" in out
+    assert _run_row("pytest-hole-run") is None

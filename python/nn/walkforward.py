@@ -1517,6 +1517,16 @@ def main(argv: list[str] | None = None) -> int:
                   f"fold(s) validating {short} have one")
             return 2
 
+    # A bar the set holds with no stored close (deleted, or never imported)
+    # would stop the market's returns with a KeyError; it is refused here by
+    # name, as a bar with no open is below.
+    lost = sorted({d for d in (*wdates, *(e for e in exits if e is not None))
+                   if d not in px.closes})
+    if lost:
+        print(f"refused: {args.symbol} has no open or close for {len(lost)} bar(s) the "
+              f"run would trade, from {lost[0]}; trades fill at the next open")
+        return 2
+
     # The market over the whole axis, built once: a money loss trains on its
     # training bars' segments, and each fold is scored on its own bars.
     psq = dff = None
