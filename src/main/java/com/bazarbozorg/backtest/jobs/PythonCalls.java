@@ -57,26 +57,11 @@ public final class PythonCalls {
      */
     public static Answer call(String method, String pathAndQuery, JsonObject body,
                               Duration timeout) {
-        int q = pathAndQuery.indexOf('?');
-        String path = q < 0 ? pathAndQuery : pathAndQuery.substring(0, q);
-        JsonObject query = new JsonObject();
-        if (q >= 0) {
-            for (String pair : pathAndQuery.substring(q + 1).split("&")) {
-                int eq = pair.indexOf('=');
-                if (eq > 0) {
-                    query.addProperty(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
-                }
-            }
-        }
-        JsonObject request = new JsonObject();
-        request.addProperty("method", method);
-        request.addProperty("path", path);
-        request.add("query", query);
-        request.add("body", body);
+        JsonObject request = request(method, pathAndQuery, body);
         JsonObject inputs = new JsonObject();
         inputs.add("request", request);
 
-        String type = TYPES.getOrDefault(path, CALL);
+        String type = typeOf(request.get("path").getAsString());
         JobQueue queue = new JobQueue(DatabaseManager.getInstance());
         JobQueue.Job job = queue.insert(type, JobQueue.PYTHON, GSON.toJson(inputs),
                 type.equals(CALL));
@@ -96,6 +81,36 @@ public final class PythonCalls {
             answer = GSON.fromJson(answer.getAsString(), JsonElement.class);
         }
         return new Answer(status, answer);
+    }
+
+    /**
+     * The request a job carries: the method, the path without its query, the
+     * query's parameters decoded, and the body. What the worker replays
+     * against the route (`jobs.calls.request`). Package-private for the tests.
+     */
+    static JsonObject request(String method, String pathAndQuery, JsonObject body) {
+        int q = pathAndQuery.indexOf('?');
+        String path = q < 0 ? pathAndQuery : pathAndQuery.substring(0, q);
+        JsonObject query = new JsonObject();
+        if (q >= 0) {
+            for (String pair : pathAndQuery.substring(q + 1).split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0) {
+                    query.addProperty(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
+                }
+            }
+        }
+        JsonObject request = new JsonObject();
+        request.addProperty("method", method);
+        request.addProperty("path", path);
+        request.add("query", query);
+        request.add("body", body);
+        return request;
+    }
+
+    /** The job type a path is queued as: the work's own name, or a {@link #CALL}. */
+    static String typeOf(String path) {
+        return TYPES.getOrDefault(path, CALL);
     }
 
     private static JobQueue.Job await(JobQueue queue, JobQueue.Job job, String type,
