@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-17** · 2026-11-27 05:37 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-18** · 2026-11-27 05:41 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -16,6 +16,19 @@ The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 
 closed on full unit testing (his decision of 2026-11-26), and the six tests he chose
 from step 10's report built. Suites: Python 1,200, engine 214, service 101, client 292;
 Python line coverage 82%.
+
+## In progress: seven test gaps (John's go, 2026-11-27)
+
+Built one at a time, each committed on passing tests; each leaves this list and the
+"Test gaps" table when it is in.
+
+1. A backtest on hourly stored candles.
+2. An intraday walk-forward run, which takes in the runner's intraday rule view.
+3. Rerun a stored result from its settings.
+4. The feeds routes, Apply included.
+5. Fold models: `check` and `--prune`.
+6. The client's benchmark checks on intraday fills.
+7. The engine's job worker end to end.
 
 ## Waiting on John
 
