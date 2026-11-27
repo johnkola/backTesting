@@ -18,6 +18,7 @@ every earlier stored value as it was.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 
 import psycopg
@@ -101,7 +102,9 @@ def weekdays(start: dt.date, n: int) -> list[dt.date]:
     return out
 
 
-DAYS = weekdays(dt.date(2019, 1, 2), 700)
+#: About four years, 2019 to late 2022: a train year after the warm-ups (2020), a
+#: validation year (2021) and a test block (2022's first half).
+DAYS = weekdays(dt.date(2019, 1, 2), 1000)
 
 
 def bar(i: int, bump: float = 0.0) -> tuple[float, float, float, float, float]:
@@ -149,8 +152,41 @@ def _seed(bump_from: int | None = None) -> None:
         conn.commit()
 
 
+#: The saved strategy the runner tests read, as the Training tab's runs do.
+STRATEGY = "pytest-pipeline-strategy"
+
+#: Train on 2020 (the first year after the warm-ups), validate on 2021, hold out 2022's first half.
+WINDOWS = {"train": {"from": "2020-01-01", "to": "2020-12-31"},
+           "validation": {"from": "2021-01-01", "to": "2021-12-31"},
+           "test": {"from": "2022-01-01", "to": "2022-06-30"}}
+
+
+def _save_strategy(windows=WINDOWS, features=("price_close", "volume", "day_of_week", "rsi_14"),
+                   version: int = 1) -> int:
+    """A saved strategy on the seeded instrument, as the service stores one: its row
+    and its engines (the tree engine only, so a run takes seconds)."""
+    from nn import strategy_spec
+
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO strategies (name, version, instrument, source, timeframe, model_type, "
+            "validation_scheme, features_json, windows_json, label_json, hyperparams_json, "
+            "objective_json) VALUES (%s, %s, %s, %s, 'D1', 'mlp', 'walkforward', %s, %s, %s, "
+            "%s, %s) RETURNING id",
+            (STRATEGY, version, SYMBOL, SOURCE, json.dumps(list(features)), json.dumps(windows),
+             json.dumps({"kind": "forward_return_3class", "horizonBars": 5}),
+             json.dumps({"lookbackWindow": 20, "seed": 1}),
+             json.dumps(dict(strategy_spec.OBJECTIVE_DEFAULTS))))
+        sid = cur.fetchone()[0]
+        cur.execute("INSERT INTO strategy_engines (strategy_id, engine, enabled, settings_json) "
+                    "VALUES (%s, 'xgboost', true, '{}'), (%s, 'mlp', false, '{}')", (sid, sid))
+    return int(sid)
+
+
 def _purge_sets() -> None:
     with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM strategies WHERE name = %s", (STRATEGY,))
+        cur.execute("DELETE FROM test_window_looks WHERE instrument = %s", (SYMBOL,))
         cur.execute("DELETE FROM data_checks WHERE instrument_id IN "
                     "(SELECT id FROM instruments WHERE symbol = %s)", (SYMBOL,))
         cur.execute("SELECT fs.id FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
@@ -257,11 +293,11 @@ def test_changing_the_last_bars_changes_no_earlier_stored_value(config, seeded):
     assert any(before.get(k) != after.get(k) for k in after if k[1] >= DAYS[cut])
 
 
-#: Seven hourly bars on every seeded day, at 14:30 to 20:30 UTC: past the
+#: Seven hourly bars on the first 700 seeded days, at 14:30 to 20:30 UTC: past the
 #: 252-session warm-up a weekday column is normalized over on an intraday
 #: calendar (its cadence is the session), with a year and more to train and score.
 HOURS = [dt.datetime(d.year, d.month, d.day, h, 30, tzinfo=dt.UTC)
-         for d in DAYS for h in range(14, 21)]
+         for d in DAYS[:700] for h in range(14, 21)]
 
 
 def _hourly_config(config):
@@ -698,3 +734,63 @@ def test_each_kept_fold_model_gives_back_the_signals_its_fold_stored(config, see
         assert not lines and "its inputs are not on file" in why
         assert fold_models.check(cur, 2_000_000_000) == ([], "there is no run 2000000000")
     assert fold_models.main(["--check", str(run_id)]) == 2
+
+
+def _run_row(label: str):
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, strategy_id, strategy_name, strategy_version, columns_json, "
+                    "train_first, train_bars_used, feature_set_id, is_test FROM walkforward_runs "
+                    "WHERE label = %s ORDER BY id DESC LIMIT 1", (label,))
+        return cur.fetchone()
+
+
+@requires_db
+def test_a_run_from_a_saved_strategy_records_where_it_came_from(config, seeded, capsys):
+    # `walkforward --strategy-id`, the run the Training tab starts: the strategy is
+    # read from its row, its features resolved against the set (one the set does
+    # not hold is dropped, with why), its train coverage said, and the run keeps
+    # which strategy, version and columns it came from.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import walkforward as wf
+
+    set_id = _build(config)
+    sid = _save_strategy(features=("price_close", "volume", "day_of_week", "rsi_14", "vix"))
+    assert wf.main(["--strategy-id", str(sid), "--label", "pytest-strategy-run"]) == 0
+    out = capsys.readouterr().out
+    assert f"strategy     {STRATEGY} v1 (id {sid})" in out
+    assert "dropped    vix: not in this feature set" in out
+    # The set's first complete row follows the warm-ups, early in 2020: the run
+    # says the train window it was given starts before its data.
+    assert "train cover  " in out and "(SHORT: the strategy asked from 2020-01-01)" in out
+    run_id, strategy_id, name, version, columns, train_first, used, set_of_run, is_test = \
+        _run_row("pytest-strategy-run")
+    assert (strategy_id, name, version, set_of_run, is_test) == (sid, STRATEGY, 1, set_id, False)
+    kept = json.loads(columns)
+    assert {"price_close", "volume", "day_of_week_sin", "day_of_week_cos", "rsi_14"} == set(kept)
+    assert train_first >= dt.date(2020, 1, 1) and used > 200
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT engine, val_year FROM walkforward_folds WHERE run_id = %s", (run_id,))
+        assert cur.fetchall() == [("xgboost", 2021)]
+
+
+@requires_db
+def test_a_saved_strategy_with_nothing_to_train_on_is_refused(config, seeded, capsys):
+    # Its train year, 2019, is inside the warm-ups of volume's 20-bar mean and
+    # the 14-bar RSI, its only features: each is dropped with why, and the run
+    # is refused before anything is trained or stored.
+    pytest.importorskip("talib")
+    from nn import walkforward as wf
+
+    _build(config)
+    sid = _save_strategy(features=("volume", "rsi_14"),
+                         windows={"train": {"from": "2019-01-01", "to": "2019-12-31"},
+                                  "validation": {"from": "2020-01-01", "to": "2020-12-31"},
+                                  "test": {"from": "2021-01-01", "to": "2021-06-30"}})
+    assert wf.main(["--strategy-id", str(sid), "--label", "pytest-strategy-empty"]) == 2
+    out = capsys.readouterr().out
+    assert f"strategy {sid} refused:" in out
+    assert ("none of the selected features can be used: volume (no values in the train "
+            "window); rsi_14 (no values in the train window)") in out
+    assert _run_row("pytest-strategy-empty") is None
+
