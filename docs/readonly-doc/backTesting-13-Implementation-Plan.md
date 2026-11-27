@@ -25,7 +25,7 @@ It is not the coding agent's job to find a winning model. It is a sandbox: John 
 
 ## Steps
 
-Step 0 comes first: the backend moves to Java (John, 2026-11-23: Java in the backend, no Node). The coding agent finishes moving the routes from Node to the Spring Boot service, the engine becomes the Java compute worker, and Node and FastAPI are removed (stack steps 4 to 6). Python still computes, and Java and Python talk through the jobs table. Done when the application runs with no Node and every page works as before; John accepts it. Accepted: John, 2026-11-24 (recorded 2026-11-25 on his word). Steps 1 to 6 are then walked on QQQ, daily bars, with the current web client. Step 9, test review (added Nov 25, 2026), comes after steps 1 to 8 are all closed: the coding agent looks over the whole application and adds every unit and integration test it can, especially tests across the pipeline and paths no test covers yet; the new tests are run and anything that fails is fixed. Done when the added tests pass and a list of what was added, and what still could not be tested, is in backTesting-07-Design-Gaps.
+Step 0 comes first: the backend moves to Java (John, 2026-11-23: Java in the backend, no Node). The coding agent finishes moving the routes from Node to the Spring Boot service, the engine becomes the Java compute worker, and Node and FastAPI are removed (stack steps 4 to 6). Python still computes, and Java and Python talk through the jobs table. Done when the application runs with no Node and every page works as before; John accepts it. Accepted: John, 2026-11-24 (recorded 2026-11-25 on his word). Steps 1 to 6 are then walked on QQQ, daily bars, with the current web client. Step 9, test review (added Nov 25, 2026), comes after steps 1 to 8 are all closed: the coding agent looks over the whole application and adds every unit and integration test it can, especially tests across the pipeline and paths no test covers yet; the new tests are run and anything that fails is fixed. Done when the added tests pass and a list of what was added, and what still could not be tested, is in backTesting-07-Design-Gaps. Step 10, test coverage review (added by John on 2026-11-26), comes after step 9: the coding agent reviews every step, 0 to 9, and reports step by step where more unit or integration tests could be added, what each new test would check and why. It only reports and adds no tests until John says. Done when the report is in backTesting-07-Design-Gaps.
 
 | \# | Step | John does | Done when | Accepted |
 | :---- | :---- | :---- | :---- | :---- |
@@ -49,6 +49,7 @@ Step 0 comes first: the backend moves to Java (John, 2026-11-23: Java in the bac
 
 | When | Who | Change |
 | :---- | :---- | :---- |
+| 2026-11-26 | Claude (Claude Opus 5.5), for John | Step 10 added: test coverage review after step 9, report only |
 | 2026-11-23 19:03 | Claude (Claude Fable 5.2), for John | Normalization folded into the features step: full range, backward-looking only. Eight steps |
 | 2026-11-23 18:58 | Claude (Claude Fable 5.2), for John | First version |
 

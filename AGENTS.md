@@ -1,6 +1,8 @@
+**DECISION — John, 2026-11-26: every step, including steps 7 and 8, is closed by the agent once it passes full unit testing. No walk-through or acceptance by John is needed to close a step. Finish the project first; full testing comes after (step 9). Orders 2, 4 and 6 below are rewritten to match.**
+
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-23-3** · 2026-11-23 19:23 Toronto time · last edited by Claude (Claude Fable 5.2), for John · [revision history](#revision-history)
+> **Revision 2026-11-26-1** · 2026-11-26 Toronto time · last edited by Claude (Claude Opus 5.5), for John · orders 2, 4 and 6 rewritten: the agent closes each step on full unit tests; full testing after the project is built · [revision history](#revision-history)
 
 ## Current orders from John, 2026-11-23
 
@@ -9,12 +11,13 @@ Current orders from John, 2026-11-23 18:58 Toronto time (written by Claude, Clau
 These orders replace anything above that disagrees with them.
 
 1. Follow backTesting-13-Implementation-Plan, one step at a time, in order. Work only on the current step.
-2. On the current step, fix only what John reports as wrong or what stops him running the step himself in the interface. Do not look for other work.
+2. Build the current step, close it once it passes full unit testing, and go straight on to the next step. Do not wait for John to run the step in the interface. Finish the whole project first; full testing comes after every step is built (step 9, Test review). [changed by John on 2026-11-26]
 3. The backend moves to Java, and this comes first, as step 0 of the plan: finish stack steps 4 to 6 (the routes move from Node to the Spring Boot service, the engine becomes the Java compute worker, Node and FastAPI are removed). Next.js and the three schemas (stack steps 7 and 8) stay paused until John says so. [changed by John on 2026-11-23, evening: he wants Java in the backend and no Node]
-4. Do not reopen or re-verify a step John has accepted, and do not close gaps that are outside the current step.
+4. Do not reopen or re-verify a closed step, and do not close gaps that are outside the current step. [changed by John on 2026-11-26: "closed" replaces "accepted by John"]
 5. Never edit backTesting-13-Implementation-Plan or the design documents backTesting-01 to -04, on Drive or in the repo. Record your work only in your own tracker, backTesting-07-Design-Gaps.
-6. Only John accepts a step. Do not mark a step done or accepted yourself.
+6. The agent closes each step itself once it passes full unit testing. John's walk-through or acceptance is not needed to close a step. [changed by John on 2026-11-26]
 7. The application's job is a tool John runs step by step: data, features, benchmarks and the engines, correct, for any symbol and any timeframe (daily, hourly, 30 minutes). Finding a winning model, and running many combinations in bulk, are not part of it.
+8. Step 10, Test coverage review, comes after step 9: review every step (0 to 9) and report, step by step, where more unit tests or integration tests could be added: what each new test would check and why. Report only; add no tests until John says. [added by John on 2026-11-26]
 
 Copied word for word from `backTesting-12-Coding-Agent-Instructions` in the Google Drive doc set, where "above" means the older text of that document. Here the orders come first and replace anything **below** in this file that disagrees with them.
 
@@ -655,6 +658,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-1 | 2026-11-26 | Claude (Claude Opus 5.5), for John | Synced from the Google Drive doc set: DECISION note at the top; current orders 2, 4 and 6 rewritten (the agent closes each step once it passes full unit testing; finish the project first, full testing after); new order 8 (step 10, test coverage review, report only) |
 | 2026-11-23-3 | 2026-11-23 19:23 | Claude (Claude Fable 5.2), for John | Current orders, order 3, from the Google Drive doc set: the backend moves to Java first, as step 0 of the plan (stack steps 4 to 6); Next.js and the three schemas stay paused. The older text below was not rewritten |
 | 2026-11-23-2 | 2026-11-23 19:20 | Claude (Claude Fable 5.2), for John | The author's current orders of 2026-11-23 added at the top, from the Google Drive doc set: follow `backTesting-13-Implementation-Plan`, the stack move is paused, the plan and the design set are never edited, work is recorded only in `backTesting-07-Design-Gaps`. The older text below was not rewritten |
 | 2026-11-23-1 | 2026-11-23 00:22 | Claude Code (Claude Fable 5.2) | Step 1: a check error no longer stops the import; it is a flagged row that holds the feature build and training until accepted or corrected (G75) |
