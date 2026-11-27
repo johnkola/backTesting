@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-26-11** · 2026-11-26 23:35 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-26-12** · 2026-11-26 23:40 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1254,7 +1254,7 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - [x] 8.6 **Training on H1**, as the Training tab starts it: walk-forward run 1678 of strategy 298 on set 272, the network, XGBoost and LightGBM, 18 fold rows in 12 minutes, seven rule benchmarks on every fold (dual momentum not available, 8.4). No engine beats buy-and-hold (0 of 6 each; the network long throughout, XGBoost −5.40 pp in 2020, LightGBM −1.17 in 2018 and −4.55 in 2020).
     - Tests: Python (`test_split.py`: an intraday window holds its days' bars and shows UTC; `test_rules.py`: with no SPY stored the reason names SPY; the full suite, 1,154, passes), engine (`RuleBenchmarkTest`: a day's call fills at the next session's first open, a day's bills once, weekly not available; all Java tests pass). Containers `engine` and `worker` rebuilt, and each fix checked live: the H1 split's rows read `2003-01-02T14:30:00Z`, and dual momentum on synthetic data gives the new reason while on yahoo-adj it is still available.
     - Found, not changed: a trade's `holdingBars` is always 0 (`PortfolioManager` builds every trade with 0), on every timeframe; no screen shows it.
-    - The walk's test records were deleted on the author's word, 2026-11-26: strategies 298 and 299, runs 1678 (H1) and 1691 (M30; its job, 1814, cancelled at 6 of 18 fold rows, so M30's walk-forward did not finish), and backtest results 1479, 1489 and 1490. Still stored: the two XGBoost models (H1 `20261127T003512.077Z`, M30 `20261127T004159.543Z`) and the two runs' fold models on disk; sets 272 and 273 are kept.
+    - The walk's test records were deleted on the author's word, 2026-11-26: strategies 298 and 299, runs 1678 (H1) and 1691 (M30; its job, 1814, cancelled at 6 of 18 fold rows, so M30's walk-forward did not finish), and backtest results 1479, 1489 and 1490. The two XGBoost models (H1 `20261127T003512.077Z`, M30 `20261127T004159.543Z`) were deleted too, and the two runs' fold models pruned (`run-1678` and `run-1691`, nothing else). Sets 272 and 273 are kept.
     - Left in this step: John walks steps 1 to 6 on H1 and M30, a walk-forward on M30 included.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
 - [ ] 16.7 **STOP. Three schemas and three logins.** Tables move to `app`, `data` and `jobs` (a move of names, not of rows), each login writes only its own schema, and a test proves a wrong-schema write is refused. This changes the stored database: full backup first, and it needs the author's go
@@ -2333,6 +2333,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-26-12 | 2026-11-26 23:40 | Claude Code (Claude Opus 5.5) | Step 8: the H1 and M30 XGBoost models deleted and the two runs' fold models pruned, on the author's word |
 | 2026-11-26-11 | 2026-11-26 23:35 | Claude Code (Claude Opus 5.5) | Step 8: the H1 and M30 test strategies, runs and results deleted on the author's word; M30's run cancelled before it finished |
 | 2026-11-26-10 | 2026-11-26 22:49 | Claude Code (Claude Opus 5.5) | Step 8 (Any timeframe), part 1: intraday feature sets rebuilt; the Split tab on intraday bars; the rule benchmarks beside an intraday result; dual momentum's reason when SPY is not stored; H1 walk-forward run 1678 |
 | 2026-11-26-9 | 2026-11-26 18:53 | Claude Code (Claude Opus 5.5) | Step 7: the fold models of SPY runs 1640 and 1659 pruned |
