@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-27-8** · 2026-11-27 05:02 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-27-9** · 2026-11-27 05:04 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1330,7 +1330,7 @@ The order, each phase leaving a stack that works end to end, with the four suite
       3. *Newman in CI* (L, G60): the Postman collection against a started stack.
       4. *The command lines* (S each): `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing` and `loader.feeds` (lines named above): their arguments and exit codes, the functions under them being tested.
   - **Step 10's tests, the top six, on John's word (2026-11-27: "Top six, in order").** The plan, written before building; each is committed on passing tests.
-    - [ ] T1 *A whole backtest from stored candles* (step 6): `EngineApi.answer` for `POST /api/run`, as the engine's job worker calls it, on a seeded instrument; the saved row read back: the trades' nets add to the final equity, bars held at least one, the settings recorded, buy-and-hold and the rule benchmarks there. The rule decisions come from the loader over the jobs table, which no worker answers in CI (a five-minute wait); the engine gets a seam for them (`BacktestEngine.ruleDecisions`, the loader by default) so the test hands it its own.
+    - [x] T1 *A whole backtest from stored candles* (step 6), built (`WholeBacktestTest`, engine 214): `EngineApi.answer` for `POST /api/run`, as the engine's job worker calls it, on a seeded instrument; the saved row read back: the trades' nets add to the final equity, bars held at least one, the settings recorded, buy-and-hold and the rule benchmarks there. The rule decisions come from the loader over the jobs table, which no worker answers in CI (a five-minute wait); the engine gets a seam for them (`BacktestEngine.ruleDecisions`, the loader by default) so the test hands it its own. On 300 seeded days, `sma-crossover-10-50` from 2020-01-01 to 2021-02-28: the answer is 200, at least two trades, capital plus the trades' nets is the final equity, every trade held at least a bar; buy-and-hold and all eight rule benchmarks are there, Faber's trades add to its own final equity and dual momentum carries the reason it was given; the saved row has the same trades and final equity, and its settings the requested start and the capital. The engine container is rebuilt.
     - [ ] T2 *A small walk-forward run end to end* (step 5): on the seeded set (the configuration of `test_pipeline_integration.py`), the runner's `main` with two epochs: the run stored with folds, engines and lineage; a recalculation in place reproduces it; the Training stage fresh, then stale after a candle changes.
     - [ ] T3 *The verdict* (step 5): `walkforward.report` on fixed fold results: each verdict line and the naive flag.
     - [ ] T4 *The feature-store network's prediction* (step 5): `POST /api/nn/predict_features` on a model the offline trainer saved from the seeded set: each bar predicted from the set the model names; a bar outside it refused.
@@ -2419,6 +2419,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-9 | 2026-11-27 05:04 | Claude Code (Claude Opus 5.5) | Step 10's tests: T1 built, a whole backtest from stored candles |
 | 2026-11-27-8 | 2026-11-27 05:02 | Claude Code (Claude Opus 5.5) | Step 10's tests, the top six on John's word: the plan |
 | 2026-11-27-7 | 2026-11-27 05:00 | Claude Code (Claude Opus 5.5) | Step 10 (Test coverage review) closed: the report's second pass, line by line; five first-pass items corrected; no test added |
 | 2026-11-27-6 | 2026-11-27 04:54 | Claude Code (Claude Opus 5.5) | Step 10 (Test coverage review): the report, first pass, step by step; no test added |

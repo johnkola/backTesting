@@ -386,7 +386,7 @@ public class BacktestEngine {
         java.time.LocalDate to = barDate(series.getBar(series.getBarCount() - 1)).toLocalDate();
         com.google.gson.JsonObject body;
         try {
-            body = com.bazarbozorg.backtest.loader.LoaderClient.get("/api/nn/rules?symbol="
+            body = ruleDecisions.apply("/api/nn/rules?symbol="
                     + com.bazarbozorg.backtest.loader.LoaderClient.encode(instrument.symbol())
                     + "&source=" + com.bazarbozorg.backtest.loader.LoaderClient.encode(source.name())
                     + "&from=" + from + "&to=" + to);
@@ -414,6 +414,15 @@ public class BacktestEngine {
         }
         return scoreRules(body, series, timeframe, warmupBars, instrument.id(), instrument.symbol(), spy);
     }
+
+    /**
+     * Where the rule decisions come from: the loader's {@code GET /api/nn/rules},
+     * over the jobs table. A test hands the engine its own (step 10), since no
+     * worker answers the jobs table in CI and the call would wait five minutes.
+     * Package-private and set back by the test that changes it.
+     */
+    static java.util.function.Function<String, com.google.gson.JsonObject> ruleDecisions =
+            com.bazarbozorg.backtest.loader.LoaderClient::get;
 
     static final String FABER = "faber";
     static final String DUAL_MOMENTUM = "dual_momentum";
