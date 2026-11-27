@@ -327,6 +327,68 @@ def _seed_hourly() -> None:
 
 
 @requires_db
+def test_a_saved_strategys_split_is_cut_from_its_stored_matrix(config, seeded):
+    # The Split tab's report, as the route serves it, on a set built from
+    # candles and a strategy saved as the service saves one: its windows, its
+    # fold and its holdout come from the rows the set stores, read through the
+    # run's own setup (the strategy's set, its kept columns, its lookback).
+    # Its other tests run on a fake store.
+    pytest.importorskip("talib")
+    from fastapi.testclient import TestClient
+
+    from loader.main import app
+    from nn import feature_store
+
+    set_id = _build(config)
+    sid = _save_strategy(features=("price_close", "volume", "day_of_week", "rsi_14", "vix"))
+    r = TestClient(app).get("/api/nn/walkforward/split", params={"strategyId": sid})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    kept = ["price_close", "volume", "day_of_week_sin", "day_of_week_cos", "rsi_14"]
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        rows = feature_store.read_matrix(cur, set_id, columns=kept).dates
+
+    assert body["strategy"] == {"id": sid, "name": STRATEGY, "version": 1, "instrument": SYMBOL,
+                                "source": SOURCE, "timeframe": "D1"}
+    assert (body["setId"], body["columns"]) == (set_id, 5)
+    assert body["dropped"] == [["vix", "not in this feature set"]]
+    assert (body["rows"], body["firstRow"], body["lastRow"]) == (
+        len(rows), rows[0].isoformat(), rows[-1].isoformat())
+    assert (body["lookback"], body["purgeBars"], body["windowEnd"]) == (20, 5, "2021-12-31")
+
+    # Each saved window holds the stored rows inside it.
+    def inside(lo: str, hi: str) -> list[dt.date]:
+        return [d for d in rows if dt.date.fromisoformat(lo) <= d <= dt.date.fromisoformat(hi)]
+
+    for block in body["blocks"]:
+        days = inside(WINDOWS[block["block"]]["from"], WINDOWS[block["block"]]["to"])
+        assert (block["rows"], block["firstRow"], block["lastRow"], block["used"]) == (
+            len(days), days[0].isoformat(), days[-1].isoformat(), True), block
+    assert [b["block"] for b in body["blocks"]] == ["train", "validation", "test"]
+
+    # One fold: trained on 2020's labelled rows, the five before 2021 purged;
+    # scored on 2021, stopping where a label would read past the window end.
+    labels = rows[19:]                       # a row is labelled once it has 20 bars behind it
+    at = {d.isoformat(): i for i, d in enumerate(labels)}
+    [fold] = body["folds"]
+    assert fold["valYear"] == 2021
+    assert fold["trainFrom"] == next(d for d in labels if d.year == 2020).isoformat()
+    assert fold["valFrom"] == "2021-01-01"
+    assert at[fold["valFrom"]] - at[fold["trainTo"]] == 6
+    assert fold["trainRows"] == at[fold["trainTo"]] - at[fold["trainFrom"]] + 1
+    last = at[fold["valTo"]]
+    assert labels[last + 5] <= dt.date(2021, 12, 31) < labels[last + 6]
+    assert fold["valRows"] == last - at[fold["valFrom"]] + 1
+
+    # The holdout trains on both years and scores the test block alone.
+    h = body["holdout"]
+    assert (h["trainFrom"], h["testFrom"]) == (fold["trainFrom"], "2022-01-03")
+    assert at[h["testFrom"]] - at[h["trainTo"]] == 6
+    assert labels[at[h["testTo"]] + 5] <= dt.date(2022, 6, 30) < labels[at[h["testTo"]] + 6]
+    assert h["testRows"] == at[h["testTo"]] - at[h["testFrom"]] + 1
+
+
+@requires_db
 def test_an_hourly_set_is_built_read_and_split_by_its_bars(config, seeded):
     # Step 8: an intraday calendar inherits the daily file; its matrix is keyed
     # by bar time, which the split once could not compare with a date.

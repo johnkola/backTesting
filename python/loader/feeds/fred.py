@@ -15,10 +15,10 @@ zeroed. Used by `fetch_fred_series.py` and by the feeds.
 
 from __future__ import annotations
 
-import json
 import urllib.parse
 import urllib.request
 
+from loader.feeds.answers import get_json, quote
 from loader.feeds.core import Bar, ProviderError
 
 GRAPH_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
@@ -47,15 +47,20 @@ def fetch_api(series: str, api_key: str, start: str | None, end: str | None,
         params["observation_end"] = end
     url = f"{API_URL}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-    return api_to_bars(payload, series)
+    return api_to_bars(get_json(req, f"FRED's answer for '{series}'", timeout), series)
 
 
 def api_to_bars(payload: dict, series: str) -> tuple[list[Bar], int]:
+    if not isinstance(payload, dict):
+        raise ProviderError(f"FRED's answer for '{series}' is not an object: {quote(payload)}")
+    if payload.get("error_message"):
+        raise ProviderError(f"FRED refused '{series}': {payload['error_message']}")
     bars: list[Bar] = []
     skipped = 0
-    for obs in payload.get("observations", []):
+    for obs in payload.get("observations") or []:
+        if not isinstance(obs, dict) or not obs.get("date"):
+            raise ProviderError(f"FRED's answer for '{series}' has an observation "
+                                f"with no date: {quote(obs)}")
         raw = (obs.get("value") or "").strip()
         if not raw or raw == ".":
             skipped += 1

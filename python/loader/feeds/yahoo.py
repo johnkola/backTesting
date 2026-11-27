@@ -10,11 +10,11 @@ feeds, so both store the same numbers.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import urllib.parse
 import urllib.request
 from zoneinfo import ZoneInfo
 
+from loader.feeds.answers import get_json, quote
 from loader.feeds.core import Bar, ProviderError
 
 CHART_URL = (
@@ -76,8 +76,7 @@ def fetch(symbol: str, period1: int, period2: int, interval: str = "1d",
     url = CHART_URL.format(symbol=urllib.parse.quote(yahoo_symbol(symbol)),
                            period1=period1, period2=period2, interval=interval)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return get_json(req, f"Yahoo's answer for '{symbol}'", timeout)
 
 
 def to_bars(payload: dict, symbol: str, adjusted: bool = False) -> tuple[list[Bar], int]:
@@ -95,21 +94,23 @@ def to_bars(payload: dict, symbol: str, adjusted: bool = False) -> tuple[list[Ba
     On SPY that is roughly 1.7 points of annual return, which is the
     difference between a strategy beating the index and losing to it.
     """
-    chart = payload.get("chart", {})
-    if chart.get("error"):
-        raise ProviderError(f"Yahoo error for '{symbol}': {chart['error']}")
-    results = chart.get("result") or []
-    if not results:
-        raise ProviderError(f"No data returned for '{symbol}'.")
-
-    result = results[0]
+    result = _result(payload, symbol)
     timestamps = result.get("timestamp") or []
-    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
-    opens, highs = quote.get("open", []), quote.get("high", [])
-    lows, closes = quote.get("low", []), quote.get("close", [])
-    volumes = quote.get("volume", [])
+    q = (result.get("indicators", {}).get("quote") or [{}])[0]
+    opens, highs = q.get("open") or [], q.get("high") or []
+    lows, closes = q.get("low") or [], q.get("close") or []
+    volumes = q.get("volume") or []
     if not timestamps:
         raise ProviderError(f"No candles for '{symbol}' (check symbol / range).")
+    # A price column shorter than the timestamps cannot be lined up with them.
+    # Yahoo has answered with timestamps and an empty quote for a name with no
+    # trades; read on, it failed as a bare IndexError.
+    short = [f"{len(col)} {name}" for name, col in
+             (("open", opens), ("high", highs), ("low", lows), ("close", closes))
+             if len(col) < len(timestamps)]
+    if short:
+        raise ProviderError(f"Yahoo's answer for '{symbol}' is malformed: "
+                            f"{len(timestamps)} timestamps but {', '.join(short)} values")
 
     adjcloses = []
     if adjusted:
@@ -156,16 +157,25 @@ def to_bars(payload: dict, symbol: str, adjusted: bool = False) -> tuple[list[Ba
     return bars, dropped
 
 
+def _result(payload: object, symbol: str) -> dict:
+    """The chart's first result, or a ProviderError with Yahoo's reason, or
+    with what came instead of a chart."""
+    chart = payload.get("chart") if isinstance(payload, dict) else None
+    if not isinstance(chart, dict):
+        raise ProviderError(f"Yahoo's answer for '{symbol}' holds no chart: {quote(payload)}")
+    if chart.get("error"):
+        err = chart["error"]
+        why = (err.get("description") or err.get("code")) if isinstance(err, dict) else None
+        raise ProviderError(f"Yahoo error for '{symbol}': {why or err}")
+    results = chart.get("result") or []
+    if not results or not isinstance(results[0], dict):
+        raise ProviderError(f"No data returned for '{symbol}'.")
+    return results[0]
+
+
 def fetch_closes(symbol: str, period1: int, period2: int, timeout: int = 30) -> dict[str, float]:
     """Date -> split-adjusted close for one symbol: what breadth is built from."""
-    payload = fetch(symbol, period1, period2, timeout=timeout)
-    chart = payload.get("chart", {})
-    if chart.get("error"):
-        raise ProviderError(chart["error"].get("description") or str(chart["error"]))
-    results = chart.get("result") or []
-    if not results:
-        raise ProviderError("no result")
-    result = results[0]
+    result = _result(fetch(symbol, period1, period2, timeout=timeout), symbol)
     stamps = result.get("timestamp") or []
     closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close", [])
     out: dict[str, float] = {}

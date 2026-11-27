@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-56** · 2026-11-27 12:19 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-57** · 2026-11-27 17:00 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -14,8 +14,8 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 ## Where it stands
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
-closed on full unit testing (his decision of 2026-11-26), and the twenty-two tests he chose
-from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,239, engine 225,
+closed on full unit testing (his decision of 2026-11-26), and the twenty-five tests he chose
+from step 10's reviews built (six, seven, three, three, three, then three). Suites: Python 1,268, engine 225,
 service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
 
@@ -123,9 +123,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 1 | The audit and checks routes | `loader/audit_api.py` (53%), `loader/checks_api.py` (73%) | S |
-| 1 | The providers' bad answers | Yahoo (68%), FRED (65%), the Bank of Canada (67%), breadth (73%): an empty or malformed answer fails its series with the reason | S |
-| 3 | The split from stored rows | The windows, folds and holdout from the stored matrix through `strategy_setup` (today on a fake store) | S |
 | 4 | The rules route | `nn/rules_api.py` (61%): no SPY or no T-bills, an unknown symbol, a bad window | S |
 | 4 | The indicator rules on hourly bars | No test scores one of the five on an hourly result | S |
 | 5 | The input snapshot check | `walkforward.check_snapshot`: whether a run would read the same inputs today | S |

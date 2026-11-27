@@ -104,7 +104,15 @@ def fetch_bars(feed: Feed, start: dt.date | None, ctx: RunContext) -> list[core.
     elif feed.provider == "breadth":
         if ctx.closes is None:
             raise FeedError("breadth members were not loaded")
-        bars, _ = breadth.compute(ctx.closes, feed.ref)
+        bars, thin = breadth.compute(ctx.closes, feed.ref)
+        if not bars:
+            # Empty, it compared as a provider that dropped every stored day of
+            # the overlap, and the series read as held, waiting for an Apply.
+            raise core.ProviderError(
+                f"no {feed.ref} days to store: {len(ctx.closes)} member(s) cached in "
+                f"{members.cache_dir()}"
+                + (f", {thin} day(s) with fewer than {breadth.DEFAULT_MIN_MEMBERS} of them"
+                   if thin else ""))
     elif feed.provider == "sec":
         if ctx.earnings is None:
             raise FeedError(f"the SEC filings could not be loaded: {ctx.earnings_error}")
