@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-53** · 2026-11-27 09:04 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-54** · 2026-11-27 09:19 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -35,9 +35,9 @@ files that share the feeds machinery (its lock and `feed_runs`: `test_feeds_api`
 Now: 1 and 3 are in. Four timed runs in 8 processes took 7.0 to 8.3 minutes (12.3 in
 one). They found one race, fixed: a fixture borrowed the newest feature set, which in a
 parallel run could be another file's, deleted mid-test. Every other failure was the local
-database's connection limit: 25 (`TS_TUNE_MEMORY: 2GB` and `TS_TUNE_NUM_CPUS: 2` in
-`docker-compose.yml`), of which the running stack holds about 19. Whether to raise it is
-John's call (under "Waiting on John"). The slowest file is `test_feature_catalog`, about 7
+database's connection limit, 25, of which the stack holds about 19; at John's word it is
+100 now (`docker-compose.yml`, the database recreated, its data kept). Next: two runs at
+the new limit, then CI to `-n 4`. The slowest file is `test_feature_catalog`, about 7
 minutes alone under load: each of its syncs scans every stored feature value (the
 catalogue sync item under "Open gaps").
 
@@ -68,10 +68,6 @@ Decisions only he can make. Each blocks the work named with it.
    income rather than their EPS (summed EPS falls at every split).
 10. **G53's items** (dividends, account currency, the superficial-loss rule, separate cost
     items) stay out until he adds them to the plan.
-11. **The local database allows 25 connections** (`TS_TUNE_MEMORY: 2GB`, `TS_TUNE_NUM_CPUS: 2`
-    in `docker-compose.yml`; the stack holds about 19). The tests in parallel run out of
-    them. Raising it (`-c max_connections=100` on the database's command) restarts the
-    database. Blocks running the suite in parallel on this machine.
 ## For John to pick up
 
 Changes to files the coding agent does not edit (his rule of 2026-11-26).

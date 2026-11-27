@@ -17,7 +17,12 @@ services:
     # creates yearly chunks, which keeps the count low, but databases created
     # before that change still carry their old chunks; this is the headroom
     # that keeps them queryable either way.
-    command: postgres -c max_locks_per_transaction=1024
+    #
+    # max_connections: timescaledb-tune sized it to 25 for the 2 GB above when
+    # the database was created, and the stack holds about 19 of those. The
+    # Python tests in parallel (pytest -n) open a few per process and ran out
+    # ("too many clients already"); 100 is Postgres's own default.
+    command: postgres -c max_locks_per_transaction=1024 -c max_connections=100
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
     healthcheck:
