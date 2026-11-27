@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-59** · 2026-11-27 18:17 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-60** · 2026-11-27 18:36 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -14,17 +14,20 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 ## Where it stands
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
-closed on full unit testing (his decision of 2026-11-26), and the thirty-one tests he chose
-from step 10's reviews built (six, seven, three, three, three, three, three, then three). Suites: Python 1,295, engine 229,
-service 103, client 296; Python line coverage 86% at the last line report. Step 10's
-review was run again on 2026-11-27: its result is "Test gaps" below.
+closed on full unit testing (his decision of 2026-11-26), and every test he chose from
+step 10's reviews built (six, seven, three, three, three, three, three, three, then two):
+"Test gaps" below has none left. Suites: Python 1,308, engine 233, service 103, client 302;
+Python line coverage 86% at the last line report. Step 10's review was run again on
+2026-11-27: its result is "Test gaps" below.
 
 ## Waiting on John
 
 Decisions only he can make. Each blocks the work named with it.
 
-1. **The feeds hold QQQ and SPY** (yahoo-adj): 2 stored days differ from the provider
-   (2026-11-20 to 2026-11-23) and both series end 2 sessions behind. Apply on the Data
+1. **The feeds hold seven series** (the 2026-11-27 evening run): QQQ, SPY and PSQ, yahoo and
+   yahoo-adj, on 2026-11-20 and 11-23 (Yahoo revised the volumes, by up to 2.2%, and one of
+   PSQ's prices), and XIU yahoo-adj on 11 days from 2026-11-10 (a dividend factor: every
+   price about 0.6% lower). Each has 3 sessions waiting behind the hold. Apply on the Data
    stage rewrites stored history.
 2. **15 stored backtest results say 0 bars held** for every trade (`holdingBars` in their
    `result_json`; the engine counted none until 2026-11-27). Rerunning them follows the
@@ -121,15 +124,19 @@ line report (1,207 tests, 86% of `nn`, `loader` and `jobs`; the untested lines n
 the service's routes (all 70 called by a service test since this review), the engine's classes, and the
 client's modules (no page or component has a test).
 
-| Step | Where | What a test would check, and why | Size |
-|---|---|---|---|
-| 9 | The client's tooltip dictionaries | Every metric and field a page shows has its hint (`fieldHints`, `metricHints`, `cohesionHints`), so a renamed field cannot lose its tooltip unseen (G59) | S |
-| 9 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models` (`--prune`, `--list`), `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`, and the engine's `backtest`, `train`, `signals`: arguments and exit codes | S each |
+None is open: every row of the review is built. What could not be tested follows.
 
-**An intermittent failure**: `test_walkforward.py::test_the_stopper_keeps_the_best_epoch_and_stops_after_patience`
-failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not
-the best epoch's 4.0). It passed alone three times and in every full run since, and no
-test changes torch's global state. Cause not found; in CI it would fail the job at random.
+**Two intermittent failures**:
+
+- `test_walkforward.py::test_the_stopper_keeps_the_best_epoch_and_stops_after_patience`
+  failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not
+  the best epoch's 4.0). It passed alone three times and in every full run since, and no
+  test changes torch's global state. Cause not found; in CI it would fail the job at random.
+- `test_feeds_api.py::test_an_apply_from_the_route_lands_the_held_revision` failed in a
+  full local run that overlapped the evening feeds run (2026-11-27, 18:30 New York): its
+  Apply takes the same run lock as the worker's scheduled run, was refused as busy, and
+  passed when run again after it. Only on a machine whose worker runs the schedule; CI has
+  none. A test-only lock would keep them apart.
 
 **Not testable as things stand**, with what it would take:
 

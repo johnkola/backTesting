@@ -16,6 +16,7 @@ import picocli.CommandLine.Option;
 import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * Trains a {@link PersistableModelStrategy} and persists the resulting model
@@ -23,7 +24,7 @@ import java.util.Map;
  * Output is the model cache only; there's no explicit output path.
  */
 @Command(name = "train", description = "Train a persistable model strategy and cache it on disk")
-public class TrainCommand implements Runnable {
+public class TrainCommand implements Callable<Integer> {
 
     @Option(names = {"-s", "--strategy"}, required = true,
             description = "Strategy name (must support training, e.g. nn-feedforward)")
@@ -61,7 +62,7 @@ public class TrainCommand implements Runnable {
     // loader process; a Java-side --keep-last flag would be a no-op.
 
     @Override
-    public void run() {
+    public Integer call() {
         DatabaseManager dbManager = DatabaseManager.getInstance();
         try {
             dbManager.initialize();
@@ -74,14 +75,14 @@ public class TrainCommand implements Runnable {
                 System.err.println("Strategy not found: " + strategyName);
                 System.err.println("Available strategies: "
                         + StrategyRegistry.getInstance().getAvailableStrategies());
-                return;
+                return ExitCodes.REFUSED;
             }
 
             if (!(strategy instanceof PersistableModelStrategy)) {
                 System.err.println("Strategy '" + strategyName + "' does not support training "
                         + "(only strategies implementing PersistableModelStrategy can be trained — "
                         + "indicator strategies like sma-crossover have no model to cache).");
-                return;
+                return ExitCodes.REFUSED;
             }
 
             Timeframe timeframe = Timeframe.fromCode(timeframeCode);
@@ -116,10 +117,16 @@ public class TrainCommand implements Runnable {
             if (summary.cacheKey() != null) {
                 System.out.printf("Cache key:   %s%n", summary.cacheKey());
             }
+            return ExitCodes.OK;
 
+        } catch (IllegalArgumentException e) {
+            // A date or timeframe it cannot read, an instrument or source it does not know.
+            System.err.println("Training failed: " + e.getMessage());
+            return ExitCodes.REFUSED;
         } catch (Exception e) {
             System.err.println("Training failed: " + e.getMessage());
             e.printStackTrace();
+            return ExitCodes.FAILED;
         } finally {
             dbManager.shutdown();
         }

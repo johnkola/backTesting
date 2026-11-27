@@ -19,6 +19,7 @@ import picocli.CommandLine.Option;
 import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * DESIGN.md's Strategy 1 — score a strategy's calls without acting on them.
@@ -33,7 +34,7 @@ import java.util.Map;
 @Command(name = "signals",
          description = "Score a strategy's buy/sell/hold calls without trading them "
                  + "(DESIGN.md Strategy 1)")
-public class SignalsCommand implements Runnable {
+public class SignalsCommand implements Callable<Integer> {
 
     @Option(names = {"-s", "--strategy"}, required = true,
             description = "Strategy name (e.g. nn-feature-store)")
@@ -73,7 +74,7 @@ public class SignalsCommand implements Runnable {
     private String modelVersion;
 
     @Override
-    public void run() {
+    public Integer call() {
         DatabaseManager dbManager = DatabaseManager.getInstance();
         try {
             dbManager.initialize();
@@ -85,7 +86,7 @@ public class SignalsCommand implements Runnable {
                 System.err.println("Strategy not found: " + strategyName);
                 System.err.println("Available strategies: "
                         + StrategyRegistry.getInstance().getAvailableStrategies());
-                return;
+                return ExitCodes.REFUSED;
             }
 
             Timeframe timeframe = Timeframe.fromCode(timeframeCode);
@@ -105,6 +106,7 @@ public class SignalsCommand implements Runnable {
                     from, to, source, ModelLoadPolicy.LOAD_ONLY, modelVersion, horizonBars);
 
             System.out.println(new SignalReportFormatter().formatReport(report));
+            return ExitCodes.OK;
 
         } catch (ModelNotCachedException e) {
             System.err.println(e.getMessage());
@@ -113,9 +115,15 @@ public class SignalsCommand implements Runnable {
                         + " -i " + instrumentSymbol + " -t " + timeframeCode
                         + " --source " + source + "\"");
             }
+            return ExitCodes.REFUSED;
+        } catch (IllegalArgumentException e) {
+            // A date or timeframe it cannot read, an instrument or source it does not know.
+            System.err.println("Signal scoring failed: " + e.getMessage());
+            return ExitCodes.REFUSED;
         } catch (Exception e) {
             System.err.println("Signal scoring failed: " + e.getMessage());
             e.printStackTrace();
+            return ExitCodes.FAILED;
         } finally {
             dbManager.shutdown();
         }

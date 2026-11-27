@@ -16,6 +16,8 @@ export const metricHints: Record<string, string> = {
     'Percentage change in equity from the first bar to the last, after costs. Read it against Buy & hold — beating "do nothing" on this instrument is the bar.',
   sharpe:
     'Return per unit of volatility, computed from per-bar returns. There is no universal good value; use it to rank strategies on the same data, not as a pass mark.',
+  sortino:
+    'Like Sharpe, but it divides by the losing side only: the mean per-bar return over the spread of the losses, a gain counting as zero, annualised the same way. A dash means no bar lost, so there is nothing to divide by.',
   'max drawdown':
     'The worst peak-to-trough fall in equity during the run. Lower is better. A big number means a live trader would likely have switched the system off before the end.',
   'win rate':
@@ -30,6 +32,10 @@ export const metricHints: Record<string, string> = {
     'Account value at the last bar, after any open position is force-closed. Commission and slippage are already taken out, so this is money you would actually hold.',
   initial:
     'Capital the run started with, before the first trade. Set it on the Run form, or leave it empty to use the engine default.',
+  slippage:
+    'What filling worse than the price cost over the run, in dollars: each fill\'s gap from the next open (or from the last close, for the position closed at the end), times the shares. Already out of the final equity, like commission.',
+  tax:
+    'Tax paid on realized gains at the rate the run was given, in dollars. Each close is taxed on its gain after commission, net of losses carried from earlier trades, and the position closed at the end is taxed too. "before tax" means the run was given no rate.',
 }
 
 /**

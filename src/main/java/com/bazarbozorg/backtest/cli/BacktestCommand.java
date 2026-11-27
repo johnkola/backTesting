@@ -27,6 +27,7 @@ import picocli.CommandLine.Option;
 import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * Picocli command to run a backtest with a specified strategy, instrument,
@@ -36,7 +37,7 @@ import java.util.Map;
 @Command(name = "run",
         description = "Run a backtest of a model strategy, or of a rule benchmark "
                 + "(sma-crossover, rsi, macd, bollinger, ema-triple: kept for comparison only)")
-public class BacktestCommand implements Runnable {
+public class BacktestCommand implements Callable<Integer> {
 
     @Option(names = {"-s", "--strategy"}, required = true,
             description = "Model strategy or rule benchmark name (see list-strategies)")
@@ -90,7 +91,7 @@ public class BacktestCommand implements Runnable {
     private String modelVersion;
 
     @Override
-    public void run() {
+    public Integer call() {
         DatabaseManager dbManager = DatabaseManager.getInstance();
         try {
             dbManager.initialize();
@@ -104,7 +105,7 @@ public class BacktestCommand implements Runnable {
                 System.err.println("Strategy not found: " + strategyName);
                 System.err.println("Available strategies: "
                         + StrategyRegistry.getInstance().getAvailableStrategies());
-                return;
+                return ExitCodes.REFUSED;
             }
 
             // Resolve timeframe
@@ -154,7 +155,7 @@ public class BacktestCommand implements Runnable {
 
             if (result == null) {
                 System.err.println("Backtest returned no results.");
-                return;
+                return ExitCodes.FAILED;
             }
 
             // Format and print results
@@ -178,6 +179,7 @@ public class BacktestCommand implements Runnable {
             for (var look : resultRepo.testWindowLooks(resultId)) {
                 System.err.println("WARNING: " + look.describe(instrumentSymbol));
             }
+            return ExitCodes.OK;
 
         } catch (ModelNotCachedException e) {
             System.err.println(e.getMessage());
@@ -186,9 +188,16 @@ public class BacktestCommand implements Runnable {
                         + " -i " + instrumentSymbol + " -t " + timeframeCode
                         + " --source " + source + "\"");
             }
+            return ExitCodes.REFUSED;
+        } catch (IllegalArgumentException e) {
+            // What was asked cannot be run: a date or timeframe it cannot read,
+            // an instrument or source it does not know, one that cannot be traded.
+            System.err.println("Backtest failed: " + e.getMessage());
+            return ExitCodes.REFUSED;
         } catch (Exception e) {
             System.err.println("Backtest failed: " + e.getMessage());
             e.printStackTrace();
+            return ExitCodes.FAILED;
         } finally {
             dbManager.shutdown();
         }

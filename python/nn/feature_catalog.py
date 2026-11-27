@@ -212,12 +212,12 @@ def sync(conn, cfg: feature_config.FeatureConfig | None = None) -> dict[str, int
     return {"upserted": upserted, "pruned": pruned, "rangesUpdated": ranged}
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Sync feature_definitions from features.toml.")
     ap.add_argument("--sync", action="store_true",
                     help="Write the catalogue. Without it, print what would be written.")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     cfg = feature_config.load()
     rows = rows_from_config(cfg)

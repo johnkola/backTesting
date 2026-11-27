@@ -472,6 +472,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     return 2
                 done = [i for i in args.id if revert(conn, i, args.reason)]
                 print(f"reverted {len(done)} repair(s): {done}")
+                # A row that is not applied has nothing to take back: the route
+                # answers 404 for it, and a script must not read it as done.
+                missed = [i for i in args.id if i not in done]
+                if missed:
+                    print(f"not applied, so not reverted: {missed}")
+                    return 1
                 return 0
             with conn.cursor() as cur:
                 rows = log(cur, args.symbol, args.source, None if args.all else "held")

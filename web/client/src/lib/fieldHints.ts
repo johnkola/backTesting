@@ -214,10 +214,6 @@ export const fieldHints: Record<string, string> = {
     'Return target: the forecast return a call must clear, as a fraction (0.01 is '
     + '1%). A forecast at or above it is BUY, at or below its negative SELL, HOLD '
     + 'between. 0 calls on the forecast\'s sign alone.',
-  'strategy.features':
-    'The exact columns the network sees. Recorded with the run, so two runs with '
-    + 'different feature lists are two different experiments rather than one '
-    + 'unexplained difference.',
 
   // --- Features tab ------------------------------------------------------
   'features.catalogueCount':
@@ -292,13 +288,6 @@ export const fieldHints: Record<string, string> = {
     'Fingerprint of how the column is computed — its method, parameters and '
     + 'source series. Two runs can be compared by which of their features were '
     + 'computed differently.',
-
-  'strategy.featuresNotYetUsed':
-    'Recorded with the strategy, but not yet consumed by training. '
-    + 'nn-feedforward computes its own fixed 12 features from the candles and '
-    + 'takes no feature list; the stored-feature trainer uses the whole set and '
-    + 'has no subset option. Selecting columns here is therefore a declaration '
-    + 'of intent until one of those learns to honour it.',
 
   // --- Train -------------------------------------------------------------
   'train.savedStrategy':
