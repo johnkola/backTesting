@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-26** · 2026-11-27 05:58 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-27** · 2026-11-27 06:11 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -13,9 +13,10 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 ## Where it stands
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
-closed on full unit testing (his decision of 2026-11-26), and the six tests he chose
-from step 10's report built. Suites: Python 1,200, engine 214, service 101, client 292;
-Python line coverage 82%.
+closed on full unit testing (his decision of 2026-11-26), and the thirteen tests he chose
+from step 10's reviews built (six, then seven). Suites: Python 1,207, engine 219,
+service 101, client 294; Python line coverage 86%. Step 10's review was run again on
+2026-11-27: its result is "Test gaps" below.
 
 ## Waiting on John
 
@@ -110,48 +111,59 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 
 ## Test gaps
 
-What the tests do not cover yet, from step 10's report (checked line by line on
-2026-11-27). Report only: none is added until John says. Python line coverage is 82%;
-the service calls 67 of its 70 routes under test.
+Step 10's review, run again on 2026-11-27 after the day's tests: where more unit or
+integration tests could go, what each would check, and why, by step and most useful
+first. Report only: none is added until John says. Grounded in a full Python run with a
+line report (1,207 tests, 86% of `nn`, `loader` and `jobs`; the untested lines named),
+the service's routes (67 of 70 called by a service test), the engine's classes, and the
+client's modules (no page or component has a test).
 
-| Where | What a test would check | Size |
-|---|---|---|
-| The Python worker as started | `jobs/worker.py` `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
-| Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
-| An import's roll-ups | W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |
-| The fill methods' refusals | No bar before the day, a related index without symbol and source or without a bar, an unknown method; the default falling back from roll-up to carry | S |
-| The feeds timer | `loader/feeds/schedule.py` (45%): the thread fires at its time and works out the next, stops when asked, refuses a bad `FEEDS_SCHEDULE` | S |
-| The audit and checks routes | `loader/audit_api.py` (53%), `loader/checks_api.py` (73%) | S |
-| The providers' bad answers | Yahoo, FRED and the Bank of Canada: an empty or malformed answer fails its series with the reason | S |
-| The preview on a built set | `nn/feature_preview.py` (62%): before and after on the seeded set, warm-up days null, window edges, a column the set lacks a 404 | S |
-| The split from stored rows | The windows, folds and holdout from the stored matrix through `strategy_setup` (today on a fake store) | S |
-| The rules route | `nn/rules_api.py` (61%): no SPY or no T-bills, an unknown symbol, a bad window | S |
-| The indicator rules on hourly bars | No test scores one of the five on an hourly result | S |
-| The input snapshot check | `walkforward.check_snapshot`: whether a run would read the same inputs today | S |
-| The models list and the train route | `GET /api/nn/models`; `POST /api/nn/train`'s refusal | S |
-| The feature-store strategy in the engine | `FeatureStoreNeuralNetworkStrategy` calls the loader through a static client with no seam; its route is tested, the strategy is not | M |
-| A set on a second instrument | `features.toml@ZZB/zz-b` on a second seeded instrument: its own series, its own hash, the first set still fresh | M |
-| The status on a built second set | The Features stage names that instrument's set | S |
-| The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`: arguments and exit codes | S each |
+| Step | Where | What a test would check, and why | Size |
+|---|---|---|---|
+| 5 | The runner from a saved strategy | `walkforward.main --strategy-id`, the path the Training tab starts: the strategy's columns kept, dropped and partial, its train coverage, the refusal when no train bar has every kept column, and its provenance on the stored run. Every runner test so far starts it from flags | M |
+| 5 | The runner's refusals | Training over a series with an open flagged row is refused (the build's refusal is tested, the runner's is not); a missing open or close in the bars it would trade is refused | S |
+| 8 | The holdout run | `--test`: one fold over the test block, its look recorded before anything is scored, an earlier look said ("TEST WINDOW REUSED") | M |
+| 5 | Strategy 2 end to end | A margin run: the PSQ and rate series loaded, the margin refusals, the margin figures stored. Its parts are tested, the run is not | M |
+| 0 | The Python worker as started | `jobs/worker.py` (69%) `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
+| 0 | The engine worker's loop | `JobWorker.start`: it polls, takes a job, beats its heartbeat and stops when asked. `runOne` is tested; the loop around it is not | S |
+| 0 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
+| 2 | The pipeline status route | `nn/pipeline_api.py` (45%): the answer is kept a minute per timeframe and instrument, `fresh` recomputes it, symbol without source is a 400, and the Data stage reads "running" while a feeds run is going. The status itself is tested, the route is not | S |
+| 2 | The preview on a built set | `nn/feature_preview.py` (62%): before and after on the seeded set, warm-up days null, window edges, a column the set lacks a 404 | S |
+| 1 | An import's roll-ups | `loader/imports_api.py` (70%): W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |
+| 1 | The fill methods' refusals | `loader/missing.py` (77%): no bar before the day, a related index without symbol and source or without a bar, an unknown method; the default falling back from roll-up to carry | S |
+| 1 | The feeds timer | `loader/feeds/schedule.py` (51%): the thread fires at its time and works out the next, stops when asked, refuses a bad `FEEDS_SCHEDULE` | S |
+| 1 | The audit and checks routes | `loader/audit_api.py` (53%), `loader/checks_api.py` (73%) | S |
+| 1 | The providers' bad answers | Yahoo (68%), FRED (65%), the Bank of Canada (67%), breadth (73%): an empty or malformed answer fails its series with the reason | S |
+| 3 | The split from stored rows | The windows, folds and holdout from the stored matrix through `strategy_setup` (today on a fake store) | S |
+| 4 | The rules route | `nn/rules_api.py` (61%): no SPY or no T-bills, an unknown symbol, a bad window | S |
+| 4 | The indicator rules on hourly bars | No test scores one of the five on an hourly result | S |
+| 5 | The input snapshot check | `walkforward.check_snapshot`: whether a run would read the same inputs today | S |
+| 5 | The models list and the train route | `GET /api/nn/models`; `POST /api/nn/train`'s refusal | S |
+| 5 | The feature-store strategy in the engine | `FeatureStoreNeuralNetworkStrategy` calls the loader through a static client with no seam; its route is tested, the strategy is not | M |
+| 7 | A set on a second instrument | `features.toml@ZZB/zz-b` on a second seeded instrument: its own series, its own hash, the first set still fresh | M |
+| 7 | The status on a built second set | The Features stage names that instrument's set | S |
+| 9 | The client's tooltip dictionaries | Every metric and field a page shows has its hint (`fieldHints`, `metricHints`, `cohesionHints`), so a renamed field cannot lose its tooltip unseen (G59) | S |
+| 9 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models` (`--prune`, `--list`), `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`, and the engine's `backtest`, `train`, `signals`: arguments and exit codes | S each |
 
 **An intermittent failure**: `test_walkforward.py::test_the_stopper_keeps_the_best_epoch_and_stops_after_patience`
-failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not the
-best epoch's 4.0). It passed alone three times and in two other full runs that day, and
-no test changes torch's global state. Cause not found; in CI it would fail the job at
-random.
+failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not
+the best epoch's 4.0). It passed alone three times and in every full run since, and no
+test changes torch's global state. Cause not found; in CI it would fail the job at random.
 
 **Not testable as things stand**, with what it would take:
 
-- The client's pages and components (17 pages, the result page's panels, the Split tab,
-  the instrument picker): Vitest runs in Node without React Testing Library (G60).
-- The Postman collection and an end-to-end path: both need the whole stack, which CI
-  does not start (G60).
+- The client's pages and components (23 pages, 22 components, among them the result
+  page's panels, the Split tab and the instrument picker) and its hooks (`useApiData`,
+  `useInstrument`, `useTimeframe`): Vitest runs in Node without React Testing Library (G60).
+- The Postman collection and an end-to-end path in a browser: both need the whole stack,
+  which CI does not start (G60).
 - `flags.scan`: reads every stored series and writes flags on real data; needs a
   database of its own.
 - `PythonCalls.call` and `LoaderClient` end to end: they wait on the real jobs table,
-  which the running worker would claim. What they build is tested.
-- A full walk-forward on the real feature set: minutes a run. A small one on seeded
-  data is tested.
+  which the running worker would claim. What they build is tested, and the engine's job
+  hop is tested on a copy of the table.
+- A full walk-forward on the real feature set: minutes a run. Small ones on seeded data,
+  daily and hourly, are tested.
 
 ## Code that still cites this file
 
