@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-27** · 2026-11-27 06:11 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-28** · 2026-11-27 06:14 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -17,6 +17,15 @@ closed on full unit testing (his decision of 2026-11-26), and the thirteen tests
 from step 10's reviews built (six, then seven). Suites: Python 1,207, engine 219,
 service 101, client 294; Python line coverage 86%. Step 10's review was run again on
 2026-11-27: its result is "Test gaps" below.
+
+## In progress: three test gaps (John's go, 2026-11-27)
+
+Built one at a time on the seeded set, each committed on passing tests; each leaves this
+list and the "Test gaps" table when it is in.
+
+1. The runner from a saved strategy.
+2. The runner's refusals.
+3. The holdout run.
 
 ## Waiting on John
 
