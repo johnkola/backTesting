@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-33** · 2026-11-27 06:43 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-34** · 2026-11-27 06:58 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,6 +18,18 @@ closed on full unit testing (his decision of 2026-11-26), and the sixteen tests 
 from step 10's reviews built (six, seven, then three). Suites: Python 1,212, engine 219,
 service 101, client 294; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
+
+## In progress: three test gaps (John's go, 2026-11-27)
+
+Each committed on passing tests; each leaves this list and the "Test gaps" table when
+it is in.
+
+1. Strategy 2 end to end. Run on the seeded set: Strategy 2 holds only QQQ and reads PSQ
+   and Fed funds by name, which the test may not seed beside the real series. So the test
+   gives the runner a seeded inverse series and a flat rate, and lifts only the QQQ-only
+   refusal; the rest of the margin path is the real one.
+2. The pipeline status route.
+3. The Python worker as started.
 
 ## Waiting on John
 
