@@ -25,7 +25,7 @@ WHERE THE DATA COMES FROM. `data.sec.gov`, two documents per company:
     filings from 2009-07 (phased in to 2011), which is why column 40 starts
     around 2010.
 
-NET INCOME, NOT EPS (DESIGN-GAPS D5). The design says the members' EPS "added
+NET INCOME, NOT EPS. The design says the members' EPS "added
 up". Summed point in time, a 4:1 split cuts a member's EPS by four overnight,
 and 2020-2024 had several among the largest members, so the change column would
 show drops that are only splits. Summed net income is the index's real E (the

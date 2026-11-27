@@ -1,12 +1,13 @@
-# Gaps
+# Backlog
 
-> **Revision 2026-11-27-28** · 2026-11-27 06:14 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-29** · 2026-11-27 06:16 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
-Every gap open now, of any kind: what the design asks for that the code does not do
-yet, what the tests do not cover, and anything else missing or wrong. John and the
-coding agent gather them here. Only current gaps: when one is closed it leaves this
-file, and its record is the commit that closed it. The history is in git
-(`git log -p -- GAPS.md`, and before 2026-11-27 `docs/readonly-doc/backTesting-07-Design-Gaps.md`).
+Everything still open between John and the coding agent: the decisions waiting on him,
+the notes for him to pick up, what the design asks for that the code does not do yet,
+what the tests do not cover, and anything else missing or wrong. They gather it here.
+Only what is open now: when an item is closed it leaves this file, and its record is the
+commit that closed it. The history is in git (`git log -p --follow -- BACKLOG.md`; it was
+`GAPS.md` until 2026-11-27, and `docs/readonly-doc/backTesting-07-Design-Gaps.md` before that).
 
 Size: S under a day, M a few days, L a week or more, XL a rebuild.
 
@@ -60,7 +61,7 @@ Decisions only he can make. Each blocks the work named with it.
 Changes to files the coding agent does not edit (his rule of 2026-11-26).
 
 - **This file moved** on 2026-11-27 from `docs/readonly-doc/backTesting-07-Design-Gaps.md`
-  to `GAPS.md`. The old path is still named in `AGENTS.md` (lines 17, 24, 45, 101, 125,
+  to the root, now `BACKLOG.md`. The old path is still named in `AGENTS.md` (lines 17, 24, 45, 101, 125,
   430, 663, the current orders' "record your work only in backTesting-07-Design-Gaps"
   among them), `CLAUDE.md` (13, 15), `README.md` (969, 977, 1017),
   `backTesting-05-Requirements-Consolidated.md` (10, 11, 13),
