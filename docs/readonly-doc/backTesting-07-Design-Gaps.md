@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-27-14** · 2026-11-27 05:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-27-15** · 2026-11-27 05:26 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -13,6 +13,27 @@ author before work starts) · **gated** (the design puts it after something else
 **done**.
 
 Effort is an estimate: S is under a day, M a few days, L a week or more, XL a rebuild.
+
+---
+
+## Where it stands — 2026-11-27
+
+The current summary; the one below, of 2026-11-23, is kept as it was.
+
+**The implementation plan is done.** Steps 0 to 10 are closed: step 0 accepted by John (2026-11-24), steps 1 to 10 closed by this agent on full unit testing (John's decision of 2026-11-26). Step 10's report is under "Step 10 of the implementation plan" below, and its six tests John chose (T1 to T6) are built. Suites at `64c24d6`: Python 1,185 and the step 10 tests on top, engine 214, service 101, client 292; Python line coverage 82%.
+
+**Waiting on John**
+
+- **The feeds hold QQQ and SPY** (yahoo-adj): 2 stored days differ from the provider (2026-11-20 to 2026-11-23), and both series end 2 sessions behind. Apply on the Data stage rewrites stored history, so it is his.
+- **15 stored backtest results** keep `holdingBars` 0 in their trades (step 9, 9.2). Rerunning them is the stale-records rule's: back up, his go, delete, rerun.
+- **The notes for him to pick up** ("For the author to pick up, 2026-11-26"): `AGENTS.md`'s commit rule and container names, today's `README.md` edits, two routes missing from the README.
+
+**What could come next, quickest first** (his to choose)
+
+1. The decisions above.
+2. More of step 10's tests, about 25 left (the report, by step). The most useful next: a backtest on hourly stored candles (step 8), an intraday walk-forward run with the runner's intraday rule view (steps 4 and 8), the feeds routes (the Data stage's Apply), the Python worker's start-up.
+3. The stack steps paused until he says (G16): 16.7, three schemas and three logins, which changes the stored database and needs a full backup and his go; 16.8, Next.js in place of the Vite client and Recharts (G14), where component tests for the pages (G60) would come in.
+4. Open gaps outside the plan, among them G72 (a metric with no value shows 0, not a dash), G73 (the Nasdaq-100 member series are not fed), G13 (a shared table), G10 (a Verify tab). Dividends, currency and the superficial loss rule stay out until he adds them to the plan.
 
 ---
 
@@ -2419,6 +2440,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-15 | 2026-11-27 05:26 | Claude Code (Claude Opus 5.5) | Where it stands, 2026-11-27: the plan done, what waits on John (the held QQQ and SPY feeds included), what could come next |
 | 2026-11-27-14 | 2026-11-27 05:22 | Claude Code (Claude Opus 5.5) | Step 10's tests: T6 built, CI fails when a named integration test skips; the six are built |
 | 2026-11-27-13 | 2026-11-27 05:18 | Claude Code (Claude Opus 5.5) | Step 10's tests: T5 built, a new bar normalized as it arrives |
 | 2026-11-27-12 | 2026-11-27 05:17 | Claude Code (Claude Opus 5.5) | Step 10's tests: T4 built, the feature-store prediction route; intraday stamps fixed |
