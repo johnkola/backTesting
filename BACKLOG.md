@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-40** · 2026-11-27 07:23 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-41** · 2026-11-27 07:24 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -24,7 +24,6 @@ review was run again on 2026-11-27: its result is "Test gaps" below.
 Each committed on passing tests; each leaves this list and the "Test gaps" table when
 it is in.
 
-2. Three service routes.
 3. The preview on a built set.
 
 ## Waiting on John
@@ -124,12 +123,11 @@ Step 10's review, run again on 2026-11-27 after the day's tests: where more unit
 integration tests could go, what each would check, and why, by step and most useful
 first. Report only: none is added until John says. Grounded in a full Python run with a
 line report (1,207 tests, 86% of `nn`, `loader` and `jobs`; the untested lines named),
-the service's routes (67 of 70 called by a service test), the engine's classes, and the
+the service's routes (all 70 called by a service test since this review), the engine's classes, and the
 client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 0 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
 | 2 | The preview on a built set | `nn/feature_preview.py` (62%): before and after on the seeded set, warm-up days null, window edges, a column the set lacks a 404 | S |
 | 1 | An import's roll-ups | `loader/imports_api.py` (70%): W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |
 | 1 | The fill methods' refusals | `loader/missing.py` (77%): no bar before the day, a related index without symbol and source or without a bar, an unknown method; the default falling back from roll-up to carry | S |

@@ -99,6 +99,27 @@ class DocsTest extends ServiceTest {
         assertEquals(302, root.statusCode());
     }
 
+    @Test
+    void theGettingStartedLinksRedirectToTheDocTheRegistryNames() throws Exception {
+        // The old /getting-started and its history page, kept for bookmarks: each a
+        // permanent redirect into the client's /docs, to the slug the registry has.
+        String slug = DocRegistry.LEGACY.get("getting-started");
+        assertTrue(DocRegistry.BY_SLUG.containsKey(slug), "no doc with slug " + slug);
+        HttpClient plain = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+        HttpResponse<String> page = plain.send(HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/getting-started?step=2")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(301, page.statusCode());
+        assertEquals("http://localhost:3000/docs/" + slug + "?step=2",
+                page.headers().firstValue("location").orElseThrow());
+        HttpResponse<String> history = plain.send(HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/getting-started/history")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(301, history.statusCode());
+        assertEquals("http://localhost:3000/docs/" + slug + "/history",
+                history.headers().firstValue("location").orElseThrow());
+    }
+
     // --- The anchors and the links (G69) ----------------------------------------------
 
     @Test

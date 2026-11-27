@@ -70,4 +70,26 @@ class EngineRoutesTest extends ServiceTest {
         assertEquals("result-delete", job.get("type").getAsString());
         assertFalse(job.get("transient").getAsBoolean(), "a delete is kept in the jobs list");
     }
+
+    @Test
+    void theOnnxCheckIsAKeptJobForTheEngineCarryingTheRun() throws Exception {
+        // The prediction check for a stored run: the engine loads each fold's
+        // network in ONNX Runtime; the service only hands it the run.
+        var w = JobCallsTest.worker("done",
+                "{\"status\": 200, \"body\": {\"run\": 7, \"folds\": 6, \"agree\": 6}}", null);
+        Reply r = send(HttpRequest.newBuilder(URI.create(
+                        "http://localhost:" + port + "/api/walkforward/onnx-check?run=7"))
+                .POST(HttpRequest.BodyPublishers.noBody()));
+        w.join();
+        assertEquals(200, r.status());
+        assertEquals(6, r.at("agree").getAsInt());
+        JsonObject job = onlyJob();
+        assertEquals("onnx-check", job.get("type").getAsString());
+        assertEquals("java-compute", job.get("engine").getAsString());
+        assertEquals(false, job.get("transient").getAsBoolean(), "a check's result is kept");
+        JsonObject request = job.getAsJsonObject("inputs").getAsJsonObject("request");
+        assertEquals("POST", request.get("method").getAsString());
+        assertEquals("/api/walkforward/onnx-check", request.get("path").getAsString());
+        assertEquals("7", request.getAsJsonObject("query").get("run").getAsString());
+    }
 }
