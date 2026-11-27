@@ -9,7 +9,6 @@ import com.bazarbozorg.backtest.strategy.persistence.ModelCacheOutcome;
 import com.bazarbozorg.backtest.strategy.persistence.ModelContext;
 import com.bazarbozorg.backtest.strategy.persistence.ModelNotCachedException;
 import com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy;
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
@@ -59,7 +58,14 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
 
-    private static final Gson GSON = new Gson();
+    /** How the strategy reaches the Python worker: {@link PythonCalls#call}. */
+    @FunctionalInterface
+    interface Worker {
+        PythonCalls.Answer call(String method, String pathAndQuery, JsonObject body,
+                                Duration timeout);
+    }
+
+    private final Worker worker;
 
     private ModelContext modelContext;
     private ModelCacheOutcome cacheOutcome;
@@ -67,6 +73,15 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
 
     /** epochSecond -> predicted class (0/1/2). Built once in buildIndicators(). */
     private Map<Long, Integer> predictionsByEpochSecond = new HashMap<>();
+
+    public FeatureStoreNeuralNetworkStrategy() {
+        this(PythonCalls::call);
+    }
+
+    /** With the worker's answers given, so the strategy runs without one. */
+    FeatureStoreNeuralNetworkStrategy(Worker worker) {
+        this.worker = worker;
+    }
 
     @Override
     public String getName() {
@@ -266,7 +281,7 @@ public class FeatureStoreNeuralNetworkStrategy extends AbstractTa4jStrategy
     }
 
     private JsonObject send(String method, String path, JsonObject body) {
-        PythonCalls.Answer answer = PythonCalls.call(method, path, body, REQUEST_TIMEOUT);
+        PythonCalls.Answer answer = worker.call(method, path, body, REQUEST_TIMEOUT);
         JsonObject parsed = answer.body() != null && answer.body().isJsonObject()
                 ? answer.body().getAsJsonObject() : null;
 

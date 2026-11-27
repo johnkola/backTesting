@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-58** · 2026-11-27 17:53 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-59** · 2026-11-27 18:17 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -14,8 +14,8 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 ## Where it stands
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
-closed on full unit testing (his decision of 2026-11-26), and the twenty-eight tests he chose
-from step 10's reviews built (six, seven, three, three, three, three, then three). Suites: Python 1,281, engine 225,
+closed on full unit testing (his decision of 2026-11-26), and the thirty-one tests he chose
+from step 10's reviews built (six, seven, three, three, three, three, three, then three). Suites: Python 1,295, engine 229,
 service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
 
@@ -123,10 +123,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 5 | The models list and the train route | `GET /api/nn/models`; `POST /api/nn/train`'s refusal | S |
-| 5 | The feature-store strategy in the engine | `FeatureStoreNeuralNetworkStrategy` calls the loader through a static client with no seam; its route is tested, the strategy is not | M |
-| 7 | A set on a second instrument | `features.toml@ZZB/zz-b` on a second seeded instrument: its own series, its own hash, the first set still fresh | M |
-| 7 | The status on a built second set | The Features stage names that instrument's set | S |
 | 9 | The client's tooltip dictionaries | Every metric and field a page shows has its hint (`fieldHints`, `metricHints`, `cohesionHints`), so a renamed field cannot lose its tooltip unseen (G59) | S |
 | 9 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models` (`--prune`, `--list`), `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`, and the engine's `backtest`, `train`, `signals`: arguments and exit codes | S each |
 

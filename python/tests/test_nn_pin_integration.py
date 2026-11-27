@@ -209,3 +209,36 @@ def test_a_field_the_request_does_not_know_is_refused_not_dropped(client):
     r = _train(client, mode="force", hidden_layer_size=128)
     assert r.status_code == 422
     assert "hidden_layer_size" in r.text
+
+
+@pytest.mark.parametrize("over, status, error", [
+    ({"symbol": "ZZ_NO_SUCH_SYMBOL"}, 404, "unknown instrument symbol: ZZ_NO_SUCH_SYMBOL"),
+    ({"source": "zz-no-such-source"}, 404, "unknown data source: zz-no-such-source"),
+    ({"since": "2030-01-01"}, 400,
+     f"no candles found for {SYMBOL}/{SOURCE}/D1 in the requested range"),
+    ({"timeframe": "H1"}, 400, f"no candles found for {SYMBOL}/{SOURCE}/H1 in the requested range"),
+    ({"mode": "sometimes"}, 400, "unknown mode: sometimes"),
+    ({"engine_settings": {"maxDepth": 3}}, 400,
+     "the network's settings are the hyperparameter fields, not engine_settings"),
+    # Sixteen bars: fewer than the longest indicator needs before the first row.
+    ({"until": "2021-01-20"}, 400, "not enough candles to train: need at least"),
+])
+def test_the_train_route_says_why_it_will_not_train(client, tmp_path, over, status, error):
+    from nn.store import ModelRegistry
+
+    r = _train(client, **{"mode": "force", **over})
+    assert r.status_code == status, r.text
+    assert error in r.json()["error"]
+    assert ModelRegistry(tmp_path).list_all() == [], "nothing is trained or saved"
+
+
+def test_a_trained_version_is_what_the_models_list_shows(client):
+    trained = _train(client, mode="force").json()
+    [item] = client.get("/api/nn/models").json()["items"]
+    assert (item["strategy"], item["cacheKey"], item["versionId"]) == (
+        "nn-feedforward", trained["cacheKey"], trained["versionId"])
+    assert (item["hiddenSize"], item["numHidden"]) == (PARAMS["hidden_size"],
+                                                      PARAMS["num_hidden"])
+    window = item["extra"]["training_window"]
+    assert (window["symbol"], window["source"], window["timeframe"]) == (SYMBOL, SOURCE, TF)
+    assert client.get("/api/nn/models", params={"strategy": "xgboost"}).json()["items"] == []

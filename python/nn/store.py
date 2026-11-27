@@ -57,6 +57,13 @@ def required_files(engine: str) -> tuple[str, ...]:
 _VERSION_RE = re.compile(r"\d{8}T\d{6}\.\d{3}Z")
 
 
+def _plain(name: str) -> bool:
+    """A name the registry could have written: one directory, not a path. A
+    strategy or cache key from a request that is not one could point outside
+    the registry."""
+    return name not in ("", ".", "..") and "/" not in name and "\\" not in name
+
+
 @dataclass
 class MetadataRecord:
     """Persisted alongside the model. Free-form `extra` lets callers
@@ -261,7 +268,7 @@ class ModelRegistry:
     def list_all(self, strategy: str | None = None) -> list[MetadataRecord]:
         """Walk the tree and rehydrate metadata. Backs GET /api/nn/models."""
         out: list[MetadataRecord] = []
-        if not self.base_dir.exists():
+        if not self.base_dir.exists() or (strategy and not _plain(strategy)):
             return out
         strategy_dirs = (
             [self.base_dir / strategy] if strategy else [p for p in self.base_dir.iterdir() if p.is_dir()]
@@ -295,8 +302,7 @@ class ModelRegistry:
         is not a plain directory name could point outside the registry."""
         if not _VERSION_RE.fullmatch(version_id):
             return False
-        if any(part in ("", ".", "..") or "/" in part or "\\" in part
-               for part in (strategy, cache_key)):
+        if not (_plain(strategy) and _plain(cache_key)):
             return False
         ver_dir = self.entry_dir(strategy, cache_key) / version_id
         if not ver_dir.is_dir():

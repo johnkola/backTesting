@@ -212,20 +212,20 @@ def seeded():
         purge_instrument(SYMBOL, SOURCE)
 
 
-def _build(config) -> int:
+def _build(config, symbol: str = SYMBOL, *extra: str) -> int:
     import sys
 
     from nn import feature_build
 
     argv = sys.argv
-    sys.argv = ["nn.feature_build", "--config", str(config)]
+    sys.argv = ["nn.feature_build", "--config", str(config), *extra]
     try:
         assert feature_build.main() == 0
     finally:
         sys.argv = argv
     with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
         cur.execute("SELECT fs.id FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
-                    "WHERE i.symbol = %s ORDER BY fs.id DESC LIMIT 1", (SYMBOL,))
+                    "WHERE i.symbol = %s ORDER BY fs.id DESC LIMIT 1", (symbol,))
         return int(cur.fetchone()[0])
 
 
@@ -275,6 +275,89 @@ def test_a_set_built_from_candles_is_what_a_run_reads_and_splits(config, seeded)
     assert [b["block"] for b in blocks] == ["train", "validation", "test"]
     assert all(b["rows"] > 0 for b in blocks)
     assert sum(b["rows"] for b in blocks) == sum(1 for d in fm.dates if d <= dt.date(2021, 9, 30))
+
+
+#: The second instrument: the same days, another price path.
+SYMBOL_B, SOURCE_B = "ZZPIPEB", "zz-pipe-b"
+
+
+def _seed_b() -> None:
+    from loader.csv_import import (
+        get_or_create_data_source,
+        get_or_create_instrument,
+        upsert_candles,
+    )
+    from loader.db import pool
+
+    rows = [(f"{d.isoformat()}T00:00:00Z", *bar(i + 37)) for i, d in enumerate(DAYS)]
+    with pool().connection() as conn, conn.transaction():
+        upsert_candles(conn, get_or_create_instrument(conn, SYMBOL_B, "STOCK"),
+                       get_or_create_data_source(conn, SOURCE_B), "D1", rows)
+
+
+def _purge_b() -> None:
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM data_checks WHERE instrument_id IN "
+                    "(SELECT id FROM instruments WHERE symbol = %s)", (SYMBOL_B,))
+        cur.execute("SELECT fs.id FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
+                    "WHERE i.symbol = %s", (SYMBOL_B,))
+        ids = [r[0] for r in cur.fetchall()]
+        for table in ("feature_values", "feature_spec", "feature_runs"):
+            cur.execute(f"DELETE FROM {table} WHERE feature_set_id = ANY(%s)", (ids,))  # noqa: S608
+        cur.execute("DELETE FROM feature_sets WHERE id = ANY(%s)", (ids,))
+        conn.commit()
+    purge_instrument(SYMBOL_B, SOURCE_B)
+
+
+@requires_db
+def test_a_set_on_a_second_instrument_is_its_own_and_leaves_the_first_fresh(config, seeded):
+    # `--instrument`: the same config on another instrument (`features.toml@SYM/src`).
+    # Its instrument-scoped columns read that instrument's own bars, its name
+    # and digest are its own, it is a set of its own, and building it leaves
+    # the first instrument's set as fresh as it was. Each stage names its set.
+    pytest.importorskip("talib")
+    from nn import feature_config, staleness
+
+    _purge_b()
+    _seed_b()
+    try:
+        set_a = _build(config)
+        set_b = _build(config, SYMBOL_B, "--instrument", f"{SYMBOL_B}/{SOURCE_B}")
+        assert set_b != set_a
+        name_b = f"features.toml@{SYMBOL_B}/{SOURCE_B}"
+        with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT fs.id, i.symbol, s.name, fs.config_file, fs.config_hash, "
+                        "fr.inputs_json FROM feature_sets fs "
+                        "JOIN instruments i ON i.id = fs.instrument_id "
+                        "JOIN data_sources s ON s.id = fs.source_id "
+                        "JOIN feature_runs fr ON fr.id = fs.current_run_id "
+                        "WHERE fs.id = ANY(%s)", ([set_a, set_b],))
+            sets = {r[0]: r[1:] for r in cur.fetchall()}
+            a_status = staleness.status(cur, "D1", symbol=SYMBOL, source=SOURCE)["features"]
+            b_status = staleness.status(cur, "D1", symbol=SYMBOL_B, source=SOURCE_B)["features"]
+
+        sym, src, file, digest, inputs = sets[set_b]
+        assert (sym, src, file) == (SYMBOL_B, SOURCE_B, name_b)
+        assert digest == feature_config.digest_name(name_b) != sets[set_a][3]
+        # Every series it read is the second instrument's; the first set's, the first's.
+        assert {(e["symbol"], e["source"]) for e in json.loads(inputs)} == {(SYMBOL_B, SOURCE_B)}
+        assert {(e["symbol"], e["source"]) for e in json.loads(sets[set_a][4])} == {
+            (SYMBOL, SOURCE)}
+
+        # Its price and volume columns are its own bars'; the calendar's are shared.
+        values_a, values_b = _values(set_a), _values(set_b)
+        day = max(d for (n, d) in values_a if n == "price_close")
+        assert values_b[("price_close", day)] != pytest.approx(values_a[("price_close", day)])
+        assert values_b[("volume", day)] != pytest.approx(values_a[("volume", day)])
+        assert values_b[("day_of_week_sin", day)] == pytest.approx(
+            values_a[("day_of_week_sin", day)])
+
+        # The first set is still the fresh one for its instrument, and the
+        # Features stage names each instrument's own set.
+        assert (a_status["state"], a_status["setId"]) == ("passed", set_a)
+        assert (b_status["state"], b_status["setId"]) == ("passed", set_b)
+    finally:
+        _purge_b()
 
 
 @requires_db
