@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-20** · 2026-11-27 05:45 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-21** · 2026-11-27 05:47 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -149,6 +149,12 @@ the service calls 67 of its 70 routes under test.
 | The status on a built second set | The Features stage names that instrument's set | S |
 | An intraday walk-forward run | The runner end to end on hourly bars, with the intraday rule view | L |
 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`: arguments and exit codes | S each |
+
+**An intermittent failure**: `test_walkforward.py::test_the_stopper_keeps_the_best_epoch_and_stops_after_patience`
+failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not the
+best epoch's 4.0). It passed alone three times and in two other full runs that day, and
+no test changes torch's global state. Cause not found; in CI it would fail the job at
+random.
 
 **Not testable as things stand**, with what it would take:
 
