@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-35** · 2026-11-27 07:00 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-36** · 2026-11-27 07:01 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -24,7 +24,6 @@ review was run again on 2026-11-27: its result is "Test gaps" below.
 Each committed on passing tests; each leaves this list and the "Test gaps" table when
 it is in.
 
-2. The pipeline status route.
 3. The Python worker as started.
 
 ## Waiting on John
@@ -132,7 +131,6 @@ client's modules (no page or component has a test).
 | 0 | The Python worker as started | `jobs/worker.py` (69%) `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
 | 0 | The engine worker's loop | `JobWorker.start`: it polls, takes a job, beats its heartbeat and stops when asked. `runOne` is tested; the loop around it is not | S |
 | 0 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
-| 2 | The pipeline status route | `nn/pipeline_api.py` (45%): the answer is kept a minute per timeframe and instrument, `fresh` recomputes it, symbol without source is a 400, and the Data stage reads "running" while a feeds run is going. The status itself is tested, the route is not | S |
 | 2 | The preview on a built set | `nn/feature_preview.py` (62%): before and after on the seeded set, warm-up days null, window edges, a column the set lacks a 404 | S |
 | 1 | An import's roll-ups | `loader/imports_api.py` (70%): W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |
 | 1 | The fill methods' refusals | `loader/missing.py` (77%): no bar before the day, a related index without symbol and source or without a bar, an unknown method; the default falling back from roll-up to carry | S |
