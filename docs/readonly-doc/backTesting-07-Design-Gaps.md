@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-27-6** · 2026-11-27 04:54 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-27-7** · 2026-11-27 05:00 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1280,40 +1280,41 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - **Added, 42 tests, all passing:** Python 31 (`test_job_contract.py` 5, `test_status_contract.py` 5, `test_pipeline_integration.py` 5, `TestRecalculateToAnotherVersion` 5, `test_feeds_runner_integration.py` 1, `test_repairs_api.py` 10); engine 5 (`PythonCallsTest` 4, the bars-held test in `BacktestEngineBenchmarkTest`, and its checks in `RuleBenchmarkTest`); service 2 (`PythonRoutesTableTest`); client 4 (`timeframe.test.ts`). Fixed on what they found: a trade's `holdingBars` (9.2).
     - **Full suites at the close:** Python 1,185 (from 1,154), line coverage 82% (from 76%): `nn/train_features.py` 96% (29%), `nn/feature_build.py` 83% (36%), `loader/repairs_api.py` 79% (46%), `nn/staleness.py` 78% (48%), `nn/recalculate.py` 69% (56%), `loader/feeds/runner.py` 64% (41%); `loader/flags.py` stays 53% (`scan`, 9.11) and `nn/walkforward.py` 61% (full runs, 9.11). Engine 213 (from 208), service 101 (from 99), client 292 (from 288), ESLint and `tsc` clean.
     - Found on the way, not changed: `feature_catalog.sync` refreshes each feature's date range with a scan of all of `feature_values` (about 13 million values with the SPY, H1 and M30 sets), about 30 s a sync; every feature build pays it, and the Python suite went from 8 to 10 minutes.
-  - **Step 10 of the implementation plan (Test coverage review): the report, first pass, 2026-11-27.** Report only (order 8): no test is added until John says. For each step, where more unit or integration tests could go, what each would check and why, most useful first. Size: S under an hour, M a few hours, L a day or more. Grounded at `6288986`: Python line coverage per module (82% over `nn`, `loader` and `jobs`, 1,185 tests), the service's routes (67 of 70 called by a service test), the engine's classes (no test runs `BacktestEngine.run` on stored candles), and the client (its `lib/` has tests; no page or component does). A second pass adds the untested lines per module from a full run with a line report.
+  - **Step 10 of the implementation plan (Test coverage review): closed 2026-11-27, the report below.** Report only (order 8): no test is added until John says. For each step, where more unit or integration tests could go, what each would check and why, most useful first. Size: S under an hour, M a few hours, L a day or more. Grounded at `6288986` and checked line by line: Python line coverage per module with its untested lines named (82% over `nn`, `loader` and `jobs`, 1,185 tests; a full run with a line report), the service's routes (67 of 70 called by a service test), the engine's classes (no test runs `BacktestEngine.run` on stored candles), and the client (its `lib/` has tests; no page or component does). The first pass of this report, the same day, had five items wrong (the worker's re-claim and cancel, import undo, the fill methods, the schedule's next run and the catalogue's ranges are tested); they are corrected here.
     - **Step 0, the Java backend (the service, the jobs table, the workers)**
-      1. *The engine's job worker end to end* (M): a `java-compute` backtest job taken from a copy of the jobs table and answered with a saved result. `JobWorkerTest` covers its request routes only. Why: `POST /api/run` rests on it, and no test proves the round trip through the engine.
-      2. *The Python worker's lanes* (M): `jobs/worker.py` is 69%. A lane that loses its heartbeat is re-claimed; the third failure ends the job; a cancel reaches a running job; two lanes never take the same job. Why: a stuck or doubled job is what the jobs table exists to prevent.
-      3. *The three routes no service test calls* (S): `GET /getting-started` and `/getting-started/history` (redirects into the docs registry: `DocsTest` holds `/architecture` and `/claude` to it, not these), and `POST /api/walkforward/onnx-check` (queues the engine's ONNX check with the run id).
+      1. *The engine's job worker end to end* (M): a `java-compute` backtest job taken from a copy of the jobs table and answered with a saved result. `JobWorkerTest` covers its request routes only. Why: `POST /api/run` rests on it.
+      2. *The Python worker as started* (M): `jobs/worker.py` is 69%, and its claim, heartbeat, re-claim, three attempts and cancel are tested (`test_jobs.py`). What is not is `main` and `listen` (lines 207-275): one lane per group of job types, a feeds run left "running" by a dead worker marked interrupted at start, the schedule started, and a NOTIFY waking an idle lane at once rather than at its next poll. Why: the start-up is what runs after every rebuild.
+      3. *The three routes no service test calls* (S): `GET /getting-started` and `/getting-started/history` (redirects into the docs registry; `DocsTest` holds `/architecture` and `/claude`, not these), and `POST /api/walkforward/onnx-check` (queues the engine's ONNX check with the run id).
     - **Step 1, Data**
-      1. *Import undo and versions* (M): `loader/imports_api.py` is 70%. Undoing a year slice deletes its candles and audit rows and keeps the archive; an older version answers 409 with the current one; `dry_run` counts without deleting. Why: it rewrites stored history.
-      2. *Repair and the missing-bar fill* (M): `loader/repair.py` 72%, `loader/missing.py` 77%. Each fill method (rolled up from finer bars, a related index's move, the previous close carried) on a seeded gap, logged, and reverted. Why: step 1's done-when names each method.
-      3. *The feeds schedule* (S): `loader/feeds/schedule.py` 45%. The next run across a weekend, a change of clock (DST) and a host that slept past 18:30 (it runs once on waking), and a bad `FEEDS_SCHEDULE`. Why: the evening run is what keeps the data current.
-      4. *The feeds routes* (S): `loader/feeds/api.py` 30%. A refresh and an Apply as the Data stage sends them; an Apply naming a series that is not held is refused.
-      5. *The providers' bad answers* (S): Yahoo 68%, FRED 65%, the Bank of Canada 67%. An empty or malformed answer fails its series with the reason, not the run.
-      6. *The audit and checks routes* (S): `loader/audit_api.py` 53%, `loader/checks_api.py` 73%.
+      1. *The feeds routes* (S): `loader/feeds/api.py` is 30%: `GET /api/feeds`, `POST /api/feeds/refresh`, `POST /api/feeds/apply`, `GET /api/feeds/runs` and `/runs/{id}` have no test of their own (lines 45-152). An Apply naming a series that is not held is refused; a refresh while one runs answers busy; the list carries each feed's last run. Why: the Data stage's Apply, which rewrites stored history, goes through them.
+      2. *An import's roll-ups* (S): `loader/imports_api.py` is 70%; the import and its undo are tested, but not the fan-out (lines 215-241): an import that lands D1 rebuilds W1 and MN1 for the years it touched. And the 409 both the import and the undo give for candles in a compressed chunk (lines 187-205, 462-475).
+      3. *The fill methods' refusals* (S): `loader/missing.py` is 77%; each method fills a gap under test, but its refusals do not: no bar before the day, the related-index method without its symbol and source, a related index with no bar on either day, an unknown method; and the default proposal falling back from a roll-up to the previous close (lines 126-179). Why: each reaches the Repairs page as a message.
+      4. *The feeds timer* (S): `loader/feeds/schedule.py` is 45%; the next run's time is tested, the thread is not (lines 53-108): it fires at that time, works out the next, stops when asked; a bad `FEEDS_SCHEDULE` is refused at start; `describe` says when it runs next.
+      5. *The audit and checks routes* (S): `loader/audit_api.py` 53% (its route body, lines 42-81) and `loader/checks_api.py` 73% (the filters and accept, lines 36-63).
+      6. *The providers' bad answers* (S): Yahoo 68%, FRED 65%, the Bank of Canada 67%: an empty or malformed answer fails its series with the reason, not the run.
       7. *`flags.scan`* (L): needs a database of its own (9.11).
     - **Step 2, Features, normalized**
       1. *A new bar normalized as it arrives* (M): the done-when's second half. Build, add one bar, rebuild as the evening run does: every earlier value unchanged (held in 9.7), the new bar's value equal to what a build over the longer history gives, and the Features stage fresh again. Why: only the first half is held today.
-      2. *The preview on a built set* (S): `nn/feature_preview.py` 62%. On the seeded set: "before" is the input the method was given, "after" the stored value, warm-up days null, the window's edges.
-      3. *The catalogue's ranges* (S): `nn/feature_catalog.py` 69%. The range set after a build and cleared after the set is deleted, on the seeded instrument. And a bound on its time (found in step 9: a refresh scans all of `feature_values`).
-      4. *The features config on an intraday timeframe* (S): `nn/nn_api.py` 66%. `GET /api/nn/features/config` with `timeframe=H1` answers with the H1 calendar file.
+      2. *The preview on a built set* (S): `nn/feature_preview.py` is 62%; `preview` itself (lines 85-110) and its route (`nn/nn_api.py` 775-790) have no test. On the seeded set: "before" is the input the method was given, "after" the stored value, warm-up days null, the window's edges, a column the set does not hold a 404.
+      3. *The catalogue's time* (M, after a fix): `nn/feature_catalog.py`'s range refresh is tested (its 69% is its command line), but it scans all of `feature_values`, about 30 s a sync at 13 million values (found in step 9). Once it reads only the sets that changed, a test can bound it.
     - **Step 3, Split** (`nn/split.py` 96%, `nn/strategy_spec.py` 97%)
-      1. *The split route on a seeded strategy* (S): `test_split.py` uses a fake store; on the seeded set through `strategy_setup` the windows, folds and holdout come from stored rows.
+      1. *The split from stored rows* (S): `test_split.py` uses a fake store; on the seeded set through `strategy_setup`, the windows, folds and holdout come from the stored matrix.
       2. *The Split tab* (needs React Testing Library, G60).
     - **Step 4, Benchmarks**
-      1. *The rules route* (S): `nn/rules_api.py` 61%. A window with no SPY or no T-bills, an unknown symbol, a bad window.
-      2. *The runner's intraday rule view* (M): `walkforward.intraday_rule_view` has no test. Decided on D1 closes and scored on the run's sessions; the last scored session never reads past the window (G38).
+      1. *The runner's intraday rule view* (M): `walkforward.intraday_rule_view` (lines 771-778) has no test: decided on D1 closes and scored on the run's sessions, the last scored session never reading past the window (G38).
+      2. *The rules route* (S): `nn/rules_api.py` is 61%, its route body (lines 75-90): a window with no SPY or no T-bills, an unknown symbol, a bad window.
       3. *The client's benchmark checks on intraday fills* (S): `benchmarkCheck.test.ts` checks daily fills only. Since step 8 a rule fills at a session's first bar, which the panel checks against the hourly bar at that instant.
-      4. *The five indicator rules on an hourly result* (S): `RuleBenchmarkTest`'s intraday cases cover Faber and dual momentum's path; no test scores an indicator rule on hourly bars.
+      4. *The five indicator rules on an hourly result* (S): `RuleBenchmarkTest`'s intraday cases cover Faber and dual momentum; no test scores an indicator rule on hourly bars.
     - **Step 5, Training**
-      1. *A small walk-forward run end to end* (L, the largest gap): `nn/walkforward.py` is 61%, and most of what is left is its `main`, the runner's whole flow. On the seeded set, two epochs and the tree engines: the run stored with its folds, engines, epochs, rule benchmarks and lineage; the ONNX check; a recalculation in place reproduces it; the Training stage fresh, then stale after a candle changes. Why: stored runs are tested from fakes, and the runner is what step 5 is.
-      2. *Fold models* (S): `nn/fold_models.py` 65%. `--check` (each kept model reproduces the run's stored signals) and `--prune` (only deleted runs' folders; the dry run lists the same).
-      3. *The train route per engine* (S): `/api/nn/train` for XGBoost and LightGBM, and a setting out of bounds refused.
-      4. *Model windows* (S): `nn/model_windows.py` 79%.
+      1. *A small walk-forward run end to end* (L, the largest gap): `nn/walkforward.py` is 61%, and most of what is left is `main` (lines 1440-1728), the runner's whole flow. On the seeded set, two epochs and the tree engines: the run stored with its folds, engines, epochs, rule benchmarks and lineage; the ONNX check; a recalculation in place reproduces it; the Training stage fresh, then stale after a candle changes.
+      2. *The verdict* (S): `walkforward.report` (lines 864-972) prints each run's verdict, BEATS or not on its objective and flagged below the naive baseline, which step 6's review quoted; no test. On fixed fold results: each verdict line, the naive flag, and the margin note under Strategy 2.
+      3. *The feature-store network's prediction* (M): `POST /api/nn/predict_features` (`nn/nn_api.py` 581-654) and the engine's `FeatureStoreNeuralNetworkStrategy` that calls it have no test on either side. On a model the offline trainer saved (9.8): each bar's prediction from the set the model names, a bar outside the set refused. Why: the engine's only path to a feature-store model.
+      4. *The run's input snapshot check* (S): `walkforward.check_snapshot` (lines 1288-1339), which says whether a run would read the same inputs today (G61); no test.
+      5. *Fold models* (S): `nn/fold_models.py` is 65%: `check` (each kept model reproduces the run's stored signals, lines 259-305) and the command line's `--prune` (only deleted runs' folders; the dry run lists the same).
+      6. *The models list and the train route* (S): `GET /api/nn/models` (`nn_api` 676-688), the Models page's list; and `POST /api/nn/train`'s refusal branch (326-327).
     - **Step 6, Backtest and result**
       1. *A whole backtest from stored candles* (M): `POST /api/run`, the engine's job, the saved result, `GET /api/results/:id`, on a seeded instrument: the trades' nets add to the final equity, the settings are recorded, buy-and-hold and the rule benchmarks are there, the in-sample flag and the bars held. Why: every engine test works on fixture series; none runs `BacktestEngine.run` on stored candles.
-      2. *Rerun a stored result from its settings* (M): the request rebuilt from `settings_json` gives the same trades and figures (step 7 of the review's reproduction check, by hand until now).
+      2. *Rerun a stored result from its settings* (M): the request rebuilt from `settings_json` gives the same trades and figures; the reproduction check, done by hand until now.
       3. *The result page's panels* (needs React Testing Library, G60).
     - **Step 7, Any symbol**
       1. *A set on a second instrument* (M): with the test's own configuration, `features.toml@ZZB/zz-b` built on a second seeded instrument: its own series moved, the others kept, its own hash, and the first instrument's set still fresh beside it (`Context._hash_for`).
@@ -1321,12 +1322,13 @@ The order, each phase leaving a stack that works end to end, with the four suite
       3. *The instrument picker* (needs React Testing Library, G60).
     - **Step 8, Any timeframe**
       1. *A backtest on hourly stored candles* (M): step 6's first item on H1: the rule benchmarks fill at the first bar of each session, bars per year come from the measured bars.
-      2. *An intraday walk-forward run* (L): step 5's first item on H1, with the intraday rule view.
+      2. *An intraday walk-forward run* (L): step 5's first item on H1, with the intraday rule view (step 4's first item).
       3. *M30 as well as H1* (S, once those exist): a different number of bars a day, half days, the 252-session warm-up.
     - **Step 9, Test review**
       1. *CI fails when an integration test skips there* (S): the pipeline, feeds and status tests skip without a database; a skip in CI passes unseen. Run with `-rs` and fail on a skip of a named test.
       2. *Component tests* (L, G60): React Testing Library and a browser environment for Vitest; the only way to test the pages.
       3. *Newman in CI* (L, G60): the Postman collection against a started stack.
+      4. *The command lines* (S each): `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing` and `loader.feeds` (lines named above): their arguments and exit codes, the functions under them being tested.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
   - **For the author to pick up, 2026-11-26** (the author's rule of that day: this agent changes only this tracker and leaves notes here; it never edits `AGENTS.md`):
     - `AGENTS.md`, Working rules: "Commit or push only when the author asks" predates the author's instruction of 2026-11-26 to commit and push at every tested checkpoint, which this agent now follows.
@@ -2410,6 +2412,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-7 | 2026-11-27 05:00 | Claude Code (Claude Opus 5.5) | Step 10 (Test coverage review) closed: the report's second pass, line by line; five first-pass items corrected; no test added |
 | 2026-11-27-6 | 2026-11-27 04:54 | Claude Code (Claude Opus 5.5) | Step 10 (Test coverage review): the report, first pass, step by step; no test added |
 | 2026-11-27-5 | 2026-11-27 00:51 | Claude Code (Claude Opus 5.5) | Step 9 (Test review) closed on full unit testing: 9.10 and 9.11, the list of what was added and what could not be tested, the totals |
 | 2026-11-27-4 | 2026-11-27 00:40 | Claude Code (Claude Opus 5.5) | Step 9: 9.9 built, the feeds cycle, the flag gate across the pipeline, the repairs routes |
