@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-21** · 2026-11-27 05:47 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-22** · 2026-11-27 05:50 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -22,7 +22,6 @@ Python line coverage 82%.
 Built one at a time, each committed on passing tests; each leaves this list and the
 "Test gaps" table when it is in.
 
-2. An intraday walk-forward run, which takes in the runner's intraday rule view.
 3. Rerun a stored result from its settings.
 4. The feeds routes, Apply included.
 5. Fold models: `check` and `--prune`.
@@ -137,7 +136,6 @@ the service calls 67 of its 70 routes under test.
 | The providers' bad answers | Yahoo, FRED and the Bank of Canada: an empty or malformed answer fails its series with the reason | S |
 | The preview on a built set | `nn/feature_preview.py` (62%): before and after on the seeded set, warm-up days null, window edges, a column the set lacks a 404 | S |
 | The split from stored rows | The windows, folds and holdout from the stored matrix through `strategy_setup` (today on a fake store) | S |
-| The runner's intraday rule view | `walkforward.intraday_rule_view`: decided on D1 closes, scored on the run's sessions, never past the window | M |
 | The rules route | `nn/rules_api.py` (61%): no SPY or no T-bills, an unknown symbol, a bad window | S |
 | The indicator rules on hourly bars | No test scores one of the five on an hourly result | S |
 | The input snapshot check | `walkforward.check_snapshot`: whether a run would read the same inputs today | S |
@@ -147,7 +145,6 @@ the service calls 67 of its 70 routes under test.
 | Rerun a stored result | The request rebuilt from `settings_json` gives the same trades and figures | M |
 | A set on a second instrument | `features.toml@ZZB/zz-b` on a second seeded instrument: its own series, its own hash, the first set still fresh | M |
 | The status on a built second set | The Features stage names that instrument's set | S |
-| An intraday walk-forward run | The runner end to end on hourly bars, with the intraday rule view | L |
 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`: arguments and exit codes | S each |
 
 **An intermittent failure**: `test_walkforward.py::test_the_stopper_keeps_the_best_epoch_and_stops_after_patience`

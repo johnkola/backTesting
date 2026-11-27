@@ -257,11 +257,20 @@ def test_changing_the_last_bars_changes_no_earlier_stored_value(config, seeded):
     assert any(before.get(k) != after.get(k) for k in after if k[1] >= DAYS[cut])
 
 
-#: Seven hourly bars a day over the first 320 seeded days, at 14:30 to 20:30 UTC:
-#: past the 252-session warm-up a weekday column is normalized over on an
-#: intraday calendar (its cadence is the session), with two months to spare.
+#: Seven hourly bars on every seeded day, at 14:30 to 20:30 UTC: past the
+#: 252-session warm-up a weekday column is normalized over on an intraday
+#: calendar (its cadence is the session), with a year and more to train and score.
 HOURS = [dt.datetime(d.year, d.month, d.day, h, 30, tzinfo=dt.UTC)
-         for d in DAYS[:320] for h in range(14, 21)]
+         for d in DAYS for h in range(14, 21)]
+
+
+def _hourly_config(config):
+    """The test's intraday calendar file, inheriting its daily one."""
+    hourly = config.parent / "calendars" / f"{SYMBOL}-{SOURCE}-H1.toml"
+    hourly.write_text('inherit = "features.toml"\n\n[alignment]\n'
+                      f'calendar_symbol = "{SYMBOL}"\ncalendar_source = "{SOURCE}"\n'
+                      'calendar_timeframe = "H1"\n', encoding="utf-8")
+    return hourly
 
 
 def _seed_hourly() -> None:
@@ -302,7 +311,7 @@ def test_an_hourly_set_is_built_read_and_split_by_its_bars(config, seeded):
     stamps = {ts.replace(tzinfo=None) for ts in HOURS}
     assert set(fm.dates) <= stamps
     windows = {"train": {"from": "2019-01-01", "to": "2020-01-31"},
-               "validation": {"from": "2020-02-01", "to": "2020-12-31"}}
+               "validation": {"from": "2020-02-01", "to": "2021-12-31"}}
     blocks = split.blocks(windows, list(fm.dates))
     assert all(b["rows"] > 0 for b in blocks)
     assert blocks[0]["lastRow"].endswith("Z") and blocks[1]["firstRow"].endswith("Z")
@@ -592,3 +601,55 @@ def test_a_new_bar_from_the_evening_run_is_normalized_and_the_stage_follows(
     finally:
         _purge_sets()
         purge_instrument(SYMBOL, SOURCE)
+
+
+@requires_db
+def test_an_hourly_walk_forward_run_scores_its_rules_on_daily_closes(config, seeded, capsys):
+    # The runner end to end on hourly bars: folds cut by session, a signal per
+    # scored bar, and the rule benchmarks decided on D1 closes over the sessions
+    # its scored bars fall in (`intraday_rule_view`), never past the window. A
+    # recalculation in place, which rebuilds that view from the stored signals
+    # alone, gives back what the run stored.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import profit, recalculate
+    from nn import walkforward as wf
+
+    _seed_hourly()
+    set_id = _build(_hourly_config(config))
+    argv = ["--symbol", SYMBOL, "--source", SOURCE, "--timeframe", "H1", "--set-id",
+            str(set_id), "--train-start", "2019", "--first-val", "2020", "--last-val", "2021",
+            "--engines", "xgboost", "--label", "pytest-wf-h1"]
+    assert wf.main(argv) == 0, capsys.readouterr().out
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, span_to FROM walkforward_runs WHERE feature_set_id = %s "
+                    "AND label = 'pytest-wf-h1'", (set_id,))
+        run_id, span_to = cur.fetchone()
+        assert span_to <= DAYS[-1]
+        cur.execute("SELECT fold, val_year, n_val FROM walkforward_folds WHERE run_id = %s "
+                    "ORDER BY fold", (run_id,))
+        folds = cur.fetchall()
+        assert folds and all(n > 6 * 100 for _, _, n in folds), folds   # hourly bars, not days
+        cur.execute("SELECT count(*) FROM walkforward_signals WHERE run_id = %s", (run_id,))
+        assert cur.fetchone()[0] == sum(n for _, _, n in folds)
+        cur.execute("SELECT fold, name, available, reason, return_pct, trades FROM "
+                    "walkforward_benchmarks WHERE run_id = %s", (run_id,))
+        rules = {(f, n): (a, why, ret, tr) for f, n, a, why, ret, tr in cur.fetchall()}
+    for fold, _, _ in folds:
+        faber = rules[(fold, "faber")]
+        assert faber[0] and faber[2] is not None and faber[3] >= 1, faber
+        momentum = rules[(fold, "dual_momentum")]
+        assert not momentum[0] and "needs SPY" in momentum[1], momentum
+
+    with psycopg.connect(dsn()) as conn:
+        dry = recalculate.recalculate(conn, run_id, dry_run=True)
+    for before, after in zip(dry.before, dry.after, strict=True):
+        for name in profit.PROFIT_FIELDS:
+            assert getattr(after, name) == pytest.approx(getattr(before, name)), name
+        if before.rules:
+            assert [(f.name, f.available) for f in after.rules] == [
+                (f.name, f.available) for f in before.rules]
+            for a, b in zip(after.rules, before.rules, strict=True):
+                if b.return_pct is not None:
+                    assert a.return_pct == pytest.approx(b.return_pct), a.name
+
