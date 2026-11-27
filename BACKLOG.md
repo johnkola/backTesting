@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-54** · 2026-11-27 09:19 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-55** · 2026-11-27 09:35 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,28 +18,6 @@ closed on full unit testing (his decision of 2026-11-26), and the twenty-two tes
 from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,238, engine 225,
 service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
-
-## In progress: the Python suite in parallel (John's go, 2026-11-27)
-
-The suite takes about 12 minutes in one process. With pytest-xdist it runs in several,
-each file kept whole in one process (each seeds and purges its own instrument), and the
-files that share the feeds machinery (its lock and `feed_runs`: `test_feeds_api`,
-`test_feeds_runner_integration`, `test_pipeline_integration`, `test_job_calls`,
-`test_worker_start`) kept together in one. Done when:
-
-1. pytest-xdist is in the dev dependencies and the grouping is in `tests/conftest.py`.
-2. A parallel run passes, timed against the 12-minute one, with the slowest files listed.
-3. A must-run file that skips still fails the run under xdist.
-4. CI runs it in parallel only if repeated runs pass as reliably as the single process.
-
-Now: 1 and 3 are in. Four timed runs in 8 processes took 7.0 to 8.3 minutes (12.3 in
-one). They found one race, fixed: a fixture borrowed the newest feature set, which in a
-parallel run could be another file's, deleted mid-test. Every other failure was the local
-database's connection limit, 25, of which the stack holds about 19; at John's word it is
-100 now (`docker-compose.yml`, the database recreated, its data kept). Next: two runs at
-the new limit, then CI to `-n 4`. The slowest file is `test_feature_catalog`, about 7
-minutes alone under load: each of its syncs scans every stored feature value (the
-catalogue sync item under "Open gaps").
 
 ## Waiting on John
 
@@ -73,9 +51,9 @@ Decisions only he can make. Each blocks the work named with it.
 Changes to files the coding agent does not edit (his rule of 2026-11-26).
 
 - **This file moved** on 2026-11-27 from `docs/readonly-doc/backTesting-07-Design-Gaps.md`
-  to the root, now `BACKLOG.md`. The old path is still named in `AGENTS.md` (lines 17, 24, 45, 101, 125,
-  430, 663, the current orders' "record your work only in backTesting-07-Design-Gaps"
-  among them), `CLAUDE.md` (13, 15), `README.md` (969, 977, 1017),
+  to the root, now `BACKLOG.md`. `AGENTS.md`'s own mentions are covered by his decision of
+  2026-11-27 (read `BACKLOG.md` wherever it names the old file). The old path is still named
+  in `CLAUDE.md` (13, 15), `README.md` (969, 977, 1017),
   `backTesting-05-Requirements-Consolidated.md` (10, 11, 13),
   `backTesting-06-Questions-for-John.md` (7, 41, 42) and the implementation plan
   `backTesting-13-Implementation-Plan.md` (23, 28; its master is on Drive). If the Drive
@@ -85,6 +63,11 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
   2026-11-26 to commit and push at every tested checkpoint, which the agent follows; the
   rebuild rule names the containers "loader, engine, api, client", now `server`,
   `worker`, `engine` and `client`; step 0 still describes the Node stack.
+- **`README.md`, running the Python tests**: they can run in parallel, `pytest -n 8`
+  (pytest-xdist, in the dev dependencies), about 7½ minutes here against 12 in one
+  process; a plain `pytest` is one process as before. Each file stays whole in one
+  process (`tests/conftest.py`). CI stays in one process: its database starts empty and
+  the suite takes under a minute there.
 - **`README.md`**: the agent's two edits of 2026-11-26, made before the rule (revision
   2026-11-26-4, `--instrument` and the instrument on the build, the features report and
   the pipeline status; 2026-11-26-5, the rule benchmarks beside an intraday result), to
@@ -157,6 +140,11 @@ client's modules (no page or component has a test).
 failed once in a full local run on 2026-11-27 (after `Stopper.restore` the weight was not
 the best epoch's 4.0). It passed alone three times and in every full run since, and no
 test changes torch's global state. Cause not found; in CI it would fail the job at random.
+
+**A test CI skips**: `test_fold_models.py`'s ONNX Runtime check (the fold network run in
+ONNX Runtime against PyTorch's output) skips there, because `onnxruntime` is not among
+the dependencies CI installs; it runs here. Adding it to the dev dependencies would run it
+in CI. S.
 
 **Not testable as things stand**, with what it would take:
 

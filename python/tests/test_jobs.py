@@ -345,22 +345,36 @@ def test_cancelling_ends_the_runner_and_keeps_what_it_wrote(conn, runner):
 
 @pytest.fixture
 def a_run(conn):
-    """A real `walkforward_runs` row, on a calendar no page reads."""
+    """A real `walkforward_runs` row, on a calendar no page reads, under an
+    instrument of its own (one per test process). It used to borrow one from
+    any stored feature set: on an empty database (CI) it skipped, and in a
+    parallel run it could hold another file's instrument that file deletes."""
+    from .dbfixtures import purge_instrument
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    symbol, source = f"ZZJOBRUN-{worker}", f"zz-job-run-{worker}"
+
+    def drop():
+        conn.rollback()
+        conn.execute("DELETE FROM walkforward_runs WHERE instrument_id IN "
+                     "(SELECT id FROM instruments WHERE symbol = %s)", (symbol,))
+        conn.commit()
+        purge_instrument(symbol, source)
+
+    drop()
+    inst = conn.execute("INSERT INTO instruments (symbol, name, type) VALUES (%s, 'pytest run', "
+                        "'STOCK') RETURNING id", (symbol,)).fetchone()[0]
+    src = conn.execute("INSERT INTO data_sources (name) VALUES (%s) RETURNING id",
+                       (source,)).fetchone()[0]
     row = conn.execute(
         "INSERT INTO walkforward_runs (instrument_id, source_id, timeframe, objective, loss, "
-        "train_start, first_val, last_val) SELECT c.instrument_id, c.source_id, 'ZZJOB', "
-        "'return', 'ce', 2003, 2016, 2021 FROM feature_sets c LIMIT 1 RETURNING id"
-    ).fetchone()
+        "train_start, first_val, last_val) VALUES (%s, %s, 'ZZJOB', 'return', 'ce', 2003, "
+        "2016, 2021) RETURNING id", (inst, src)).fetchone()
     conn.commit()
-    if row is None:
-        # CI's database starts empty: no feature set to borrow a series from.
-        pytest.skip("needs one stored feature set")
     try:
         yield row[0]
     finally:
-        conn.rollback()
-        conn.execute("DELETE FROM walkforward_runs WHERE id = %s", (row[0],))
-        conn.commit()
+        drop()
 
 
 def _run_row(conn, run_id):
