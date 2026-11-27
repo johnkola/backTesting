@@ -962,3 +962,44 @@ def test_a_strategy_2_run_is_scored_on_margin_and_recalculates_to_the_same(
                 assert a == pytest.approx(b) if b is not None else a is None, name
     finally:
         purge_instrument(inverse, SOURCE)
+
+
+@requires_db
+def test_the_preview_pairs_each_input_with_its_stored_value(config, seeded, predict_client):
+    # The Normalization tab's preview on a built set: for each day, the series
+    # the method was given ("before") beside the value stored ("after"), the
+    # warm-up days without one, and the window it was asked for. Through the
+    # route as the tab calls it, and its refusals.
+    pytest.importorskip("talib")
+    from nn import feature_preview
+
+    set_id = _build(config)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        body = feature_preview.preview(cur, set_id, "price_close", days=30)
+        stored = {d: v for (n, d), v in _values(set_id).items() if n == "price_close"}
+        start = feature_preview.preview(cur, set_id, "volume", start=DAYS[0].isoformat(),
+                                        end=DAYS[40].isoformat())
+    assert body["configMatches"] is True and body["method"] == "ratio_to_prev_close"
+    pts = body["points"]
+    # `days` are calendar days back from the set's last date, so 30 of them hold
+    # the trading days between.
+    in_30 = [d for d in DAYS if DAYS[-1] - dt.timedelta(days=30) <= d]
+    assert [p["date"] for p in pts] == [d.isoformat() for d in in_30]
+    for p in pts:
+        d = dt.date.fromisoformat(p["date"])
+        assert p["before"] == pytest.approx(bar(DAYS.index(d))[3]), p   # the raw close
+        assert p["after"] == pytest.approx(stored[d]), p                 # the stored value
+    # Volume against its 20-bar mean: its first days are warm-up, with no value.
+    assert start["from"] == DAYS[0].isoformat() and start["to"] == DAYS[40].isoformat()
+    assert start["points"][0]["after"] is None and start["points"][-1]["after"] is None
+
+    client, _ = predict_client
+    r = client.get("/api/nn/features/preview",
+                   params={"set": set_id, "column": "price_close", "days": 10})
+    in_10 = [d for d in DAYS if DAYS[-1] - dt.timedelta(days=10) <= d]
+    assert r.status_code == 200 and len(r.json()["points"]) == len(in_10)
+    r = client.get("/api/nn/features/preview", params={"set": set_id, "column": "vix"})
+    assert r.status_code == 404 and "has no column 'vix'" in r.json()["error"]
+    r = client.get("/api/nn/features/preview",
+                   params={"set": set_id, "column": "price_close", "days": 0})
+    assert r.status_code == 400 and "days must be at least 1" in r.json()["error"]
