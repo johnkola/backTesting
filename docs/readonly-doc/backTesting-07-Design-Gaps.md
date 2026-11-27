@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-27-13** · 2026-11-27 05:18 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-27-14** · 2026-11-27 05:22 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1335,7 +1335,7 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - [x] T3 *The verdict* (step 5), built (`test_walkforward_report.py`, 8): `walkforward.report` on folds with known figures, read from what it prints: on the return objective a positive mean excess beats and a negative one does not; on Sharpe only the Sharpe counts (more return at a lower Sharpe loses); on drawdown a smaller drawdown must also be worth what it cost; a run that never traded is "buy-and-hold with extra steps"; under Strategy 2 an excess earned by leverage says so; below the naive baseline is flagged; each rule benchmark shows its return or why it is missing; an intraday run counts bars out, not days.
     - [x] T4 *The feature-store network's prediction* (step 5), built (`test_pipeline_integration.py`, D1 and H1): `POST /api/nn/predict_features` on a model the offline trainer saved from the seeded set: the answer names that set and version, one prediction per bar once the lookback is filled, each stamped with the bar its window ends on, a class and probabilities that sum to one; an unknown model is a 404 that names it. **Found and fixed:** on hourly bars each stamp was the bar's time with a midnight appended (`2019-12-24T19:30:00T00:00:00Z`), which the engine's `Instant.parse` cannot read, so a feature-store model could not be backtested on intraday bars; the route now stamps an intraday bar with its own time in UTC (`nn_api._instant`). The worker container is rebuilt.
     - [x] T5 *A new bar normalized as it arrives* (step 2), built (`test_pipeline_integration.py`): the seeded series loaded through the feeds runner on a provider of the test's own, so each day lands as a recorded import; the set built and the Features stage passed; the next evening's refresh adds a day and the stage reads stale; after the rebuild it passes again, no earlier stored value moved, and the new day has a finite value in every column. Step 2's done-when now holds both halves by test.
-    - [ ] T6 *CI fails when an integration test skips there* (step 9): the named integration files must run in CI; a skip there fails the job.
+    - [x] T6 *CI fails when an integration test skips there* (step 9), built: `tests/conftest.py` names the integration files that must run (`MUST_RUN`: the pipeline, the feeds runner, the status and job contracts, the repairs routes, the verdict); with `MUST_RUN_INTEGRATION=1`, which the CI job's pytest step now sets, a skip in any of them, a test or a whole module, fails the session and is listed with its reason. `test_must_run.py` (3) runs pytest on files of its own as CI does: a skip in a named file fails and names itself, one elsewhere does not, and without the setting nothing changes; every named file exists. On this machine the six files ran with the check on: 38 tests, none skipped.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
   - **For the author to pick up, 2026-11-26** (the author's rule of that day: this agent changes only this tracker and leaves notes here; it never edits `AGENTS.md`):
     - `AGENTS.md`, Working rules: "Commit or push only when the author asks" predates the author's instruction of 2026-11-26 to commit and push at every tested checkpoint, which this agent now follows.
@@ -2419,6 +2419,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-14 | 2026-11-27 05:22 | Claude Code (Claude Opus 5.5) | Step 10's tests: T6 built, CI fails when a named integration test skips; the six are built |
 | 2026-11-27-13 | 2026-11-27 05:18 | Claude Code (Claude Opus 5.5) | Step 10's tests: T5 built, a new bar normalized as it arrives |
 | 2026-11-27-12 | 2026-11-27 05:17 | Claude Code (Claude Opus 5.5) | Step 10's tests: T4 built, the feature-store prediction route; intraday stamps fixed |
 | 2026-11-27-11 | 2026-11-27 05:12 | Claude Code (Claude Opus 5.5) | Step 10's tests: T3 built, the verdict a run prints |

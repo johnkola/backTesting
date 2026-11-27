@@ -27,3 +27,43 @@ def _fold_models_in_a_temp_dir(tmp_path_factory):
         os.environ.pop("FOLD_MODELS_DIR", None)
     else:
         os.environ["FOLD_MODELS_DIR"] = before
+
+
+#: The integration tests that must run, not skip, where `MUST_RUN_INTEGRATION`
+#: is set (CI). Each skips without the database, TA-Lib, torch or the Java and
+#: client sources beside the checkout, and a skip in CI passed unseen: a green
+#: run that had not run them (step 10, T6).
+MUST_RUN = (
+    "tests/test_pipeline_integration.py",
+    "tests/test_feeds_runner_integration.py",
+    "tests/test_status_contract.py",
+    "tests/test_job_contract.py",
+    "tests/test_repairs_api.py",
+    "tests/test_walkforward_report.py",
+)
+
+
+def must_run_skips(reports, must_run=MUST_RUN) -> list[str]:
+    """The skips among `reports` in a must-run file, as `node: reason`. A test
+    that skipped and a module that skipped at collection both count."""
+    out = []
+    for r in reports:
+        node = getattr(r, "nodeid", "") or ""
+        if node.split("::", 1)[0] in must_run:
+            why = r.longrepr[2] if isinstance(r.longrepr, tuple) else str(r.longrepr)
+            out.append(f"{node}: {why}")
+    return out
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if os.environ.get("MUST_RUN_INTEGRATION") != "1":
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    skipped = must_run_skips(reporter.stats.get("skipped", [])) if reporter else []
+    if skipped:
+        reporter.write_line("")
+        reporter.write_line("MUST_RUN_INTEGRATION: these integration tests must run here "
+                            "and were skipped:", red=True)
+        for line in skipped:
+            reporter.write_line(f"  {line}", red=True)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

@@ -68,6 +68,11 @@ jobs:
       - name: Apply schema.sql
         run: psql -v ON_ERROR_STOP=1 -q -f ../src/main/resources/schema.sql
       - name: pytest
+        # A skip in one of the integration files tests/conftest.py names
+        # (MUST_RUN) fails the job: a green run that had not run them passed
+        # unseen (step 10, T6).
+        env:
+          MUST_RUN_INTEGRATION: "1"
         run: python -m pytest -q -rs
 
   java:
