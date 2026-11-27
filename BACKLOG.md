@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-50** · 2026-11-27 08:20 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-52** · 2026-11-27 08:24 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,6 +18,24 @@ closed on full unit testing (his decision of 2026-11-26), and the twenty-two tes
 from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,238, engine 225,
 service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
+
+## In progress: the Python suite in parallel (John's go, 2026-11-27)
+
+The suite takes about 12 minutes in one process. With pytest-xdist it runs in several,
+each file kept whole in one process (each seeds and purges its own instrument), and the
+files that share the feeds machinery (its lock and `feed_runs`: `test_feeds_api`,
+`test_feeds_runner_integration`, `test_pipeline_integration`, `test_job_calls`,
+`test_worker_start`) kept together in one. Done when:
+
+1. pytest-xdist is in the dev dependencies and the grouping is in `tests/conftest.py`.
+2. A parallel run passes, timed against the 12-minute one, with the slowest files listed.
+3. A must-run file that skips still fails the run under xdist.
+4. CI runs it in parallel only if repeated runs pass as reliably as the single process.
+
+Now: 1 is written (pytest-xdist 3.8 in the local venv; `pyproject.toml` makes `--dist
+loadgroup` the default, so a plain `pytest` is one process as before and `-n` keeps files
+whole; `conftest.py` groups the feeds files), smoke-tested in one process and in four.
+Next: the timed full run, then 3 and 4.
 
 ## Waiting on John
 
