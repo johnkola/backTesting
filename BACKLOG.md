@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-42** · 2026-11-27 07:30 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-43** · 2026-11-27 07:36 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,6 +18,15 @@ closed on full unit testing (his decision of 2026-11-26), and the nineteen tests
 from step 10's reviews built (six, seven, three, then three). Suites: Python 1,220, engine 219,
 service 101, client 294; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
+
+## In progress: three test gaps (John's go, 2026-11-27)
+
+Each committed on passing tests; each leaves this list and the "Test gaps" table when
+it is in.
+
+1. An import's roll-ups.
+2. The fill methods' refusals.
+3. The feeds timer.
 
 ## Waiting on John
 
