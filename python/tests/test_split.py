@@ -66,6 +66,20 @@ def test_each_window_counts_the_rows_inside_it():
     assert b[2]["rows"] == 5 and b[2]["lastRow"] == "2018-01-05"   # 2018-01-01 is a Monday
 
 
+def test_on_intraday_bars_a_window_holds_its_days_bars():
+    # Step 8: an H1 or M30 row is a timestamp; comparing it with the window's
+    # dates was a TypeError, so the Split tab failed on every intraday strategy.
+    from datetime import UTC, datetime
+    bars = [datetime(d.year, d.month, d.day, h, 30, tzinfo=UTC)
+            for d in weekdays(date(2015, 12, 30), date(2016, 1, 5)) for h in (14, 15, 19)]
+    b = split.blocks(WINDOWS, bars)
+    assert b[0]["rows"] == 6 and b[0]["lastRow"] == "2015-12-31T19:30:00+00:00"
+    assert b[1]["rows"] == 9 and b[1]["firstRow"] == "2016-01-01T14:30:00+00:00"
+    # The matrix keys a bar by its UTC time without a zone; it is shown as UTC.
+    naive = [x.replace(tzinfo=None) for x in bars]
+    assert split.blocks(WINDOWS, naive)[0]["lastRow"] == "2015-12-31T19:30:00Z"
+
+
 @pytest.fixture
 def fake_store(monkeypatch):
     from nn import walkforward_api

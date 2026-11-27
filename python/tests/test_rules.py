@@ -108,6 +108,19 @@ class TestDualMomentum:
         _, momentum, *_ = rules.window_calls(dec, [dec.month_ends[12]])
         assert not momentum.available and "SPY and T-bills" in momentum.reason
 
+    def test_with_no_spy_stored_the_reason_names_spy_not_the_history(self):
+        # Step 8: the synthetic source holds no SPY. The reason said 12 months
+        # were needed before a window whose history went back years.
+        px = history([100.0] * 30)
+        dec = rules.decide("QQQ", px, None, {d: 2.0 for d in px.closes})
+        _, momentum, *_ = rules.window_calls(dec, [dec.month_ends[20]])
+        assert not momentum.available
+        assert momentum.reason.startswith("needs SPY beside QQQ, and none is stored")
+        assert "history starts" not in momentum.reason
+        # With SPY stored and history enough, it decides as before.
+        dec = rules.decide("QQQ", px, history([100.0] * 30), {d: 2.0 for d in px.closes})
+        assert rules.window_calls(dec, [dec.month_ends[20]])[1].available
+
 
 class TestDataCheck:
     def test_the_average_and_the_return_agree_with_the_independent_copy(self):

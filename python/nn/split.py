@@ -24,7 +24,7 @@ that is in use.
 from __future__ import annotations
 
 import argparse
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from nn import feature_store, walkforward
@@ -34,18 +34,27 @@ BLOCKS = ("train", "validation", "test", "prediction")
 
 
 def _iso(d: date | None) -> str | None:
-    return d.isoformat() if d else None
+    """A row's date, or an intraday bar's time (step 8). The matrix keys a bar
+    by its UTC time without a zone (`feature_store.key_sql`), so it is marked
+    UTC here: shown bare, 14:30 reads as New York's afternoon, not its open."""
+    if d is None:
+        return None
+    if isinstance(d, datetime) and d.tzinfo is None:
+        return d.isoformat() + "Z"
+    return d.isoformat()
 
 
 def blocks(windows: dict[str, dict[str, str]], dates: list[date]) -> list[dict[str, Any]]:
-    """Each saved window with the matrix rows inside it. Pure."""
+    """Each saved window with the matrix rows inside it. Pure. On intraday
+    bars a row is a timestamp, and it is inside by its session's day (step 8),
+    as the runner cuts its folds."""
     out = []
     for name in BLOCKS:
         w = windows.get(name)
         if not w:
             continue
         lo, hi = date.fromisoformat(w["from"]), date.fromisoformat(w["to"])
-        inside = [d for d in dates if lo <= d <= hi]
+        inside = [d for d in dates if lo <= feature_store.session_of(d) <= hi]
         out.append({"block": name, "from": w["from"], "to": w["to"], "rows": len(inside),
                     "firstRow": _iso(inside[0]) if inside else None,
                     "lastRow": _iso(inside[-1]) if inside else None,

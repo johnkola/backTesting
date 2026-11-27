@@ -207,6 +207,10 @@ class Decisions:
     #: that bar's close (G79): the symbol, `CASH`, or None inside its warm-up.
     days: tuple[date, ...] = ()
     daily: dict[str, list[str | None]] | None = None
+    #: SPY or the T-bills not stored at all (step 8: a synthetic or vendor
+    #: source may hold no SPY), so dual momentum's reason names what is missing
+    #: rather than a history that is long enough.
+    missing: tuple[str, ...] = ()
 
 
 def _close_on_or_before(px: profit.Prices, d: date) -> float | None:
@@ -267,8 +271,11 @@ def decide(symbol: str, px: profit.Prices, spy: profit.Prices | None,
     daily = {name: [None if h is None else (symbol if h else CASH)
                     for h in indicator_holdings(name, day_closes)]
              for name in INDICATOR_RULES}
+    missing = tuple(name for name, absent in (
+        (SPY, not is_spy and (spy is None or not spy.closes)), ("T-bills (DTB3)", not dtb3))
+        if absent)
     return Decisions(symbol, ends, closes, sma, faber, inst_r12, spy_r12, tbill12, momentum,
-                     tuple(days), daily)
+                     tuple(days), daily, missing)
 
 
 def month_table(dec: Decisions, spy: profit.Prices | None, start: date,
@@ -350,6 +357,10 @@ def window_calls(dec: Decisions, dates: list[date]) -> tuple[Calls, ...]:
     momentum = build(DUAL_MOMENTUM, list(dec.momentum),
                      f"{MOMENTUM_MONTHS} months of {dec.symbol}"
                      + ("" if dec.symbol.upper() == SPY else ", SPY") + " and T-bills (DTB3)")
+    if dec.missing and not momentum.available:
+        momentum = Calls(DUAL_MOMENTUM, [], f"needs {' and '.join(dec.missing)} beside "
+                         f"{dec.symbol}, and none is stored: it compares {dec.symbol} with "
+                         "SPY's daily closes from the same source, and its cash earns T-bills")
     daily = dec.daily or {}
     indicator = tuple(
         build(name, daily.get(name, []),

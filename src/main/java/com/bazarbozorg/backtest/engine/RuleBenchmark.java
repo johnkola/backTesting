@@ -17,9 +17,11 @@ import java.util.List;
  * Faber's cash earns nothing, as the engine's idle money does; dual
  * momentum's earns T-bills, as the rule says.
  *
- * <p>Not available, with the reason, when the window has too little history
- * before it for the 10 or 12 months, when the result is not daily, or when the
- * loader could not serve the decisions. Its figures are then null: a rule is
+ * <p>Decided on daily closes; on an intraday result each day's decision is
+ * traded at the next session's first bar (step 8). Not available, with the
+ * reason, when the window has too little history before it for the 10 or 12
+ * months, when the result is weekly or monthly, or when the loader could not
+ * serve the decisions. Its figures are then null: a rule is
  * never computed on fewer months or reported as a zero.
  *
  * @param name      {@code faber}, {@code dual_momentum}, or one of the five indicator

@@ -173,14 +173,67 @@ class RuleBenchmarkTest {
     }
 
     @Test
-    @DisplayName("a result that is not daily has no month ends to decide on")
-    void notDailyIsNotAvailable() {
+    @DisplayName("a weekly or monthly result has no daily decision per bar")
+    void weeklyIsNotAvailable() {
         BacktestEngine engine = new BacktestEngine(null, new FixedCommission(0.0),
                 new PercentageSlippage(0.0), CAPITAL);
-        List<RuleBenchmark> r = engine.ruleBenchmarks(QQQ, Timeframe.H1, 0, null, null);
+        List<RuleBenchmark> r = engine.ruleBenchmarks(QQQ, Timeframe.W1, 0, null, null);
         assertEquals(8, r.size());
         assertTrue(r.stream().noneMatch(RuleBenchmark::available));
-        assertTrue(r.get(1).reason().contains("daily bars"));
-        assertTrue(r.get(7).reason().contains("daily bars"));
+        assertTrue(r.get(1).reason().contains("daily closes"));
+        assertTrue(r.get(7).reason().contains("daily closes"));
+    }
+
+    /** Three sessions of hourly bars: 3, 3 and 2 bars, opens 100 to 107, closes half a point up. */
+    private static final String[] HOURS = {
+        "2024-01-29T14:30:00Z", "2024-01-29T15:30:00Z", "2024-01-29T20:30:00Z",
+        "2024-01-30T14:30:00Z", "2024-01-30T15:30:00Z", "2024-01-30T20:30:00Z",
+        "2024-01-31T14:30:00Z", "2024-01-31T20:30:00Z"};
+
+    private static BarSeries hourly() {
+        List<Candle> candles = new ArrayList<>();
+        for (int i = 0; i < HOURS.length; i++) {
+            double open = 100 + i;
+            candles.add(new Candle(0, 1, 1, Timeframe.H1, java.time.ZonedDateTime.parse(HOURS[i]),
+                    open, open + 0.5, open, open + 0.5, 0));
+        }
+        return BarSeriesConverter.convert("QQQ", candles);
+    }
+
+    private static List<RuleBenchmark> scoreHourly(String faberCalls, String momentumCalls, String bills) {
+        String json = "{\"dates\":[\"2024-01-29\",\"2024-01-30\",\"2024-01-31\"],"
+                + "\"faber\":" + faberCalls + ",\"dualMomentum\":" + momentumCalls
+                + ",\"bills\":" + bills + "}";
+        BacktestEngine engine = new BacktestEngine(null, new FixedCommission(0.0),
+                new PercentageSlippage(0.0), CAPITAL);
+        return engine.scoreRules(JsonParser.parseString(json).getAsJsonObject(), hourly(),
+                Timeframe.H1, 0, 1L, "QQQ", Map.of());
+    }
+
+    @Test
+    @DisplayName("on hourly bars a day's call fills at the next session's first bar, at its open")
+    void intradayTradesTheDaysCallAtTheNextSessionsOpen() {
+        // Step 8: the call is made at the day's close, so taking it at the
+        // session's first bar would trade on a close not yet made.
+        String faber = "{\"available\":true,\"calls\":[\"QQQ\",null,\"QQQ\"]}";
+        String no = "{\"available\":false,\"reason\":\"x\"}";
+        RuleBenchmark f = scoreHourly(faber, no, "null").get(0);
+        assertTrue(f.available());
+        List<Trade> t = f.trades();
+        assertEquals(1, t.size());   // the 31st's call is made at the last bar: nothing after it
+        assertEquals(103.0, t.get(0).entryPrice(), 1e-12);   // the 29th's call, the 30th's first open
+        assertEquals("2024-01-30T14:30Z", t.get(0).entryTime().toString());
+        assertEquals(106.0, t.get(0).exitPrice(), 1e-12);    // the 30th's cash call, the 31st's first open
+        assertEquals("2024-01-31T14:30Z", t.get(0).exitTime().toString());
+        assertEquals(CAPITAL * 106 / 103, f.finalEquity(), 1e-9);
+        assertEquals(HOURS.length, f.equity().size());       // one point per bar, as the strategy's
+    }
+
+    @Test
+    @DisplayName("on hourly bars cash earns a day's T-bills once, not once per bar")
+    void intradayCashEarnsADaysBillsOnce() {
+        String cash = "{\"available\":true,\"calls\":[null,null,null]}";
+        RuleBenchmark d = scoreHourly(cash, cash, "[0.001,0.001,0.001]").get(1);
+        assertEquals(CAPITAL * Math.pow(1.001, 3), d.finalEquity(), 1e-6);
     }
 }

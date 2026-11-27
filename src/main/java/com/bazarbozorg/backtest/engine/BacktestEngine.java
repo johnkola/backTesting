@@ -372,8 +372,13 @@ public class BacktestEngine {
      */
     List<RuleBenchmark> ruleBenchmarks(BarSeries series, Timeframe timeframe, int warmupBars,
                                        Instrument instrument, DataSource source) {
-        if (timeframe != Timeframe.D1) {
-            String why = "the rule benchmarks are decided on daily bars; this result is " + timeframe;
+        // Decided on daily closes. An intraday result trades them on its own
+        // bars, at the next session's first bar (tradeHoldings; the author's
+        // rule of 2026-11-18, as the walk-forward runner scores them, step 8).
+        // A weekly or monthly bar spans many decisions, so it has none.
+        if (timeframe == Timeframe.W1 || timeframe == Timeframe.MN1) {
+            String why = "the rule benchmarks are decided on daily closes; a " + timeframe
+                    + " bar spans several of them";
             return unavailableRules(why);
         }
         int start = benchmarkStartIndex(series.getBarCount(), warmupBars);
@@ -500,6 +505,14 @@ public class BacktestEngine {
      * open first; cash earns {@code bills} for the bar after the open; equity is
      * marked at the held asset's close; a holding still open at the end is
      * closed at the last close. Returns why it could not be traded, or null.
+     *
+     * <p>The calls are one per day, made at the day's close. On intraday bars
+     * (step 8) a day's call is taken at its session's last bar, so it fills at
+     * the next session's first bar, at the session's open, and a day's T-bill
+     * carry is earned once, at that last bar; taking it at the first bar would
+     * trade on a close not yet made. On daily bars every bar is its session's
+     * last, so nothing changes there. SPY, held by dual momentum, has daily
+     * bars only: it fills at its session's open and is marked at its close.
      */
     static String tradeHoldings(BarSeries series, Map<java.time.LocalDate, String> calls,
                                 String symbol, long instrumentId, Map<java.time.LocalDate, Bar> spy,
@@ -515,6 +528,8 @@ public class BacktestEngine {
             // Stamped with the bar's own date, as trade() stamps a fill (below).
             ZonedDateTime time = barDate(bar);
             java.time.LocalDate day = time.toLocalDate();
+            boolean closesDay = i == series.getBarCount() - 1
+                    || !barDate(series.getBar(i + 1)).toLocalDate().equals(day);
             if (called && !java.util.Objects.equals(pending, held)) {
                 if (held != null) {
                     Bar from = held.equals(symbol) ? bar : spy.get(day);
@@ -538,11 +553,11 @@ public class BacktestEngine {
                 }
                 held = pending;
             }
-            if (calls.containsKey(day)) {
+            if (closesDay && calls.containsKey(day)) {
                 pending = calls.get(day);
                 called = true;
             }
-            if (held == null) {
+            if (held == null && closesDay) {
                 pm.accrueInterest(bills.getOrDefault(day, 0.0));
             }
             Bar mark = held == null || held.equals(symbol) ? bar : spy.get(day);
