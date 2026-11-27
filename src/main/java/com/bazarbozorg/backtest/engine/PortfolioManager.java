@@ -9,7 +9,9 @@ import com.bazarbozorg.backtest.model.enums.OrderSide;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Manages the portfolio during a backtest, including positions, cash balance,
@@ -53,6 +55,14 @@ public class PortfolioManager {
     private final List<Position> openPositions;
     private final List<Trade> completedTrades;
     private final List<EquityPoint> equityHistory;
+    /**
+     * Bars each open position has been held through, by position id: one per
+     * equity point recorded while it is open, so a position bought at bar i's
+     * open and sold at bar j's open was held j - i bars, and one closed at the
+     * last close counts that bar too. A trade carries it as {@code holdingBars}
+     * (step 9: it was always 0).
+     */
+    private final Map<String, Integer> barsHeld = new HashMap<>();
     private double peakEquity;
 
     public PortfolioManager(double initialCapital) {
@@ -113,7 +123,8 @@ public class PortfolioManager {
 
         openPositions.remove(position);
 
-        Trade trade = Trade.from(closed, 0);
+        Integer held = barsHeld.remove(position.id());
+        Trade trade = Trade.from(closed, held == null ? 0 : held);
         if (taxRate > 0.0) {
             double net = trade.taxableGain() + lossCarry;
             if (net > 0.0) {
@@ -185,6 +196,9 @@ public class PortfolioManager {
         double drawdown = peakEquity - equity;
         double drawdownPct = peakEquity > 0 ? drawdown / peakEquity : 0.0;
         equityHistory.add(new EquityPoint(time, equity, drawdown, drawdownPct));
+        for (Position position : openPositions) {
+            barsHeld.merge(position.id(), 1, Integer::sum);
+        }
     }
 
     public double getInitialCapital() {

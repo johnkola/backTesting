@@ -83,6 +83,8 @@ class RuleBenchmarkTest {
         assertEquals(106.0, t.get(1).exitPrice(), 1e-12);    // closed at the last close
         assertEquals(CAPITAL * 102 / 101 * 106 / 104, f.finalEquity(), 1e-9);
         assertEquals(QQQ.getBarCount(), f.equity().size());
+        assertEquals(2, t.get(0).holdingBars());   // bars 1 and 2, sold at bar 3's open
+        assertEquals(1, t.get(1).holdingBars());   // bar 4, closed at its close
     }
 
     @Test
@@ -227,6 +229,7 @@ class RuleBenchmarkTest {
         assertEquals("2024-01-31T14:30Z", t.get(0).exitTime().toString());
         assertEquals(CAPITAL * 106 / 103, f.finalEquity(), 1e-9);
         assertEquals(HOURS.length, f.equity().size());       // one point per bar, as the strategy's
+        assertEquals(3, t.get(0).holdingBars());              // the 30th's three hourly bars
     }
 
     @Test
