@@ -5,7 +5,7 @@ package com.bazarbozorg.backtest.report;
  * Includes return metrics, risk-adjusted ratios, trade statistics,
  * and cost summaries. Use the {@link Builder} to construct instances.
  *
- * <p>NOT AVAILABLE IS NULL, NEVER 0 (DESIGN-GAPS G29). Sortino with no losing
+ * <p>NOT AVAILABLE IS NULL, NEVER 0. Sortino with no losing
  * bar and profit factor with no losing trade have no value: both divide by
  * nothing. They used to be stored as 0.0, which reads as the worst case for a
  * run that never lost. They are {@code null} now, Gson leaves them out of

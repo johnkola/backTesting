@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Every route the Python worker answers ({@code PythonRoutes}), through the
- * service as a page calls it (step 9). Each is one line there: a job type, a
+ * service as a page calls it. Each is one line there: a job type, a
  * wait, kept or not. {@link PythonRoutesTest} holds the mechanism on a few of
  * them (a repeated parameter, a refusal, a queued run); this holds every
  * route's own line, which only Postman reached, with the whole stack up. The

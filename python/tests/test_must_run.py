@@ -1,4 +1,4 @@
-"""CI fails when a must-run integration test skips there (step 10, T6).
+"""CI fails when a must-run integration test skips there.
 
 The check is `conftest.pytest_sessionfinish`. It is run here as CI runs it:
 pytest in a directory of its own, with a copy of the conftest, on files that

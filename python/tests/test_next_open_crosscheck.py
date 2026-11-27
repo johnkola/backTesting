@@ -2,8 +2,8 @@
 
 `src/test/resources/crosscheck/next-open.json` holds bars, one long-or-flat
 call per bar, and the trades and return they must give with costs off.
-`NextOpenCrossCheckTest` holds the Java engine to the same file, so a step 7
-result and a step 6 fold trade the same days at the same prices.
+`NextOpenCrossCheckTest` holds the Java engine to the same file, so a backtest
+result and a walk-forward fold trade the same days at the same prices.
 
 The scorer's bars are the fixture's bars but the last: each runs from its
 close to the next bar's close, and the last bar's call has no next open to

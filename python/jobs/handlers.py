@@ -139,7 +139,7 @@ def walkforward(ctx: Context) -> dict[str, Any]:
 def feature_build_argv(inputs: dict[str, Any]) -> list[str]:
     """The build's flags for a job's inputs: the config whose calendar is at
     the timeframe asked for (`feature_config.for_timeframe`), on the instrument
-    asked for when there is one (`for_instrument`, step 7): the config's own
+    asked for when there is one (`for_instrument`): the config's own
     instrument when none is."""
     from nn import feature_config
 

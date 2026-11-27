@@ -10,7 +10,7 @@ columns (a bar where one is NULL is dropped, as the run drops it), and
 stop at the window end, G38). This module only counts and dates what those
 return, so the tab and a run cannot disagree.
 
-The holdout fold is in it too (step 3: the windows on screen are the ones
+The holdout fold is in it too (the windows on screen are the ones
 used): the one fold a `--test` run of the strategy makes, by the same
 `plan_folds` with the strategy's `test.to`, so the tab shows the dates the
 test block would be scored on and what trains for it. Showing it spends
@@ -34,7 +34,7 @@ BLOCKS = ("train", "validation", "test", "prediction")
 
 
 def _iso(d: date | None) -> str | None:
-    """A row's date, or an intraday bar's time (step 8). The matrix keys a bar
+    """A row's date, or an intraday bar's time. The matrix keys a bar
     by its UTC time without a zone (`feature_store.key_sql`), so it is marked
     UTC here: shown bare, 14:30 reads as New York's afternoon, not its open."""
     if d is None:
@@ -46,7 +46,7 @@ def _iso(d: date | None) -> str | None:
 
 def blocks(windows: dict[str, dict[str, str]], dates: list[date]) -> list[dict[str, Any]]:
     """Each saved window with the matrix rows inside it. Pure. On intraday
-    bars a row is a timestamp, and it is inside by its session's day (step 8),
+    bars a row is a timestamp, and it is inside by its session's day,
     as the runner cuts its folds."""
     out = []
     for name in BLOCKS:

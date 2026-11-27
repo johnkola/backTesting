@@ -2,7 +2,7 @@
 
 This module only reads: it never mutates data. Every finding carries a
 severity, `error` or `warning`, set here where the finding is made (the
-author's decision of 2026-11-19, Design-Gaps C2 and D11; R12 and R65: an error
+author's decision of 2026-11-19; R12 and R65: an error
 "is a hard stop: the chain does not continue over that data"). The stop is not
 at the door (the author 2026-11-22, G75): a file always lands, so raw data is
 never lost, and each bar with an error becomes a flagged row (`loader/flags.py`)

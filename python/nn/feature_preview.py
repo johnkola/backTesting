@@ -68,7 +68,7 @@ def set_config(cur, set_id: int) -> tuple[Any, str, bool]:
     """(config, timeframe, whether the config still hashes as the set) for set
     `set_id`: against the config that built it (I3), not features.toml by
     name. Its `config_file` is a file, or a file on another instrument
-    (`features.toml@SPY/yahoo-adj`, step 7), which is a name and not a path."""
+    (`features.toml@SPY/yahoo-adj`), which is a name and not a path."""
     from nn import feature_config
 
     cur.execute("SELECT config_hash, config_file, timeframe FROM feature_sets WHERE id = %s",

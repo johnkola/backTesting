@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The registry's kinds (Design-Gaps C8): the five indicator rules are
+ * The registry's kinds: the five indicator rules are
  * benchmarks, kept runnable for comparison, and everything that runs a trained
  * model is a model strategy.
  */

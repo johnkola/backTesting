@@ -22,7 +22,7 @@ export function splitProblems(blocks: readonly SplitBlock[]): string[] {
 }
 
 /**
- * What is wrong with the folds (step 3: no overlap): a fold that trains on a
+ * What is wrong with the folds (no overlap): a fold that trains on a
  * day it is scored on, two folds whose scored years touch, the validation
  * folds reaching the test block, or the holdout training on its test days.
  * The runner makes them so none of this can happen; the tab says so if it does.

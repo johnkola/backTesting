@@ -75,7 +75,7 @@ def _registry() -> ModelRegistry:
 class TrainRequest(BaseModel):
     # A field this request does not know is refused (422), not dropped: the
     # Train page once sent `hidden_layer_size` for `hidden_size`, and a changed
-    # setting trained at the default without a word (step 5).
+    # setting trained at the default without a word.
     model_config = ConfigDict(extra="forbid")
 
     symbol: str = Field(..., description="Instrument symbol, must already exist")
@@ -561,7 +561,7 @@ def _instant(key) -> str:
     row's date at midnight UTC, an intraday row's bar time, which the matrix
     keys as UTC without a zone (`feature_store.key_sql`). Appending a midnight
     to an hourly bar's time gave `...T14:30:00T00:00:00Z`, so the engine could
-    not read a feature-store model's predictions on intraday bars (step 10)."""
+    not read a feature-store model's predictions on intraday bars."""
     import datetime as _dt
 
     if isinstance(key, _dt.datetime):
@@ -820,7 +820,7 @@ def get_features_config(symbol: str | None = None, source: str | None = None,
     rsi_14 and breakeven_inflation are out.
 
     With `symbol` and `source`, the config that builds that instrument's
-    `timeframe` calendar (`feature_config.for_instrument`, step 7), so its own
+    `timeframe` calendar (`feature_config.for_instrument`), so its own
     series name it and not the file's instrument.
     """
     if bool(symbol) != bool(source):

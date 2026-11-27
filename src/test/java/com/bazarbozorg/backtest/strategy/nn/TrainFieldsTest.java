@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The train request's field names (step 5): one table, read by the engine's own
+ * The train request's field names: one table, read by the engine's own
  * request and, through {@code GET /api/strategies}, by the Train page.
  *
  * <p>The page used to derive the names by converting the case, and two of the

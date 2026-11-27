@@ -30,7 +30,7 @@ export default function DataStage() {
     setReload((n) => n + 1)
     reloadStatus()
   }, [reloadStatus])
-  // The series the instrument the pipeline is on needs (step 7): the status
+  // The series the instrument the pipeline is on needs: the status
   // names it, the one picked or the config's own, and its config names that
   // instrument's own series in place of the file's.
   const on = stageInstrument(status, statusError)

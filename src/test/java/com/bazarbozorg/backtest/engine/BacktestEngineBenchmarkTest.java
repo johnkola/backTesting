@@ -58,7 +58,7 @@ class BacktestEngineBenchmarkTest {
     @Test
     @DisplayName("a trade counts the bars it was held: bought at bar 1's open, held to bar 4's close")
     void aTradeCountsTheBarsItWasHeld() {
-        // Step 9: every trade said 0 bars held (PortfolioManager built each with 0).
+        // Every trade used to say 0 bars held (PortfolioManager built each with 0).
         assertEquals(4, hold(0.0, 0.0, 0).trades().get(0).holdingBars());
         assertEquals(2, hold(0.0, 0.0, 2).trades().get(0).holdingBars());   // bar 3's open to bar 4's close
     }

@@ -29,8 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * A whole backtest from stored candles (step 10, the report's first item for
- * step 6): {@code POST /api/run} as the engine's job worker answers it
+ * A whole backtest from stored candles: {@code POST /api/run} as the engine's job worker answers it
  * ({@link EngineApi#answer}), on a seeded instrument, and the row it saves read
  * back. Every other engine test works on fixture series; none ran
  * {@link BacktestEngine#run} on candles from the store and saved the result.

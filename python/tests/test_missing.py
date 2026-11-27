@@ -1,5 +1,5 @@
 """Missing bars: found on the NYSE calendar, flagged as warnings, and filled by
-repair rows the adjusted view turns into a bar (R89; step 1)."""
+repair rows the adjusted view turns into a bar (R89)."""
 
 from __future__ import annotations
 
@@ -216,7 +216,7 @@ class TestMissing:
         assert ms.scan(db, SYMBOL, VENDOR)["missing"] == 1
 
     def test_only_daily_bars_today(self, db, series):  # noqa: F811
-        with pytest.raises(ValueError, match="needs its session calendar"):
+        with pytest.raises(ValueError, match="needs a session calendar, which is not built yet"):
             ms.scan(db, SYMBOL, VENDOR, "H1")
         with pytest.raises(LookupError):
             ms.scan(db, "ZZ-NO-SUCH", VENDOR)

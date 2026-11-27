@@ -206,7 +206,7 @@ export function designDefaultWindows(lastStoredDate?: string): Windows {
 }
 
 /**
- * Windows proposed from the series' own stored range (DESIGN-GAPS G21).
+ * Windows proposed from the series' own stored range.
  *
  * The design's split assumes QQQ's history. On a series stored from 2019 it
  * leaves an empty train window, which saves without complaint and trains on
@@ -263,7 +263,7 @@ export function fitWindowsToSeries(fromDate: string, toDate: string): Windows | 
 }
 
 /**
- * The label horizon as market time on this timeframe (DESIGN-GAPS I8).
+ * The label horizon as market time on this timeframe.
  *
  * `horizonBars` counts bars, so the same 5 is a week on D1 and two and a half
  * hours on M30, and the form gave no sign of it. This says it in time. Intraday

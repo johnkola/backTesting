@@ -12,7 +12,7 @@ import java.util.List;
  * Calculates all performance metrics from trade history and equity curve data.
  * Uses Apache Commons Math DescriptiveStatistics for statistical calculations.
  *
- * <p>ANNUALISING IS PER PERIOD, NOT PER BAR (DESIGN-GAPS I5). The annualised
+ * <p>ANNUALISING IS PER PERIOD, NOT PER BAR. The annualised
  * return, Sharpe, Sortino and Calmar all scale a per-bar figure up to a year,
  * so they need the number of bars in a year, which depends on the timeframe.
  * This used to be 252 for every timeframe, so an M30 run (13 bars a day) was
@@ -26,7 +26,7 @@ import java.util.List;
  * length, because the session decides it: H1 over a 09:30-16:00 NYSE day is
  * seven bars, over a 24-hour FX day 24. A D1 run is exactly what it was.
  *
- * <p>FOUR METRICS FIXED, 2026-11-15 (DESIGN-GAPS G29, AGENTS.md B3).
+ * <p>FOUR METRICS FIXED, 2026-11-15.
  * <ul>
  *   <li>Sortino divided by the standard deviation of the losing bars about
  *       their own mean. The downside deviation is the root of the mean squared

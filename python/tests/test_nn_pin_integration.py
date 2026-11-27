@@ -172,7 +172,7 @@ def test_the_saved_window_is_the_bars_fitted(client):
                                                ("lightgbm", "model.txt")])
 def test_a_tree_engine_trains_saves_and_predicts(client, engine, model_file):
     """B9: a tree engine trains on the same rows, is saved in its library's
-    format with no scaler, and predict_range serves it for a step 7 backtest."""
+    format with no scaler, and predict_range serves it for a backtest."""
     pytest.importorskip(engine)
     from nn.nn_api import _registry
 

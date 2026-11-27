@@ -101,7 +101,7 @@ public class PythonRoutes {
         return python.forward("repair-choose", 300, KEPT, request, body);
     }
 
-    /** Flags a series' missing bars and writes their repair rows (R89; step 1). */
+    /** Flags a series' missing bars and writes their repair rows (R89). */
     @PostMapping("/api/repairs/missing")
     public ResponseEntity<Object> findMissing(HttpServletRequest request,
             @RequestBody(required = false) JsonNode body) {

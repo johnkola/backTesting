@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { instrumentKey, instrumentParams, parseInstrument, stageInstrument } from './instrument'
 
-describe('the pipeline\'s instrument (step 7)', () => {
+describe('the pipeline\'s instrument', () => {
   it('is SYMBOL/source, or none for the config\'s own', () => {
     expect(parseInstrument('SPY/yahoo-adj')).toEqual({ symbol: 'SPY', source: 'yahoo-adj' })
     expect(parseInstrument('')).toBeNull()
@@ -17,7 +17,7 @@ describe('the pipeline\'s instrument (step 7)', () => {
   })
 })
 
-describe('the instrument a pipeline stage reads (step 7)', () => {
+describe('the instrument a pipeline stage reads', () => {
   it('is the one the status names, the API\'s default once the status fails, and waits while it loads', () => {
     expect(stageInstrument({ symbol: 'SPY', source: 'yahoo-adj' }, null)).toEqual({ symbol: 'SPY', source: 'yahoo-adj' })
     expect(stageInstrument({}, null)).toEqual({})

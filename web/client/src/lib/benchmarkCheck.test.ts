@@ -10,7 +10,7 @@ const bar = (day: string, open: number, close: number): Candle =>
     low: Math.min(open, close), close, volume: 1 })
 
 // QQQ 2016-03-18 opened at 99.904393; with 0.05% slippage the buy filled at
-// 99.9543451965 (step 4's first check, by hand).
+// 99.9543451965 (checked by hand).
 const qqq = barIndex([
   bar('2016-03-18', 99.904393, 99.820724),
   bar('2016-05-06', 98.1, 98.9),
@@ -31,7 +31,7 @@ const trades: Trade[] = [
 ]
 const LAST = '2021-12-31T00:00:00.000Z'
 
-describe('a benchmark fill beside its bar (step 4)', () => {
+describe('a benchmark fill beside its bar', () => {
   it('names the asset: SPY when dual momentum switched into it', () => {
     expect(trades.map((t) => assetOf(t, 'QQQ'))).toEqual(['QQQ', 'SPY', 'QQQ'])
   })
@@ -95,7 +95,7 @@ describe('a benchmark fill beside its bar (step 4)', () => {
   })
 })
 
-// Result 1405's Faber trade 1, as stored (step 6): QQQ opened at 100.90846 on
+// Result 1405's Faber trade 1, as stored: QQQ opened at 100.90846 on
 // 2016-04-01 and 98.537750 on 2016-05-02; 0.05% slippage, 0.1% commission.
 const faber: Trade = { instrumentId: 47, entryTime: '2016-04-01T00:00:00Z',
   entryPrice: 100.95891423, exitTime: '2016-05-02T00:00:00Z', exitPrice: 98.48846313400001,
@@ -104,7 +104,7 @@ const faberBars = new Map([['QQQ', barIndex([bar('2016-04-01', 100.90846, 102.6)
   bar('2016-05-02', 98.537732, 98.9)])]])
 const pct = (value: number) => ({ type: 'percentage', value, description: null })
 
-describe('a trade followed to the settings (step 6)', () => {
+describe('a trade followed to the settings', () => {
   const [line] = tradeLines([faber], 'QQQ', faberBars, null)
 
   it('nets the gain, both commissions and the tax', () => {

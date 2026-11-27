@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * What a backtest was asked to do, kept with its result (DESIGN-GAPS G40, R34).
+ * What a backtest was asked to do, kept with its result (R34).
  *
  * <p>A stored result used to hold only what came out: the first and last bar
  * it traded, the trades, the metrics. The request was gone, so "rerun with the

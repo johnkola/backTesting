@@ -193,7 +193,7 @@ def test_every_enabled_computed_series_has_an_implementation():
 
 
 # --------------------------------------------------------------------------
-# feature_spec.role (Design-Gaps C7: selectable columns)
+# feature_spec.role: selectable columns
 # --------------------------------------------------------------------------
 
 

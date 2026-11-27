@@ -34,7 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>{@code at} asks for the bars at given instants instead, never thinned:
  * the bar each fill of a result took its price from, so a trade can be checked
- * against the price it names (step 4). A trade is stamped with its bar's own
+ * against the price it names. A trade is stamped with its bar's own
  * timestamp ({@code BacktestEngine.barDate}), the one the bar is stored under.
  */
 @RestController

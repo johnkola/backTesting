@@ -109,7 +109,7 @@ class DateTimeUtilsTest {
         assertEquals("", DateTimeUtils.formatDate(null));
     }
 
-    // ---- DESIGN-GAPS I6: a bare end date covers its whole day ----------------
+    // ---- a bare end date covers its whole day ---------------------------------
 
     @Test
     @DisplayName("parseEnd reads a bare date as the last microsecond of that day")

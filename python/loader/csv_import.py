@@ -227,7 +227,7 @@ MAX_SKIP_EXAMPLES = 5
 
 @dataclass
 class SkippedRows:
-    """Rows a file had that no candle came from (DESIGN-GAPS R6).
+    """Rows a file had that no candle came from.
 
     The importer is lenient on purpose: one bad line in a vendor export should
     not refuse the other 6,000. But it used to drop those lines without a

@@ -11,8 +11,8 @@ import {
 
 /**
  * One benchmark of a result, opened under its row of the benchmark table so
- * each of its figures can be checked by hand against the prices (implementation
- * plan, step 4): how each figure is made, every trade beside the bar it filled
+ * each of its figures can be checked by hand against the prices: how each
+ * figure is made, every trade beside the bar it filled
  * at, the month ends behind Faber and dual momentum, and the trades and daily
  * equity as CSV for the two figures a spreadsheet is needed for (max drawdown
  * and Sharpe).

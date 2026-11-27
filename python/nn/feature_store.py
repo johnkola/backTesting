@@ -12,7 +12,7 @@ read back with its columns permuted would score nonsense while looking fine.
 A set stores three roles. `input` columns are the default inputs: what a read
 with no columns named returns, so every set reads as it did before the other
 roles existed. `select` columns (RSI, MACD, realized volatility and two ratios;
-Design-Gaps C7, the author's decision 2026-11-19) are read only when a strategy
+the author's decision 2026-11-19) are read only when a strategy
 names them. `data` columns are stored for charts and rules and never read into
 a matrix; this module is the boundary that keeps them out. No column has that
 role today.

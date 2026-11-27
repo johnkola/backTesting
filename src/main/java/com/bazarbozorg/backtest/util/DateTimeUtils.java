@@ -80,7 +80,7 @@ public final class DateTimeUtils {
 
     /**
      * Parses the END of a range: like {@link #parse}, except that a date with
-     * no time means the whole of that day (DESIGN-GAPS I6).
+     * no time means the whole of that day.
      *
      * <p>Range ends are compared inclusively ({@code timestamp <= to}), and a
      * bare date parses to midnight. Midnight is where a D1 bar sits, so a

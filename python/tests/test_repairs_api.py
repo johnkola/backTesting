@@ -1,4 +1,4 @@
-"""The repairs routes (`loader/repairs_api.py`), through the app (step 9).
+"""The repairs routes (`loader/repairs_api.py`), through the app.
 
 What a repair does is `loader/repair.py`'s and `loader/missing.py`'s, and has
 its tests there. The routes add their own rules: what a request must carry,

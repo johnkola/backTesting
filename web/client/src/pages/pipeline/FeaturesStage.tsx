@@ -49,7 +49,7 @@ export default function FeaturesStage() {
   const [tf] = useTimeframe()
   const [reload, setReload] = useState(0)
   const { status, error: statusError, reload: reloadStatus } = usePipelineStatus()
-  // The sets of the instrument the pipeline is on (step 7): the status names
+  // The sets of the instrument the pipeline is on: the status names
   // it, the one picked or the config's own, so another instrument's newer set
   // is never shown as this one's.
   const on = stageInstrument(status, statusError)

@@ -1,4 +1,4 @@
-# Every test suite in the repo, on every push and pull request (DESIGN-GAPS G15).
+# Every test suite in the repo, on every push and pull request.
 #
 # Three jobs, one per stack, so a failure names the stack that broke:
 #   python  the Python worker (loader + nn + jobs), against a real TimescaleDB
@@ -70,7 +70,7 @@ jobs:
       - name: pytest
         # A skip in one of the integration files tests/conftest.py names
         # (MUST_RUN) fails the job: a green run that had not run them passed
-        # unseen (step 10, T6).
+        # unseen.
         env:
           MUST_RUN_INTEGRATION: "1"
         run: python -m pytest -q -rs

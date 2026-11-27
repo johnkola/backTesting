@@ -1,5 +1,5 @@
 /**
- * The engine's two kinds of registered strategy (Design-Gaps C8, the author's
+ * The engine's two kinds of registered strategy (the author's
  * decision 2026-11-19): a `model` strategy runs a trained model; a `benchmark`
  * is one of the five indicator rules (SMA crossover, RSI, MACD, Bollinger,
  * triple EMA), kept runnable for comparison and not offered as a strategy.

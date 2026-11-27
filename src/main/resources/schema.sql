@@ -153,7 +153,7 @@ ALTER TABLE data_imports ADD COLUMN IF NOT EXISTS archive_path TEXT;
 CREATE INDEX IF NOT EXISTS idx_data_imports_archive_path
     ON data_imports(archive_path) WHERE archive_path IS NOT NULL;
 
--- The hard stop's override (R12, R65; Design-Gaps C2, D11). A file whose check
+-- The hard stop's override (R12, R65). A file whose check
 -- report has an error is not stored. When someone stores it anyway, on purpose,
 -- every audit row it writes says why, how many errors were accepted, and who.
 -- All NULL on an import that had no error to override, which is every import
@@ -319,7 +319,7 @@ CREATE TABLE IF NOT EXISTS feature_spec (
 -- (`feature_store.read_matrix`, `column_names`). The default makes every set
 -- built before data-only columns existed read exactly as it did.
 ALTER TABLE feature_spec ADD COLUMN IF NOT EXISTS role VARCHAR(8) NOT NULL DEFAULT 'input';
--- `select` (2026-11-21, Design-Gaps C7) is stored like `data` and read like
+-- `select` (2026-11-21) is stored like `data` and read like
 -- `input`, but only when a strategy names the column: a read of the default
 -- inputs never holds one. Dropped and re-added so a database that has the
 -- two-value check gets the third value.
@@ -572,7 +572,7 @@ CREATE TABLE IF NOT EXISTS feed_runs (
 );
 ALTER TABLE feature_sets ADD COLUMN IF NOT EXISTS current_run_id BIGINT;
 
--- The build's hard stop (R12, R65; Design-Gaps C2, D11). A data check that
+-- The build's hard stop (R12, R65). A data check that
 -- could not run, or compared nothing, stops the build before a set is written.
 -- A set built anyway says why, how many such checks, and who. All NULL on a
 -- set whose checks all happened.

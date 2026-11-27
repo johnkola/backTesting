@@ -95,7 +95,7 @@ public class FeaturesController {
             @RequestParam(required = false) String source) {
         // The config is timeframe-independent (it describes the columns, not
         // the bars), so only the built sets filter: by timeframe, and by
-        // instrument when one is named (step 7), so the newest set is that
+        // instrument when one is named, so the newest set is that
         // instrument's and not whichever was built last.
         String tf = given(timeframe);
         String sym = given(symbol);
@@ -200,7 +200,7 @@ public class FeaturesController {
                     return c;
                 }).list();
 
-        // The config on the instrument named (step 7): its own series read that
+        // The config on the instrument named: its own series read that
         // instrument, so the columns shown are the ones its set was built from.
         Map<String, String> on = new LinkedHashMap<>();
         if (sym != null && src != null) {
@@ -330,7 +330,7 @@ public class FeaturesController {
         if (!timeframe.matches("[A-Z][A-Z0-9]{0,3}")) {
             throw ApiException.badRequest("timeframe is a code such as D1, H1 or M30");
         }
-        // Any instrument (step 7): its calendar, with the config's own series
+        // Any instrument: its calendar, with the config's own series
         // on it. Both or neither: without them, the config's own instrument.
         String symbol = body == null ? "" : body.path("symbol").asString("").trim();
         String source = body == null ? "" : body.path("source").asString("").trim();
@@ -458,7 +458,7 @@ public class FeaturesController {
         // calendar bar with no match is a missing bar. Moved from the Node API
         // as it was, including its grouping: row_number() and dense_rank() are
         // both taken over the missing rows, so they are equal and every missing
-        // bar lands in one range (recorded in GAPS.md).
+        // bar lands in one range.
         List<Gap> rows = db.sql("WITH calendar AS (SELECT DISTINCT timestamp FROM feature_values "
                         + "WHERE feature_set_id = ?), "
                         + "missing AS (SELECT c.timestamp FROM calendar c "

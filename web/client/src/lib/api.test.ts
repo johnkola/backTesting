@@ -107,7 +107,7 @@ describe('sorted', () => {
   })
 })
 
-describe('trainBody (step 5)', () => {
+describe('trainBody', () => {
   const network = { engine: 'mlp', fields: { lookbackWindow: 'lookback_window',
     hiddenLayerSize: 'hidden_size', numHiddenLayers: 'num_hidden', learningRate: 'learning_rate' } }
   const tree = { engine: 'xgboost', fields: { lookbackWindow: 'lookback_window' },

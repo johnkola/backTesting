@@ -1,4 +1,4 @@
-"""What the Java side asks the Python worker for, held to what the worker has (step 9).
+"""What the Java side asks the Python worker for, held to what the worker has.
 
 The service (`server/`) and the engine (`src/`) reach Python only through the
 jobs table: a job type, and for a route a method and a path that the worker

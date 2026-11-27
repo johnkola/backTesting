@@ -14,7 +14,7 @@ import tools.jackson.databind.ObjectMapper;
  * What kind each registered strategy is, as the engine's registry says
  * ({@code GET /api/strategies}, {@code kind}): {@code model}, or
  * {@code benchmark} for the five indicator rules kept runnable for comparison
- * only (Design-Gaps C8).
+ * only.
  *
  * <p>The list is the engine's; nothing is listed here. A result names its
  * strategy and the label travels with it from this one place, so Results and

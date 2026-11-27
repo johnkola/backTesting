@@ -267,7 +267,7 @@ public class ModelsController {
         row.put("validationAccuracyPct", extra.path("final_val_acc").isNumber()
                 ? extra.get("final_val_acc").asDouble() * 100 : null);
         // The page renders hyperparameters as text, which is what Java wrote.
-        // Everything the model was trained with (step 5): the shared config;
+        // Everything the model was trained with: the shared config;
         // the network's shape, which the loader writes beside it rather than
         // in it (a tree model writes 0 for both); and a tree engine's own
         // settings. Each is part of what makes the model, and the page said

@@ -18,7 +18,7 @@ import java.util.List;
  * momentum's earns T-bills, as the rule says.
  *
  * <p>Decided on daily closes; on an intraday result each day's decision is
- * traded at the next session's first bar (step 8). Not available, with the
+ * traded at the next session's first bar. Not available, with the
  * reason, when the window has too little history before it for the 10 or 12
  * months, when the result is weekly or monthly, or when the loader could not
  * serve the decisions. Its figures are then null: a rule is

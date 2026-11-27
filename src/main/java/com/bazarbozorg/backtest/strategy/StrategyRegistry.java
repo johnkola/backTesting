@@ -29,8 +29,8 @@ import java.util.function.Supplier;
  * line to the constructor. That name is what {@code run -s},
  * {@code GET /api/strategies} and the Run tab offer.
  * <p>
- * <b>Every strategy has a kind.</b> The author's decision of 2026-11-19
- * (Design-Gaps C8): the five indicator rules (SMA crossover, RSI, MACD,
+ * <b>Every strategy has a kind.</b> The author's decision of 2026-11-19:
+ * the five indicator rules (SMA crossover, RSI, MACD,
  * Bollinger, triple EMA) are kept runnable for comparison and are not offered
  * as strategies. They register as {@link Kind#BENCHMARK}; a strategy that runs
  * a trained model is {@link Kind#MODEL}. The kind changes no figure: it is

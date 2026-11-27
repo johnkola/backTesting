@@ -44,7 +44,7 @@ describe('the repair log (G76)', () => {
   })
 })
 
-describe('missing bars (R89, step 1)', () => {
+describe('missing bars (R89)', () => {
   const bar = (field: Repair['field'], id: number, extra: Partial<Repair> = {}) => row({
     id, field, original: null, problem: 'no bar on a trading day', status: 'held',
     calculated: 100, secondSource: null, barTime: '2023-01-10T00:00:00Z', ...extra,

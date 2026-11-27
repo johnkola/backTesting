@@ -32,7 +32,7 @@ def _fold_models_in_a_temp_dir(tmp_path_factory):
 #: The integration tests that must run, not skip, where `MUST_RUN_INTEGRATION`
 #: is set (CI). Each skips without the database, TA-Lib, torch or the Java and
 #: client sources beside the checkout, and a skip in CI passed unseen: a green
-#: run that had not run them (step 10, T6).
+#: run that had not run them.
 MUST_RUN = (
     "tests/test_pipeline_integration.py",
     "tests/test_feeds_runner_integration.py",

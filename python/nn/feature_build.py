@@ -540,7 +540,7 @@ def store(
 ) -> tuple[int, int]:
     """Write the set and its values, and record the build. Returns (set id, build id)."""
     # The config's name, which may carry an instrument (`features.toml@SPY/
-    # yahoo-adj`, step 7), and its digest: what any later check rebuilds.
+    # yahoo-adj`), and its digest: what any later check rebuilds.
     cfg_hash = feature_config.digest_name(cfg_name)
     cfg_file = cfg_name
     a = cfg.alignment
@@ -636,7 +636,7 @@ def main() -> int:
     p.add_argument("--instrument", metavar="SYMBOL/source", default=None,
                    help="Build the config's calendar on another instrument: its own "
                         "series (prices, volume, RSI, MACD, volatility) read this one, "
-                        "the market and macro series stay (step 7). Omit for the "
+                        "the market and macro series stay. Omit for the "
                         "config's own instrument")
     p.add_argument("--since", help="First calendar date to build (e.g. 2003-01-01)")
     p.add_argument("--dry-run", action="store_true",
@@ -726,7 +726,7 @@ def main() -> int:
         print(f"\nrefused: {held}")
         return 3
 
-    # The hard stop (R12, R65; Design-Gaps C2, D11), the dry run included: a
+    # The hard stop (R12, R65), the dry run included: a
     # check that did not happen leaves its column unverified, so no set is
     # written over it unless someone says why, and that is recorded on the set.
     stopped = data_checks.errors(checks)

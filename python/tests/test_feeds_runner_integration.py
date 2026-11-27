@@ -1,4 +1,4 @@
-"""The feeds runner's cycle on a provider of the test's own (step 9).
+"""The feeds runner's cycle on a provider of the test's own.
 
 `refresh_feed` is what keeps every series current each evening: a first
 load takes the provider's whole history; a later run adds the new days; a

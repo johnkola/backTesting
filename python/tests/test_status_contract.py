@@ -1,11 +1,11 @@
-"""The pipeline status, whole, against what the client reads (step 9).
+"""The pipeline status, whole, against what the client reads.
 
 `staleness.status` is the one answer every tab of the Pipeline page reads
 (`GET /api/nn/pipeline/status`). Its parts have their tests
 (`test_staleness.py`); nothing ran the whole of it and held it to the client:
 one entry per tab the client lists (`web/client/src/lib/stages.ts`), each in a
 state the client knows (`StageState` in `stageStatus.ts`), with its reasons,
-and on another instrument (step 7) the instrument named. The client's own
+and on another instrument the instrument named. The client's own
 types tie its tabs to `PipelineStatus`; this ties `PipelineStatus` to Python.
 
 Read-only: the status writes nothing, and the transaction is rolled back.

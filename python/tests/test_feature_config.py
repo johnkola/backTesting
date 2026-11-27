@@ -543,7 +543,7 @@ def test_any_other_disabled_column_is_still_not_built(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# selectable columns (Design-Gaps C7, F1, F2): built, offered, not a default input
+# selectable columns: built, offered, not a default input
 # --------------------------------------------------------------------------
 
 SELECTABLE_RSI = DATA_ONLY_RSI.replace('"data-only"', '"selectable"')

@@ -422,7 +422,7 @@ def test_the_worker_as_started_records_a_failed_runner_as_the_handler_said(conn)
     assert any("999999999" in line for line in row["result"]["output"])
 
 
-# ---- the feature-build handler (R68; step 2) ------------------------------------
+# ---- the feature-build handler (R68) ------------------------------------
 
 BUILD_LINES = ["config          nn/features.toml", "stored          set 63, 6971 rows"]
 

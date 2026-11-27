@@ -3,7 +3,7 @@ import {
   INSTRUMENT_EVENT, parseInstrument, readInstrument, writeInstrument, type InstrumentChoice,
 } from './instrument'
 
-/** The pipeline's instrument (step 7), and a setter every listener sees; as `useTimeframe`. */
+/** The pipeline's instrument, and a setter every listener sees; as `useTimeframe`. */
 export function useInstrument(): [InstrumentChoice | null, (c: InstrumentChoice | null) => void] {
   const [choice, setChoice] = useState<InstrumentChoice | null>(readInstrument)
 

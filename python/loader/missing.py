@@ -1,5 +1,4 @@
-"""Missing bars: a trading day with no bar, flagged and filled (R89; step 1 of
-the implementation plan).
+"""Missing bars: a trading day with no bar, flagged and filled (R89).
 
 A day the NYSE held a session (`market_calendar.is_closed` is false), between
 a series' first and last bar, with no raw bar, is a missing bar. Closed days
@@ -55,7 +54,8 @@ PROBLEM = "no bar on a trading day"
 ROLLUP, RELATED, CARRY = "rollup", "related", "carry"
 METHODS = (ROLLUP, RELATED, CARRY)
 
-#: Only daily bars today: an intraday session calendar is step 8's.
+#: Only daily bars: finding a missing intraday bar needs a session calendar,
+#: which is not built yet.
 TIMEFRAMES = ("D1",)
 
 #: Timeframes finer than D1, finest first: the roll-up uses the finest a day has.
@@ -85,7 +85,7 @@ def _bar_time(day: dt.date) -> dt.datetime:
 def _check_timeframe(timeframe: str) -> None:
     if timeframe not in TIMEFRAMES:
         raise ValueError(f"missing bars are found on {', '.join(TIMEFRAMES)} only; "
-                         f"{timeframe} needs its session calendar (step 8)")
+                         f"{timeframe} needs a session calendar, which is not built yet")
 
 
 # --------------------------------------------------------------------------

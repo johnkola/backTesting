@@ -247,7 +247,7 @@ export type CohesionReport = {
   examples: CohesionFinding[]
 }
 
-/** Rows in the file that produced no candle (DESIGN-GAPS R6). The count is
+/** Rows in the file that produced no candle. The count is
  *  exact; examples are the first few, with the file's own line numbers. */
 export type SkippedRows = {
   count: number
@@ -700,7 +700,7 @@ export type Strategy = {
    *  from an engine older than the kinds, which is read as `model`. */
   kind?: 'model' | 'benchmark'
   /**
-   * How it trains through `POST /api/nn/train` (step 5), from the engine's own
+   * How it trains through `POST /api/nn/train`, from the engine's own
    * table (`NeuralNetworkStrategy.trainFields`): the engine, each parameter's
    * field there, and where the rest go. Absent for a strategy that does not
    * train there (`nn-feature-store` is trained offline).
@@ -790,7 +790,7 @@ export function engineWindow(
  * its field from the engine's table, a tree engine's other parameters as
  * `engine_settings`. Names are never derived here: converting the case sent
  * `hidden_layer_size` for `hidden_size`, which the loader dropped, and no
- * engine, so XGBoost and LightGBM trained the network (step 5). A parameter the
+ * engine, so XGBoost and LightGBM trained the network. A parameter the
  * table does not place is left out, as the engine leaves it out.
  */
 export function trainBody(req: TrainRequest): Record<string, unknown> {
@@ -2085,7 +2085,7 @@ export type RunStaleness = {
 
 export type PipelineStatus = {
   timeframe: string
-  /** The instrument whose calendar the status is on (step 7): the one asked for, or the config's own. */
+  /** The instrument whose calendar the status is on: the one asked for, or the config's own. */
   symbol?: string
   source?: string
   checkedAt: string

@@ -1,5 +1,5 @@
 """The last step of every feature column: scaled into [-1, 1] by the bars
-before it (R68, the author 2026-11-23; step 2 of the implementation plan)."""
+before it (R68, the author 2026-11-23)."""
 
 from __future__ import annotations
 

@@ -896,7 +896,7 @@ def test_the_run_records_its_window_and_null_means_expanding():
 
 
 # --------------------------------------------------------------------------
-# Recalculating under another version of the run's strategy (step 9)
+# Recalculating under another version of the run's strategy
 # --------------------------------------------------------------------------
 
 

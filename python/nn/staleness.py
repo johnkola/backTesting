@@ -423,7 +423,7 @@ class Context:
     cfg: Any = None
     cfg_error: str | None = None
     cfg_hash: str | None = None
-    #: The instrument the status is on (step 7): the one asked for, or the
+    #: The instrument the status is on: the one asked for, or the
     #: config's calendar instrument. None only when the config cannot be read,
     #: and then every instrument's runs and results are listed.
     symbol: str | None = None
@@ -437,7 +437,7 @@ class Context:
     def open(cls, cur, timeframe: str, now: dt.datetime | None = None,
              symbol: str | None = None, source: str | None = None) -> Context:
         """The context for one timeframe, on `symbol`'s calendar when given
-        (step 7: any instrument), else the timeframe's config's own."""
+        (any instrument), else the timeframe's config's own."""
         ctx = cls(cur=cur, now=now or dt.datetime.now(dt.UTC), timeframe=timeframe,
                   symbol=symbol or None, source=source or None)
         try:
@@ -456,7 +456,7 @@ class Context:
 
     def _hash_for(self, instrument_id: int, source_id: int, timeframe: str) -> str | None:
         """The digest the current config gives this instrument's calendar: each
-        instrument's set is built from its own config name (step 7), so one
+        instrument's set is built from its own config name, so one
         hash for the timeframe would call every other instrument's set stale."""
         self.cur.execute("SELECT symbol FROM instruments WHERE id = %s", (instrument_id,))
         sym = self.cur.fetchone()
@@ -734,7 +734,7 @@ def newest_runs(cur, timeframe: str, symbol: str | None = None,
                 source: str | None = None) -> list[dict[str, Any]]:
     """The newest finished run per strategy (and per whole-set label): an older
     run of the same strategy is superseded, not stale (`pick_newest`). On one
-    instrument when given (step 7)."""
+    instrument when given."""
     on = " AND i.symbol = %s AND s.name = %s" if symbol and source else ""
     cur.execute(_RUN_SQL + " WHERE r.timeframe = %s AND r.finished_at IS NOT NULL" + on
                 + " ORDER BY r.id DESC", (timeframe, *((symbol, source) if on else ())))
@@ -893,7 +893,7 @@ def backtest_stage(ctx: Context, limit: int = 200) -> dict[str, Any]:
 def status(cur, timeframe: str = "D1", now: dt.datetime | None = None,
            symbol: str | None = None, source: str | None = None) -> dict[str, Any]:
     """Every stage's state, with the reasons, for one timeframe, on one
-    instrument's calendar when given (step 7)."""
+    instrument's calendar when given."""
     ctx = Context.open(cur, timeframe, now, symbol, source)
     data = data_stage(ctx)
     features = features_stage(ctx)

@@ -96,7 +96,7 @@ public class NeuralNetworkStrategy extends AbstractTa4jStrategy
      * {@code GET /api/strategies}. The page used to derive the names by
      * converting the case, so {@code hiddenLayerSize} went out as
      * {@code hidden_layer_size}, which the loader does not know, and a changed
-     * hidden size trained at the default without a word (step 5).
+     * hidden size trained at the default without a word.
      */
     public Map<String, String> trainFields() {
         Map<String, String> out = new LinkedHashMap<>(SHARED_FIELDS);

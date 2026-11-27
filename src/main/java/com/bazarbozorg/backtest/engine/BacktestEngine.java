@@ -239,7 +239,7 @@ public class BacktestEngine {
         // spans the post-warmup bars, so dividing by the whole series understated
         // its rate. Both sides now annualise over the bars actually traded.
         //
-        // Bars are not days below D1 (DESIGN-GAPS I5): an M30 day holds 13 of
+        // Bars are not days below D1: an M30 day holds 13 of
         // them. So the bar count drives the exponent, the distinct days are
         // what gets reported as trading days, and the bars a year comes from
         // the timeframe and the bars each day was measured to hold.
@@ -374,7 +374,7 @@ public class BacktestEngine {
                                        Instrument instrument, DataSource source) {
         // Decided on daily closes. An intraday result trades them on its own
         // bars, at the next session's first bar (tradeHoldings; the author's
-        // rule of 2026-11-18, as the walk-forward runner scores them, step 8).
+        // rule of 2026-11-18, as the walk-forward runner scores them).
         // A weekly or monthly bar spans many decisions, so it has none.
         if (timeframe == Timeframe.W1 || timeframe == Timeframe.MN1) {
             String why = "the rule benchmarks are decided on daily closes; a " + timeframe
@@ -417,7 +417,7 @@ public class BacktestEngine {
 
     /**
      * Where the rule decisions come from: the loader's {@code GET /api/nn/rules},
-     * over the jobs table. A test hands the engine its own (step 10), since no
+     * over the jobs table. A test hands the engine its own, since no
      * worker answers the jobs table in CI and the call would wait five minutes.
      * Package-private and set back by the test that changes it.
      */
@@ -516,7 +516,7 @@ public class BacktestEngine {
      * closed at the last close. Returns why it could not be traded, or null.
      *
      * <p>The calls are one per day, made at the day's close. On intraday bars
-     * (step 8) a day's call is taken at its session's last bar, so it fills at
+     * a day's call is taken at its session's last bar, so it fills at
      * the next session's first bar, at the session's open, and a day's T-bill
      * carry is earned once, at that last bar; taking it at the first bar would
      * trade on a close not yet made. On daily bars every bar is its session's

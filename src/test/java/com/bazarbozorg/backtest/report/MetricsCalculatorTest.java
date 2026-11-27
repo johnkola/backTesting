@@ -229,7 +229,7 @@ class MetricsCalculatorTest {
         assertEquals(-250.0 / 2.0, metrics.getAvgLoss(), 0.01);
     }
 
-    // ---- DESIGN-GAPS I5: annualise per period, not per bar ------------------
+    // ---- annualise per period, not per bar -----------------------------------
 
     @Test
     @DisplayName("periodsPerYear is fixed for D1, W1 and MN1")

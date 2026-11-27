@@ -13,7 +13,7 @@ Three rules the rest of the module follows from.
 
 A DISAGREEMENT WARNS, A CHECK THAT DID NOT HAPPEN STOPS. Every result has a
 severity (`CheckResult.severity`; the author's decision of 2026-11-19,
-Design-Gaps C2 and D11; R12, R65). A disagreement, or a day only one side has,
+R12, R65). A disagreement, or a day only one side has,
 is a `warning`: a reading about data quality, and the useful response to "17
 days disagree" is to go and look at those 17 days, so the build goes on. A
 check that could not run, or that compared nothing, is an `error`: the column

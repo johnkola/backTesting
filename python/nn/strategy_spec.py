@@ -97,7 +97,7 @@ RUNNER_ARGS = {
 }
 
 #: Saved objective setting -> walk-forward argument. The settings that decide
-#: the verdict rather than the network's shape (R2 in GAPS.md).
+#: the verdict rather than the network's shape.
 OBJECTIVE_ARGS = {
     "loss": "loss",
     "classWeights": "class_weights",

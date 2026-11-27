@@ -46,12 +46,12 @@ from nn import feature_config
 # exist, and `active` would offer the builder a column with no values behind it.
 #
 # `data-only` is a fourth value, a deliberate departure from §8.2a's three
-# (DESIGN-GAPS D4). None of the three is true of RSI, MACD and realized
+# None of the three is true of RSI, MACD and realized
 # volatility: they are decided (not `undecided`), have values (not `blocked`),
 # and must not be offered to the builder (not `active`). Design Notes' "In the
 # model" column gives them their own value, "No - data only", and so does this.
 #
-# `selectable` is a fifth (Design-Gaps C7, 2026-11-21): built, offered in the
+# `selectable` is a fifth (the author's decision, 2026-11-21): built, offered in the
 # builder, unticked by default. Not `active`, which the builder ticks.
 _STATUS_MAP = {
     None: "active",

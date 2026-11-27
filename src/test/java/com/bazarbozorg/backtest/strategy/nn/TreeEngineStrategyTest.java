@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** A saved model of each tree engine can be backtested (B9, step 7). */
+/** A saved model of each tree engine can be backtested (B9). */
 class TreeEngineStrategyTest {
 
     @Test

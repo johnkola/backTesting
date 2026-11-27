@@ -1,4 +1,4 @@
-"""The verdict a walk-forward run prints (step 10, T3).
+"""The verdict a walk-forward run prints.
 
 `walkforward.report` is what a run and a recalculation print at the end: the
 folds' summary, where the gap from buy-and-hold comes from, and the VERDICT

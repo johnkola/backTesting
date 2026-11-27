@@ -1,4 +1,4 @@
-"""What produced a number: the code, the libraries and the inputs (DESIGN-GAPS G3).
+"""What produced a number: the code, the libraries and the inputs.
 
 backTesting-04-Architecture.md §1: "A feature or model run is identified by code version plus
 input snapshot, so it can be recomputed and compared." This module is the one

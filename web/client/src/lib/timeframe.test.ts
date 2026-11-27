@@ -13,7 +13,7 @@ function storage(blocked = false) {
   }
 }
 
-describe('the timeframe the pipeline reads (step 9)', () => {
+describe('the timeframe the pipeline reads', () => {
   let events: string[]
   beforeEach(() => {
     events = []

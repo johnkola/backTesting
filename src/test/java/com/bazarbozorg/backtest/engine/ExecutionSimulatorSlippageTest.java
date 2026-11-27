@@ -13,7 +13,7 @@ import java.time.ZonedDateTime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Total slippage (DESIGN-GAPS G29, AGENTS.md B3): the sum over fills of the gap
+ * Total slippage: the sum over fills of the gap
  * between the bar's price and the fill price, times the quantity. It was
  * always reported as 0.
  */

@@ -108,7 +108,7 @@ _UNITS = {"percent", "level", "count", "ratio"}
 DATA_ONLY = "data-only"
 
 #: Built and stored, and a strategy may select it; the default selection leaves
-#: it out (Design-Gaps C7, the author's decision 2026-11-19). The build gives it
+#: it out (the author's decision 2026-11-19). The build gives it
 #: role `select` in `feature_spec`, so a default read of the inputs never holds
 #: one and `feature_store.read_matrix` reads it only when it is named.
 SELECTABLE = "selectable"
@@ -450,7 +450,7 @@ def _read(path: Path) -> dict[str, Any]:
 
 #: A config name may carry an instrument: `features.toml@SPY/yahoo-adj` is the
 #: file's calendar and features with the file's own instrument moved to SPY
-#: (step 7, G56: nothing on the path assumes QQQ). Every feature the base
+#: (nothing on the path assumes QQQ). Every feature the base
 #: names on its calendar instrument (the instrument-scoped ones: prices,
 #: volume, RSI, MACD, volatility, relative strength) reads the new one; the
 #: market and macro series stay. No file is written: the name says it all,

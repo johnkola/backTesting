@@ -1,4 +1,4 @@
-"""The pipeline end to end on a seeded instrument (step 9): candles in, a
+"""The pipeline end to end on a seeded instrument: candles in, a
 feature set built by `nn.feature_build`, read back as the matrix a run
 trains on, cut by the split and the fold plan.
 
@@ -10,7 +10,7 @@ features' own file would need about twenty series; a configuration of the
 test's own, four columns on one seeded instrument, keeps the test to what it
 seeds, so it runs on CI's empty database too.
 
-The same build also holds step 2's rule outright: each bar is normalized only
+The same build also holds the build's rule outright: each bar is normalized only
 against the bars before it, so changing the last bars and rebuilding leaves
 every earlier stored value as it was.
 """
@@ -404,7 +404,7 @@ def test_a_flagged_bar_stops_the_build_until_it_is_accepted(config, seeded):
 @requires_db
 def test_a_walk_forward_run_on_the_built_set_is_stored_reproduced_and_goes_stale(
         config, seeded, capsys):
-    # Step 10, T2: the runner's `main` end to end on the set the build wrote,
+    # The runner's `main` end to end on the set the build wrote,
     # with the tree engine (seconds, and no ONNX check, which only the network
     # has and which needs the engine's worker). Its run is stored with folds,
     # signals and lineage; a recalculation in place gives back what it stored;
@@ -495,7 +495,7 @@ def predict_client(monkeypatch, tmp_path):
 @pytest.mark.parametrize("timeframe", ["D1", "H1"])
 def test_the_feature_store_network_predicts_each_bar_from_the_set_its_model_names(
         config, seeded, predict_client, timeframe):
-    # Step 10, T4: `POST /api/nn/predict_features`, the route the engine's
+    # `POST /api/nn/predict_features`, the route the engine's
     # feature-store strategy calls, on a model the offline trainer saved. Each
     # prediction is for a bar of the set the model names, stamped so the engine
     # can parse it (`Instant.parse`), on daily and hourly bars alike.
@@ -542,7 +542,7 @@ def test_the_feature_store_network_predicts_each_bar_from_the_set_its_model_name
 @requires_db
 def test_a_new_bar_from_the_evening_run_is_normalized_and_the_stage_follows(
         config, monkeypatch, tmp_path):
-    # Step 10, T5: step 2's done-when, second half. The series arrives as the
+    # A new bar is normalized as it arrives. The series arrives as the
     # evening run brings it (the feeds runner, on a provider of the test's
     # own, so each day lands as a recorded import); the set is built; the next
     # evening adds a day. The Features stage is stale until the rebuild, then

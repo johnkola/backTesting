@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The request the engine hands the Python worker (step 9): what
+ * The request the engine hands the Python worker: what
  * {@link PythonCalls#call} queues, on its own. The call itself waits on the
  * real jobs table, which the running worker would take from a test, so only
  * what it builds is held here; that each path is one the worker has is held

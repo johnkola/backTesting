@@ -34,7 +34,7 @@ export default function PipelinePage() {
   const { pathname } = useLocation()
   const [tf] = useTimeframe()
   const [instrument, setInstrument] = useInstrument()
-  // Every instrument with bars at this timeframe, one entry per source (step 7).
+  // Every instrument with bars at this timeframe, one entry per source.
   const { data: instruments } = useApiData((signal) => api.instruments(tf, signal), [tf])
   const choices = (instruments?.items ?? []).flatMap((i) => i.sources
     .filter((s) => s.timeframe === tf)

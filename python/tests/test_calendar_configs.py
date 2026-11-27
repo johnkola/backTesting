@@ -234,7 +234,7 @@ def test_a_set_on_another_instrument_has_its_own_digest_and_follows_the_base():
     spy = feature_config.digest_name("features.toml@SPY/yahoo-adj")
     assert spy != feature_config.digest_name("features.toml")
     assert spy != feature_config.digest_name("features.toml@AAPL/yahoo")
-    # The file alone hashes as before, so no set built before step 7 goes stale.
+    # The file alone hashes as before, so no set built before goes stale.
     assert feature_config.digest_name("features.toml") == feature_config.config_digest(
         feature_config.DEFAULT_PATH)
     assert feature_config.load_name("features.toml@AAPL/yahoo").alignment.calendar_symbol == "AAPL"

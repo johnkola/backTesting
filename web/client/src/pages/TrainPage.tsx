@@ -90,7 +90,7 @@ export default function TrainPage() {
       .then(([s, i, savedResp]) => {
         setSaved(savedResp?.items ?? [])
         // Only strategies that train through the loader's train route, with
-        // the engine's table of how (step 5): the indicator rules have nothing
+        // the engine's table of how: the indicator rules have nothing
         // to learn, and nn-feature-store is trained offline.
         const trainable = s.items.filter((x) => x.requiresTrainedModel && x.train)
         setStrategies(trainable)

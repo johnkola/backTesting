@@ -9,7 +9,7 @@ const fmt = (n: number | null, digits = 2, suffix = '') =>
  * rules (B7, R39): the same six figures for each. A benchmark that is not
  * available shows its reason instead of numbers.
  *
- * With `detail`, a row that has one opens under itself (step 4: how its
+ * With `detail`, a row that has one opens under itself (how its
  * figures are made, its trades beside the prices). The detail is mounted only
  * while open, so what it fetches is fetched when asked for.
  */

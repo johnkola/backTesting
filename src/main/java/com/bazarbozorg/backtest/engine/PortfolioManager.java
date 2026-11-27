@@ -60,7 +60,7 @@ public class PortfolioManager {
      * equity point recorded while it is open, so a position bought at bar i's
      * open and sold at bar j's open was held j - i bars, and one closed at the
      * last close counts that bar too. A trade carries it as {@code holdingBars}
-     * (step 9: it was always 0).
+     * (it was always 0).
      */
     private final Map<String, Integer> barsHeld = new HashMap<>();
     private double peakEquity;

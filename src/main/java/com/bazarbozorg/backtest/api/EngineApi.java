@@ -169,7 +169,7 @@ public class EngineApi {
             item.put("requiresTrainedModel", strategy.get()
                     instanceof com.bazarbozorg.backtest.strategy.persistence.PersistableModelStrategy);
             // How the Train page trains it through the loader's train route
-            // (step 5): the engine, and each parameter's field there. Absent
+            //: the engine, and each parameter's field there. Absent
             // for a strategy that does not train there (nn-feature-store is
             // trained offline by nn.train_features).
             if (strategy.get() instanceof com.bazarbozorg.backtest.strategy.nn.NeuralNetworkStrategy nn) {
@@ -219,7 +219,7 @@ public class EngineApi {
         }
 
         ZonedDateTime from = parseDate(body, "from");
-        // The end of a range: a bare date covers the whole day (DESIGN-GAPS I6).
+        // The end of a range: a bare date covers the whole day.
         ZonedDateTime to = parseDate(body, "to", true);
 
         AppConfig config = AppConfig.getInstance();

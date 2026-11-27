@@ -22,7 +22,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * </ul>
  *
  * <p>While the move is under way it runs beside the Node API on its own port,
- * and routes arrive here area by area (the gap tracker, G16 steps).
+ * and routes arrive here area by area.
  */
 @SpringBootApplication
 public class ServerApplication {

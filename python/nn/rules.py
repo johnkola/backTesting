@@ -207,7 +207,7 @@ class Decisions:
     #: that bar's close (G79): the symbol, `CASH`, or None inside its warm-up.
     days: tuple[date, ...] = ()
     daily: dict[str, list[str | None]] | None = None
-    #: SPY or the T-bills not stored at all (step 8: a synthetic or vendor
+    #: SPY or the T-bills not stored at all (a synthetic or vendor
     #: source may hold no SPY), so dual momentum's reason names what is missing
     #: rather than a history that is long enough.
     missing: tuple[str, ...] = ()
@@ -282,7 +282,7 @@ def month_table(dec: Decisions, spy: profit.Prices | None, start: date,
                 end: date) -> list[dict]:
     """The month ends behind a window's Faber and dual momentum calls, each with
     the figures its decision read, so every call can be checked by hand against
-    the prices (step 4).
+    the prices.
 
     From 12 month ends before the first one the window reads, so the first
     10-month average and 12-month return can be recomputed from the closes

@@ -1,6 +1,6 @@
 /**
  * The instrument the pipeline views are read on, stored once for the whole app
- * (step 7, G56: nothing on the path assumes QQQ). Like the timeframe
+ * (nothing on the path assumes QQQ). Like the timeframe
  * (`timeframe.ts`): a choice in localStorage and an event on `window`, so the
  * picker and the stages stay independent.
  *

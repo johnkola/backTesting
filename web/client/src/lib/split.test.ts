@@ -22,7 +22,7 @@ describe('the split checks (G37)', () => {
   })
 })
 
-describe('the folds do not overlap (step 3)', () => {
+describe('the folds do not overlap', () => {
   const fold = (n: number, trainTo: string, valFrom: string, valTo: string) => ({
     fold: n, valYear: Number(valFrom.slice(0, 4)), trainFrom: '2003-01-02', trainTo, trainRows: 1,
     valFrom, valTo, valRows: 1, earlyStopping: null,

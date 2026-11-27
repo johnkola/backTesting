@@ -35,8 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>{@code src/test/resources/crosscheck/next-open.json} holds bars, one
  * long-or-flat call per bar, and the trades and return they must give with
  * costs off. The walk-forward scorer is held to the same file by
- * {@code python/tests/test_next_open_crosscheck.py}, so a step 7 result and a
- * step 6 fold trade the same days at the same prices.
+ * {@code python/tests/test_next_open_crosscheck.py}, so a backtest result and a
+ * walk-forward fold trade the same days at the same prices.
  */
 class NextOpenCrossCheckTest {
 

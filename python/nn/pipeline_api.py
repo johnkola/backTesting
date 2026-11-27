@@ -27,7 +27,7 @@ _TTL_S = 60.0
 def compute_status(timeframe: str, symbol: str | None = None,
                    source: str | None = None) -> dict:
     """Every stage's state, worked out by the worker (G16 step 16.2), on one
-    instrument when given (step 7). The route keeps the cache and adds
+    instrument when given. The route keeps the cache and adds
     whether a feeds run is going."""
     with pool().connection() as conn, conn.cursor() as cur:
         return staleness.status(cur, timeframe, symbol=symbol, source=source)

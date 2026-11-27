@@ -1,6 +1,6 @@
 /**
  * A result's benchmark, laid out so each of its figures can be checked by hand
- * against the prices (implementation plan, step 4). Pure: it lines each fill
+ * against the prices. Pure: it lines each fill
  * up with the bar it names and words the arithmetic behind the figures. It
  * scores nothing; the engine's figures are shown, never recomputed into new
  * ones, so a disagreement shows up rather than being smoothed over.

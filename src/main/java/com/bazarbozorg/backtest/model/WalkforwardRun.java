@@ -205,8 +205,8 @@ public record WalkforwardRun(
     }
 
     /**
-     * What produced the run's inputs, and whether they are still what it read
-     * (DESIGN-GAPS G3). Null for a run from before G3, which recorded none.
+     * What produced the run's inputs, and whether they are still what it read.
+     * Null for a run stored before lineage was recorded, which has none.
      *
      * <p>{@code setRebuiltSince} and {@code valuesChangedSince} are a cheap
      * signal from the stored builds alone: the set's current build is not the

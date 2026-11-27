@@ -2,7 +2,7 @@
 
 A scoring layer over the signals a model already produces, like the tax
 switch: the model and its signals are the same under Strategy 1 or 2; only how
-they are acted on, and so what they earn, differs (DESIGN-GAPS G5, step 1).
+they are acted on, and so what they earn, differs.
 
 The account, in units of the owner's own money (1.0 at the start):
 
