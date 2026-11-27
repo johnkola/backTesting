@@ -40,6 +40,7 @@ MUST_RUN = (
     "tests/test_job_contract.py",
     "tests/test_repairs_api.py",
     "tests/test_walkforward_report.py",
+    "tests/test_worker_start.py",
 )
 
 
