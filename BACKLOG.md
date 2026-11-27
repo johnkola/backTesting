@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-46** · 2026-11-27 07:43 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-47** · 2026-11-27 07:54 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,6 +18,19 @@ closed on full unit testing (his decision of 2026-11-26), and the nineteen tests
 from step 10's reviews built (six, seven, three, then three). Suites: Python 1,220, engine 219,
 service 101, client 294; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
+
+## In progress: two code fixes (John's go, 2026-11-27)
+
+Each committed on passing tests; each leaves this list when it is in.
+
+1. The engine's command lines (`backtest`, `train`, `signals`) refuse a date they cannot
+   read, as `POST /api/run` does, instead of running the whole series.
+2. G56's rest: `qqq_spy_relative` is not built on SPY's own set (it would be SPY over SPY,
+   0 on every bar), and the Training and Backtest tabs list only the picked instrument's
+   runs and results.
+
+The third fix asked for, the catalogue sync, rested on a wrong claim of the agent's (that
+every feature build pays for it): nothing in the app runs it. Corrected under "Open gaps".
 
 ## Waiting on John
 
@@ -106,7 +119,7 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 | G75 | Flagged rows: no page lists them, and the Run tab's backtests do not ask about flags | S |
 | G76 | Data repair, what is left: a second vendor (G9b), split adjustment (R63's other half), roll-ups from the adjusted bars | L |
 | — | Filling a missing bar works on daily bars only: an intraday day needs a session calendar, which is not built | M |
-| — | `feature_catalog.sync` refreshes each feature's date range by scanning all of `feature_values` (about 13 million values): about 30 s each sync, paid by every feature build | S |
+| — | Nothing in the app runs `feature_catalog.sync`: the Features catalogue's date ranges are as current as the last time someone ran `python -m nn.feature_catalog` (on this machine the test suite did, since its tests sync the real table). And the sync scans all of `feature_values` (about 13 million values here), about 30 s each, which the local test suite pays eight times. When it should run is John's to say (after each build, or on a schedule) | S |
 | — | `JAVA_HOME` under WSL points at a Windows JDK path; Gradle and npm run only through `cmd.exe` | S |
 | — | The engine's command lines (`backtest`, `train`, `signals`) take a `--from` or `--to` they cannot read as no date at all, so a mistyped date runs the whole series without a word (`DateTimeUtils.parse` answers null). `POST /api/run` refuses it since 2026-11-27 | S |
 
