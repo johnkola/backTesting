@@ -220,3 +220,46 @@ class TestMissing:
             ms.scan(db, SYMBOL, VENDOR, "H1")
         with pytest.raises(LookupError):
             ms.scan(db, "ZZ-NO-SUCH", VENDOR)
+
+    def test_each_method_says_why_it_cannot_give_a_bar(self, db, series):  # noqa: F811
+        # The reasons the Repairs page shows, from `calculate` itself: the scan
+        # and recalculate paths reach most of them through their own checks first.
+        inst, src = series
+        with db.cursor() as cur:
+            with pytest.raises(ValueError, match="no bar before 2023-01-02: no previous close"):
+                ms.calculate(cur, inst, src, "D1", D(2023, 1, 2), ms.CARRY)
+            for related in (None, ("", RELATED_SOURCE), (RELATED, "")):
+                with pytest.raises(ValueError, match="needs the related symbol and source"):
+                    ms.calculate(cur, inst, src, "D1", D(2023, 1, 10), ms.RELATED, related)
+            with pytest.raises(ValueError, match="method is one of"):
+                ms.calculate(cur, inst, src, "D1", D(2023, 1, 10), "guess")
+            # Before the series' first bar neither a roll-up (no finer bars) nor a
+            # carry (no previous close) can give one: the scan proposes nothing.
+            assert ms._default(cur, inst, src, "D1", D(2023, 1, 2)) is None
+            # A day the second vendor has no bar for gives no second opinion.
+            assert ms._second_bar(cur, inst, VENDOR, "D1", ms._bar_time(D(2023, 1, 12))) is None
+            assert ms._second_bar(cur, inst, VENDOR, "D1", ms._bar_time(D(2023, 1, 5))) is not None
+
+    def test_a_related_index_with_no_close_on_the_base_day_is_refused(
+            self, db, series):  # noqa: F811
+        # Its move cannot be measured from a zero close; the fill is refused,
+        # not computed as a division by zero.
+        from loader.csv_import import get_or_create_data_source, get_or_create_instrument, \
+            upsert_candles
+
+        inst, src = series
+        zero, zero_source = "ZZMISZERO", "zz-mis-z"
+        purge_instrument(zero, zero_source)
+        try:
+            rel = get_or_create_instrument(db, zero, "INDEX")
+            upsert_candles(db, rel, get_or_create_data_source(db, zero_source), "D1",
+                           _tuples({9: (0.0, 0.0, 0.0, 0.0), 10: (1.0, 1.0, 1.0, 1.0)}))
+            db.commit()
+            with db.cursor() as cur, pytest.raises(ValueError,
+                                                   match=f"{zero}/{zero_source} has no close on "
+                                                         "2023-01-09"):
+                ms.calculate(cur, inst, src, "D1", D(2023, 1, 10), ms.RELATED,
+                             (zero, zero_source))
+        finally:
+            db.rollback()
+            purge_instrument(zero, zero_source)

@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-44** · 2026-11-27 07:41 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-45** · 2026-11-27 07:41 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -24,7 +24,6 @@ review was run again on 2026-11-27: its result is "Test gaps" below.
 Each committed on passing tests; each leaves this list and the "Test gaps" table when
 it is in.
 
-2. The fill methods' refusals.
 3. The feeds timer.
 
 ## Waiting on John
@@ -129,7 +128,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 1 | The fill methods' refusals | `loader/missing.py` (77%): no bar before the day, a related index without symbol and source or without a bar, an unknown method; the default falling back from roll-up to carry | S |
 | 1 | The feeds timer | `loader/feeds/schedule.py` (51%): the thread fires at its time and works out the next, stops when asked, refuses a bad `FEEDS_SCHEDULE` | S |
 | 1 | The audit and checks routes | `loader/audit_api.py` (53%), `loader/checks_api.py` (73%) | S |
 | 1 | The providers' bad answers | Yahoo (68%), FRED (65%), the Bank of Canada (67%), breadth (73%): an empty or malformed answer fails its series with the reason | S |
