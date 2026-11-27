@@ -300,29 +300,56 @@ def db():
     conn.close()
 
 
-#: The instrument and source a seeded set is created under, on a database with none.
-_SEED_SYMBOL, _SEED_SOURCE = "ZZPYSET", "zz-py-set"
+def _seed_names() -> tuple[str, str]:
+    """The instrument and source the fixture's set is made under: one per test
+    process, so two files using it in a parallel run never share one."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    return f"ZZPYSET-{worker}", f"zz-py-set-{worker}"
+
+
+def _drop_seed(db, symbol: str, source: str) -> None:
+    """The fixture's set, its runs, its bars and its instrument, as a crashed
+    run left them too."""
+    from .dbfixtures import purge_instrument
+
+    owned = ("SELECT fs.id FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
+             "WHERE i.symbol = %s")
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM walkforward_folds WHERE run_id IN (SELECT id FROM "
+                    f"walkforward_runs WHERE feature_set_id IN ({owned}))", (symbol,))
+        cur.execute(f"DELETE FROM walkforward_runs WHERE feature_set_id IN ({owned})", (symbol,))
+        cur.execute(f"DELETE FROM feature_sets WHERE id IN ({owned})", (symbol,))
+    db.commit()
+    purge_instrument(symbol, source)
+
+
+#: The set's instrument's daily bars: ten weekdays, enough for the tests that
+#: score signals on its last few closes.
+_SEED_BARS = [(f"2024-01-{d:02d}T00:00:00Z", 100.0 + k, 101.0 + k, 99.0 + k, 100.5 + k * 0.7,
+               1000.0) for k, d in enumerate((2, 3, 4, 5, 8, 9, 10, 11, 12, 16))]
 
 
 @pytest.fixture
 def a_set(db):
-    """A feature set, so the run's FK and owner lookup are real.
+    """A feature set of the test's own, with daily bars, so the run's FK, owner
+    lookup and prices are real.
 
-    The newest existing one on a developer's database. On an empty one (CI)
-    a throwaway set is created and removed afterwards, rather than skipping:
-    a green run that skipped the round trip would say nothing about it."""
+    Always made here and removed afterwards. It used to borrow the newest set
+    on a developer's database: in a parallel run that could be another file's
+    set, deleted by that file mid-test (a foreign-key error at random), and on
+    an empty database (CI) the tests that read its bars skipped."""
+    from loader.csv_import import (
+        get_or_create_data_source,
+        get_or_create_instrument,
+        upsert_candles,
+    )
+
+    symbol, source = _seed_names()
+    _drop_seed(db, symbol, source)
+    inst = get_or_create_instrument(db, symbol, "STOCK")
+    src = get_or_create_data_source(db, source)
+    upsert_candles(db, inst, src, "D1", _SEED_BARS)
     with db.cursor() as cur:
-        cur.execute("SELECT id FROM feature_sets ORDER BY id DESC LIMIT 1")
-        row = cur.fetchone()
-    if row is not None:
-        yield int(row[0])
-        return
-    with db.cursor() as cur:
-        cur.execute("INSERT INTO instruments (symbol, name, type) VALUES (%s, 'pytest set', "
-                    "'STOCK') RETURNING id", (_SEED_SYMBOL,))
-        inst = cur.fetchone()[0]
-        cur.execute("INSERT INTO data_sources (name) VALUES (%s) RETURNING id", (_SEED_SOURCE,))
-        src = cur.fetchone()[0]
         cur.execute("INSERT INTO feature_sets (instrument_id, source_id, timeframe, "
                     "schema_version, config_hash) VALUES (%s, %s, 'D1', 0, 'pytest') "
                     "RETURNING id", (inst, src))
@@ -332,14 +359,7 @@ def a_set(db):
         yield set_id
     finally:
         db.rollback()
-        with db.cursor() as cur:
-            cur.execute("DELETE FROM walkforward_folds WHERE run_id IN "
-                        "(SELECT id FROM walkforward_runs WHERE feature_set_id = %s)", (set_id,))
-            cur.execute("DELETE FROM walkforward_runs WHERE feature_set_id = %s", (set_id,))
-            cur.execute("DELETE FROM feature_sets WHERE id = %s", (set_id,))
-            cur.execute("DELETE FROM instruments WHERE id = %s", (inst,))
-            cur.execute("DELETE FROM data_sources WHERE id = %s", (src,))
-        db.commit()
+        _drop_seed(db, symbol, source)
 
 
 class TestRoundTrip:
