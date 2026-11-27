@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-18** · 2026-11-27 05:41 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-19** · 2026-11-27 05:42 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -22,7 +22,6 @@ Python line coverage 82%.
 Built one at a time, each committed on passing tests; each leaves this list and the
 "Test gaps" table when it is in.
 
-1. A backtest on hourly stored candles.
 2. An intraday walk-forward run, which takes in the runner's intraday rule view.
 3. Rerun a stored result from its settings.
 4. The feeds routes, Apply included.
@@ -150,7 +149,6 @@ the service calls 67 of its 70 routes under test.
 | Rerun a stored result | The request rebuilt from `settings_json` gives the same trades and figures | M |
 | A set on a second instrument | `features.toml@ZZB/zz-b` on a second seeded instrument: its own series, its own hash, the first set still fresh | M |
 | The status on a built second set | The Features stage names that instrument's set | S |
-| A backtest on hourly stored candles | The rule benchmarks fill at each session's first bar; bars per year from the measured bars | M |
 | An intraday walk-forward run | The runner end to end on hourly bars, with the intraday rule view | L |
 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`: arguments and exit codes | S each |
 

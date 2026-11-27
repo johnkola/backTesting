@@ -92,6 +92,29 @@ class WholeBacktestTest {
                 }
                 ps.executeBatch();
             }
+            // Seven hourly bars a day, 14:30 to 20:30 UTC, over the first 120 days.
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO candles (instrument_id, "
+                    + "source_id, timeframe, timestamp, open, high, low, close, volume) "
+                    + "VALUES (?, ?, 'H1', ?, ?, ?, ?, ?, ?)")) {
+                int k = 0;
+                for (LocalDate day : DAYS.subList(0, 120)) {
+                    for (int h = 14; h <= 20; h++, k++) {
+                        double close = 100 + 10 * Math.sin(k / 40.0) + 0.01 * k;
+                        double open = close * (1 - 0.001 * Math.cos(k / 3.0));
+                        ps.setLong(1, instrumentId);
+                        ps.setLong(2, sourceId);
+                        ps.setTimestamp(3, Timestamp.from(
+                                day.atTime(h, 30).atZone(ZoneOffset.UTC).toInstant()));
+                        ps.setDouble(4, open);
+                        ps.setDouble(5, Math.max(open, close) * 1.002);
+                        ps.setDouble(6, Math.min(open, close) * 0.998);
+                        ps.setDouble(7, close);
+                        ps.setDouble(8, 100_000 + k);
+                        ps.addBatch();
+                    }
+                }
+                ps.executeBatch();
+            }
         }
     }
 
@@ -226,6 +249,75 @@ class WholeBacktestTest {
                 assertEquals(trades.size(), stored.getAsJsonArray("trades").size());
             }
         }
+    }
+
+    private static EngineApi.Answer run(String timeframe, String from, String to) {
+        JsonObject req = new JsonObject();
+        req.addProperty("strategy", "sma-crossover-10-50");
+        req.addProperty("instrument", SYMBOL);
+        req.addProperty("timeframe", timeframe);
+        req.addProperty("source", SOURCE);
+        req.addProperty("from", from);
+        req.addProperty("to", to);
+        req.addProperty("capital", CAPITAL);
+        req.addProperty("aggregateMissing", false);
+        Function<String, JsonObject> loader = BacktestEngine.ruleDecisions;
+        try {
+            BacktestEngine.ruleDecisions = WholeBacktestTest::decisions;
+            return new EngineApi(db).answer(new EngineApi.Request("POST", "/api/run", Map.of(), req));
+        } finally {
+            BacktestEngine.ruleDecisions = loader;
+        }
+    }
+
+    private static double nets(JsonArray trades) {
+        double sum = 0;
+        for (JsonElement e : trades) {
+            JsonObject t = e.getAsJsonObject();
+            sum += t.get("pnl").getAsDouble() - t.get("commission").getAsDouble()
+                    - t.get("tax").getAsDouble();
+        }
+        return sum;
+    }
+
+    @Test
+    @DisplayName("on hourly stored candles the run adds up, its rules fill at a session's first bar, "
+            + "and it annualises by sessions")
+    void anHourlyRunOnStoredCandles() {
+        EngineApi.Answer answer = run("H1", "2020-01-01", "2020-06-30");
+        assertEquals(200, answer.status(), answer.body().toString());
+        JsonObject r = answer.body().getAsJsonObject();
+
+        JsonArray trades = r.getAsJsonArray("trades");
+        assertTrue(trades.size() >= 2, "the crossover turns on hourly bars too: " + trades.size());
+        double finalEquity = r.get("finalEquity").getAsDouble();
+        assertEquals(CAPITAL + nets(trades), finalEquity, 1e-6);
+        for (JsonElement e : trades) {
+            assertTrue(e.getAsJsonObject().get("holdingBars").getAsInt() >= 1, e.toString());
+        }
+
+        // The rules are decided on daily closes and fill at the first bar of the
+        // next session: Faber, long every day, buys once, at the 14:30 bar of the
+        // session after the window's first, and holds one point per bar.
+        JsonObject faber = r.getAsJsonArray("benchmarks").get(0).getAsJsonObject();
+        assertTrue(faber.get("available").getAsBoolean(), faber.toString());
+        JsonArray faberTrades = faber.getAsJsonArray("trades");
+        assertEquals(1, faberTrades.size());
+        String start = r.get("startDate").getAsString().substring(0, 10);
+        LocalDate next = DAYS.get(DAYS.indexOf(LocalDate.parse(start)) + 1);
+        assertEquals(next + "T14:30Z", faberTrades.get(0).getAsJsonObject()
+                .get("entryTime").getAsString().replace(":00Z", "Z"));
+        assertEquals(CAPITAL + nets(faberTrades), faber.get("finalEquity").getAsDouble(), 1e-6);
+        assertEquals(r.getAsJsonArray("equityHistory").size(), faber.getAsJsonArray("equity").size());
+
+        // Annualised by sessions, not bars: bars a year are 252 times the
+        // measured bars a day, so the exponent is 252 over the trading days.
+        JsonObject m = r.getAsJsonObject("metrics");
+        long days = m.get("tradingDays").getAsLong();
+        long bars = r.getAsJsonArray("equityHistory").size();
+        assertTrue(bars >= 6 * days, "about seven bars a session: " + bars + " bars, " + days + " days");
+        double growth = finalEquity / CAPITAL;
+        assertEquals((Math.pow(growth, 252.0 / days) - 1) * 100, m.get("annualizedReturnPct").getAsDouble(), 1e-6);
     }
 
     private static long id(Connection c, String sql, String arg) throws Exception {
