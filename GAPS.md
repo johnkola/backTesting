@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-23** · 2026-11-27 05:53 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-24** · 2026-11-27 05:54 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -22,7 +22,6 @@ Python line coverage 82%.
 Built one at a time, each committed on passing tests; each leaves this list and the
 "Test gaps" table when it is in.
 
-4. The feeds routes, Apply included.
 5. Fold models: `check` and `--prune`.
 7. The engine's job worker end to end.
 
@@ -128,7 +127,6 @@ the service calls 67 of its 70 routes under test.
 | The engine's job worker | A `java-compute` backtest job taken from a copy of the jobs table and answered with a saved result (only the request routes are tested) | M |
 | The Python worker as started | `jobs/worker.py` `main` and `listen`: one lane per group of job types, a feeds run left "running" marked interrupted, the schedule started, a NOTIFY waking an idle lane | M |
 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
-| The feeds routes | `loader/feeds/api.py` (30%): list, refresh, Apply (a series not held refused), runs | S |
 | An import's roll-ups | W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |
 | The fill methods' refusals | No bar before the day, a related index without symbol and source or without a bar, an unknown method; the default falling back from roll-up to carry | S |
 | The feeds timer | `loader/feeds/schedule.py` (45%): the thread fires at its time and works out the next, stops when asked, refuses a bad `FEEDS_SCHEDULE` | S |
