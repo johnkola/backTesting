@@ -151,6 +151,8 @@ def _seed(bump_from: int | None = None) -> None:
 
 def _purge_sets() -> None:
     with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM data_checks WHERE instrument_id IN "
+                    "(SELECT id FROM instruments WHERE symbol = %s)", (SYMBOL,))
         cur.execute("SELECT fs.id FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
                     "WHERE i.symbol = %s", (SYMBOL,))
         ids = [r[0] for r in cur.fetchall()]
@@ -345,3 +347,54 @@ def test_the_offline_trainer_learns_from_the_built_set_and_names_it(config, seed
                 yield from found(v)
     ids = {int(v) for v in found(meta)}
     assert ids == {set_id}, meta
+
+
+@requires_db
+def test_a_flagged_bar_stops_the_build_until_it_is_accepted(config, seeded):
+    # G75 across the pipeline: a bar that breaks a check lands and is a flagged
+    # row; the feature build refuses while it is open, and runs once accepted.
+    import sys
+
+    from loader import flags
+    from loader.cohesion import check_candles, gate
+    from nn import feature_build
+
+    bad = dt.datetime(DAYS[400].year, DAYS[400].month, DAYS[400].day, tzinfo=dt.UTC)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT i.id, s.id FROM instruments i, data_sources s "
+                    "WHERE i.symbol = %s AND s.name = %s", (SYMBOL, SOURCE))
+        inst, src = cur.fetchone()
+        # The high below the low: an error, not a warning.
+        cur.execute("UPDATE candles SET high = low - 1 WHERE instrument_id = %s AND "
+                    "source_id = %s AND timeframe = 'D1' AND timestamp = %s", (inst, src, bad))
+        cur.execute("SELECT timestamp, open, high, low, close, volume FROM candles "
+                    "WHERE instrument_id = %s AND source_id = %s AND timeframe = 'D1' "
+                    "ORDER BY timestamp", (inst, src))
+        flagged = gate(check_candles(cur.fetchall(), "D1"))
+        assert flagged.errors >= 1
+        counts = flags.record(conn, inst, src, "D1", flagged)
+        conn.commit()
+        assert counts["open"] >= 1
+        cur.execute("SELECT count(*) FROM data_checks WHERE instrument_id = %s AND bar_time = %s",
+                    (inst, bad))
+        assert cur.fetchone()[0] >= 1
+
+    argv = sys.argv
+    sys.argv = ["nn.feature_build", "--config", str(config)]
+    try:
+        assert feature_build.main() == 3, "the build must refuse over an open flag"
+    finally:
+        sys.argv = argv
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM feature_sets fs JOIN instruments i "
+                    "ON i.id = fs.instrument_id WHERE i.symbol = %s", (SYMBOL,))
+        assert cur.fetchone()[0] == 0, "a refused build writes no set"
+        assert flags.refusal(cur, [(SYMBOL, SOURCE, "D1")], "the build")
+
+    with psycopg.connect(dsn()) as conn:
+        assert flags.accept(conn, "pytest: a seeded bad bar", SYMBOL, SOURCE, "D1") >= 1
+        conn.commit()
+        with conn.cursor() as cur:
+            assert flags.refusal(cur, [(SYMBOL, SOURCE, "D1")], "the build") is None
+    assert _build(config) > 0
+
