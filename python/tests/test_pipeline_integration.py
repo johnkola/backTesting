@@ -457,3 +457,83 @@ def test_a_walk_forward_run_on_the_built_set_is_stored_reproduced_and_goes_stale
     _build(config)
     assert run_state() == "stale"
 
+
+
+def _train_and_save(models, *extra) -> tuple[str, str]:
+    """The offline trainer on the seeded set, saved to `models`: (cache key, version)."""
+    import sys
+
+    from nn import train_features
+
+    argv = sys.argv
+    sys.argv = ["nn.train_features", "--symbol", SYMBOL, "--source", SOURCE, "--epochs", "2",
+                "--hidden", "8", "--layers", "1", "--save", "--models-dir", str(models), *extra]
+    try:
+        assert train_features.main() == 0
+    finally:
+        sys.argv = argv
+    (meta,) = list(models.glob("nn-feedforward-v2/*/*/metadata.json"))
+    return meta.parent.parent.name, meta.parent.name
+
+
+@pytest.fixture
+def predict_client(monkeypatch, tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from nn.nn_api import router
+
+    monkeypatch.setenv("JOBS_INLINE", "1")
+    monkeypatch.setenv("MODELS_DIR", str(tmp_path / "models"))
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app), tmp_path / "models"
+
+
+@requires_db
+@pytest.mark.parametrize("timeframe", ["D1", "H1"])
+def test_the_feature_store_network_predicts_each_bar_from_the_set_its_model_names(
+        config, seeded, predict_client, timeframe):
+    # Step 10, T4: `POST /api/nn/predict_features`, the route the engine's
+    # feature-store strategy calls, on a model the offline trainer saved. Each
+    # prediction is for a bar of the set the model names, stamped so the engine
+    # can parse it (`Instant.parse`), on daily and hourly bars alike.
+    pytest.importorskip("talib")
+    pytest.importorskip("torch")
+    from nn import feature_store
+
+    client, models = predict_client
+    if timeframe == "H1":
+        hourly = config.parent / "calendars" / f"{SYMBOL}-{SOURCE}-H1.toml"
+        hourly.write_text('inherit = "features.toml"\n\n[alignment]\n'
+                          f'calendar_symbol = "{SYMBOL}"\ncalendar_source = "{SOURCE}"\n'
+                          'calendar_timeframe = "H1"\n', encoding="utf-8")
+        _seed_hourly()
+        set_id = _build(hourly)
+    else:
+        set_id = _build(config)
+    key, version = _train_and_save(models, "--timeframe", timeframe, "--set-id", str(set_id))
+
+    r = client.post("/api/nn/predict_features", json={"cache_key": key, "version_id": version})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["featureSetId"], body["versionId"]) == (set_id, version)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        fm = feature_store.read_matrix(cur, set_id)
+    lookback = body["firstPredictedBarIndex"] + 1
+    preds = body["predictions"]
+    assert len(preds) == len(fm.dates) - lookback + 1
+    # Each stamp is the bar the window ends on, as an instant the engine parses.
+    for p, d in zip(preds, fm.dates[lookback - 1:], strict=True):
+        when = dt.datetime.fromisoformat(p["timestamp"].replace("Z", "+00:00"))
+        expected = (d if isinstance(d, dt.datetime)
+                    else dt.datetime(d.year, d.month, d.day)).replace(tzinfo=dt.UTC)
+        assert when == expected, (p["timestamp"], d)
+        assert p["classIndex"] in (0, 1, 2)
+        assert sum(p["probabilities"].values() if isinstance(p["probabilities"], dict)
+                   else p["probabilities"]) == pytest.approx(1.0, abs=1e-4)
+
+    # A model that does not exist is a 404 that names what was asked for.
+    r = client.post("/api/nn/predict_features", json={"cache_key": "no-such-key"})
+    assert r.status_code == 404 and "no-such-key" in r.json()["error"]

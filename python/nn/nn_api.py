@@ -556,6 +556,21 @@ def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
 # ----------------------------------------------------------------------------
 
 
+def _instant(key) -> str:
+    """A matrix key as the instant the engine parses (`Instant.parse`): a daily
+    row's date at midnight UTC, an intraday row's bar time, which the matrix
+    keys as UTC without a zone (`feature_store.key_sql`). Appending a midnight
+    to an hourly bar's time gave `...T14:30:00T00:00:00Z`, so the engine could
+    not read a feature-store model's predictions on intraday bars (step 10)."""
+    import datetime as _dt
+
+    if isinstance(key, _dt.datetime):
+        if key.tzinfo is not None:
+            key = key.astimezone(_dt.UTC).replace(tzinfo=None)
+        return key.isoformat() + "Z"
+    return f"{key.isoformat()}T00:00:00Z"
+
+
 class PredictFeaturesRequest(BaseModel):
     cache_key: str = Field(..., description="Cache key of a feature-store-backed model")
     version_id: str | None = Field(None, description="Pin a version; latest if omitted")
@@ -660,7 +675,7 @@ def post_predict_features(req: PredictFeaturesRequest) -> JSONResponse:
             "firstPredictedBarIndex": lookback - 1,
             "predictions": [
                 {
-                    "timestamp": f"{stamps[i].isoformat()}T00:00:00Z",
+                    "timestamp": _instant(stamps[i]),
                     "classIndex": r.class_index,
                     "className": r.class_name,
                     "probabilities": r.probabilities,
