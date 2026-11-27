@@ -458,7 +458,7 @@ public class FeaturesController {
         // calendar bar with no match is a missing bar. Moved from the Node API
         // as it was, including its grouping: row_number() and dense_rank() are
         // both taken over the missing rows, so they are equal and every missing
-        // bar lands in one range (recorded in backTesting-07-Design-Gaps).
+        // bar lands in one range (recorded in GAPS.md).
         List<Gap> rows = db.sql("WITH calendar AS (SELECT DISTINCT timestamp FROM feature_values "
                         + "WHERE feature_set_id = ?), "
                         + "missing AS (SELECT c.timestamp FROM calendar c "

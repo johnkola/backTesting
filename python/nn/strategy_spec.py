@@ -97,7 +97,7 @@ RUNNER_ARGS = {
 }
 
 #: Saved objective setting -> walk-forward argument. The settings that decide
-#: the verdict rather than the network's shape (R2 in backTesting-07-Design-Gaps.md).
+#: the verdict rather than the network's shape (R2 in GAPS.md).
 OBJECTIVE_ARGS = {
     "loss": "loss",
     "classWeights": "class_weights",
