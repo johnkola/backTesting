@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-49** · 2026-11-27 08:13 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-50** · 2026-11-27 08:20 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -15,7 +15,7 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
 closed on full unit testing (his decision of 2026-11-26), and the twenty-two tests he chose
-from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,236, engine 225,
+from step 10's reviews built (six, seven, three, three, then three). Suites: Python 1,238, engine 225,
 service 103, client 296; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
 
