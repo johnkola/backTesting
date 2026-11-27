@@ -186,7 +186,7 @@ export default function BenchmarkWorking({ detail, name, label }: {
   const slip = s ? costText(s.slippage, 'the price') : 'the run\'s slippage (not recorded for this result)'
   const commission = s ? costText(s.commission, 'the trade') : 'the run\'s commission (not recorded)'
   const monthly = isMonthly(name)
-  const early = name !== 'buy_and_hold' && boughtAtTheFirstOpen(trades, points)
+  const early = name !== 'buy_and_hold' && boughtAtTheFirstOpen(trades, points, detail.timeframe)
   const meanHold = lines.length
     ? lines.reduce((a, l) => a + (l.holdDays ?? 0), 0) / lines.length : null
   const slug = `${detail.instrumentSymbol}-${name}-result-${detail.id}`

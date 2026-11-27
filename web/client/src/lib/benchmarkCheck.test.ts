@@ -140,3 +140,35 @@ describe('a trade followed to the settings', () => {
     expect(reconcile(10_000, [{ ...lines[0], net: null }], 1).end).toBeNull()
   })
 })
+
+// Hourly bars (since the rules fill intraday): a rule decides on the daily
+// close, the session's last bar, and fills at the next session's first bar.
+const hour = (iso: string, open: number, close: number): Candle =>
+  ({ timestamp: iso, open, high: Math.max(open, close), low: Math.min(open, close), close, volume: 1 })
+const SESSIONS = ['2020-01-06', '2020-01-07']
+const hourly = SESSIONS.flatMap((d) => [14, 15, 20].map((h, i) =>
+  hour(`${d}T${h}:30:00.000Z`, 100 + i + (d === SESSIONS[1] ? 10 : 0), 100.5 + i)))
+const hourlyEquity: EquityPoint[] = hourly.map((b) => ({ timestamp: b.timestamp, equity: 1 }))
+
+describe('a benchmark fill beside its hourly bar', () => {
+  const rule: Trade = { instrumentId: 47, entryTime: '2020-01-07T14:30:00Z', entryPrice: 110 * 1.0005,
+    exitTime: '2020-01-07T20:30:00Z', exitPrice: 102.5 * 0.9995, quantity: 10, pnl: 1,
+    commission: 0, tax: 0, holdingBars: 3 } as Trade
+
+  it('finds the hourly bar at the fill\'s instant and its slippage', () => {
+    const [line] = tradeLines([rule], 'ZZ', new Map([['ZZ', barIndex(hourly)]]), '2020-01-07T20:30:00Z')
+    expect(line.buy.barPrice).toBe(110)
+    expect(line.buy.slipPct).toBeCloseTo(0.05, 9)
+    expect(line.sell.at).toBe('close')
+    expect(line.sell.barPrice).toBe(102.5)
+    expect(line.holdDays).toBeCloseTo(0.25, 9)       // six hours
+  })
+
+  it('knows the first open a rule can take is the next session\'s first bar, not the second bar', () => {
+    expect(boughtAtTheFirstOpen([rule], hourlyEquity, 'H1')).toBe(true)
+    const secondBar = { ...rule, entryTime: '2020-01-06T15:30:00Z' }
+    expect(boughtAtTheFirstOpen([secondBar], hourlyEquity, 'H1')).toBe(false)
+    // Read as daily, the second bar would have been the first open.
+    expect(boughtAtTheFirstOpen([secondBar], hourlyEquity, 'D1')).toBe(true)
+  })
+})

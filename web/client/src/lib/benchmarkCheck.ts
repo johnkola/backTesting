@@ -23,6 +23,7 @@
  *   setting instead of being told they agree.
  */
 import type { Candle, EquityPoint, RunCost, Trade } from './api'
+import { isIntraday } from './marketTime'
 
 /** The engine's id for SPY, which dual momentum switches into (`BacktestEngine.SPY_ID`). */
 export const SPY_INSTRUMENT_ID = -1
@@ -130,16 +131,26 @@ export function tradeLines(trades: readonly Trade[], symbol: string,
 }
 
 /**
- * Whether the first buy is at the first open the window allows (its second
- * bar: the first bar's close is the first decision). For a rule, that means it
- * held at the window's first close, from a signal that day or one before; a
- * run of the same rule from the Run tab starts flat and waits for a signal.
+ * Whether the first buy is at the first open the window allows. For a rule,
+ * that means it held at the window's first decision, from a signal that day or
+ * one before; a run of the same rule from the Run tab starts flat and waits for
+ * a signal. A rule decides on daily closes: on daily bars the first decision is
+ * the first bar's close, so the first open it can take is the window's second
+ * bar; on intraday bars it is the first session's last close, so the first open
+ * is the first bar of the second session.
  */
 export function boughtAtTheFirstOpen(trades: readonly Trade[],
-  equity: readonly EquityPoint[]): boolean {
+  equity: readonly EquityPoint[], timeframe = 'D1'): boolean {
   const first = trades[0]?.entryTime
-  const second = equity[1]?.timestamp
-  return !!first && !!second && key(first) === key(second)
+  if (!first || equity.length < 2) return false
+  let allowed: string | undefined = equity[1].timestamp
+  if (isIntraday(timeframe)) {
+    // A US session falls on one UTC date (13:30 to 21:00 UTC).
+    const day = (iso: string) => new Date(iso).toISOString().slice(0, 10)
+    const firstDay = day(equity[0].timestamp)
+    allowed = equity.find((p) => day(p.timestamp) !== firstDay)?.timestamp
+  }
+  return !!allowed && key(first) === key(allowed)
 }
 
 const csvCell = (v: string | number | null) => (v === null ? '' : String(v))

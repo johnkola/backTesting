@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-19** · 2026-11-27 05:42 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-20** · 2026-11-27 05:45 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -26,7 +26,6 @@ Built one at a time, each committed on passing tests; each leaves this list and 
 3. Rerun a stored result from its settings.
 4. The feeds routes, Apply included.
 5. Fold models: `check` and `--prune`.
-6. The client's benchmark checks on intraday fills.
 7. The engine's job worker end to end.
 
 ## Waiting on John
@@ -140,7 +139,6 @@ the service calls 67 of its 70 routes under test.
 | The split from stored rows | The windows, folds and holdout from the stored matrix through `strategy_setup` (today on a fake store) | S |
 | The runner's intraday rule view | `walkforward.intraday_rule_view`: decided on D1 closes, scored on the run's sessions, never past the window | M |
 | The rules route | `nn/rules_api.py` (61%): no SPY or no T-bills, an unknown symbol, a bad window | S |
-| The client's checks on intraday fills | `benchmarkCheck.test.ts` checks daily fills only | S |
 | The indicator rules on hourly bars | No test scores one of the five on an hourly result | S |
 | The input snapshot check | `walkforward.check_snapshot`: whether a run would read the same inputs today | S |
 | Fold models | `nn/fold_models.py` (65%): `check` reproduces a run's signals; `--prune` removes only deleted runs' folders | S |
