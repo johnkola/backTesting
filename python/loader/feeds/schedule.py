@@ -53,18 +53,21 @@ class Scheduler(threading.Thread):
         super().__init__(name="feeds-scheduler", daemon=True)
         self.times = times
         self.fire = fire
-        self._stop = threading.Event()
+        # Not `_stop`: that is `threading.Thread`'s own method, which `join` and
+        # `is_alive` call once the thread has ended. An Event in its place made
+        # both raise "'Event' object is not callable" after a stop.
+        self._halt = threading.Event()
         self.next: dt.datetime | None = None
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             self.next = next_run(dt.datetime.now(dt.UTC), self.times)
-            while not self._stop.is_set():
+            while not self._halt.is_set():
                 left = (self.next - dt.datetime.now(dt.UTC)).total_seconds()
                 if left <= 0:
                     break
-                self._stop.wait(min(left, 300))
-            if self._stop.is_set():
+                self._halt.wait(min(left, 300))
+            if self._halt.is_set():
                 return
             try:
                 self.fire()
@@ -72,15 +75,24 @@ class Scheduler(threading.Thread):
                 print(f"feeds schedule: run not started: {exc}", flush=True)
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
 
 _scheduler: Scheduler | None = None
 
 
 def start_from_env() -> Scheduler | None:
+    """Start the daily run's timer from `FEEDS_SCHEDULE`, or None. A value that
+    is not a list of times starts none and says why: the worker that calls this
+    at start-up runs every other job, and a typo here must not stop it (the
+    panel shows the same error, `describe`)."""
     global _scheduler
-    times = parse(os.environ.get(ENV))
+    try:
+        times = parse(os.environ.get(ENV))
+    except ValueError as exc:
+        print(f"feeds schedule: {ENV}={os.environ.get(ENV)!r} is not a list of times "
+              f"({exc}); no daily run is scheduled", flush=True)
+        return None
     if not times:
         return None
     from loader.feeds import runner

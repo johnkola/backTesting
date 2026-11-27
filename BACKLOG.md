@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-45** · 2026-11-27 07:41 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-46** · 2026-11-27 07:43 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -18,13 +18,6 @@ closed on full unit testing (his decision of 2026-11-26), and the nineteen tests
 from step 10's reviews built (six, seven, three, then three). Suites: Python 1,220, engine 219,
 service 101, client 294; Python line coverage 86% at the last line report. Step 10's
 review was run again on 2026-11-27: its result is "Test gaps" below.
-
-## In progress: three test gaps (John's go, 2026-11-27)
-
-Each committed on passing tests; each leaves this list and the "Test gaps" table when
-it is in.
-
-3. The feeds timer.
 
 ## Waiting on John
 
@@ -128,7 +121,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 1 | The feeds timer | `loader/feeds/schedule.py` (51%): the thread fires at its time and works out the next, stops when asked, refuses a bad `FEEDS_SCHEDULE` | S |
 | 1 | The audit and checks routes | `loader/audit_api.py` (53%), `loader/checks_api.py` (73%) | S |
 | 1 | The providers' bad answers | Yahoo (68%), FRED (65%), the Bank of Canada (67%), breadth (73%): an empty or malformed answer fails its series with the reason | S |
 | 3 | The split from stored rows | The windows, folds and holdout from the stored matrix through `strategy_setup` (today on a fake store) | S |
