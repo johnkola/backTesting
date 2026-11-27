@@ -79,6 +79,30 @@ public final class DateTimeUtils {
     }
 
     /**
+     * A command's {@code --from}: {@link #parse}, null when the option was not
+     * given, and an {@link IllegalArgumentException} naming it when it was given
+     * and cannot be read. {@link #parse} answers null for both, and a null start
+     * is the whole series: a mistyped date ran a backtest nobody asked for.
+     */
+    public static ZonedDateTime parseOption(String option, String value) {
+        return orRefuse(option, value, parse(value));
+    }
+
+    /** A command's {@code --to}: {@link #parseEnd}, refused like {@link #parseOption}. */
+    public static ZonedDateTime parseEndOption(String option, String value) {
+        return orRefuse(option, value, parseEnd(value));
+    }
+
+    private static ZonedDateTime orRefuse(String option, String value, ZonedDateTime parsed) {
+        if (parsed == null && value != null && !value.isBlank()) {
+            throw new IllegalArgumentException("'" + option + "' is not a date this understands "
+                    + "(yyyy-MM-dd, yyyy-MM-dd HH:mm:ss, or an ISO instant such as "
+                    + "2016-01-01T00:00:00Z): " + value);
+        }
+        return parsed;
+    }
+
+    /**
      * An ISO-8601 instant with its offset ({@code 2016-01-01T00:00:00Z},
      * {@code 2021-12-31T23:59:59.999999Z}): the form a result records the window
      * it was asked for in ({@code RunSettings}), so a run can be asked again

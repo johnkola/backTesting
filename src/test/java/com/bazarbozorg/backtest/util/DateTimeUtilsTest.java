@@ -146,4 +146,21 @@ class DateTimeUtilsTest {
                 DateTimeUtils.parse("2020-06-01T14:30:00-04:00"));
         assertNull(DateTimeUtils.parse("2020-1-1"));
     }
+
+    @Test
+    @DisplayName("a command's date option is refused, by name, when it cannot be read; absent stays absent")
+    void aDateOptionItCannotReadIsRefused() {
+        assertNull(DateTimeUtils.parseOption("--from", null));
+        assertNull(DateTimeUtils.parseEndOption("--to", "  "));
+        assertEquals(ZonedDateTime.of(2020, 1, 2, 0, 0, 0, 0, ZoneOffset.UTC),
+                DateTimeUtils.parseOption("--from", "2020-01-02"));
+        assertEquals(ZonedDateTime.of(2020, 1, 2, 23, 59, 59, 999_999_000, ZoneOffset.UTC),
+                DateTimeUtils.parseEndOption("--to", "2020-01-02"));
+        IllegalArgumentException from = assertThrows(IllegalArgumentException.class,
+                () -> DateTimeUtils.parseOption("--from", "2020-1-1"));
+        assertTrue(from.getMessage().startsWith("'--from' is not a date"), from.getMessage());
+        IllegalArgumentException to = assertThrows(IllegalArgumentException.class,
+                () -> DateTimeUtils.parseEndOption("--to", "31/12/2020x"));
+        assertTrue(to.getMessage().contains("31/12/2020x"), to.getMessage());
+    }
 }

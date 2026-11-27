@@ -111,8 +111,8 @@ public class BacktestCommand implements Runnable {
             Timeframe timeframe = Timeframe.fromCode(timeframeCode);
 
             // Resolve date range
-            ZonedDateTime from = fromDate != null ? DateTimeUtils.parse(fromDate) : null;
-            ZonedDateTime to = toDate != null ? DateTimeUtils.parseEnd(toDate) : null;
+            ZonedDateTime from = DateTimeUtils.parseOption("--from", fromDate);
+            ZonedDateTime to = DateTimeUtils.parseEndOption("--to", toDate);
 
             // Resolve capital and cost models from config
             AppConfig config = AppConfig.getInstance();
