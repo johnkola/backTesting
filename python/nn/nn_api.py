@@ -38,7 +38,7 @@ from nn.features import (
 )
 from nn import feature_config
 from nn.infer import load_for_inference, predict_batch
-from nn.store import ModelRegistry
+from nn.store import ModelRecords, ModelRefused, ModelRegistry
 from nn.train import TrainConfig, train_model
 from loader.db import pool
 
@@ -64,7 +64,13 @@ def _keep_last_n() -> int:
 
 
 def _registry() -> ModelRegistry:
-    return ModelRegistry(_models_dir(), keep_last_n=_keep_last_n())
+    return ModelRegistry(_models_dir(), records=ModelRecords(), keep_last_n=_keep_last_n())
+
+
+def _refused(exc: ModelRefused) -> JSONResponse:
+    """A version on disk the database does not vouch for: no record, or files
+    that changed since it was saved. Not loaded, and not a 404: it is there."""
+    return JSONResponse(status_code=409, content={"error": str(exc)})
 
 
 # ----------------------------------------------------------------------------
@@ -370,12 +376,15 @@ def post_predict(req: PredictRequest) -> JSONResponse:
     if not req.features:
         return JSONResponse(status_code=400, content={"error": "features must be non-empty"})
 
-    loaded = load_for_inference(
-        _registry(),
-        strategy=_STRATEGY,
-        cache_key=req.cache_key,
-        version_id=req.version_id,
-    )
+    try:
+        loaded = load_for_inference(
+            _registry(),
+            strategy=_STRATEGY,
+            cache_key=req.cache_key,
+            version_id=req.version_id,
+        )
+    except ModelRefused as exc:
+        return _refused(exc)
     if loaded is None:
         return JSONResponse(
             status_code=404,
@@ -442,12 +451,15 @@ def post_predict_range(req: PredictRangeRequest) -> JSONResponse:
     if req.engine not in ENGINE_STRATEGIES:
         return JSONResponse(status_code=400, content={
             "error": f"engine {req.engine!r} is not registered"})
-    loaded = load_for_inference(
-        _registry(),
-        strategy=ENGINE_STRATEGIES[req.engine],
-        cache_key=req.cache_key,
-        version_id=req.version_id,
-    )
+    try:
+        loaded = load_for_inference(
+            _registry(),
+            strategy=ENGINE_STRATEGIES[req.engine],
+            cache_key=req.cache_key,
+            version_id=req.version_id,
+        )
+    except ModelRefused as exc:
+        return _refused(exc)
     if loaded is None:
         return JSONResponse(
             status_code=404,
@@ -602,6 +614,8 @@ def post_predict_features(req: PredictFeaturesRequest) -> JSONResponse:
         )
     except FileNotFoundError:
         loaded = None
+    except ModelRefused as exc:
+        return _refused(exc)
     if loaded is None:
         return JSONResponse(
             status_code=404,
@@ -689,8 +703,14 @@ def post_predict_features(req: PredictFeaturesRequest) -> JSONResponse:
 @router.get("/api/nn/models")
 def get_models(strategy: str | None = None) -> JSONResponse:
     items: list[dict[str, Any]] = []
-    for m in _registry().list_all(strategy=strategy):
+    registry = _registry()
+    recorded = registry.records.all() if registry.records is not None else {}
+    for m in registry.list_all(strategy=strategy):
         item = asdict(m)
+        # The hash its files were recorded with; null for a version on disk with
+        # no record, which is listed but not loaded.
+        row = recorded.get((m.strategy, m.cache_key, m.version_id))
+        item["fileHash"] = row["fileHash"] if row else None
         # Move the free-form metadata blob to a top-level key for the
         # web client — the React side reads cacheKey + versionId etc.
         item["cacheKey"] = item.pop("cache_key")

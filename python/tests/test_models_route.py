@@ -1,7 +1,8 @@
 """`GET /api/nn/models`: the saved model versions the Models page lists.
 
-Read from the registry's files alone, so no database: each version's
-`metadata.json` under `MODELS_DIR/<strategy>/<cache key>/<version>/`.
+Read from the registry's files, each version's `metadata.json` under
+`MODELS_DIR/<strategy>/<cache key>/<version>/`, with the hash each was recorded
+with in the database; the records are the test's own, so no database.
 """
 
 from __future__ import annotations
@@ -24,11 +25,22 @@ def saved(base, strategy: str, key: str, version: str, created: str, **extra) ->
         "input_size": 12, "hidden_size": 8, "num_hidden": 1, "extra": extra}))
 
 
+class Recorded:
+    """The `model_versions` rows the listing joins: V1 of k1 only."""
+
+    def all(self):
+        return {("nn-feedforward", "k1", V1): {"path": f"nn-feedforward/k1/{V1}",
+                                               "fileHash": "ab" * 32, "bytes": 100}}
+
+
 @pytest.fixture
 def models(tmp_path, monkeypatch):
+    from nn import nn_api
+
     base = tmp_path / "models"
     base.mkdir()
     monkeypatch.setenv("MODELS_DIR", str(base))
+    monkeypatch.setattr(nn_api, "ModelRecords", Recorded)
     return base
 
 
@@ -59,13 +71,18 @@ def test_every_saved_version_is_listed_newest_first_in_the_clients_names(models)
     oldest = body["items"][-1]
     assert oldest == {"strategy": "nn-feedforward", "cacheKey": "k1", "versionId": V1,
                       "createdAt": "2026-11-01T09:00:00Z", "inputSize": 12, "hiddenSize": 8,
-                      "numHidden": 1, "extra": {"symbol": "QQQ"}}
+                      "numHidden": 1, "extra": {"symbol": "QQQ"}, "fileHash": "ab" * 32}
+    # A version on disk with no record is listed, with no hash: it is not loaded.
+    assert [i["fileHash"] for i in body["items"][:2]] == [None, None]
 
     assert [i["versionId"] for i in listed(strategy="xgboost")["items"]] == [V3]
     assert listed(strategy="lightgbm")["items"] == []
 
 
 def test_no_registry_yet_lists_nothing(tmp_path, monkeypatch):
+    from nn import nn_api
+
+    monkeypatch.setattr(nn_api, "ModelRecords", Recorded)
     monkeypatch.setenv("MODELS_DIR", str(tmp_path / "never-made"))
     assert listed()["items"] == []
 

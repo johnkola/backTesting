@@ -336,7 +336,7 @@ def main() -> int:
         print("\n  Collapsed to a single class — this model would never trade.")
 
     if args.save:
-        from nn.store import ModelRegistry, compute_cache_key
+        from nn.store import ModelRecords, ModelRegistry, compute_cache_key
 
         cur.execute(
             "SELECT schema_version, config_hash FROM feature_sets WHERE id = %s", (set_id,)
@@ -361,7 +361,7 @@ def main() -> int:
             "class_weights": str(bool(args.class_weights)),
         })
 
-        registry = ModelRegistry(args.models_dir)
+        registry = ModelRegistry(args.models_dir, records=ModelRecords())
         version_id = registry.save(
             strategy=args.strategy, cache_key=cache_key, model=model, scaler=scaler,
             input_size=x_tr.shape[1], hidden_size=args.hidden, num_hidden=args.layers,

@@ -21,7 +21,7 @@ def _version(base, key="k1", version=VERSION):
 
 def test_a_version_goes_and_the_key_goes_with_its_last_one(tmp_path):
     first, second = _version(tmp_path), _version(tmp_path, version=OTHER)
-    registry = ModelRegistry(tmp_path)
+    registry = ModelRegistry(tmp_path, records=None)
 
     assert registry.delete_version("nn-test", "k1", VERSION) is True
     assert not first.exists() and second.exists(), "only the version named"
@@ -35,7 +35,7 @@ def test_a_name_that_is_not_the_registrys_own_removes_nothing(tmp_path):
     kept = _version(tmp_path)
     outside = tmp_path.parent / "outside"
     outside.mkdir(exist_ok=True)
-    registry = ModelRegistry(tmp_path)
+    registry = ModelRegistry(tmp_path, records=None)
     assert registry.delete_version("nn-test", "k1", "not-a-version") is False
     assert registry.delete_version("..", "outside", VERSION) is False
     assert registry.delete_version("nn-test", "../k1", VERSION) is False
@@ -43,6 +43,15 @@ def test_a_name_that_is_not_the_registrys_own_removes_nothing(tmp_path):
 
 
 def test_the_route_deletes_the_version_and_says_404_for_one_that_is_not_there(tmp_path, monkeypatch):
+    from nn import nn_api
+
+    forgotten = []
+
+    class Records:
+        def forget(self, strategy, key, version):
+            forgotten.append((strategy, key, version))
+
+    monkeypatch.setattr(nn_api, "ModelRecords", Records)
     monkeypatch.setenv("MODELS_DIR", str(tmp_path))
     _version(tmp_path)
     client = TestClient(app)
@@ -50,5 +59,7 @@ def test_the_route_deletes_the_version_and_says_404_for_one_that_is_not_there(tm
     assert gone.status_code == 200
     assert gone.json() == {"status": "deleted", "strategy": "nn-test", "cacheKey": "k1",
                            "versionId": VERSION}
+    assert forgotten == [("nn-test", "k1", VERSION)], "its record goes with its files"
     again = client.delete(f"/api/nn/models/nn-test/k1/{VERSION}")
     assert again.status_code == 404 and "no model version" in again.json()["error"]
+    assert len(forgotten) == 1

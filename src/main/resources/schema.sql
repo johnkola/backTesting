@@ -1120,6 +1120,28 @@ CREATE TABLE IF NOT EXISTS walkforward_fold_models (
     PRIMARY KEY (run_id, fold, engine)
 );
 
+-- A trained model version in the registry under MODELS_DIR (python/nn/store.py,
+-- R49): the files are on disk, this row is their record. A version is loaded
+-- only when it has a row and its files still hash to it, so the database, not
+-- whatever sits in the directory, says which models exist.
+--   path        the version's directory, relative to MODELS_DIR
+--   file_hash   SHA-256 over its files, by name then bytes (`files_hash`)
+--   trained_at  when the version was saved, from its metadata
+-- A version saved before these rows existed is recorded by
+-- `python -m nn.store --record`, which hashes the files as they are then.
+CREATE TABLE IF NOT EXISTS model_versions (
+    strategy VARCHAR(64) NOT NULL,
+    cache_key VARCHAR(64) NOT NULL,
+    version_id VARCHAR(24) NOT NULL,
+    path TEXT NOT NULL,
+    file_hash CHAR(64) NOT NULL,
+    bytes BIGINT NOT NULL,
+    trained_at TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recorded_by VARCHAR(64) NOT NULL DEFAULT audit_actor(),
+    PRIMARY KEY (strategy, cache_key, version_id)
+);
+
 -- G75 (R12, R65; the author 2026-11-22): a bar an import found an error on.
 -- An import always lands; what job 8 refused at the door is recorded here
 -- instead, one row per bar and finding, and the feature build and training

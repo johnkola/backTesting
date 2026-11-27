@@ -129,3 +129,14 @@ def _scalar(cur, sql: str, *params):
     cur.execute(sql, params)
     row = cur.fetchone()
     return row[0] if row else None
+
+
+def forget_models(base) -> None:
+    """Remove the `model_versions` rows of the model versions a test saved
+    under `base`. The rows do not hold the models directory, so a test that
+    trains through the service or a trainer leaves them behind otherwise."""
+    from nn.store import ModelRecords, ModelRegistry
+
+    registry = ModelRegistry(base, records=ModelRecords())
+    for strategy, key, version, _ in registry.versions_on_disk():
+        registry.records.forget(strategy, key, version)

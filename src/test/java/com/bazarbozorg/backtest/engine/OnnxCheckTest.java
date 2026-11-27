@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
@@ -52,6 +53,39 @@ class OnnxCheckTest {
         assertTrue(c.maxDiff() <= 1e-5, "largest difference " + c.maxDiff());
         assertTrue(c.agreed());
         assertFalse(OnnxCheck.runtimeVersion().isBlank());
+    }
+
+    @Test
+    @DisplayName("a fold's files hash by the rule the Python side records them with")
+    void filesHashIsPythons(@TempDir Path tmp) throws IOException {
+        Files.write(tmp.resolve("model.onnx"), "weights".getBytes(StandardCharsets.UTF_8));
+        Files.write(tmp.resolve("check.json"), "{\"rows\": 0}".getBytes(StandardCharsets.UTF_8));
+        Files.write(tmp.resolve("b-\u00e9.bin"), new byte[] {0, 1, 2});
+        Files.createDirectory(tmp.resolve("not-a-file"));
+        // nn.file_hash.files_hash on the same three files.
+        assertEquals("e5094180a177526388f4a5ac343752abcdc09c60752d9cf7d33bf2a9a91d3cad",
+                OnnxCheck.filesHash(tmp));
+    }
+
+    @Test
+    @DisplayName("a fold whose files no longer hash to its record is not checked")
+    void aChangedFoldIsNotChecked(@TempDir Path tmp) throws IOException {
+        Path dir = copyOf(tmp);
+        String recorded = OnnxCheck.filesHash(dir);
+        OnnxCheck.FoldCheck as = OnnxCheck.checkRecordedFold(dir, 1, recorded);
+        assertNull(as.problem(), as.problem());
+        assertTrue(as.agreed());
+
+        Path outputs = dir.resolve(OnnxCheck.OUTPUTS_FILE);
+        byte[] raw = Files.readAllBytes(outputs);
+        raw[0] ^= 1;
+        Files.write(outputs, raw);
+        OnnxCheck.FoldCheck changed = OnnxCheck.checkRecordedFold(dir, 1, recorded);
+        assertEquals(0, changed.bars());
+        assertFalse(changed.agreed());
+        assertTrue(changed.problem().startsWith("the fold's files hash to "), changed.problem());
+        assertTrue(changed.problem().endsWith("not the recorded " + recorded.substring(0, 12)
+                + ": they changed after the run kept them"), changed.problem());
     }
 
     @Test

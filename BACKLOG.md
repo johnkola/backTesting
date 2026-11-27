@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-60** · 2026-11-27 18:36 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-61** · 2026-11-27 18:58 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -16,7 +16,7 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
 closed on full unit testing (his decision of 2026-11-26), and every test he chose from
 step 10's reviews built (six, seven, three, three, three, three, three, three, then two):
-"Test gaps" below has none left. Suites: Python 1,308, engine 233, service 103, client 302;
+"Test gaps" below has none left. Suites: Python 1,316, engine 235, service 103, client 302;
 Python line coverage 86% at the last line report. Step 10's review was run again on
 2026-11-27: its result is "Test gaps" below.
 
@@ -100,7 +100,6 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 | G59 | Tooltips come from three dictionaries and about 29 hard-coded strings; the nav and Pipeline sub-tabs have none | S |
 | G60 | Testing layers: React Testing Library component tests, Newman in CI, one scripted end-to-end path, a reproducibility test (same seed and snapshot, same model), indicators against published values. See "Test gaps" | L |
 | G61 | The lineage chain cannot be followed: `candles` carry no audit columns or link to their import slice, rolled-up candles have no audit record, `feed_runs` has no audit columns, `backtest_results` record no code version or input snapshot | M |
-| G62 | Models are files only: no database record with path and file hash, no hash check on load | S |
 | G63 | The catalogue has no entries for buy-and-hold, Faber and dual momentum; nothing shown on Results, Docs or tooltips | S |
 | G65 | Signal voting (phase 2). Gated: after phase 1 | L |
 | G66 | Reloading a series from its archive is not one action (CLI, API, Imports page) | S |

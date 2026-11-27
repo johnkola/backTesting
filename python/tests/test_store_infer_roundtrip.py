@@ -27,7 +27,7 @@ SPEC = ArchSpec(input_size=60, hidden_size=8, num_hidden=1)
 @pytest.fixture
 def saved(tmp_path):
     """A registry holding one saved model with a realistic (60, 8, 1) shape."""
-    registry = ModelRegistry(tmp_path)
+    registry = ModelRegistry(tmp_path, records=None)
     scaler = fit_scaler(np.zeros((4, SPEC.input_size), dtype=np.float32))
     version_id = registry.save(
         strategy=STRATEGY,

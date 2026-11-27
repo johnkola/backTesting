@@ -38,7 +38,14 @@ import java.util.Map;
  * it, so it takes the fold's raw inputs and returns what the fold stores),
  * {@code check_inputs.f32} and {@code check_outputs.f64} (flat little-endian
  * rows) and {@code check.json} (their shape and the tolerance). This class
- * shares no code with the Python side beyond that layout.
+ * shares no code with the Python side beyond that layout and the hash below.
+ *
+ * <p>The files are checked against their record before any is read (R49): the
+ * fold's row in {@code walkforward_fold_models} holds a SHA-256 over them, by
+ * the rule {@code python/nn/file_hash.py} states, and a fold whose files no
+ * longer hash to it is reported as not checked. Run on files that changed
+ * after the run kept them, the check would vouch for a model the run never
+ * trained.
  *
  * <p>The design runs this in a separate Java compute worker fed by the jobs
  * table. That is the stack move (G16); until then the engine is the Java side,
@@ -89,6 +96,54 @@ public final class OnnxCheck {
     /** The ONNX Runtime this check ran on, recorded with each row. */
     public static String runtimeVersion() {
         return OrtEnvironment.getEnvironment().getVersion();
+    }
+
+    /**
+     * SHA-256 over every file of the directory in name order, each as its name
+     * in UTF-8, a zero byte, its length in decimal, a zero byte and its bytes:
+     * the hash a kept model is recorded with ({@code python/nn/file_hash.py}).
+     */
+    static String filesHash(Path dir) throws IOException {
+        java.security.MessageDigest sha;
+        try {
+            sha = java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        List<Path> files;
+        try (var listing = Files.list(dir)) {
+            files = listing.filter(Files::isRegularFile)
+                    .sorted(java.util.Comparator.comparing(f -> f.getFileName().toString()))
+                    .toList();
+        }
+        for (Path f : files) {
+            byte[] raw = Files.readAllBytes(f);
+            sha.update(f.getFileName().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            sha.update((byte) 0);
+            sha.update(Integer.toString(raw.length).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            sha.update((byte) 0);
+            sha.update(raw);
+        }
+        return java.util.HexFormat.of().formatHex(sha.digest());
+    }
+
+    /** One fold, after its files are checked against the hash its run recorded. */
+    public static FoldCheck checkRecordedFold(Path dir, int fold, String recordedHash) {
+        if (Files.isDirectory(dir)) {
+            try {
+                String now = filesHash(dir);
+                String recorded = recordedHash == null ? "" : recordedHash.trim();
+                if (!now.equals(recorded)) {
+                    return FoldCheck.notChecked(fold, "the fold's files hash to "
+                            + now.substring(0, 12) + ", not the recorded "
+                            + recorded.substring(0, Math.min(12, recorded.length()))
+                            + ": they changed after the run kept them");
+                }
+            } catch (IOException e) {
+                return FoldCheck.notChecked(fold, e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+        return checkFold(dir, fold);
     }
 
     /** Runs one fold's ONNX model on its check batch. Never throws for a bad fold. */
@@ -147,12 +202,13 @@ public final class OnnxCheck {
         List<FoldCheck> out = new ArrayList<>();
         try (Connection conn = db.getConnection()) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT fold, path FROM walkforward_fold_models "
+                    "SELECT fold, path, file_hash FROM walkforward_fold_models "
                             + "WHERE run_id = ? AND engine = 'mlp' ORDER BY fold")) {
                 ps.setLong(1, runId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        out.add(checkFold(base.resolve(rs.getString("path")), rs.getInt("fold")));
+                        out.add(checkRecordedFold(base.resolve(rs.getString("path")),
+                                rs.getInt("fold"), rs.getString("file_hash")));
                     }
                 }
             }

@@ -26,7 +26,7 @@ pytest.importorskip("torch")  # whole module skips if torch isn't installed
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from .dbfixtures import purge_instrument, requires_db  # noqa: E402
+from .dbfixtures import forget_models, purge_instrument, requires_db  # noqa: E402
 
 # Dedicated instrument/source so the test never collides with real data and
 # can clean up after itself.
@@ -90,6 +90,7 @@ def client(tmp_path, monkeypatch):
     try:
         yield TestClient(app)
     finally:
+        forget_models(tmp_path)
         purge_instrument(SYMBOL, SOURCE)
 
 
@@ -229,7 +230,7 @@ def test_the_train_route_says_why_it_will_not_train(client, tmp_path, over, stat
     r = _train(client, **{"mode": "force", **over})
     assert r.status_code == status, r.text
     assert error in r.json()["error"]
-    assert ModelRegistry(tmp_path).list_all() == [], "nothing is trained or saved"
+    assert ModelRegistry(tmp_path, records=None).list_all() == [], "nothing is trained or saved"
 
 
 def test_a_trained_version_is_what_the_models_list_shows(client):
@@ -242,3 +243,31 @@ def test_a_trained_version_is_what_the_models_list_shows(client):
     window = item["extra"]["training_window"]
     assert (window["symbol"], window["source"], window["timeframe"]) == (SYMBOL, SOURCE, TF)
     assert client.get("/api/nn/models", params={"strategy": "xgboost"}).json()["items"] == []
+
+
+def test_a_model_the_database_does_not_vouch_for_is_not_served(client):
+    """A version is served only while its record holds and its files hash to
+    it: one whose files changed, or with no record, is a 409 that says why."""
+    from nn.nn_api import _registry
+
+    trained = _train(client, mode="force").json()
+    key, version = trained["cacheKey"], trained["versionId"]
+    registry = _registry()
+
+    def predict():
+        return client.post("/api/nn/predict_range", json={
+            "cache_key": key, "version_id": version, "symbol": SYMBOL, "source": SOURCE,
+            "timeframe": TF})
+
+    assert predict().status_code == 200
+    scaler = registry.version_dir("nn-feedforward", key, version) / "scaler.json"
+    original = scaler.read_bytes()
+    scaler.write_bytes(original + b" ")
+    r = predict()
+    assert r.status_code == 409 and "not the recorded" in r.json()["error"], r.text
+    scaler.write_bytes(original)
+    registry.records.forget("nn-feedforward", key, version)
+    r = predict()
+    assert r.status_code == 409 and "has no record in the database" in r.json()["error"], r.text
+    listed = client.get("/api/nn/models").json()["items"]
+    assert [i["fileHash"] for i in listed if i["versionId"] == version] == [None]

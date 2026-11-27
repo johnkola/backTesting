@@ -24,7 +24,7 @@ import math
 import psycopg
 import pytest
 
-from .dbfixtures import dsn, purge_instrument, requires_db
+from .dbfixtures import dsn, forget_models, purge_instrument, requires_db
 
 SYMBOL, SOURCE = "ZZPIPE", "zz-pipe"
 
@@ -523,6 +523,7 @@ def test_the_offline_trainer_learns_from_the_built_set_and_names_it(config, seed
         assert train_features.main() == 0
     finally:
         sys.argv = argv
+        forget_models(models)
     saved = list(models.glob("nn-feedforward-v2/*/*/metadata.json"))
     assert len(saved) == 1
     meta = json.loads(saved[0].read_text(encoding="utf-8"))
@@ -708,7 +709,10 @@ def predict_client(monkeypatch, tmp_path):
     monkeypatch.setenv("MODELS_DIR", str(tmp_path / "models"))
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app), tmp_path / "models"
+    try:
+        yield TestClient(app), tmp_path / "models"
+    finally:
+        forget_models(tmp_path / "models")
 
 
 @requires_db

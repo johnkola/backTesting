@@ -36,7 +36,6 @@ The rows go with their run (ON DELETE CASCADE); the files do not, so
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -46,6 +45,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from nn.file_hash import files_hash
 
 MODEL_FILE = "model.pt"
 SCALER_FILE = "scaler.json"
@@ -94,16 +95,6 @@ def run_dir(base: Path, run_id: int) -> Path:
 
 def fold_dir(base: Path, run_id: int, fold: int, engine: str) -> Path:
     return run_dir(base, run_id) / f"fold-{int(fold):02d}" / engine
-
-
-def files_hash(dir_: Path) -> str:
-    """SHA-256 over every file in the directory, by name then bytes, in name
-    order: one changed, added or missing file changes it."""
-    h = hashlib.sha256()
-    for f in sorted(p for p in dir_.iterdir() if p.is_file()):
-        raw = f.read_bytes()
-        h.update(f.name.encode("utf-8") + b"\0" + str(len(raw)).encode() + b"\0" + raw)
-    return h.hexdigest()
 
 
 def network_arch(model, args) -> dict[str, Any]:
