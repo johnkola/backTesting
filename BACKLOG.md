@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-39** · 2026-11-27 07:22 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-40** · 2026-11-27 07:23 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -24,7 +24,6 @@ review was run again on 2026-11-27: its result is "Test gaps" below.
 Each committed on passing tests; each leaves this list and the "Test gaps" table when
 it is in.
 
-1. The engine worker's loop.
 2. Three service routes.
 3. The preview on a built set.
 
@@ -130,7 +129,6 @@ client's modules (no page or component has a test).
 
 | Step | Where | What a test would check, and why | Size |
 |---|---|---|---|
-| 0 | The engine worker's loop | `JobWorker.start`: it polls, takes a job, beats its heartbeat and stops when asked. `runOne` is tested; the loop around it is not | S |
 | 0 | Three service routes | `GET /getting-started` and `/getting-started/history` (redirects into the docs registry), `POST /api/walkforward/onnx-check` | S |
 | 2 | The preview on a built set | `nn/feature_preview.py` (62%): before and after on the seeded set, warm-up days null, window edges, a column the set lacks a 404 | S |
 | 1 | An import's roll-ups | `loader/imports_api.py` (70%): W1 and MN1 rebuilt for the years an import touched; the 409 for candles in a compressed chunk, on import and undo | S |
