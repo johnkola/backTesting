@@ -653,3 +653,48 @@ def test_an_hourly_walk_forward_run_scores_its_rules_on_daily_closes(config, see
                 if b.return_pct is not None:
                     assert a.return_pct == pytest.approx(b.return_pct), a.name
 
+
+
+@requires_db
+def test_each_kept_fold_model_gives_back_the_signals_its_fold_stored(config, seeded, capsys):
+    # `nn.fold_models --check`: every model a run kept, loaded again, predicts
+    # its fold's scored bars and must give the signals the run stored. Checked
+    # on a real run, then refused with the reason once the run's inputs are no
+    # longer on file, and per model when its files changed.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import fold_models
+    from nn import walkforward as wf
+
+    set_id = _build(config)
+    assert wf.main(["--symbol", SYMBOL, "--source", SOURCE, "--set-id", str(set_id),
+                    "--train-start", "2019", "--first-val", "2020", "--last-val", "2021",
+                    "--engines", "xgboost", "--label", "pytest-fold-check"]) == 0
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM walkforward_runs WHERE label = 'pytest-fold-check' "
+                    "AND feature_set_id = %s", (set_id,))
+        run_id = cur.fetchone()[0]
+        lines, why = fold_models.check(cur, run_id)
+        assert why is None and lines, why
+        assert all(c.ok and c.bars > 0 for c in lines), lines
+        kept = fold_models.rows(cur, run_id)
+    capsys.readouterr()
+    assert fold_models.main(["--check", str(run_id)]) == 0
+    assert f"{len(lines)} of {len(lines)} kept models give the signals" in capsys.readouterr().out
+
+    # A model whose files changed is not checked, and says why.
+    target = fold_models.base_dir() / kept[0]["path"]
+    some = next(p for p in sorted(target.rglob("*")) if p.is_file())
+    some.write_bytes(some.read_bytes() + b"\0")
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        lines, why = fold_models.check(cur, run_id)
+    assert why is None and not lines[0].ok and "hash" in lines[0].problem
+    assert fold_models.main(["--check", str(run_id)]) == 1
+
+    # Once the set is rebuilt, the inputs the run read are gone.
+    _build(config)
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        lines, why = fold_models.check(cur, run_id)
+        assert not lines and "its inputs are not on file" in why
+        assert fold_models.check(cur, 2_000_000_000) == ([], "there is no run 2000000000")
+    assert fold_models.main(["--check", str(run_id)]) == 2
