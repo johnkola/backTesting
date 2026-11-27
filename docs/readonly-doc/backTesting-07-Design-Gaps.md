@@ -2,7 +2,7 @@
 
 # Design gap tracker
 
-> **Revision 2026-11-27-12** · 2026-11-27 05:17 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
+> **Revision 2026-11-27-13** · 2026-11-27 05:18 Toronto time · last edited by Claude Code (Claude Opus 5.5) · [revision history](#revision-history)
 
 What `` asks for that the code does not do yet. Rolling tracker, not a
 project doc: it stays out of the `DOCS` registry, like `backTesting-08-Doc-Review.md` and `backTesting-09-UI-Review.md`.
@@ -1334,7 +1334,7 @@ The order, each phase leaving a stack that works end to end, with the four suite
     - [x] T2 *A small walk-forward run end to end* (step 5), built (`test_pipeline_integration.py`): the runner's `main` on the seeded set with the tree engine (seconds; the network's ONNX check needs the engine's worker, so XGBoost alone): the run finished with its input snapshot and code hash, its span inside the seeded days, one fold (2021: the set's first complete row follows the 252-bar warm-up, so 2020 has nothing before it to train on) and a signal per scored bar; a recalculation in place gives back every profit figure it stored; the Training stage calls it fresh, and stale once a bar inside its span changes and the set is rebuilt from it.
     - [x] T3 *The verdict* (step 5), built (`test_walkforward_report.py`, 8): `walkforward.report` on folds with known figures, read from what it prints: on the return objective a positive mean excess beats and a negative one does not; on Sharpe only the Sharpe counts (more return at a lower Sharpe loses); on drawdown a smaller drawdown must also be worth what it cost; a run that never traded is "buy-and-hold with extra steps"; under Strategy 2 an excess earned by leverage says so; below the naive baseline is flagged; each rule benchmark shows its return or why it is missing; an intraday run counts bars out, not days.
     - [x] T4 *The feature-store network's prediction* (step 5), built (`test_pipeline_integration.py`, D1 and H1): `POST /api/nn/predict_features` on a model the offline trainer saved from the seeded set: the answer names that set and version, one prediction per bar once the lookback is filled, each stamped with the bar its window ends on, a class and probabilities that sum to one; an unknown model is a 404 that names it. **Found and fixed:** on hourly bars each stamp was the bar's time with a midnight appended (`2019-12-24T19:30:00T00:00:00Z`), which the engine's `Instant.parse` cannot read, so a feature-store model could not be backtested on intraday bars; the route now stamps an intraday bar with its own time in UTC (`nn_api._instant`). The worker container is rebuilt.
-    - [ ] T5 *A new bar normalized as it arrives* (step 2): the seeded series fed through the feeds runner, built, a day added by the next refresh: the Features stage stale, then after the rebuild fresh, every earlier value unchanged and the new bar valued in every column.
+    - [x] T5 *A new bar normalized as it arrives* (step 2), built (`test_pipeline_integration.py`): the seeded series loaded through the feeds runner on a provider of the test's own, so each day lands as a recorded import; the set built and the Features stage passed; the next evening's refresh adds a day and the stage reads stale; after the rebuild it passes again, no earlier stored value moved, and the new day has a finite value in every column. Step 2's done-when now holds both halves by test.
     - [ ] T6 *CI fails when an integration test skips there* (step 9): the named integration files must run in CI; a skip there fails the job.
   - **For the author, in files this agent does not edit:** `AGENTS.md` step 0 still says "the database, Java engine, Python loader, Node API and React client are up"; on the new stack that is the database, the API (`server`), the Java engine, the Python worker and the client. Drive's Operator Reference and Getting Started will want the same change as the repo's README and Getting Started.
   - **For the author to pick up, 2026-11-26** (the author's rule of that day: this agent changes only this tracker and leaves notes here; it never edits `AGENTS.md`):
@@ -2419,6 +2419,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-13 | 2026-11-27 05:18 | Claude Code (Claude Opus 5.5) | Step 10's tests: T5 built, a new bar normalized as it arrives |
 | 2026-11-27-12 | 2026-11-27 05:17 | Claude Code (Claude Opus 5.5) | Step 10's tests: T4 built, the feature-store prediction route; intraday stamps fixed |
 | 2026-11-27-11 | 2026-11-27 05:12 | Claude Code (Claude Opus 5.5) | Step 10's tests: T3 built, the verdict a run prints |
 | 2026-11-27-10 | 2026-11-27 05:10 | Claude Code (Claude Opus 5.5) | Step 10's tests: T2 built, a walk-forward run end to end |

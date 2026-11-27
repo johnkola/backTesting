@@ -537,3 +537,58 @@ def test_the_feature_store_network_predicts_each_bar_from_the_set_its_model_name
     # A model that does not exist is a 404 that names what was asked for.
     r = client.post("/api/nn/predict_features", json={"cache_key": "no-such-key"})
     assert r.status_code == 404 and "no-such-key" in r.json()["error"]
+
+
+@requires_db
+def test_a_new_bar_from_the_evening_run_is_normalized_and_the_stage_follows(
+        config, monkeypatch, tmp_path):
+    # Step 10, T5: step 2's done-when, second half. The series arrives as the
+    # evening run brings it (the feeds runner, on a provider of the test's
+    # own, so each day lands as a recorded import); the set is built; the next
+    # evening adds a day. The Features stage is stale until the rebuild, then
+    # fresh; no earlier value moved; the new day has a value in every column.
+    pytest.importorskip("talib")
+    from loader.feeds import runner
+    from loader.feeds.registry import Feed
+    from nn import staleness
+
+    monkeypatch.setenv("CSV_ARCHIVE_DIR", str(tmp_path / "archive"))
+    served: dict[str, list[tuple]] = {}
+    monkeypatch.setattr(runner, "fetch_bars", lambda feed, start, ctx: [
+        b for b in served["bars"] if start is None or b[0] >= start.isoformat()])
+    feed = Feed(symbol=SYMBOL, source=SOURCE, type="STOCK", provider="fake", ref="ZZ",
+                group="prices")
+    ctx = runner.RunContext.at(dt.datetime(2026, 11, 27, 23, 0, tzinfo=dt.UTC))
+
+    def provider(n: int) -> list[tuple]:
+        return [(d.isoformat(), *(round(x, 4) for x in bar(i)[:4]), round(bar(i)[4]))
+                for i, d in enumerate(DAYS[:n])]
+
+    def features_state() -> str:
+        with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+            return staleness.status(cur, "D1", symbol=SYMBOL, source=SOURCE)["features"]["state"]
+
+    _purge_sets()
+    purge_instrument(SYMBOL, SOURCE)
+    try:
+        served["bars"] = provider(len(DAYS) - 1)
+        with psycopg.connect(dsn()) as conn:
+            assert runner.refresh_feed(conn, feed, ctx)["status"] == "loaded"
+        before = _values(_build(config))
+        assert features_state() == "passed"
+
+        served["bars"] = provider(len(DAYS))
+        with psycopg.connect(dsn()) as conn:
+            out = runner.refresh_feed(conn, feed, ctx)
+        assert out["status"] == "extended" and out["lastAfter"] == DAYS[-1].isoformat()
+        assert features_state() == "stale"
+
+        after = _values(_build(config))
+        assert features_state() == "passed"
+        assert all(after.get(k) == v for k, v in before.items()), "an earlier value moved"
+        new = {n: v for (n, d), v in after.items() if d == DAYS[-1]}
+        assert set(new) == {n for n, _ in before} and all(
+            v is not None and math.isfinite(v) for v in new.values()), new
+    finally:
+        _purge_sets()
+        purge_instrument(SYMBOL, SOURCE)
