@@ -687,12 +687,21 @@ public class EngineApi {
         if (raw == null || raw.isBlank()) {
             return null;
         }
+        ZonedDateTime parsed;
         try {
-            return rangeEnd ? DateTimeUtils.parseEnd(raw) : DateTimeUtils.parse(raw);
+            parsed = rangeEnd ? DateTimeUtils.parseEnd(raw) : DateTimeUtils.parse(raw);
         } catch (RuntimeException e) {
-            throw badRequest("'" + field + "' is not a date this server understands "
-                    + "(yyyy-MM-dd or yyyy-MM-dd HH:mm:ss): " + raw);
+            parsed = null;
         }
+        // The parser answers null for a value it cannot read, and a null end
+        // means "the whole series": a mistyped date widened the run without a
+        // word. It is refused instead.
+        if (parsed == null) {
+            throw badRequest("'" + field + "' is not a date this server understands "
+                    + "(yyyy-MM-dd, yyyy-MM-dd HH:mm:ss, or an ISO instant such as "
+                    + "2016-01-01T00:00:00Z): " + raw);
+        }
+        return parsed;
     }
 
     private static CommissionModel commissionModel(AppConfig config) {

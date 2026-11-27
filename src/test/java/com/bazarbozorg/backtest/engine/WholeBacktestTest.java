@@ -320,6 +320,99 @@ class WholeBacktestTest {
         assertEquals((Math.pow(growth, 252.0 / days) - 1) * 100, m.get("annualizedReturnPct").getAsDouble(), 1e-6);
     }
 
+    private static EngineApi.Answer runRequest(JsonObject req) {
+        Function<String, JsonObject> loader = BacktestEngine.ruleDecisions;
+        try {
+            BacktestEngine.ruleDecisions = WholeBacktestTest::decisions;
+            return new EngineApi(db).answer(new EngineApi.Request("POST", "/api/run", Map.of(), req));
+        } finally {
+            BacktestEngine.ruleDecisions = loader;
+        }
+    }
+
+    @Test
+    @DisplayName("a stored result asked again from its recorded settings gives the same trades and figures")
+    void aStoredResultRerunsFromItsSettings() throws Exception {
+        // A window inside the seeded days, so a start or end the rerun lost
+        // would show: the route once read a recorded instant as no date at all.
+        EngineApi.Answer first = run("D1", "2020-03-02", "2020-12-31");
+        assertEquals(200, first.status(), first.body().toString());
+
+        // The request rebuilt from the stored row alone, as a Rerun would.
+        JsonObject req = new JsonObject();
+        JsonObject recorded;
+        try (Connection c = db.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT strategy_name, instrument_symbol, "
+                     + "timeframe, data_source, settings_json FROM backtest_results "
+                     + "WHERE instrument_symbol = ? ORDER BY id DESC LIMIT 1")) {
+            ps.setString(1, SYMBOL);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                recorded = JsonParser.parseString(rs.getString("settings_json")).getAsJsonObject();
+                req.addProperty("strategy", rs.getString("strategy_name"));
+                req.addProperty("instrument", rs.getString("instrument_symbol"));
+                req.addProperty("timeframe", rs.getString("timeframe"));
+                req.addProperty("source", rs.getString("data_source"));
+            }
+        }
+        req.addProperty("from", recorded.get("requestedFrom").getAsString());
+        req.addProperty("to", recorded.get("requestedTo").getAsString());
+        req.addProperty("capital", recorded.get("initialCapital").getAsDouble());
+        req.add("parameters", recorded.get("parameters"));
+        if (recorded.has("taxRatePct") && !recorded.get("taxRatePct").isJsonNull()) {
+            req.addProperty("taxRate", recorded.get("taxRatePct").getAsDouble());
+        }
+        req.addProperty("aggregateMissing", false);
+        EngineApi.Answer again = runRequest(req);
+        assertEquals(200, again.status(), again.body().toString());
+
+        JsonObject a = first.body().getAsJsonObject();
+        JsonObject b = again.body().getAsJsonObject();
+        assertEquals(a.get("startDate"), b.get("startDate"));
+        assertEquals(a.get("endDate"), b.get("endDate"));
+        assertEquals(a.getAsJsonArray("trades").size(), b.getAsJsonArray("trades").size());
+        for (int i = 0; i < a.getAsJsonArray("trades").size(); i++) {
+            JsonObject x = a.getAsJsonArray("trades").get(i).getAsJsonObject();
+            JsonObject y = b.getAsJsonArray("trades").get(i).getAsJsonObject();
+            for (String f : List.of("entryTime", "exitTime", "entryPrice", "exitPrice", "quantity",
+                    "commission", "holdingBars")) {
+                assertEquals(x.get(f), y.get(f), "trade " + i + " " + f);
+            }
+        }
+        assertEquals(a.get("finalEquity").getAsDouble(), b.get("finalEquity").getAsDouble(), 1e-9);
+        for (String m : List.of("sharpeRatio", "maxDrawdownPct", "totalReturnPct")) {
+            assertEquals(a.getAsJsonObject("metrics").get(m), b.getAsJsonObject("metrics").get(m), m);
+        }
+        // And the rerun records the same window and costs it was asked with.
+        try (Connection c = db.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT settings_json FROM backtest_results "
+                     + "WHERE instrument_symbol = ? ORDER BY id DESC LIMIT 1")) {
+            ps.setString(1, SYMBOL);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                JsonObject second = JsonParser.parseString(rs.getString("settings_json")).getAsJsonObject();
+                for (String f : List.of("requestedFrom", "requestedTo", "commission", "slippage")) {
+                    assertEquals(recorded.get(f), second.get(f), f);
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("a date the run cannot read is refused, not taken as the whole series")
+    void anUnreadableDateIsRefused() {
+        JsonObject req = new JsonObject();
+        req.addProperty("strategy", "sma-crossover-10-50");
+        req.addProperty("instrument", SYMBOL);
+        req.addProperty("timeframe", "D1");
+        req.addProperty("source", SOURCE);
+        req.addProperty("from", "2020-1-1");
+        req.addProperty("aggregateMissing", false);
+        EngineApi.Answer a = runRequest(req);
+        assertEquals(400, a.status(), a.body().toString());
+        assertTrue(a.body().toString().contains("'from' is not a date"), a.body().toString());
+    }
+
     private static long id(Connection c, String sql, String arg) throws Exception {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, arg);

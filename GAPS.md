@@ -1,6 +1,6 @@
 # Gaps
 
-> **Revision 2026-11-27-22** · 2026-11-27 05:50 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-23** · 2026-11-27 05:53 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Every gap open now, of any kind: what the design asks for that the code does not do
 yet, what the tests do not cover, and anything else missing or wrong. John and the
@@ -22,7 +22,6 @@ Python line coverage 82%.
 Built one at a time, each committed on passing tests; each leaves this list and the
 "Test gaps" table when it is in.
 
-3. Rerun a stored result from its settings.
 4. The feeds routes, Apply included.
 5. Fold models: `check` and `--prune`.
 7. The engine's job worker end to end.
@@ -116,6 +115,7 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 | — | Filling a missing bar works on daily bars only: an intraday day needs a session calendar, which is not built | M |
 | — | `feature_catalog.sync` refreshes each feature's date range by scanning all of `feature_values` (about 13 million values): about 30 s each sync, paid by every feature build | S |
 | — | `JAVA_HOME` under WSL points at a Windows JDK path; Gradle and npm run only through `cmd.exe` | S |
+| — | The engine's command lines (`backtest`, `train`, `signals`) take a `--from` or `--to` they cannot read as no date at all, so a mistyped date runs the whole series without a word (`DateTimeUtils.parse` answers null). `POST /api/run` refuses it since 2026-11-27 | S |
 
 ## Test gaps
 
@@ -142,7 +142,6 @@ the service calls 67 of its 70 routes under test.
 | Fold models | `nn/fold_models.py` (65%): `check` reproduces a run's signals; `--prune` removes only deleted runs' folders | S |
 | The models list and the train route | `GET /api/nn/models`; `POST /api/nn/train`'s refusal | S |
 | The feature-store strategy in the engine | `FeatureStoreNeuralNetworkStrategy` calls the loader through a static client with no seam; its route is tested, the strategy is not | M |
-| Rerun a stored result | The request rebuilt from `settings_json` gives the same trades and figures | M |
 | A set on a second instrument | `features.toml@ZZB/zz-b` on a second seeded instrument: its own series, its own hash, the first set still fresh | M |
 | The status on a built second set | The Features stage names that instrument's set | S |
 | The command lines | `nn.staleness`, `nn.recalculate`, `nn.fold_models`, `nn.model_windows`, `nn.feature_catalog`, `loader.repair`, `loader.missing`, `loader.feeds`: arguments and exit codes | S each |

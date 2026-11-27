@@ -75,7 +75,21 @@ public final class DateTimeUtils {
             }
         }
 
-        return null;
+        return isoInstant(trimmed);
+    }
+
+    /**
+     * An ISO-8601 instant with its offset ({@code 2016-01-01T00:00:00Z},
+     * {@code 2021-12-31T23:59:59.999999Z}): the form a result records the window
+     * it was asked for in ({@code RunSettings}), so a run can be asked again
+     * from it. Kept exactly, at either end of a range. Null if it is not one.
+     */
+    private static ZonedDateTime isoInstant(String s) {
+        try {
+            return java.time.OffsetDateTime.parse(s).atZoneSameInstant(ZoneOffset.UTC);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**
@@ -114,7 +128,7 @@ public final class DateTimeUtils {
                 // Try next format
             }
         }
-        return null;
+        return isoInstant(trimmed);
     }
 
     /**

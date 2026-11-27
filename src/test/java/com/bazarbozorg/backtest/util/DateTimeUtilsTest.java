@@ -132,4 +132,18 @@ class DateTimeUtilsTest {
         assertNull(DateTimeUtils.parseEnd("not a date"));
         assertNull(DateTimeUtils.parseEnd(" "));
     }
+
+    @Test
+    @DisplayName("an ISO instant, as a result records its window, is read exactly at either end")
+    void anIsoInstantIsReadExactly() {
+        // RunSettings records the requested window as instants; a run asked
+        // again from them must get the same window.
+        assertEquals(ZonedDateTime.of(2016, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC),
+                DateTimeUtils.parse("2016-01-01T00:00:00Z"));
+        assertEquals(ZonedDateTime.of(2021, 12, 31, 23, 59, 59, 999_999_000, ZoneOffset.UTC),
+                DateTimeUtils.parseEnd("2021-12-31T23:59:59.999999Z"));
+        assertEquals(ZonedDateTime.of(2020, 6, 1, 18, 30, 0, 0, ZoneOffset.UTC),
+                DateTimeUtils.parse("2020-06-01T14:30:00-04:00"));
+        assertNull(DateTimeUtils.parse("2020-1-1"));
+    }
 }
