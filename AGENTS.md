@@ -1,8 +1,10 @@
+**DECISION — John, 2026-11-27: (a) This file is how John, Claude and the scheduled tasks give orders to the integration agent; the agent never edits it. (b) `BACKLOG.md` at the repo root is how the agent reports back: questions and notes for John, design gaps, test gaps, everything open. It is the agent's only tracker; wherever this file names `backTesting-07-Design-Gaps` or `GAPS.md` as the tracker, read `BACKLOG.md`. Never create a CHANGES file. (c) All of `docs/` is John's alone and read-only for the agent, the trackers and Getting Started (`-05` to `-10`) and `docs/reference/` included. CI enforces it: a commit that changes `docs/` fails unless its subject starts with "Docs from Drive" (the nightly copy of John's Drive docs), and on `master` the change is undone. What a doc needs goes in `BACKLOG.md`. (d) `CLAUDE.md` stays, for the local agent.**
+
 **DECISION — John, 2026-11-26: every step, including steps 7 and 8, is closed by the agent once it passes full unit testing. No walk-through or acceptance by John is needed to close a step. Finish the project first; full testing comes after (step 9). Orders 2, 4 and 6 below are rewritten to match.**
 
 # AGENTS.md: the steps, and when each one is done
 
-> **Revision 2026-11-26-1** · 2026-11-26 Toronto time · last edited by Claude (Claude Opus 5.5), for John · orders 2, 4 and 6 rewritten: the agent closes each step on full unit tests; full testing after the project is built · [revision history](#revision-history)
+> **Revision 2026-11-27-1** · 2026-11-27 08:20 Toronto time · last edited by Claude (Claude Opus 5.5), for John · DECISION of 2026-11-27: AGENTS.md is John's, BACKLOG.md the agent's, all of docs/ read-only (CI guard) · [revision history](#revision-history)
 
 ## Current orders from John, 2026-11-23
 
@@ -14,14 +16,14 @@ These orders replace anything above that disagrees with them.
 2. Build the current step, close it once it passes full unit testing, and go straight on to the next step. Do not wait for John to run the step in the interface. Finish the whole project first; full testing comes after every step is built (step 9, Test review). [changed by John on 2026-11-26]
 3. The backend moves to Java, and this comes first, as step 0 of the plan: finish stack steps 4 to 6 (the routes move from Node to the Spring Boot service, the engine becomes the Java compute worker, Node and FastAPI are removed). Next.js and the three schemas (stack steps 7 and 8) stay paused until John says so. [changed by John on 2026-11-23, evening: he wants Java in the backend and no Node]
 4. Do not reopen or re-verify a closed step, and do not close gaps that are outside the current step. [changed by John on 2026-11-26: "closed" replaces "accepted by John"]
-5. Never edit backTesting-13-Implementation-Plan or the design documents backTesting-01 to -04, on Drive or in the repo. Record your work only in your own tracker, backTesting-07-Design-Gaps.
+5. Never edit backTesting-13-Implementation-Plan or the design documents backTesting-01 to -04, on Drive or in the repo. Record your work only in your own tracker, `BACKLOG.md` at the repo root. [changed by John on 2026-11-27]
 6. The agent closes each step itself once it passes full unit testing. John's walk-through or acceptance is not needed to close a step. [changed by John on 2026-11-26]
 7. The application's job is a tool John runs step by step: data, features, benchmarks and the engines, correct, for any symbol and any timeframe (daily, hourly, 30 minutes). Finding a winning model, and running many combinations in bulk, are not part of it.
 8. Step 10, Test coverage review, comes after step 9: review every step (0 to 9) and report, step by step, where more unit tests or integration tests could be added: what each new test would check and why. Report only; add no tests until John says. [added by John on 2026-11-26]
 
 Copied word for word from `backTesting-12-Coding-Agent-Instructions` in the Google Drive doc set, where "above" means the older text of that document. Here the orders come first and replace anything **below** in this file that disagrees with them.
 
-In this repo: the plan is [`docs/readonly-doc/backTesting-13-Implementation-Plan.md`](docs/readonly-doc/backTesting-13-Implementation-Plan.md). The coding agent never edits it or `backTesting-01` to `-04` in `docs/readonly-doc/`, and records its work only in [`docs/readonly-doc/backTesting-07-Design-Gaps.md`](docs/readonly-doc/backTesting-07-Design-Gaps.md).
+In this repo: the plan is [`docs/readonly-doc/backTesting-13-Implementation-Plan.md`](docs/readonly-doc/backTesting-13-Implementation-Plan.md). The coding agent never edits it or `backTesting-01` to `-04` in `docs/readonly-doc/`, and records its work only in [`BACKLOG.md`](BACKLOG.md). Nothing in `docs/` is edited by the agent (2026-11-27).
 
 ---
 
@@ -98,7 +100,7 @@ steps.
 
   Check that the reruns reproduce the results. Never mark stale records as expired
   and keep them.
-- **Keep work followable.** Write the plan as a checklist in `docs/readonly-doc/backTesting-07-Design-Gaps.md`, tick
+- **Keep work followable.** Write the plan as a checklist in `BACKLOG.md`, tick
   it as you go, and stop at a checkpoint before applying anything.
 - **Commit or push only when the author asks**, and then do just that.
 - **Stamp every doc you change.** Bump the revision line under its title
@@ -107,8 +109,9 @@ steps.
   covers the project docs and trackers, never the design set (`backTesting-01` to
   `-04` in `docs/readonly-doc/`), whose revision line is the author's.
 - **The design set is never edited.** That is the four files `backTesting-01` to
-  `-04` in `docs/readonly-doc/`. The trackers and Getting Started (`-05` to `-10`)
-  share the folder and are edited as usual. Each new fact goes in exactly one place:
+  `-04` in `docs/readonly-doc/`. Since 2026-11-27 nothing else in `docs/` is edited by
+  the agent either (the trackers and Getting Started, `-05` to `-10`, included); what a
+  doc needs goes in `BACKLOG.md`. Each new fact goes in exactly one place:
   see [`CLAUDE.md`](CLAUDE.md).
 - **The Google Drive doc set is the source of truth**, by the author's decision of
   2026-11-22: the folder "backTesting docs — SOURCE OF TRUTH (Google Docs)". A copy
@@ -658,6 +661,7 @@ Newest first, Toronto time. Every change to this file bumps the revision line at
 
 | Revision | When | Who | Change |
 |---|---|---|---|
+| 2026-11-27-1 | 2026-11-27 08:20 | Claude (Claude Opus 5.5), for John | DECISION of 2026-11-27 at the top: this file is John's way to give the agent orders; `BACKLOG.md` is the agent's only tracker and report; all of `docs/` is read-only for the agent, enforced by `.github/workflows/docs-guard.yml`; `CLAUDE.md` stays. Order 5, the plan note, the checklist rule and the design-set rule point to `BACKLOG.md` |
 | 2026-11-26-1 | 2026-11-26 | Claude (Claude Opus 5.5), for John | Synced from the Google Drive doc set: DECISION note at the top; current orders 2, 4 and 6 rewritten (the agent closes each step once it passes full unit testing; finish the project first, full testing after); new order 8 (step 10, test coverage review, report only) |
 | 2026-11-23-3 | 2026-11-23 19:23 | Claude (Claude Fable 5.2), for John | Current orders, order 3, from the Google Drive doc set: the backend moves to Java first, as step 0 of the plan (stack steps 4 to 6); Next.js and the three schemas stay paused. The older text below was not rewritten |
 | 2026-11-23-2 | 2026-11-23 19:20 | Claude (Claude Fable 5.2), for John | The author's current orders of 2026-11-23 added at the top, from the Google Drive doc set: follow `backTesting-13-Implementation-Plan`, the stack move is paused, the plan and the design set are never edited, work is recorded only in `backTesting-07-Design-Gaps`. The older text below was not rewritten |
