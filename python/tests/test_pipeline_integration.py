@@ -156,6 +156,8 @@ def _purge_sets() -> None:
         cur.execute("SELECT fs.id FROM feature_sets fs JOIN instruments i ON i.id = fs.instrument_id "
                     "WHERE i.symbol = %s", (SYMBOL,))
         ids = [r[0] for r in cur.fetchall()]
+        # A run's folds, signals and benchmarks go with it (ON DELETE CASCADE).
+        cur.execute("DELETE FROM walkforward_runs WHERE feature_set_id = ANY(%s)", (ids,))
         for table in ("feature_values", "feature_spec", "feature_runs"):
             cur.execute(f"DELETE FROM {table} WHERE feature_set_id = ANY(%s)", (ids,))  # noqa: S608
         cur.execute("DELETE FROM feature_sets WHERE id = ANY(%s)", (ids,))
@@ -397,4 +399,61 @@ def test_a_flagged_bar_stops_the_build_until_it_is_accepted(config, seeded):
         with conn.cursor() as cur:
             assert flags.refusal(cur, [(SYMBOL, SOURCE, "D1")], "the build") is None
     assert _build(config) > 0
+
+
+@requires_db
+def test_a_walk_forward_run_on_the_built_set_is_stored_reproduced_and_goes_stale(
+        config, seeded, capsys):
+    # Step 10, T2: the runner's `main` end to end on the set the build wrote,
+    # with the tree engine (seconds, and no ONNX check, which only the network
+    # has and which needs the engine's worker). Its run is stored with folds,
+    # signals and lineage; a recalculation in place gives back what it stored;
+    # the Training stage calls it fresh, and stale once its inputs change.
+    pytest.importorskip("talib")
+    pytest.importorskip("xgboost")
+    from nn import profit, recalculate, staleness
+    from nn import walkforward as wf
+
+    set_id = _build(config)
+    argv = ["--symbol", SYMBOL, "--source", SOURCE, "--set-id", str(set_id),
+            "--train-start", "2019", "--first-val", "2020", "--last-val", "2021",
+            "--engines", "xgboost", "--label", "pytest-wf-e2e"]
+    assert wf.main(argv) == 0, capsys.readouterr().out
+    with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, finished_at, input_snapshot, code_hash, span_to FROM "
+                    "walkforward_runs WHERE feature_set_id = %s AND label = 'pytest-wf-e2e'",
+                    (set_id,))
+        run_id, finished, snapshot, code_hash, span_to = cur.fetchone()
+        assert finished is not None and snapshot and code_hash
+        assert span_to <= DAYS[-1]
+        cur.execute("SELECT engine, val_year, n_val, strat_return, hold_return FROM "
+                    "walkforward_folds WHERE run_id = %s ORDER BY val_year", (run_id,))
+        folds = cur.fetchall()
+        # The set's first complete row comes after the 252-bar warm-up, early in
+        # 2020, so a 2020 fold would have nothing before it to train on: the
+        # runner scores 2021, trained on 2020.
+        assert [(e, y) for e, y, *_ in folds] == [("xgboost", 2021)]
+        assert all(n > 0 for _, _, n, _, _ in folds)
+        cur.execute("SELECT count(*) FROM walkforward_signals WHERE run_id = %s", (run_id,))
+        assert cur.fetchone()[0] == sum(n for _, _, n, _, _ in folds)
+
+    # A recalculation at its own settings gives back what the run stored.
+    with psycopg.connect(dsn()) as conn:
+        dry = recalculate.recalculate(conn, run_id, dry_run=True)
+    assert dry.mode == "in place" and len(dry.after) == len(folds)
+    for before, after in zip(dry.before, dry.after, strict=True):
+        for name in profit.PROFIT_FIELDS:
+            assert getattr(after, name) == pytest.approx(getattr(before, name)), name
+
+    def run_state() -> str:
+        with psycopg.connect(dsn()) as conn, conn.cursor() as cur:
+            body = staleness.status(cur, "D1", symbol=SYMBOL, source=SOURCE)
+        return next(r["state"] for r in body["training"]["runs"] if r["runId"] == run_id)
+
+    assert run_state() == "fresh"
+    # A bar inside the run's span changes and the set is rebuilt from it, as the
+    # evening run would: the run now reads inputs it was not made from.
+    _seed(bump_from=DAYS.index(dt.date(2020, 6, 1)) if dt.date(2020, 6, 1) in DAYS else 360)
+    _build(config)
+    assert run_state() == "stale"
 
