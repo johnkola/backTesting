@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-63** · 2026-11-27 22:53 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-64** · 2026-11-27 22:57 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -19,6 +19,23 @@ step 10's reviews built (six, seven, three, three, three, three, three, three, t
 "Test gaps" below has none left. Suites: Python 1,323, engine 235, service 103, client 306;
 Python line coverage 86% at the last line report. Step 10's review was run again on
 2026-11-27: its result is "Test gaps" below.
+
+## In progress
+
+**G63, the benchmarks' catalogue entries** (R74: every engine and benchmark has an entry,
+shown on the Strategy, Results and Docs tabs and in tooltips). Started 2026-11-27 at his
+word, after G62 and G66.
+
+- Done, not yet committed: `nn/benchmarks.py`, one entry for buy-and-hold, Faber, dual
+  momentum and the six indicator rules (title, library and version, what it does, what
+  checks it, its settings), served at `GET /api/nn/benchmarks`; the network's entry no
+  longer says its ONNX prediction check is not built. Tested
+  (`tests/test_benchmark_catalogue.py`).
+- Left: the route through the service (its table test and Postman request); on the
+  client, each benchmark's entry as the tooltip of its row on the result page and the
+  Training tab, the benchmarks beside the engines on the Strategy tab, a Catalogue tab on
+  Docs with the engines and benchmarks, and the "rule benchmark" mark on Results; then the
+  suites, the rebuilds, and the commit that closes it.
 
 ## Waiting on John
 
