@@ -5,7 +5,7 @@ per-bar window scan with an O(n) amortised walk is exactly where an off-by-one
 hides, and a wrong flag is not a cosmetic bug here: the tally becomes a model
 input column, so one bad boundary is a wrong feature on every member that day.
 
-The builder lives at the repo root rather than in the `nn` package, so it is
+The builder lives in `scripts/` rather than in the `nn` package, so it is
 loaded by path.
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "build_ndx_breadth.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "build_ndx_breadth.py"
 
 
 def _load_builder():

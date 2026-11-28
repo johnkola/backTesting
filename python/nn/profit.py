@@ -853,6 +853,6 @@ def load_park(cur, mode: str) -> dict[date, float] | None:
     if not obs:
         raise SystemExit(
             f"--park {mode} needs {symbol} imported. Fetch it with "
-            f"`python fetch_fred_series.py {symbol}` and import it as INDEX/fred."
+            f"`python scripts/fetch_fred_series.py {symbol}` and import it as INDEX/fred."
         )
     return obs

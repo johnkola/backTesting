@@ -1,11 +1,11 @@
 """The Nasdaq-100 breadth series, computed from each member's daily closes:
 percent above their own 200-day average (NDXBREADTH), percent closing up
 (NDXAD), the cross-sectional spread of returns (NDXDISP), and net new one-year
-highs minus lows (NDXNHNL). Used by `build_ndx_breadth.py` and by the feeds,
+highs minus lows (NDXNHNL). Used by `scripts/build_ndx_breadth.py` and by the feeds,
 so the stored series is the same whichever produced it.
 
 SURVIVORSHIP BIAS. There is no free point-in-time membership, so today's
-members are applied to all history; see `build_ndx_breadth.py` before trusting
+members are applied to all history; see `scripts/build_ndx_breadth.py` before trusting
 a backtest that leans on these.
 
 Closes are Yahoo's split-adjusted `close`. A split rescales a name's whole

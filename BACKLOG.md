@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-61** · 2026-11-27 18:58 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-27-62** · 2026-11-27 19:11 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -79,6 +79,15 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
   `timeframe`).
 - **Drive's Operator Reference and Getting Started** want the same changes as the
   README's.
+- **The data scripts moved** on 2026-11-27, at his word, from the repo root to `scripts/`
+  (`build_ndx_breadth.py`, `build_ndx_earnings.py`, `fetch_boc_series.py`,
+  `fetch_fred_series.py`, `fetch_historical_data.py`, `fetch_twelvedata_indicator.py`).
+  They run from the repo root as before, as `python scripts/<name>.py`. Still named at the
+  root in `README.md` (1337, 1340), `AGENTS.md` (197), Getting Started (73, 74, 89 to 94,
+  97, 103, 110, 279, 280) and `backTesting-08-Doc-Review.md` (45). Four comments in
+  `python/nn/features.toml` (416, 463, 687, 804) still say `python fetch_...py` too: they
+  are left until the file next changes for a reason of its own, because every feature
+  set's digest is the file's bytes and a comment edit would mark all of them stale.
 
 ## Open gaps
 

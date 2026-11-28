@@ -4,11 +4,11 @@
 Source: the Bank's Valet API (https://www.bankofcanada.ca/valet/), public, no key.
 Each observation is one number per day, so it is written as a degenerate bar
 (open = high = low = close = the value, volume = 0), the same shape
-fetch_fred_series.py writes, and imported as INDEX: real data, not a thing the
+scripts/fetch_fred_series.py writes, and imported as INDEX: real data, not a thing the
 engine can hold.
 
 Usage:
-    python fetch_boc_series.py AVG.INTWO --out test-data/CORRA_daily.csv
+    python scripts/fetch_boc_series.py AVG.INTWO --out test-data/CORRA_daily.csv
 
 Then import it (the API must be running):
     curl -F file=@test-data/CORRA_daily.csv -F symbol=CORRA -F type=INDEX \
@@ -29,7 +29,7 @@ import urllib.error
 from pathlib import Path
 
 # The Valet client lives in the loader package, shared with the data feeds.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from loader.feeds.boc import VALET_URL, fetch, to_bars  # noqa: E402,F401
 from loader.feeds.core import HEADER_ROW, ProviderError  # noqa: E402
 

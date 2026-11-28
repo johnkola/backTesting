@@ -1,7 +1,7 @@
 """The earnings builder's arithmetic (G7, backTesting-02-Features.md 39-40), offline.
 
-`build_ndx_earnings.py` lives at the repo root beside `build_ndx_breadth.py`,
-so it is loaded by path.
+`scripts/build_ndx_earnings.py` lives beside `build_ndx_breadth.py`, outside the
+packages, so it is loaded by path.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_PATH = Path(__file__).resolve().parents[2] / "build_ndx_earnings.py"
+_PATH = Path(__file__).resolve().parents[2] / "scripts" / "build_ndx_earnings.py"
 _spec = importlib.util.spec_from_file_location("build_ndx_earnings", _PATH)
 ne = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ne)

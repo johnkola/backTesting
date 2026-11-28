@@ -1,5 +1,5 @@
 """The Nasdaq-100 earnings series (backTesting-02-Features.md 39-40), computed from each
-member's SEC filings: used by `build_ndx_earnings.py` and by the feeds, so the
+member's SEC filings: used by `scripts/build_ndx_earnings.py` and by the feeds, so the
 stored series is the same whichever produced it. The filings themselves are
 fetched and cached by `sec`.
 
@@ -13,7 +13,7 @@ fetched and cached by `sec`.
 
 The reasoning behind each choice (net income rather than EPS, first-filed
 values only, the matched change, the accepted lookahead in column 39,
-survivorship) is in `build_ndx_earnings.py`'s docstring.
+survivorship) is in `scripts/build_ndx_earnings.py`'s docstring.
 
 WHERE THE SERIES END. Everything is computed up to `through`, the newest
 session the cached filings are complete for (`sec.refresh_all`). The release

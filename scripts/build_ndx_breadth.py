@@ -2,10 +2,10 @@
 """Build the market-breadth series: percent of Nasdaq-100 names trading above
 their own 200-day moving average, as one daily CSV in the app's format.
 
-    python build_ndx_breadth.py
-    python build_ndx_breadth.py --ma 50 --out test-data/NDXBREADTH50_daily.csv
-    python build_ndx_breadth.py --metric new-highs-lows
-    python build_ndx_breadth.py --offline          # recompute from the cache
+    python scripts/build_ndx_breadth.py
+    python scripts/build_ndx_breadth.py --ma 50 --out test-data/NDXBREADTH50_daily.csv
+    python scripts/build_ndx_breadth.py --metric new-highs-lows
+    python scripts/build_ndx_breadth.py --offline          # recompute from the cache
 
 SURVIVORSHIP BIAS - read this before trusting a backtest that uses the output.
 There is no free source of point-in-time Nasdaq-100 membership, so this applies
@@ -45,7 +45,7 @@ from pathlib import Path
 # The breadth math and the Yahoo client live in the loader package, shared with
 # the data feeds (loader/feeds), so this script and a scheduled refresh compute
 # the same series. Neither imports anything outside the standard library.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from loader.feeds.breadth import (  # noqa: E402,F401  (re-exported: tests load this file)
     METRICS,
     above_ma_flags,

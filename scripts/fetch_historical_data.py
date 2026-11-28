@@ -6,9 +6,9 @@ JSON we reshape into the loader's expected header: Date,Open,High,Low,Close,Volu
 (Stooq's direct-CSV endpoint now sits behind a JS anti-bot wall, so we don't use it.)
 
 Usage:
-    python fetch_historical_data.py QQQ
-    python fetch_historical_data.py QQQ --out test-data/QQQ_daily.csv
-    python fetch_historical_data.py AAPL --from 2015-01-01 --interval 1d
+    python scripts/fetch_historical_data.py QQQ
+    python scripts/fetch_historical_data.py QQQ --out test-data/QQQ_daily.csv
+    python scripts/fetch_historical_data.py AAPL --from 2015-01-01 --interval 1d
 
 Then import it (the API must be running; it proxies the upload to the loader):
     curl -F file=@test-data/QQQ_daily.csv -F symbol=QQQ -F type=STOCK \
@@ -24,7 +24,7 @@ from pathlib import Path
 # The Yahoo client lives in the loader package, shared with the data feeds
 # (loader/feeds), so a download here and a scheduled refresh store the same
 # numbers. It imports nothing outside the standard library.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from loader.feeds.core import HEADER_ROW, ProviderError  # noqa: E402
 from loader.feeds.yahoo import (  # noqa: E402,F401  (re-exported for callers)
     CHART_URL,

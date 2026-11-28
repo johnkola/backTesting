@@ -35,8 +35,8 @@ FORMAT. Like the FRED series, each value is written as a degenerate bar:
 open = high = low = close = the value, volume = 0, under the six-column header
 the importer requires. Import as INDEX, source `twelvedata`:
 
-    python fetch_twelvedata_indicator.py rsi
-    python fetch_twelvedata_indicator.py macd
+    python scripts/fetch_twelvedata_indicator.py rsi
+    python scripts/fetch_twelvedata_indicator.py macd
     curl -F file=@test-data/QQQ-RSI14_daily.csv -F symbol=QQQ-RSI14 -F type=INDEX \\
          -F timeframe=D1 -F source=twelvedata http://localhost:8001/api/imports
 
@@ -180,7 +180,7 @@ def fetch_window(indicator: str, symbol: str, lo: dt.date, hi: dt.date,
 
 
 def main() -> None:
-    load_dotenv(Path(__file__).resolve().parent / ".env")
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     p = argparse.ArgumentParser(
         description="Fetch Twelve Data's RSI(14) or MACD(12,26) line as app-format CSV.")
     p.add_argument("indicator", choices=sorted(INDICATORS))

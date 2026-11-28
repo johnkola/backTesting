@@ -1,6 +1,6 @@
 """SEC EDGAR client and the earnings cache: one JSON file per member company
 under `NDX_EARNINGS_DIR` (default `data/ndx-earnings`, the cache
-`build_ndx_earnings.py` reads), holding what `earnings` needs and no more: every
+`scripts/build_ndx_earnings.py` reads), holding what `earnings` needs and no more: every
 8-K's date and items, and the net income facts.
 
     {"cik", "name", "filings": [{form, filingDate, items}], "facts": {tag: [...]},

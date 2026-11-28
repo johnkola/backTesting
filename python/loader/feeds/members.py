@@ -1,6 +1,6 @@
 """Keeps the breadth members' daily closes current: one JSON file per member,
 date -> split-adjusted close, under `NDX_CONSTITUENTS_DIR` (the same cache
-`build_ndx_breadth.py` reads). The member list is the set of files there.
+`scripts/build_ndx_breadth.py` reads). The member list is the set of files there.
 
 Each member is extended from OVERLAP_DAYS before its newest cached close. The
 overlap must agree with the cache to within float noise; if it does, the new

@@ -27,10 +27,10 @@ can hold, and InstrumentType.INDEX is what stops the engine opening a
 position in one.
 
 Usage:
-    python fetch_fred_series.py DGS10
-    python fetch_fred_series.py T10YIE --from 2003-01-01
-    python fetch_fred_series.py DCOILWTICO --out test-data/WTI_daily.csv
-    FRED_API_KEY=... python fetch_fred_series.py BAMLC0A0CM
+    python scripts/fetch_fred_series.py DGS10
+    python scripts/fetch_fred_series.py T10YIE --from 2003-01-01
+    python scripts/fetch_fred_series.py DCOILWTICO --out test-data/WTI_daily.csv
+    FRED_API_KEY=... python scripts/fetch_fred_series.py BAMLC0A0CM
 
 Then import it (the API must be running; it proxies the upload to the loader):
     curl -F file=@test-data/DGS10_daily.csv -F symbol=DGS10 -F type=INDEX \
@@ -63,7 +63,7 @@ import urllib.error
 from pathlib import Path
 
 # The FRED client lives in the loader package, shared with the data feeds.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from loader.feeds.core import HEADER_ROW, ProviderError  # noqa: E402
 from loader.feeds.fred import (  # noqa: E402,F401  (re-exported for callers)
     API_URL,
@@ -120,7 +120,7 @@ def load_dotenv(path: Path) -> None:
 
 def main() -> None:
     # Before the parser: --api-key takes its default from the environment.
-    load_dotenv(Path(__file__).resolve().parent / ".env")
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     p = argparse.ArgumentParser(description="Fetch a daily FRED series as app-format CSV.")
     p.add_argument("series", help="FRED series id, e.g. DGS10, T10YIE, DCOILWTICO")
     p.add_argument("--from", dest="start", metavar="YYYY-MM-DD",

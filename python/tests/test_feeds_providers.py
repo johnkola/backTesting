@@ -1,5 +1,5 @@
 """Provider payloads into bars (loader/feeds/yahoo.py, fred.py, boc.py), and
-the breadth computation the feeds and `build_ndx_breadth.py` now share."""
+the breadth computation the feeds and `scripts/build_ndx_breadth.py` now share."""
 
 from __future__ import annotations
 

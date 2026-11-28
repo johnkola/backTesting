@@ -534,8 +534,8 @@ def load_margin_series(cur, source: str) -> tuple[profit.Prices, dict[date, floa
                                     ("DFF (fred, D1)", dff)) if not s]
     if missing:
         raise SystemExit(f"Strategy 2 needs {' and '.join(missing)} imported: "
-                         f"`python fetch_historical_data.py PSQ` / "
-                         f"`python fetch_fred_series.py DFF`, then POST /api/imports")
+                         f"`python scripts/fetch_historical_data.py PSQ` / "
+                         f"`python scripts/fetch_fred_series.py DFF`, then POST /api/imports")
     return psq, dff
 
 

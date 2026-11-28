@@ -1,6 +1,6 @@
 """The Bank of Canada's Valet API (public, no key), as degenerate bars like
 FRED's: one number a day, open = high = low = close, volume 0. Used by
-`fetch_boc_series.py` and by the feeds."""
+`scripts/fetch_boc_series.py` and by the feeds."""
 
 from __future__ import annotations
 

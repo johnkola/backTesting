@@ -2,8 +2,8 @@
 """Build the two Nasdaq-100 earnings columns (backTesting-02-Features.md 39-40) from SEC EDGAR,
 as daily CSVs in the app's format.
 
-    python build_ndx_earnings.py              # fetch what is not cached, write all four
-    python build_ndx_earnings.py --offline    # recompute from the cache only
+    python scripts/build_ndx_earnings.py              # fetch what is not cached, write all four
+    python scripts/build_ndx_earnings.py --offline    # recompute from the cache only
 
 Four series, each one value per trading day:
 
@@ -54,7 +54,7 @@ the newest session the filings are complete for, the last day whose window has
 fully passed (loader/feeds/earnings.py). Using it live needs an earnings calendar.
 
 SURVIVORSHIP. Today's members applied to the whole history, as for breadth
-(see build_ndx_breadth.py). Members are counted as companies, by CIK, so GOOG
+(see scripts/build_ndx_breadth.py). Members are counted as companies, by CIK, so GOOG
 and GOOGL are one. Foreign filers (6-K and 20-F, no Item 2.02, IFRS facts)
 drop out of both columns and are listed when the script runs.
 
@@ -82,7 +82,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 # The arithmetic and the SEC client live in the loader package, shared with the
 # data feeds (loader/feeds), so this script and the daily refresh compute the
 # same series. Neither imports anything outside the standard library.

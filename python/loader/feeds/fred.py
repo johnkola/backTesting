@@ -10,7 +10,7 @@ for the handful this project reads.
 Each observation becomes a degenerate bar (open = high = low = close = the
 value, volume 0): the store holds OHLCV, and this is lossless for one number a
 day. A no-print day ("." from the API, blank from the CSV) is dropped, not
-zeroed. Used by `fetch_fred_series.py` and by the feeds.
+zeroed. Used by `scripts/fetch_fred_series.py` and by the feeds.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """The Twelve Data fetcher's offline parts: windows, parsing, stitching.
 
-The script lives at the repo root beside `fetch_fred_series.py`, so it is loaded
+The script lives in `scripts/` beside `fetch_fred_series.py`, so it is loaded
 by path rather than imported as a package.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_PATH = Path(__file__).resolve().parents[2] / "fetch_twelvedata_indicator.py"
+_PATH = Path(__file__).resolve().parents[2] / "scripts" / "fetch_twelvedata_indicator.py"
 _spec = importlib.util.spec_from_file_location("fetch_twelvedata_indicator", _PATH)
 td = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(td)

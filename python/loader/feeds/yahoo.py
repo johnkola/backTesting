@@ -3,7 +3,7 @@
 Unofficial and keyless (query1.finance.yahoo.com/v8/finance/chart). It has
 served this project's prices, indexes and futures since the start, and it can
 rate-limit or change without notice; a paid feed is the safer source if the
-app becomes a signal provider. Used by `fetch_historical_data.py` and by the
+app becomes a signal provider. Used by `scripts/fetch_historical_data.py` and by the
 feeds, so both store the same numbers.
 """
 
