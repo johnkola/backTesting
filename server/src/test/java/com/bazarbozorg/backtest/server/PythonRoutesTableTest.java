@@ -54,6 +54,7 @@ class PythonRoutesTableTest extends ServiceTest {
             new Route("GET", "/api/nn/models", "python-call", true),
             new Route("DELETE", "/api/nn/models/xgboost/abc/v1", "python-call", false),
             new Route("GET", "/api/nn/engines", "python-call", true),
+            new Route("GET", "/api/nn/benchmarks", "python-call", true),
             new Route("GET", "/api/nn/features/schema", "python-call", true),
             new Route("GET", "/api/nn/features/config", "python-call", true),
             new Route("GET", "/api/nn/features/preview", "feature-preview", true),

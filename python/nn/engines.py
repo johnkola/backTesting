@@ -132,8 +132,9 @@ ENGINES: dict[str, Engine] = {
         description="Layers of weighted connections learn patterns from the features. "
                     "Trained on the class label, or on the trade's own returns with a "
                     "money-trained loss. Its settings are the strategy's hyperparameters.",
-        checked_by="Naive baseline (R72). The prediction check in ONNX Runtime (R62) "
-                   "is not built.",
+        checked_by="Naive baseline (R72), and the prediction check (R62): each fold's "
+                   "network, exported to ONNX, is run again in ONNX Runtime and must give what "
+                   "PyTorch gave on the same rows",
         scaled=False, losses=ALL_LOSSES,
     ),
     "xgboost": Engine(

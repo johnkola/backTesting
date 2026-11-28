@@ -12,6 +12,7 @@ import {
   type EngineForm,
 } from '../lib/engines'
 import { hintFor, paramHint } from '../lib/fieldHints'
+import { libraryLine, useBenchmarks } from '../lib/catalogue'
 import { useApiData } from '../lib/useApiData'
 import { useTimeframe } from '../lib/useTimeframe'
 import {
@@ -256,6 +257,7 @@ export default function StrategyPage() {
   // The runner's engines (R22). Null when the loader did not answer: the form
   // then saves as it did before B9, the network alone.
   const registry: EngineEntry[] | null = saved?.engines ?? null
+  const benchmarks = useBenchmarks()
   const engineForm: EngineForm | null = registry
     ? editedEngines ?? enginesToForm(undefined, registry)
     : null
@@ -1062,6 +1064,26 @@ export default function StrategyPage() {
               )}
             </Section>
           )}
+
+          <Section
+            title="9 · What every run is scored beside"
+            note="Not settings: each fold of a run, and each backtest, is scored beside these with the run's own costs and tax, on the same bars. The list is what the runner scores."
+          >
+            {!benchmarks ? (
+              <span className="text-sm text-base-content/60">The benchmarks&apos; entries did not load.</span>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-3">
+                {Object.values(benchmarks).map((b) => (
+                  <div key={b.name} className="rounded-box bg-base-100 p-3 border border-base-300">
+                    <h3 className="font-medium">{b.title}</h3>
+                    <p className="text-xs text-base-content/60">{libraryLine(b)}</p>
+                    <p className="text-xs mt-2">{b.description}</p>
+                    <p className="text-xs text-base-content/60 mt-1">Checked by: {b.checkedBy}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
 
           <div className="flex items-center gap-3">
             <button type="submit" className="btn btn-primary" disabled={!ready}>

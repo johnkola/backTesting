@@ -749,6 +749,14 @@ def get_engines() -> dict:
     return {"items": engines.registry_json()}
 
 
+@router.get("/api/nn/benchmarks")
+def get_benchmarks() -> dict:
+    """Every benchmark's catalogue entry (R74): buy-and-hold, the two monthly rules
+    and the indicator rules, with the library, its version and what checks each."""
+    from nn import benchmarks
+    return {"items": benchmarks.registry_json()}
+
+
 @router.get("/api/nn/models/window")
 def get_model_window(strategy: str, versionId: str) -> JSONResponse:  # noqa: N803
     """The bars a model version was trained on (B4, G30): `{status, since,

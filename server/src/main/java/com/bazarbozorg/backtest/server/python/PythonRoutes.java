@@ -176,6 +176,11 @@ public class PythonRoutes {
         return read(request);
     }
 
+    @GetMapping("/api/nn/benchmarks")
+    public ResponseEntity<Object> benchmarks(HttpServletRequest request) {
+        return read(request);
+    }
+
     @GetMapping("/api/nn/features/schema")
     public ResponseEntity<Object> featureSchema(HttpServletRequest request) {
         return read(request);

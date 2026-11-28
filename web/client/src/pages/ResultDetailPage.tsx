@@ -25,6 +25,7 @@ import { api, type ResultDetail } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
 import { barStamp } from '../lib/marketTime'
 import BenchmarkWorking from '../components/BenchmarkWorking'
+import { useBenchmarks } from '../lib/catalogue'
 import { percent } from '../lib/numbers'
 
 const pct = percent
@@ -102,6 +103,7 @@ export default function ResultDetailPage() {
     (signal) => api.result(id, signal),
     [id],
   )
+  const benchmarks = useBenchmarks()
 
   if (error) return <div className="alert alert-error">{error}</div>
   if (!detail) return <span className="loading loading-spinner" />
@@ -288,6 +290,7 @@ export default function ResultDetailPage() {
           rows={resultBenchmarkRows(r)} unit="calendar days"
           tradesNote="Round trips, every row alike: a buy and its sale, the last at the end of the window."
           detail={(row) => () => <BenchmarkWorking detail={detail} name={row.key} label={row.label} />}
+          catalogue={benchmarks}
         />
         <h2 className="font-semibold mb-1">Equity curve</h2>
         {hold ? (

@@ -14,6 +14,7 @@ import {
   runEnginesNote,
 } from '../../lib/engines'
 import { useApiData } from '../../lib/useApiData'
+import { useBenchmarks } from '../../lib/catalogue'
 import { useTimeframe } from '../../lib/useTimeframe'
 import {
   accuracyMeaning, executionLine, isLeverageOnly, lineageLine, naiveFlag, newestFinished, num, pp,
@@ -56,6 +57,7 @@ type Loaded = { items: TrainedModel[], modelsDir: string }
  */
 export default function TrainingStage() {
   const [tf] = useTimeframe()
+  const benchmarks = useBenchmarks()
   const { status, error: statusError } = usePipelineStatus()
   // The runs of the instrument the pipeline is on, as the status names it:
   // every instrument's runs here read as this one's history.
@@ -393,6 +395,7 @@ export default function TrainingStage() {
               <BenchmarkTable
                 rows={engineBenchmarkRows(detail.folds)} unit="trading days"
                 tradesNote="Position changes a fold, every row alike: each buy and each sale, the last at the fold's end."
+                catalogue={benchmarks}
               />
               <div className="overflow-x-auto bg-base-200 rounded-box">
                 <table className="table table-sm">

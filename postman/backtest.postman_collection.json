@@ -3923,6 +3923,44 @@
           ]
         },
         {
+          "name": "Benchmark catalogue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/nn/benchmarks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "nn",
+                "benchmarks"
+              ]
+            },
+            "description": "Every benchmark a result or a walk-forward fold is scored beside (R74): buy-and-hold, Faber, dual momentum and the six indicator rules, each with its library and version, what it does and what checks it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('one entry per benchmark, each saying what checks it', function () {",
+                  "    const items = pm.response.json().items;",
+                  "    pm.expect(items.map(b => b.name)).to.include.members(['buy_and_hold', 'faber', 'dual_momentum']);",
+                  "    items.forEach(b => {",
+                  "        pm.expect(b.kind).to.eql('benchmark');",
+                  "        pm.expect(b.checkedBy).to.be.a('string').and.not.empty;",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "What a strategy may choose and still run (G54)",
           "request": {
             "method": "GET",

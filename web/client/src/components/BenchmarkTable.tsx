@@ -1,5 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react'
 import type { BenchmarkRow } from '../lib/benchmarks'
+import { catalogueTip, type CatalogueEntry } from '../lib/catalogue'
+import { tipClass } from './FieldLabel'
 
 const fmt = (n: number | null, digits = 2, suffix = '') =>
   n === null || !Number.isFinite(n) ? '—' : `${n.toFixed(digits)}${suffix}`
@@ -11,9 +13,10 @@ const fmt = (n: number | null, digits = 2, suffix = '') =>
  *
  * With `detail`, a row that has one opens under itself (how its
  * figures are made, its trades beside the prices). The detail is mounted only
- * while open, so what it fetches is fetched when asked for.
+ * while open, so what it fetches is fetched when asked for. With `catalogue`, a
+ * benchmark's name carries its catalogue entry as a tooltip (R74).
  */
-export default function BenchmarkTable({ rows, unit, tradesNote, detail }: {
+export default function BenchmarkTable({ rows, unit, tradesNote, detail, catalogue }: {
   rows: BenchmarkRow[]
   /** What the holding time is counted in. */
   unit: string
@@ -21,6 +24,8 @@ export default function BenchmarkTable({ rows, unit, tradesNote, detail }: {
   tradesNote: string
   /** What opens under a row, or null for a row that does not open. */
   detail?: (row: BenchmarkRow) => (() => ReactNode) | null
+  /** The benchmarks' entries by name. */
+  catalogue?: Record<string, CatalogueEntry> | null
 }) {
   const [open, setOpen] = useState<string | null>(null)
   if (!rows.length) return null
@@ -45,6 +50,10 @@ export default function BenchmarkTable({ rows, unit, tradesNote, detail }: {
             const id = `${r.key}:${r.label}`
             const render = r.note ? null : detail?.(r) ?? null
             const isOpen = open === id && render !== null
+            const entry = catalogue?.[r.key]
+            const label = entry
+              ? <span className={tipClass} data-tip={catalogueTip(entry)}>{r.label}</span>
+              : r.label
             return (
               <Fragment key={id}>
                 <tr className={r.key === 'strategy' ? 'font-semibold' : ''}>
@@ -56,9 +65,9 @@ export default function BenchmarkTable({ rows, unit, tradesNote, detail }: {
                         title="How these figures are made, and its trades beside the prices"
                         onClick={() => setOpen(isOpen ? null : id)}
                       >
-                        {isOpen ? '▾' : '▸'} {r.label}
+                        {isOpen ? '▾' : '▸'} {label}
                       </button>
-                    ) : r.label}
+                    ) : label}
                   </td>
                   {r.note ? (
                     <td colSpan={6} className="text-xs text-base-content/60">Not available: {r.note}</td>

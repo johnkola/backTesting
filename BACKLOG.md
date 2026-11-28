@@ -1,6 +1,6 @@
 # Backlog
 
-> **Revision 2026-11-27-64** · 2026-11-27 22:57 Toronto time · last edited by Claude Code (Claude Opus 5.5)
+> **Revision 2026-11-28-1** · 2026-11-28 03:28 Toronto time · last edited by Claude Code (Claude Opus 5.5)
 
 Everything still open between John and the coding agent: the decisions waiting on him,
 the notes for him to pick up, what the design asks for that the code does not do yet,
@@ -16,26 +16,9 @@ Size: S under a day, M a few days, L a week or more, XL a rebuild.
 The implementation plan is done: step 0 accepted by John on 2026-11-24, steps 1 to 10
 closed on full unit testing (his decision of 2026-11-26), and every test he chose from
 step 10's reviews built (six, seven, three, three, three, three, three, three, then two):
-"Test gaps" below has none left. Suites: Python 1,323, engine 235, service 103, client 306;
+"Test gaps" below has none left. Suites: Python 1,326, engine 235, service 103, client 309;
 Python line coverage 86% at the last line report. Step 10's review was run again on
 2026-11-27: its result is "Test gaps" below.
-
-## In progress
-
-**G63, the benchmarks' catalogue entries** (R74: every engine and benchmark has an entry,
-shown on the Strategy, Results and Docs tabs and in tooltips). Started 2026-11-27 at his
-word, after G62 and G66.
-
-- Done, not yet committed: `nn/benchmarks.py`, one entry for buy-and-hold, Faber, dual
-  momentum and the six indicator rules (title, library and version, what it does, what
-  checks it, its settings), served at `GET /api/nn/benchmarks`; the network's entry no
-  longer says its ONNX prediction check is not built. Tested
-  (`tests/test_benchmark_catalogue.py`).
-- Left: the route through the service (its table test and Postman request); on the
-  client, each benchmark's entry as the tooltip of its row on the result page and the
-  Training tab, the benchmarks beside the engines on the Strategy tab, a Catalogue tab on
-  Docs with the engines and benchmarks, and the "rule benchmark" mark on Results; then the
-  suites, the rebuilds, and the commit that closes it.
 
 ## Waiting on John
 
@@ -99,7 +82,8 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
   record, or whose files changed, is no longer loaded); `python -m loader.reload --symbol
   ... --source ... [--timeframe D1] [--dry-run]` and `POST /api/imports/reload`
   (`{symbol, source, timeframe, dryRun}`), a series' bars put back from its archive, with
-  the Imports page's "Reload a series from its archive".
+  the Imports page's "Reload a series from its archive"; `GET /api/nn/benchmarks`, the
+  benchmarks' catalogue entries, shown on the Docs tab's new "Catalogue".
 - **Drive's Operator Reference and Getting Started** want the same changes as the
   README's.
 - **The data scripts moved** on 2026-11-27, at his word, from the repo root to `scripts/`
@@ -132,7 +116,6 @@ Changes to files the coding agent does not edit (his rule of 2026-11-26).
 | G59 | Tooltips come from three dictionaries and about 29 hard-coded strings; the nav and Pipeline sub-tabs have none | S |
 | G60 | Testing layers: React Testing Library component tests, Newman in CI, one scripted end-to-end path, a reproducibility test (same seed and snapshot, same model), indicators against published values. See "Test gaps" | L |
 | G61 | The lineage chain cannot be followed: `candles` carry no audit columns or link to their import slice, rolled-up candles have no audit record, `feed_runs` has no audit columns, `backtest_results` record no code version or input snapshot | M |
-| G63 | The catalogue has no entries for buy-and-hold, Faber and dual momentum; nothing shown on Results, Docs or tooltips | S |
 | G65 | Signal voting (phase 2). Gated: after phase 1 | L |
 | G67 | The archive keeps only the newest version of a slice: a fix rewrites the file in place, so an older version cannot be reloaded (contrary to D10) | M |
 | G70 | An engine cannot train on a subset of the strategy's features (R21) | S |

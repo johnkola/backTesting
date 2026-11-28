@@ -2,6 +2,10 @@ import { useEffect, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, type DocContent, type DocSummary } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import Catalogue from '../components/Catalogue'
+
+/** The Docs tab that is not a document: the engines' and benchmarks' catalogue (R74). */
+const CATALOGUE = 'catalogue'
 
 /**
  * The project docs, inside the app.
@@ -11,6 +15,9 @@ import { useApiData } from '../lib/useApiData'
  * a second application you left the app to reach, with no link back. The API
  * now returns the rendered markdown as data (`GET /api/docs/:slug`) and this
  * page puts it in the same layout, nav and theme as everything else.
+ *
+ * Beside the documents, the catalogue: its entries come from the runner's
+ * registries, not from Markdown, so it is a tab of its own with no history.
  */
 export default function DocsPage() {
   const { slug = 'readme' } = useParams<{ slug: string }>()
@@ -23,8 +30,9 @@ export default function DocsPage() {
     (signal) => api.docs(signal).then((r) => r.items),
     [],
   )
-  const { data: doc, error } = useApiData<DocContent>(
-    (signal) => api.doc(slug, rev, signal),
+  const catalogue = slug === CATALOGUE
+  const { data: doc, error } = useApiData<DocContent | null>(
+    (signal) => (catalogue ? Promise.resolve(null) : api.doc(slug, rev, signal)),
     [slug, rev],
   )
 
@@ -63,15 +71,21 @@ export default function DocsPage() {
               {d.label}
             </Link>
           ))}
+          <Link role="tab" to={`/docs/${CATALOGUE}`} className={`tab ${catalogue ? 'tab-active' : ''}`}>
+            Catalogue
+          </Link>
         </div>
         <div className="flex-1" />
-        <Link to={`/docs/${slug}/history`} className="link link-primary text-sm">
-          View history
-        </Link>
+        {!catalogue && (
+          <Link to={`/docs/${slug}/history`} className="link link-primary text-sm">
+            View history
+          </Link>
+        )}
       </div>
 
+      {catalogue && <Catalogue />}
       {error && <div className="alert alert-error">{error}</div>}
-      {!doc && !error && <span className="loading loading-spinner" />}
+      {!catalogue && !doc && !error && <span className="loading loading-spinner" />}
 
       {doc?.revision && (
         <div className="alert alert-warning mb-4">

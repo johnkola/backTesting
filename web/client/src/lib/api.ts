@@ -1358,6 +1358,23 @@ export type EngineEntry = {
   settings: EngineSetting[]
 }
 
+/** A benchmark's catalogue entry (R74), as `GET /api/nn/benchmarks` serves it. */
+export type BenchmarkEntry = {
+  /** As a fold or a result stores it: `buy_and_hold`, `faber`, `sma-crossover`, ... */
+  name: string
+  title: string
+  kind: 'benchmark'
+  /** A library, or "this project's code". */
+  library: string
+  /** The library's version, or the code's; null when the library cannot be imported. */
+  version: string | null
+  description: string
+  /** What checks it, in plain words. */
+  checkedBy: string
+  /** The settings it is pinned to. */
+  settings: Record<string, number>
+}
+
 /**
  * A strategy version's engines by name (B9): switched on or off, with its
  * settings. Absent from a request, the API stores the network alone.
@@ -2402,6 +2419,11 @@ export const api = {
     ),
   deleteImport: (id: string | number) =>
     sendJson<ImportDeleteResult>(`/api/imports/${encodeURIComponent(String(id))}`, 'DELETE'),
+  /** Every engine's catalogue entry (R74), from the runner's registry. */
+  engines: (signal?: AbortSignal) => getJson<{ items: EngineEntry[] }>('/api/nn/engines', signal),
+  /** Every benchmark's catalogue entry (R74). */
+  benchmarks: (signal?: AbortSignal) =>
+    getJson<{ items: BenchmarkEntry[] }>('/api/nn/benchmarks', signal),
   /** Put a series' archived bars back into the candles; `dryRun` only says what it would do. */
   reloadSeries: (req: { symbol: string, source: string, timeframe: string, dryRun: boolean }) =>
     sendJson<ReloadResult>('/api/imports/reload', 'POST', req),

@@ -6,6 +6,7 @@ import { taxBadge } from '../lib/tax'
 import { testWindowMark, testWindowNote } from '../lib/testWindow'
 import { api, type ResultSummary, type Paginated } from '../lib/api'
 import { useApiData } from '../lib/useApiData'
+import { catalogueTip, useBenchmarks } from '../lib/catalogue'
 import DeleteResultRowButton from '../components/DeleteResultRowButton'
 import Pagination from '../components/Pagination'
 import WalkforwardResults from '../components/WalkforwardResults'
@@ -35,6 +36,7 @@ export default function ResultsPage() {
   const source = params.get('source') ?? ''
   const offset = Math.max(0, Number(params.get('offset')) || 0)
   const [tf] = useTimeframe()
+  const benchmarks = useBenchmarks()
   // Bumped after a delete so the list refetches: the row is gone server-side,
   // and the rows after it have shifted up a page.
   const [reloadKey, setReloadKey] = useState(0)
@@ -145,7 +147,9 @@ export default function ResultsPage() {
                         {isBenchmark(r.strategyKind) && (
                           <span
                             className={`${tipClass} block`}
-                            data-tip="A fixed indicator rule kept for comparison, not a strategy under test."
+                            data-tip={'A fixed indicator rule kept for comparison, not a strategy under test.'
+                              + (benchmarks?.[r.strategyName]
+                                ? ` ${catalogueTip(benchmarks[r.strategyName])}` : '')}
                           >
                             <span className="badge badge-neutral badge-sm font-sans cursor-help">
                               benchmark
