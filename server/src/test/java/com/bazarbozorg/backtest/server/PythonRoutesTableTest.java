@@ -34,6 +34,7 @@ class PythonRoutesTableTest extends ServiceTest {
 
     static final List<Route> ROUTES = List.of(
             new Route("DELETE", "/api/imports/7", "import-undo", false),
+            new Route("POST", "/api/imports/reload", "import-reload", false),
             new Route("POST", "/api/aggregate", "aggregate", false),
             new Route("POST", "/api/audit", "audit", false),
             new Route("GET", "/api/checks", "python-call", true),

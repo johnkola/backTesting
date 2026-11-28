@@ -11,6 +11,7 @@ import Pagination from '../components/Pagination'
 import { tipClass } from '../components/FieldLabel'
 import UploadCard from '../components/UploadCard'
 import FileVersions from '../components/FileVersions'
+import ReloadSeries from '../components/ReloadSeries'
 import { useTimeframe } from '../lib/useTimeframe'
 
 const LIMIT = 25
@@ -113,6 +114,14 @@ export default function ImportsPage() {
       <UploadCard onSuccess={refreshHistory} />
 
       <FileVersions source={source} instrument={instrument} reloadKey={reloadKey} />
+
+      <ReloadSeries
+        key={`${instrument}|${source}|${tf}`}
+        symbol={instrument}
+        source={source}
+        timeframe={tf}
+        onReloaded={refreshHistory}
+      />
 
       <div className="flex flex-wrap gap-2 mb-4">
         <span className={tipClass} data-tip="Show only imports filed under this source. Matched exactly.">

@@ -52,6 +52,12 @@ public class PythonRoutes {
         return python.forward("import-undo", 300, KEPT, request, null);
     }
 
+    @PostMapping("/api/imports/reload")
+    public ResponseEntity<Object> reloadSeries(HttpServletRequest request,
+            @RequestBody(required = false) JsonNode body) {
+        return python.forward("import-reload", 600, KEPT, request, body);
+    }
+
     @PostMapping("/api/aggregate")
     public ResponseEntity<Object> aggregate(HttpServletRequest request,
             @RequestBody(required = false) JsonNode body) {

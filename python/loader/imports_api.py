@@ -1,7 +1,10 @@
 """FastAPI router for POST /api/imports — the multipart CSV upload entry
 point. Response shapes (200 completed, 409 conflict, 409 compressed_chunk)
 match the React client's UploadImportResponse discriminated union, so
-ImportsPage.tsx works against this endpoint with no client-side change."""
+ImportsPage.tsx works against this endpoint with no client-side change.
+
+Beside it, the undo of one import (DELETE /api/imports/{id}) and the reload
+of a whole series from its archive (POST /api/imports/reload, `loader/reload.py`)."""
 
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from jobs.calls import job_route
 from loader.aggregate import aggregate, is_valid_pair
@@ -484,3 +488,51 @@ def delete_import(import_id: int, dry_run: bool = False) -> JSONResponse:
             "archiveKept": True,
         },
     )
+
+
+COMPRESSED_HINT = ("Run SELECT decompress_chunk(show_chunks(...)) for the affected range and "
+                   "retry. Auto-compress will re-apply on its next pass.")
+
+
+class ReloadRequest(BaseModel):
+    symbol: str = ""
+    source: str = ""
+    timeframe: str = "D1"
+    dryRun: bool = False
+
+
+@router.post("/api/imports/reload")
+@job_route("import-reload", timeout_s=600)
+def reload_series(req: ReloadRequest) -> JSONResponse:
+    """Put a series' archived bars back into `candles`, every year at once
+    (`loader/reload.py`): what is missing is restored, what differs from its
+    file is rewritten, what no file holds is reported and kept. `dryRun` says
+    what it would do and writes nothing. 400 without the series, 404 for a
+    series the database or the archive does not have, 409 when a file changed
+    after its import (nothing is written) or a bar falls in a compressed chunk."""
+    from loader import reload
+
+    symbol, source = req.symbol.strip(), req.source.strip()
+    if not symbol or not source:
+        return _bad("symbol and source are required")
+    if req.timeframe not in ALLOWED_TIMEFRAMES:
+        return _bad(f"timeframe must be one of {', '.join(sorted(ALLOWED_TIMEFRAMES))}")
+    try:
+        with pool().connection() as conn:
+            out = reload.reload(conn, symbol, source, req.timeframe, dry_run=req.dryRun)
+    except reload.Refused as exc:
+        return JSONResponse(status_code=409, content={
+            "status": "refused", "reasons": exc.reasons,
+            "error": "nothing was written: " + "; ".join(exc.reasons)})
+    except LookupError as exc:
+        return _bad(str(exc), code=404)
+    except Exception as exc:  # noqa: BLE001 — narrow check below
+        if is_compressed_chunk_error(exc):
+            return JSONResponse(status_code=409, content={
+                "status": "compressed_chunk",
+                "error": "Postgres rejected the write because the bars fall inside a "
+                         "TimescaleDB-compressed chunk",
+                "hint": COMPRESSED_HINT, "detail": str(exc)})
+        raise
+    return JSONResponse(content={**out, "lines": reload.describe(out)})
+

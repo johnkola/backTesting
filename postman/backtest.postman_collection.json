@@ -641,6 +641,53 @@
           ]
         },
         {
+          "name": "Reload a series from its archive (dry run)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"QQQ\",\n  \"source\": \"yahoo-adj\",\n  \"timeframe\": \"D1\",\n  \"dryRun\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/imports/reload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports",
+                "reload"
+              ]
+            },
+            "description": "Puts a series' archived bars back into candles, every year at once: missing bars restored, bars that differ from their file rewritten, bars no file holds reported and kept. A file changed after its import refuses the whole reload (409). The dry run says what it would do and writes nothing; the real one is the same body without dryRun."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('a dry run reports each archived year, or the series is not here', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "    if (pm.response.code === 200) {",
+                  "        const body = pm.response.json();",
+                  "        pm.expect(body.dryRun).to.eql(true);",
+                  "        pm.expect(body.written).to.eql(false);",
+                  "        pm.expect(body.years).to.be.an('array').that.is.not.empty;",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Undo with a non-numeric id is rejected",
           "request": {
             "method": "DELETE",

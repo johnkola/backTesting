@@ -289,6 +289,19 @@ export const fieldHints: Record<string, string> = {
     + 'source series. Two runs can be compared by which of their features were '
     + 'computed differently.',
 
+  // --- Imports: reload from the archive ----------------------------------
+  'imports.reload':
+    'Every import keeps each year it wrote as a CSV in the archive. This puts those bars '
+    + 'back into the stored candles, every year of the series at once: a missing bar is '
+    + 'restored, a bar that differs from its file is rewritten, and a bar no file holds is '
+    + 'reported and kept. Check first: it says what it would do and writes nothing.',
+  'imports.reloadCheck':
+    'Compares every archived year of the series with the stored bars and writes nothing. '
+    + 'A file that changed after its import is refused here, before anything is written.',
+  'imports.reloadRun':
+    'Writes what the check found. The series is then checked as an import checks it, and a '
+    + 'daily series\' weekly and monthly roll-ups are rebuilt from the first changed day.',
+
   // --- Train -------------------------------------------------------------
   'train.savedStrategy':
     'Every strategy saved on the Strategy tab, every version of each. Picking '

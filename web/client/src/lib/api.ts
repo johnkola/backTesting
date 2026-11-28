@@ -397,6 +397,44 @@ export type ImportDeleteResult = ImportDeleteTarget & {
   archiveKept: boolean
 }
 
+/** One archived year of a series, as a reload found it (POST /api/imports/reload). */
+export type ReloadYear = {
+  year: number
+  archivePath: string
+  /** Bars in the archived file. */
+  bars: number
+  /** False when the year has no audit row (an undone year): a reload records it again. */
+  recorded: boolean
+  /** In the file, not stored: put back. */
+  restored: number
+  /** Stored with other values than the file's: rewritten from it. */
+  changed: number
+  /** Stored, in no archived file: reported and kept. */
+  notInArchive: number
+  notInArchiveFrom: string | null
+  notInArchiveTo: string | null
+  examples: { time: string, stored: number[], archive: number[] }[]
+}
+
+/** A series reloaded from its archive, or what that would do (`dryRun`). */
+export type ReloadResult = {
+  symbol: string
+  source: string
+  timeframe: string
+  dryRun: boolean
+  years: ReloadYear[]
+  bars: number
+  restored: number
+  changed: number
+  notInArchive: number
+  /** Years with no audit row, recorded again by the reload. */
+  recordedAgain: number[]
+  written: boolean
+  rollups: { timeframe: string, since: string, rows: number }[] | null
+  /** The result as sentences, the command line's own. */
+  lines: string[]
+}
+
 /** POST /api/aggregate — build higher-timeframe rollups from a source tf. */
 export type AggregateRequest = {
   symbol: string
@@ -2364,6 +2402,9 @@ export const api = {
     ),
   deleteImport: (id: string | number) =>
     sendJson<ImportDeleteResult>(`/api/imports/${encodeURIComponent(String(id))}`, 'DELETE'),
+  /** Put a series' archived bars back into the candles; `dryRun` only says what it would do. */
+  reloadSeries: (req: { symbol: string, source: string, timeframe: string, dryRun: boolean }) =>
+    sendJson<ReloadResult>('/api/imports/reload', 'POST', req),
   audit: (req: AuditRequest) => sendJson<AuditResponse>('/api/audit', 'POST', req),
   /** The repair log (G76): every repair with its candidates and what was applied. */
   repairs: (q: { symbol?: string, source?: string, status?: string, limit?: number }, signal?: AbortSignal) =>
